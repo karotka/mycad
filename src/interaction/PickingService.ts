@@ -8,6 +8,37 @@ export interface SolidBounds {
   maxX: number; maxY: number; maxZ: number;
 }
 
+export interface WindowBounds {
+  minX: number; minY: number; maxX: number; maxY: number;
+}
+
+export function applyWindowSelection(doc: Document, box: WindowBounds, crossing: boolean, additive: boolean): void {
+  if (!additive) {
+    doc.selectedEntityIds.clear();
+    doc.selectedSolidIds.clear();
+  }
+  const matches = (bounds: WindowBounds): boolean => {
+    const inside = bounds.minX >= box.minX && bounds.maxX <= box.maxX
+      && bounds.minY >= box.minY && bounds.maxY <= box.maxY;
+    const intersects = bounds.maxX >= box.minX && bounds.minX <= box.maxX
+      && bounds.maxY >= box.minY && bounds.minY <= box.maxY;
+    return inside || (crossing && intersects);
+  };
+  for (const entity of doc.entities) {
+    const bounds = entityBounds(entity);
+    if (!doc.hiddenLayers.has(entity.layer) && matches({
+      minX: bounds.min.x, minY: bounds.min.y, maxX: bounds.max.x, maxY: bounds.max.y,
+    })) {
+      doc.selectedEntityIds.add(entity.id);
+    }
+  }
+  for (const solid of doc.solids) {
+    if (!doc.hiddenLayers.has(solid.layer) && matches(solidBounds(solid))) doc.selectedSolidIds.add(solid.id);
+  }
+  doc.pruneSelection();
+  doc.notify();
+}
+
 export function solidBounds(solid: Solid): SolidBounds {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;

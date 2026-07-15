@@ -435,7 +435,12 @@ export class CommandManager {
           stepIndex: 0,
           data: { entities: selectedLines },
         };
-        if (selectedLines.length > 0) this.ctx.log(`${selectedLines.length} preselected object(s). Press Enter to join.`);
+        if (selectedLines.length >= 2) {
+          this.ctx.log(`${selectedLines.length} preselected object(s). Joining selection.`);
+          void this.advanceStep(null);
+        } else if (selectedLines.length > 0) {
+          this.ctx.log('1 object preselected. Select at least one connected object or press Enter.');
+        }
         break;
       }
       case 'EXTEND':

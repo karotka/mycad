@@ -1,17 +1,26 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
-import { cloneEntity, curvePoints, entityBounds, getEntityPoints, transformEntityPoints, type Entity, type Solid, type SolidFeature } from './core/entities/types';
+import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFeature } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
-import { AddEntitiesEdit, DeleteLayerEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
+import { ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
 import { snapPoint2, type Vec2 } from './math/geometry';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
-import { Canvas2DRenderer, Viewport3D } from './render/Viewport';
+import { Canvas2DRenderer } from './render/Canvas2DRenderer';
+import { Viewport3D } from './render/Viewport3D';
 import { hitTestSolid2d, pickEntityAt, selectionExclusions, solidBounds } from './interaction/PickingService';
 import { InputController } from './interaction/InputController';
 import { GripController, type GripMode } from './interaction/GripController';
-import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from './io/ProjectIO';
-import { importAsciiDxf } from './io/DxfImport';
+import type { ProjectViewState } from './io/ProjectIO';
+import { LayerController } from './ui/LayerController';
+import { WindowDragController } from './interaction/WindowDragController';
+import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, objectSnapCandidates, type SnapTarget } from './interaction/SnapService';
+import { ViewportNavigationController } from './interaction/ViewportNavigationController';
+import { PreviewController } from './ui/PreviewController';
+import { ProjectController } from './ui/ProjectController';
+import { SelectionController } from './interaction/SelectionController';
+import { GripInteractionController } from './interaction/GripInteractionController';
+import { DrawingInteractionController } from './interaction/DrawingInteractionController';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -174,6 +183,7 @@ const viewport = get<HTMLElement>('viewport');
 const canvas2d = get<HTMLCanvasElement>('canvas2d');
 const viewport3dHost = get<HTMLElement>('viewport3d');
 const input = get<HTMLInputElement>('command-input');
+const commandForm = get<HTMLFormElement>('command-form');
 const commandSuggestionsElement = get<HTMLElement>('command-suggestions');
 const prompt = get<HTMLElement>('command-prompt');
 const logElement = get<HTMLElement>('command-log');
@@ -196,21 +206,58 @@ const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
 renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
 renderer3d.attachControls(viewport, enter3dForOrbit);
+const previewController = new PreviewController(
+  dimensionToast,
+  measureOrigin,
+  measureTarget,
+  snapMarker,
+  (point) => cadDocument.viewMode === '3d'
+    ? renderer3d.projectCadPoint(renderer3d.renderer.domElement, point)
+    : null,
+);
+const navigation = new ViewportNavigationController(
+  cadDocument,
+  viewport,
+  renderer2d,
+  renderer3d,
+  { enter3dForOrbit, redraw },
+);
 const history = new CommandHistory(cadDocument);
 const gripController = new GripController(cadDocument, history);
+const gripInteraction = new GripInteractionController(gripController, viewport);
+const windowDrag = new WindowDragController(viewport, selectionWindowElement);
+const selectionController = new SelectionController(
+  cadDocument,
+  viewport,
+  renderer2d,
+  renderer3d,
+  windowDrag,
+  {
+    viewportSize: () => ({ width, height }),
+    selectionChanged: () => { gripController.mode = null; gripController.hoveredGrip = -1; },
+    zoomFinished: () => {
+      zoomWindowMode = false;
+      document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
+      prompt.textContent = 'Enter command:';
+    },
+    redraw,
+  },
+);
+const layerController = new LayerController(
+  cadDocument,
+  history,
+  layerPanel,
+  layerList,
+  get('layer-current'),
+  get('layer-toggle'),
+  get('layer-add'),
+  { log, redraw, objectsDeleted: () => gripController.clear() },
+);
 
 let width = 1;
 let height = 1;
-let panning = false;
-let gripEditLatched = false;
-let gripTargetSnapMode: GripMode | null = null;
-let drawingTargetSnapMode: GripMode | null = null;
 let ucsHoverPoint: { x: number; y: number; z: number } | null = null;
 let suppressNextContextMenu = false;
-let lastPointer = { x: 0, y: 0 };
-let preview: { type: string; data: unknown } | undefined;
-let dimensionTimer: ReturnType<typeof setTimeout> | undefined;
-let selectionWindow: { start: Vec2; current: Vec2; additive: boolean; pointerId: number; purpose?: 'select' | 'zoom' } | null = null;
 let zoomWindowMode = false;
 let currentSuggestions: CommandName[] = [];
 
@@ -251,7 +298,6 @@ commandResizeHandle.addEventListener('pointerup', (event) => {
   commandResizeHandle.releasePointerCapture(event.pointerId);
 });
 let suggestionIndex = 0;
-let currentProjectPath: string | undefined;
 
 function get<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -297,7 +343,7 @@ function redraw(): void {
   viewport.classList.toggle('object-pick', isObjectPick);
   if (is2d) {
     const grips = gripController.visibleGrips().map((grip) => ({ point: grip.point, shape: grip.shape, hot: grip.index === gripController.hoveredGrip }));
-    renderer2d.render(cadDocument, width, height, preview, grips);
+    renderer2d.render(cadDocument, width, height, previewController.preview, grips);
   }
   else {
     const grips = visibleGripsInWorld().map((grip) => ({
@@ -308,7 +354,7 @@ function redraw(): void {
     const visibleEntities = cadDocument.entities.filter((entity) => !cadDocument.hiddenLayers.has(entity.layer));
     const visibleSolids = cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer));
     renderer3d.syncEntities(visibleEntities);
-    renderer3d.syncPreview(preview);
+    renderer3d.syncPreview(previewController.preview);
     renderer3d.syncGrips(grips);
     renderer3d.syncSolids(visibleSolids);
     renderer3d.render();
@@ -361,107 +407,6 @@ function gripEditingPoint(
   return snap?.point ?? interactionPoint(event);
 }
 
-function renderLayers(): void {
-  get('layer-current').textContent = cadDocument.currentLayer;
-  const selectedLayers = new Set([
-    ...cadDocument.getSelectedEntities().map((entity) => entity.layer),
-    ...cadDocument.getSelectedSolids().map((solid) => solid.layer),
-  ]);
-  const highlightedLayer = selectedLayers.size === 1 ? [...selectedLayers][0] : cadDocument.currentLayer;
-  layerList.replaceChildren(...cadDocument.layers.map((name) => {
-    const row = document.createElement('div');
-    row.className = `layer-row${name === highlightedLayer ? ' active' : ''}`;
-    const visible = !cadDocument.hiddenLayers.has(name);
-    const count = cadDocument.entities.filter((entity) => entity.layer === name).length
-      + cadDocument.solids.filter((solid) => solid.layer === name).length;
-    const color = cadDocument.layerColors[name] ?? 0xffffff;
-    row.innerHTML = `<button class="layer-eye" title="${visible ? 'Hide' : 'Show'} layer">${visible ? 'Hide' : 'Show'}</button><input class="layer-color" type="color" value="#${color.toString(16).padStart(6, '0')}" title="Layer color"><button class="layer-current-mark${name === cadDocument.currentLayer ? ' active' : ''}" title="Set current layer">${name === cadDocument.currentLayer ? '●' : '○'}</button><input class="layer-name" value="${name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" maxlength="32" aria-label="Layer name" ${name === '0' ? 'readonly' : ''}><span>${count}</span><button class="layer-delete" title="${name === '0' ? 'Layer 0 cannot be deleted' : `Delete layer and ${count} object(s)`}" aria-label="Delete layer" ${name === '0' ? 'disabled' : ''}>×</button>`;
-    row.querySelector<HTMLButtonElement>('.layer-eye')!.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (visible) cadDocument.hiddenLayers.add(name); else cadDocument.hiddenLayers.delete(name);
-      cadDocument.clearSelection();
-      cadDocument.notify();
-      renderLayers();
-    });
-    row.addEventListener('click', () => {
-      cadDocument.currentLayer = name;
-      cadDocument.hiddenLayers.delete(name);
-      const entities = cadDocument.getSelectedEntities();
-      const solids = cadDocument.getSelectedSolids();
-      const layerColor = cadDocument.layerColors[name] ?? 0xffffff;
-      entities.forEach((entity) => { entity.layer = name; entity.color = layerColor; });
-      solids.forEach((solid) => { solid.layer = name; solid.color = layerColor; });
-      if (entities.length + solids.length > 0) log(`Moved ${entities.length + solids.length} object(s) to layer ${name}.`);
-      cadDocument.notify();
-      renderLayers();
-      redraw();
-    });
-    const nameInput = row.querySelector<HTMLInputElement>('.layer-name')!;
-    const rename = (): void => {
-      const nextName = nameInput.value.trim();
-      if (!nextName || nextName === name) { nameInput.value = name; return; }
-      if (cadDocument.layers.includes(nextName)) {
-        nameInput.setCustomValidity('Layer already exists.');
-        nameInput.reportValidity();
-        nameInput.value = name;
-        return;
-      }
-      nameInput.setCustomValidity('');
-      const index = cadDocument.layers.indexOf(name);
-      cadDocument.layers[index] = nextName;
-      cadDocument.layerColors[nextName] = cadDocument.layerColors[name] ?? 0xffffff;
-      delete cadDocument.layerColors[name];
-      if (cadDocument.currentLayer === name) cadDocument.currentLayer = nextName;
-      if (cadDocument.hiddenLayers.delete(name)) cadDocument.hiddenLayers.add(nextName);
-      cadDocument.entities.filter((entity) => entity.layer === name).forEach((entity) => { entity.layer = nextName; });
-      cadDocument.solids.filter((solid) => solid.layer === name).forEach((solid) => { solid.layer = nextName; });
-      cadDocument.notify();
-      renderLayers();
-    };
-    nameInput.addEventListener('change', rename);
-    nameInput.addEventListener('click', (event) => event.stopPropagation());
-    nameInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); nameInput.blur(); } });
-    const colorInput = row.querySelector<HTMLInputElement>('.layer-color')!;
-    colorInput.addEventListener('click', (event) => event.stopPropagation());
-    colorInput.addEventListener('input', (event) => {
-      const nextColor = Number.parseInt((event.currentTarget as HTMLInputElement).value.slice(1), 16);
-      cadDocument.layerColors[name] = nextColor;
-      cadDocument.entities.filter((entity) => entity.layer === name).forEach((entity) => { entity.color = nextColor; });
-      cadDocument.solids.filter((solid) => solid.layer === name).forEach((solid) => { solid.color = nextColor; });
-      cadDocument.notify();
-    });
-    const deleteButton = row.querySelector<HTMLButtonElement>('.layer-delete')!;
-    deleteButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (name === '0') return;
-      history.execute(new DeleteLayerEdit(cadDocument, name));
-      gripController.clear();
-      log(`Deleted layer ${name} and ${count} object(s).`);
-      renderLayers();
-      redraw();
-    });
-    return row;
-  }));
-}
-
-get('layer-toggle').addEventListener('click', () => {
-  layerPanel.hidden = !layerPanel.hidden;
-  if (!layerPanel.hidden) renderLayers();
-});
-get('layer-add').addEventListener('click', () => {
-  let number = 1;
-  while (cadDocument.layers.includes(`Layer ${number}`)) number++;
-  const name = `Layer ${number}`;
-  cadDocument.layers.push(name);
-  cadDocument.layerColors[name] = 0xffffff;
-  cadDocument.currentLayer = name;
-  renderLayers();
-  redraw();
-  const inputs = layerList.querySelectorAll<HTMLInputElement>('.layer-name');
-  const input = inputs[inputs.length - 1];
-  input?.focus();
-  input?.select();
-});
 function updateViewCubeOrientation(): void {
   const plane = cadDocument.activeWorkPlane;
   const yaw = Math.atan2(plane.xAxis.y, plane.xAxis.x) * 180 / Math.PI;
@@ -482,8 +427,43 @@ const commands = new CommandManager({
     prompt.textContent = message;
     queueMicrotask(syncTextOptions);
   },
-  getCursor: () => renderer2d.screenToWorld(lastPointer.x, lastPointer.y, width, height),
+  getCursor: () => {
+    const cursor = navigation.cursor;
+    return renderer2d.screenToWorld(cursor.x, cursor.y, width, height);
+  },
   redraw,
+});
+const drawingInteraction = new DrawingInteractionController(commands);
+
+const projectController = new ProjectController(cadDocument, history, {
+  captureView: captureProjectView,
+  cancelInteraction: () => {
+    commands.cancelActive();
+    gripInteraction.cancel();
+    gripController.clear();
+    previewController.reset();
+  },
+  resetView: () => {
+    renderer2d.pan = { x: 0, y: 0 };
+    renderer2d.zoom = 20;
+    renderer3d.clearFaceHighlight();
+    renderer3d.clearEdgeHighlight();
+    renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+    renderer3d.frameContent([], []);
+  },
+  applyView: (view) => {
+    renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+    if (!view) return;
+    renderer2d.pan = { ...view.twoD.pan };
+    renderer2d.zoom = view.twoD.zoom;
+    renderer3d.restoreViewState(view.threeD);
+  },
+  zoomExtents: () => renderer2d.zoomExtents(cadDocument, width, height),
+  renderLayers: () => layerController.render(),
+  log,
+  clearLog: () => logElement.replaceChildren(),
+  redraw,
+  focusInput: () => input.focus(),
 });
 
 function syncTextOptions(): void {
@@ -530,7 +510,7 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
   const drawing = active && ['LINE', 'RECTANGLE', 'CIRCLE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT'].includes(active.name)
     && active.steps[active.stepIndex]?.kind === 'point';
   if (drawing) {
-    const targetedSnap = nearestGripTargetSnap(event, drawingTargetSnapMode);
+    const targetedSnap = nearestGripTargetSnap(event, drawingInteraction.targetSnapMode);
     if (targetedSnap) return targetedSnap.point;
     const snap = nearestMeasurementPoint(event);
     if (snap) {
@@ -539,7 +519,7 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
     }
   }
   if ((active?.name === 'ROTATE' || active?.name === 'MOVE') && active.steps[active.stepIndex]?.kind === 'point') {
-    const targetedSnap = nearestGripTargetSnap(event, drawingTargetSnapMode);
+    const targetedSnap = nearestGripTargetSnap(event, drawingInteraction.targetSnapMode);
     if (targetedSnap) {
       if (active.name === 'MOVE') active.data.pendingMoveWorldPoint = targetedSnap.world;
       return active.name === 'MOVE' && cadDocument.viewMode === '3d'
@@ -562,44 +542,6 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
     return point && cadDocument.snapEnabled ? snapPoint2(point, cadDocument.snapSize) : point;
   }
   return worldPoint3d(event);
-}
-
-function isDrawingPointStep(): boolean {
-  const active = commands.active;
-  return Boolean(active
-    && (['LINE', 'RECTANGLE', 'CIRCLE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT'].includes(active.name) || active.name === 'ROTATE' || active.name === 'MOVE')
-    && active.steps[active.stepIndex]?.kind === 'point');
-}
-
-function rotatePreviewEntity(entity: Entity, base: Vec2, angle: number): Entity {
-  const rotate = (point: Vec2): Vec2 => {
-    const dx = point.x - base.x, dy = point.y - base.y;
-    return {
-      x: base.x + dx * Math.cos(angle) - dy * Math.sin(angle),
-      y: base.y + dx * Math.sin(angle) + dy * Math.cos(angle),
-    };
-  };
-  if (entity.type === 'rectangle') {
-    const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
-    return {
-      id: entity.id, type: 'polyline', layer: entity.layer, color: 0xe6f4ff, selected: false,
-      workPlane: entity.workPlane, vertices: corners.map(rotate), closed: true,
-    };
-  }
-  const result = cloneEntity(entity);
-  result.color = 0xe6f4ff;
-  result.selected = false;
-  switch (result.type) {
-    case 'line': result.start = rotate(result.start); result.end = rotate(result.end); break;
-    case 'circle': result.center = rotate(result.center); break;
-    case 'octagon': result.center = rotate(result.center); result.vertices = result.vertices.map(rotate); break;
-    case 'polyline': result.vertices = result.vertices.map(rotate); break;
-    case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
-    case 'bezier': result.start = rotate(result.start); result.control1 = rotate(result.control1); result.control2 = rotate(result.control2); result.end = rotate(result.end); break;
-    case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
-    case 'rectangle': break;
-  }
-  return result;
 }
 
 function moveObject(object: Entity | string, screenDelta: Vec2, snappedWorldDelta?: { x: number; y: number; z: number }): void {
@@ -654,139 +596,19 @@ function translateFeature(feature: SolidFeature, delta: { x: number; y: number; 
 }
 
 function updatePreview(cursor: Vec2): void {
-  const active = commands.active;
-  preview = undefined;
-  if (!active) return;
-  if (active.name === 'UCS') {
-    preview = {
-      type: 'ucs',
-      data: {
-        origin: active.data.origin,
-        xPoint: active.data.xPoint,
-        yPoint: active.data.yPoint,
-        hover: ucsHoverPoint,
-        step: active.stepIndex,
-      },
-    };
-    return;
-  }
-  if (active.name === 'POLYGON' && active.stepIndex === 2 && active.data.center && active.data.sides) {
-    preview = { type: 'polygon', data: { center: active.data.center, cursor, sides: active.data.sides } };
-    return;
-  }
-  if (active.name === 'ARC') {
-    if (active.stepIndex === 1 && active.data.center) preview = { type: 'circle', data: { center: active.data.center, cursor } };
-    else if (active.stepIndex === 2 && active.data.center && active.data.start) preview = { type: 'arc', data: { center: active.data.center, start: active.data.start, cursor } };
-    return;
-  }
-  if (active.name === 'BEZIER' && active.data.start) {
-    preview = { type: 'bezier', data: { start: active.data.start, control1: active.data.control1 ?? cursor, control2: active.data.control2 ?? cursor, end: cursor } };
-    return;
-  }
-  if (active.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
-    preview = { type: 'line', data: { start: active.data.basePoint, end: cursor } };
-    return;
-  }
-  if (active.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
-    const base = active.data.basePoint as Vec2;
-    const angle = Math.atan2(cursor.y - base.y, cursor.x - base.x);
-    const entities = (active.data.entities as Entity[]).map((entity) => rotatePreviewEntity(entity, base, angle));
-    preview = { type: 'rotate', data: { start: base, end: cursor, entities } };
-    return;
-  }
-  if (active.stepIndex !== 1) return;
-  if (active.name === 'LINE' && active.data.start) {
-    preview = { type: 'line', data: { start: active.data.start, end: cursor } };
-  } else if (active.name === 'RECTANGLE' && active.data.start) {
-    preview = { type: 'rectangle', data: { start: active.data.start, end: cursor } };
-  } else if (active.name === 'CIRCLE' && active.data.center) {
-    preview = { type: 'circle', data: { center: active.data.center, cursor } };
-  } else if (active.name === 'OCTAGON' && active.data.center) {
-    preview = { type: 'octagon', data: { center: active.data.center, cursor } };
-  }
+  previewController.update(commands.active, cursor, ucsHoverPoint);
 }
 
 function showDimension(text: string | null, x: number, y: number): void {
-  if (!text) return;
-  dimensionToast.textContent = text;
-  dimensionToast.style.left = `${x + 16}px`;
-  dimensionToast.style.top = `${y - 34}px`;
-  dimensionToast.hidden = false;
-  if (dimensionTimer) clearTimeout(dimensionTimer);
-  dimensionTimer = setTimeout(() => { dimensionToast.hidden = true; }, 1200);
+  previewController.showDimension(text, x, y);
 }
 
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
-  marker.style.left = `${x}px`;
-  marker.style.top = `${y}px`;
-  marker.hidden = false;
+  previewController.showMarker(marker, x, y);
 }
 
 function positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number): void {
-  if (cadDocument.viewMode === '3d') {
-    const projected = renderer3d.projectCadPoint(renderer3d.renderer.domElement, point);
-    if (projected) {
-      positionMeasureMarker(snapMarker, projected.x, projected.y);
-      return;
-    }
-  }
-  positionMeasureMarker(snapMarker, fallbackX, fallbackY);
-}
-
-async function saveTextFile(content: string, defaultPath: string, name: string, extension: string): Promise<string | undefined> {
-  if (window.mycadAPI) {
-    const result = await window.mycadAPI.saveFile({
-      content,
-      defaultPath,
-      filters: [{ name, extensions: [extension] }],
-    });
-    if (!result.canceled) log(`Saved: ${result.filePath ?? defaultPath}`);
-    return result.canceled ? undefined : result.filePath;
-  }
-  const blob = new Blob([content], { type: extension === 'stl' ? 'model/stl' : 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = defaultPath;
-  link.click();
-  URL.revokeObjectURL(url);
-  log(`Downloaded: ${defaultPath}`);
-  return undefined;
-}
-
-async function saveProject(): Promise<void> {
-  try {
-    const content = serializeProject(cadDocument, captureProjectView());
-    if (window.mycadAPI && currentProjectPath) {
-      await window.mycadAPI.writeFile({ filePath: currentProjectPath, content });
-      log(`Saved: ${currentProjectPath}`);
-      return;
-    }
-    const filePath = await saveTextFile(content, 'model.mycad', 'MyCAD project', 'mycad');
-    if (filePath) currentProjectPath = filePath;
-  } catch (error) {
-    log(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-async function quickSaveProject(): Promise<void> {
-  try {
-    const content = serializeProject(cadDocument, captureProjectView());
-    if (window.mycadAPI?.quickSave) {
-      const result = await window.mycadAPI.quickSave({ filePath: currentProjectPath, content });
-      currentProjectPath = result.filePath;
-      log(`Saved: ${result.filePath}`);
-      return;
-    }
-    if (currentProjectPath && window.mycadAPI) {
-      await window.mycadAPI.writeFile({ filePath: currentProjectPath, content });
-      log(`Saved: ${currentProjectPath}`);
-      return;
-    }
-    await saveTextFile(content, 'model.mycad', 'MyCAD project', 'mycad');
-  } catch (error) {
-    log(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  previewController.showSnap(point, fallbackX, fallbackY);
 }
 
 function selectedEntity(): Entity | undefined {
@@ -821,134 +643,46 @@ function profileContainingPoint(point: Vec2): Entity | undefined {
 }
 
 function nearestMeasurementPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, pixelTolerance = 14): { x: number; y: number; z: number } | null {
+  const candidates = measurementCandidates(cadDocument);
   if (cadDocument.viewMode === '3d') {
-    return renderer3d.nearestMeasurementPoint(
-      renderer3d.renderer.domElement, cadDocument.entities, cadDocument.solids,
-      event.clientX, event.clientY, pixelTolerance,
-    );
+    const rect = viewport.getBoundingClientRect();
+    return nearestCandidateProjected(
+      candidates,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+      pixelTolerance,
+      cadDocument.activeWorkPlane,
+    )?.world ?? null;
   }
   const cursor = rawWorldPoint(event);
-  const tolerance = pixelTolerance / renderer2d.zoom;
-  let best = tolerance;
-  let result: { x: number; y: number; z: number } | null = null;
-  const consider = (point: { x: number; y: number; z?: number }): void => {
-    const distance = Math.hypot(cursor.x - point.x, cursor.y - point.y);
-    if (distance <= best) {
-      best = distance;
-      result = { x: point.x, y: point.y, z: point.z ?? 0 };
-    }
-  };
-  cadDocument.entities.forEach((entity) => getEntityPoints(entity).forEach(consider));
-  cadDocument.solids.forEach((solid) => {
-    for (let i = 0; i < solid.mesh.positions.length; i += 3) {
-      consider({ x: solid.mesh.positions[i], y: solid.mesh.positions[i + 1], z: solid.mesh.positions[i + 2] });
-    }
-  });
-  return result;
+  return nearestCandidate2d(candidates, cursor, cadDocument.activeWorkPlane, pixelTolerance / renderer2d.zoom)?.world ?? null;
 }
 
-type GripSnapTarget = { point: Vec2; world: { x: number; y: number; z: number } };
+type GripSnapTarget = SnapTarget;
 
 function nearestGripTargetSnap(
   event: Pick<PointerEvent, 'clientX' | 'clientY'>,
-  mode: GripMode | null = gripTargetSnapMode,
+  mode: GripMode | null = gripInteraction.targetSnapMode,
   pixelTolerance = 14,
 ): GripSnapTarget | null {
   if (!mode) return null;
-  const draggedId = gripController.draggingObjectId;
-  const candidates: Array<{ x: number; y: number; z: number }> = [];
-  const addLocal = (entity: Entity, point: Vec2): void => {
-    candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point));
-  };
-  const midpoint = (a: Vec2, b: Vec2): Vec2 => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-
-  for (const entity of cadDocument.entities) {
-    if (entity.id === draggedId) continue;
-    if (mode === 'end') {
-      if (entity.type === 'line') [entity.start, entity.end].forEach((point) => addLocal(entity, point));
-      else if (entity.type === 'rectangle') {
-        [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]
-          .forEach((point) => addLocal(entity, point));
-      } else if (entity.type === 'polyline' || entity.type === 'octagon') {
-        entity.vertices.forEach((point) => addLocal(entity, point));
-      } else if (entity.type === 'arc' || entity.type === 'bezier') {
-        const points = curvePoints(entity, 2);
-        addLocal(entity, points[0]);
-        addLocal(entity, points[2]);
-      } else if (entity.type === 'text') addLocal(entity, entity.position);
-    } else if (mode === 'center') {
-      if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon') addLocal(entity, entity.center);
-      else if (entity.type === 'rectangle') addLocal(entity, midpoint(entity.first, entity.opposite));
-      else if (entity.type === 'bezier') addLocal(entity, curvePoints(entity, 2)[1]);
-      else if (entity.type === 'text') addLocal(entity, entity.position);
-    } else {
-      if (entity.type === 'line') addLocal(entity, midpoint(entity.start, entity.end));
-      else if (entity.type === 'arc' || entity.type === 'bezier') addLocal(entity, curvePoints(entity, 2)[1]);
-      else if (entity.type === 'rectangle') {
-        const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
-        corners.forEach((point, index) => addLocal(entity, midpoint(point, corners[(index + 1) % corners.length])));
-      } else if (entity.type === 'polyline' || entity.type === 'octagon') {
-        const last = entity.type === 'octagon' || entity.closed ? entity.vertices.length : entity.vertices.length - 1;
-        for (let index = 0; index < last; index++) {
-          addLocal(entity, midpoint(entity.vertices[index], entity.vertices[(index + 1) % entity.vertices.length]));
-        }
-      }
-    }
-  }
-
-  for (const solid of cadDocument.solids) {
-    if (solid.id === draggedId) continue;
-    const positions = solid.mesh.positions;
-    if (mode === 'end') {
-      for (let index = 0; index < positions.length; index += 3) {
-        candidates.push({ x: positions[index], y: positions[index + 1], z: positions[index + 2] });
-      }
-    } else if (mode === 'center') {
-      const bounds = solidBounds(solid);
-      candidates.push({ x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2, z: (bounds.minZ + bounds.maxZ) / 2 });
-    } else {
-      const indices = solid.mesh.indices;
-      const seen = new Set<string>();
-      for (let index = 0; index < indices.length; index += 3) {
-        const triangle = [indices[index], indices[index + 1], indices[index + 2]];
-        for (const [a, b] of [[triangle[0], triangle[1]], [triangle[1], triangle[2]], [triangle[2], triangle[0]]]) {
-          const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          candidates.push({
-            x: (positions[a * 3] + positions[b * 3]) / 2,
-            y: (positions[a * 3 + 1] + positions[b * 3 + 1]) / 2,
-            z: (positions[a * 3 + 2] + positions[b * 3 + 2]) / 2,
-          });
-        }
-      }
-    }
-  }
-
-  let bestDistance = pixelTolerance;
-  let bestWorld: { x: number; y: number; z: number } | null = null;
+  const candidates = objectSnapCandidates(cadDocument, mode, gripController.draggingObjectId);
   if (cadDocument.viewMode === '3d') {
     const rect = viewport.getBoundingClientRect();
-    const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    for (const candidate of candidates) {
-      const projected = renderer3d.projectCadPoint(renderer3d.renderer.domElement, candidate);
-      if (!projected) continue;
-      const distance = Math.hypot(projected.x - cursor.x, projected.y - cursor.y);
-      if (distance <= bestDistance) { bestDistance = distance; bestWorld = candidate; }
-    }
-  } else {
-    const cursor = rawWorldPoint(event);
-    const tolerance = pixelTolerance / renderer2d.zoom;
-    let bestLocalDistance = tolerance;
-    for (const candidate of candidates) {
-      const local = worldToLocal(cadDocument.activeWorkPlane, candidate);
-      const distance = Math.hypot(local.x - cursor.x, local.y - cursor.y);
-      if (distance <= bestLocalDistance) { bestLocalDistance = distance; bestWorld = candidate; }
-    }
+    return nearestCandidateProjected(
+      candidates,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+      pixelTolerance,
+      cadDocument.activeWorkPlane,
+    );
   }
-  if (!bestWorld) return null;
-  const local = worldToLocal(cadDocument.activeWorkPlane, bestWorld);
-  return { point: { x: local.x, y: local.y }, world: bestWorld };
+  return nearestCandidate2d(
+    candidates,
+    rawWorldPoint(event),
+    cadDocument.activeWorkPlane,
+    pixelTolerance / renderer2d.zoom,
+  );
 }
 
 function solidSelectionExclusions(): Set<string> {
@@ -966,7 +700,7 @@ function resize(): void {
 
 cadDocument.subscribe(() => {
   redraw();
-  if (!layerPanel.hidden) renderLayers();
+  if (layerController.isOpen) layerController.render();
 });
 new ResizeObserver(resize).observe(viewport);
 
@@ -974,6 +708,10 @@ viewport.addEventListener('pointermove', (event) => {
   const rect = viewport.getBoundingClientRect();
   const sx = event.clientX - rect.left;
   const sy = event.clientY - rect.top;
+  // Keep the software CAD cursor attached to the pointer even when a mode
+  // (selection window, pan, etc.) returns before geometric hover processing.
+  crosshair.style.left = `${sx}px`;
+  crosshair.style.top = `${sy}px`;
   if (cadDocument.viewMode === '3d' && (commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET')) {
     renderer3d.pickSolidEdge(renderer3d.renderer.domElement, cadDocument.solids, event.clientX, event.clientY);
   } else {
@@ -984,28 +722,12 @@ viewport.addEventListener('pointermove', (event) => {
   } else {
     renderer3d.clearFaceHighlight();
   }
-  if (selectionWindow) {
-    selectionWindow.current = { x: sx, y: sy };
-    const left = Math.min(selectionWindow.start.x, sx);
-    const top = Math.min(selectionWindow.start.y, sy);
-    selectionWindowElement.style.left = `${left}px`;
-    selectionWindowElement.style.top = `${top}px`;
-    selectionWindowElement.style.width = `${Math.abs(sx - selectionWindow.start.x)}px`;
-    selectionWindowElement.style.height = `${Math.abs(sy - selectionWindow.start.y)}px`;
-    selectionWindowElement.classList.toggle('crossing', selectionWindow.purpose !== 'zoom' && sx < selectionWindow.start.x);
-    if (selectionWindow.purpose === 'zoom') prompt.textContent = 'Specify opposite corner of zoom window:';
+  if (windowDrag.active) {
+    const drag = windowDrag.update({ x: sx, y: sy });
+    if (drag?.purpose === 'zoom') prompt.textContent = 'Specify opposite corner of zoom window:';
     return;
   }
-  if (panning) {
-    if (cadDocument.viewMode === '2d') {
-      renderer2d.pan.x -= (sx - lastPointer.x) / renderer2d.zoom;
-      renderer2d.pan.y += (sy - lastPointer.y) / renderer2d.zoom;
-    } else {
-      renderer3d.panByScreenDelta(sx - lastPointer.x, sy - lastPointer.y);
-    }
-    redraw();
-  }
-  lastPointer = { x: sx, y: sy };
+  navigation.updatePointer({ x: sx, y: sy });
   if (commands.active?.name === 'UCS') {
     const snap = nearestMeasurementPoint(event, Number.POSITIVE_INFINITY);
     ucsHoverPoint = snap;
@@ -1026,7 +748,7 @@ viewport.addEventListener('pointermove', (event) => {
   if (gripController.isDragging) {
     gripController.update(p);
     if (gripSnap) positionSnapMarker(gripSnap.world, sx, sy);
-    else if (gripTargetSnapMode) snapMarker.hidden = true;
+    else if (gripInteraction.targetSnapMode) snapMarker.hidden = true;
     showDimension(gripController.changedDimension(), sx, sy);
   }
   else {
@@ -1039,8 +761,6 @@ viewport.addEventListener('pointermove', (event) => {
     );
   }
   coords.textContent = `X: ${p.x.toFixed(3)} mm Y: ${p.y.toFixed(3)} mm`;
-  crosshair.style.left = `${sx}px`;
-  crosshair.style.top = `${sy}px`;
   updatePreview(p);
   const active = commands.active;
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
@@ -1048,9 +768,9 @@ viewport.addEventListener('pointermove', (event) => {
     const angle = Math.atan2(p.y - base.y, p.x - base.x) * 180 / Math.PI;
     showDimension(`Angle ${angle.toFixed(2)}°`, sx, sy);
   }
-  const targetedDrawingSnap = isDrawingPointStep() ? nearestGripTargetSnap(event, drawingTargetSnapMode) : null;
-  const drawingSnap = isDrawingPointStep()
-    ? targetedDrawingSnap?.world ?? (drawingTargetSnapMode ? null : nearestMeasurementPoint(event))
+  const targetedDrawingSnap = drawingInteraction.isPointStep ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode) : null;
+  const drawingSnap = drawingInteraction.isPointStep
+    ? targetedDrawingSnap?.world ?? (drawingInteraction.targetSnapMode ? null : nearestMeasurementPoint(event))
     : null;
   const extrudeSnap = active?.name === 'EXTRUDE' && active.stepIndex === 1
     ? nearestMeasurementPoint(event)
@@ -1066,7 +786,7 @@ viewport.addEventListener('pointermove', (event) => {
       const height = worldToLocal(cadDocument.activeWorkPlane, extrudeSnap).z;
       showDimension(`Height ${height.toFixed(2)} mm`, sx, sy);
     }
-  } else if (!gripController.isDragging || !gripTargetSnapMode) {
+  } else if (!gripController.isDragging || !gripInteraction.targetSnapMode) {
     snapMarker.hidden = true;
   }
   if (active?.name === 'MEASURE') {
@@ -1119,12 +839,7 @@ viewport.addEventListener('pointermove', (event) => {
 viewport.addEventListener('pointerdown', async (event) => {
   if ((event.target as HTMLElement).closest('.view-toggle')) return;
   if (zoomWindowMode && event.button === 0) {
-    const rect = viewport.getBoundingClientRect();
-    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    selectionWindow = { start: point, current: point, additive: false, pointerId: event.pointerId, purpose: 'zoom' };
-    selectionWindowElement.hidden = false;
-    selectionWindowElement.classList.remove('crossing');
-    viewport.setPointerCapture(event.pointerId);
+    selectionController.beginWindow(event, 'zoom');
     event.preventDefault();
     return;
   }
@@ -1135,8 +850,8 @@ viewport.addEventListener('pointerdown', async (event) => {
     return;
   }
   if (event.button === 2) {
-    if (gripController.isDragging && gripEditLatched) return;
-    if (isDrawingPointStep()) return;
+    if (gripController.isDragging && gripInteraction.isLatched) return;
+    if (drawingInteraction.isPointStep) return;
     const point = cadDocument.viewMode === '2d' ? rawWorldPoint(event) : rawWorldPoint3d(event);
     const tolerance = cadDocument.viewMode === '2d' ? 8 / renderer2d.zoom : Math.max(0.2, renderer3d.orbitRadius * 0.025);
     const entity = point ? hitTestEntity(cadDocument.entities, point, tolerance) : null;
@@ -1152,25 +867,18 @@ viewport.addEventListener('pointerdown', async (event) => {
     window.setTimeout(() => { suppressNextContextMenu = false; }, 800);
   }
   if (event.button === 1 || event.button === 2 || (event.button === 0 && event.altKey)) {
-    panning = true;
     const rect = viewport.getBoundingClientRect();
-    lastPointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    viewport.classList.add('is-panning');
-    viewport.setPointerCapture(event.pointerId);
+    navigation.beginPan({ x: event.clientX - rect.left, y: event.clientY - rect.top }, event.pointerId);
     event.preventDefault();
     return;
   }
   if (event.button !== 0) return;
-  if (gripController.isDragging && gripEditLatched) {
+  if (gripController.isDragging && gripInteraction.isLatched) {
     const snap = nearestGripTargetSnap(event);
     const point = gripEditingPoint(event, snap);
     if (point) gripController.update(point);
-    gripController.commit();
-    gripEditLatched = false;
-    gripTargetSnapMode = null;
+    gripInteraction.finishClick(event.pointerId);
     snapMarker.hidden = true;
-    gripController.hoveredGrip = -1;
-    if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
     event.preventDefault();
     redraw();
     input.focus();
@@ -1250,9 +958,7 @@ viewport.addEventListener('pointerdown', async (event) => {
       const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
       const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
       if (!gripPoint) return;
-      gripController.begin(selected, selectedBody, gripIndex, gripPoint);
-      gripEditLatched = true;
-      viewport.setPointerCapture(event.pointerId);
+      gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
       event.preventDefault();
       return;
     }
@@ -1260,29 +966,17 @@ viewport.addEventListener('pointerdown', async (event) => {
       ?? (commands.active?.name === 'EXTRUDE' ? profileContainingPoint(point) : undefined);
     const solid = hitTestSolid2d(cadDocument, rawWorldPoint(event), solidSelectionExclusions());
     if (commands.active) {
-      const consumeDrawingSnap = isDrawingPointStep() && drawingTargetSnapMode !== null;
-      await commands.handleClick(point, entity ?? undefined, solid?.id);
-      if (consumeDrawingSnap) drawingTargetSnapMode = null;
+      await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
     }
     else if (entity) {
       if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
-      cadDocument.selectEntity(entity.id, event.shiftKey);
+      selectionController.selectHit(entity, null, event.shiftKey);
     } else if (solid) {
       if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
-      cadDocument.selectSolid(solid.id, event.shiftKey);
+      selectionController.selectHit(null, solid.id, event.shiftKey);
     } else {
       gripController.mode = null;
-      const rect = viewport.getBoundingClientRect();
-      selectionWindow = {
-        start: { x: event.clientX - rect.left, y: event.clientY - rect.top },
-        current: { x: event.clientX - rect.left, y: event.clientY - rect.top },
-        additive: event.shiftKey,
-        pointerId: event.pointerId,
-        purpose: 'select',
-      };
-      selectionWindowElement.hidden = false;
-      selectionWindowElement.classList.remove('crossing');
-      viewport.setPointerCapture(event.pointerId);
+      selectionController.beginWindow(event, 'select');
       event.preventDefault();
       return;
     }
@@ -1319,7 +1013,7 @@ viewport.addEventListener('pointerdown', async (event) => {
     if (!point) return;
     if (commands.active?.name === 'MOVE' && activeStep?.kind === 'point') {
       await commands.handleClick(point);
-      if (!commands.active) preview = undefined;
+      if (!commands.active) previewController.clearPreview();
       input.focus();
       return;
     }
@@ -1337,9 +1031,7 @@ viewport.addEventListener('pointerdown', async (event) => {
       const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
       const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
       if (!gripPoint) return;
-      gripController.begin(selected, selectedBody, gripIndex, gripPoint);
-      gripEditLatched = true;
-      viewport.setPointerCapture(event.pointerId);
+      gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
       event.preventDefault();
       return;
     }
@@ -1359,104 +1051,53 @@ viewport.addEventListener('pointerdown', async (event) => {
       ? renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY)
       : null;
     if (commands.active) {
-      const consumeDrawingSnap = isDrawingPointStep() && drawingTargetSnapMode !== null;
-      await commands.handleClick(point, entity ?? undefined, solidId ?? undefined, face ?? undefined);
-      if (consumeDrawingSnap) drawingTargetSnapMode = null;
+      await drawingInteraction.handleClick(point, entity ?? undefined, solidId ?? undefined, face ?? undefined);
     }
-    else if (entity) cadDocument.selectEntity(entity.id, event.shiftKey);
-    else if (solidId) cadDocument.selectSolid(solidId, event.shiftKey);
+    else if (entity || solidId) selectionController.selectHit(entity, solidId, event.shiftKey);
     else {
       cadDocument.clearSelection();
     }
   }
-  if (!commands.active || commands.active.stepIndex === 0) preview = undefined;
+  if (!commands.active || commands.active.stepIndex === 0) previewController.clearPreview();
   input.focus();
 });
 
 window.addEventListener('pointerup', (event) => {
-  if (selectionWindow && event.pointerId === selectionWindow.pointerId) {
-    const selection = selectionWindow;
-    selectionWindow = null;
-    selectionWindowElement.hidden = true;
-    const moved = Math.hypot(selection.current.x - selection.start.x, selection.current.y - selection.start.y);
-    if (selection.purpose === 'zoom') {
-      zoomWindowMode = false;
-      document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
-      if (moved >= 4) {
-        if (cadDocument.viewMode === '2d') {
-          const a = renderer2d.screenToWorld(selection.start.x, selection.start.y, width, height);
-          const b = renderer2d.screenToWorld(selection.current.x, selection.current.y, width, height);
-          renderer2d.zoomWindow(a, b, width, height);
-        } else {
-          renderer3d.zoomScreenWindow(
-            selection.start.x, selection.start.y,
-            selection.current.x, selection.current.y,
-            width, height,
-          );
-        }
-      }
-      if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
-      prompt.textContent = 'Enter command:';
-      redraw();
-      return;
-    }
-    if (moved < 4) {
-      if (!selection.additive) cadDocument.clearSelection();
-    } else {
-      const a = renderer2d.screenToWorld(selection.start.x, selection.start.y, width, height);
-      const b = renderer2d.screenToWorld(selection.current.x, selection.current.y, width, height);
-      const box = { minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minY: Math.min(a.y, b.y), maxY: Math.max(a.y, b.y) };
-      const crossing = selection.current.x < selection.start.x;
-      if (!selection.additive) {
-        cadDocument.selectedEntityIds.clear();
-        cadDocument.selectedSolidIds.clear();
-      }
-      for (const entity of cadDocument.entities) {
-        const bounds = entityBounds(entity);
-        const inside = bounds.min.x >= box.minX && bounds.max.x <= box.maxX && bounds.min.y >= box.minY && bounds.max.y <= box.maxY;
-        const intersects = bounds.max.x >= box.minX && bounds.min.x <= box.maxX && bounds.max.y >= box.minY && bounds.min.y <= box.maxY;
-        if (inside || (crossing && intersects)) cadDocument.selectedEntityIds.add(entity.id);
-      }
-      for (const solid of cadDocument.solids) {
-        const bounds = solidBounds(solid);
-        const inside = bounds.minX >= box.minX && bounds.maxX <= box.maxX && bounds.minY >= box.minY && bounds.maxY <= box.maxY;
-        const intersects = bounds.maxX >= box.minX && bounds.minX <= box.maxX && bounds.maxY >= box.minY && bounds.minY <= box.maxY;
-        if (inside || (crossing && intersects)) cadDocument.selectedSolidIds.add(solid.id);
-      }
-      cadDocument.pruneSelection();
-      cadDocument.notify();
-    }
-    gripController.mode = null;
-    gripController.hoveredGrip = -1;
-    if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
-    redraw();
-    return;
-  }
-  panning = false;
-  viewport.classList.remove('is-panning');
-  if (!gripEditLatched) gripController.commit();
+  if (selectionController.finishWindow(event.pointerId)) return;
+  navigation.endPan(event.pointerId);
+  gripInteraction.commitIfNotLatched();
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
 });
-new InputController({
+
+function deleteSelectedObjects(): boolean {
+  if (cadDocument.selectedEntityIds.size === 0 && cadDocument.selectedSolidIds.size === 0) return false;
+  gripInteraction.cancel();
+  const entities = cadDocument.getSelectedEntities().map(cloneEntity);
+  const solids = cadDocument.getSelectedSolids().map(cloneSolid);
+  history.execute(new ReplaceObjectsEdit('Delete selected objects', entities, solids, [], []));
+  gripController.mode = null;
+  gripController.hoveredGrip = -1;
+  previewController.clearPreview();
+  log(`Deleted objects: ${entities.length + solids.length}`);
+  redraw();
+  return true;
+}
+
+new InputController(input, commandForm, {
   escape: () => {
-    gripController.cancel();
-    gripEditLatched = false;
-    gripTargetSnapMode = null;
-    drawingTargetSnapMode = null;
+    gripInteraction.cancel();
+    drawingInteraction.cancel();
     ucsHoverPoint = null;
     zoomWindowMode = false;
-    selectionWindow = null;
-    selectionWindowElement.hidden = true;
+    windowDrag.cancel();
+    navigation.cancel();
     document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
     commands.cancelActive();
-    preview = undefined;
+    previewController.reset();
     gripController.mode = null;
     gripController.hoveredGrip = -1;
     gripMenu.hidden = true;
     renderer3d.clearFaceHighlight();
-    measureOrigin.hidden = true;
-    measureTarget.hidden = true;
-    snapMarker.hidden = true;
     input.value = '';
     currentSuggestions = [];
     suggestionIndex = 0;
@@ -1469,41 +1110,30 @@ new InputController({
   },
   undo: () => { history.undo(); redraw(); },
   redo: () => { history.redo(); redraw(); },
+  save: () => { void projectController.quickSave(); },
+  newProject: () => { fileMenu.hidden = true; projectController.newProject(); },
+  open: () => get<HTMLButtonElement>('open-project').click(),
+  export: () => get<HTMLButtonElement>('export-stl').click(),
+  deleteSelection: deleteSelectedObjects,
+  show2d: () => {
+    cadDocument.viewMode = '2d';
+    cadDocument.notify();
+    redraw();
+  },
+  commandActive: () => Boolean(commands.active),
+  commandInputChanged: () => {
+    suggestionIndex = 0;
+    updateCommandSuggestions();
+  },
 });
-canvas2d.addEventListener('wheel', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  if (event.metaKey) {
-    if (Math.abs(event.deltaX) > 0.01 || Math.abs(event.deltaY) > 0.01) {
-      enter3dForOrbit();
-      renderer3d.orbitByScreenDelta(event.deltaX * 0.6, event.deltaY * 0.6);
-      renderer3d.render();
-    }
-    return;
-  }
-  const before = renderer2d.screenToWorld(event.offsetX, event.offsetY, width, height);
-  // macOS trackpad: two fingers up zooms in, two fingers down zooms out.
-  // Large imported drawings can legitimately need far less than 2 px/mm to fit.
-  // Use the gesture magnitude for smooth zooming and keep only numerical limits.
-  const zoomFactor = Math.exp(-event.deltaY * 0.0025);
-  renderer2d.zoom = Math.max(1e-6, Math.min(100_000, renderer2d.zoom * zoomFactor));
-  const after = renderer2d.screenToWorld(event.offsetX, event.offsetY, width, height);
-  renderer2d.pan.x += before.x - after.x;
-  renderer2d.pan.y += before.y - after.y;
-  redraw();
-}, { passive: false });
 
-get<HTMLFormElement>('command-form').addEventListener('submit', async (event) => {
+commandForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const gripDistance = input.value.trim().match(/^@([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/);
-  if (gripController.isDragging && gripEditLatched && gripDistance) {
+  if (gripController.isDragging && gripInteraction.isLatched && gripDistance) {
     const distance = Number(gripDistance[1]);
     input.value = '';
-    if (gripController.applyRelativeDistance(distance)) {
-      gripController.commit();
-      gripEditLatched = false;
-      gripTargetSnapMode = null;
-      gripController.hoveredGrip = -1;
+    if (gripInteraction.applyRelativeDistance(distance)) {
       log(`Grip moved relatively by ${distance.toFixed(3)} mm.`);
     }
     updateCommandSuggestions();
@@ -1518,7 +1148,7 @@ get<HTMLFormElement>('command-form').addEventListener('submit', async (event) =>
   input.value = '';
   await commands.submitInput(value);
   updateCommandSuggestions();
-  if (!commands.active) preview = undefined;
+  if (!commands.active) previewController.clearPreview();
   redraw();
 });
 
@@ -1539,7 +1169,7 @@ input.addEventListener('input', () => {
   suggestionIndex = 0;
   updateCommandSuggestions();
   if (commands.active?.name === 'TEXT' && commands.active.stepIndex === 3 && commands.active.data.position) {
-    preview = { type: 'text', data: { position: commands.active.data.position, text: input.value, font: commands.active.data.font, height: commands.active.data.height } };
+    previewController.setPreview({ type: 'text', data: { position: commands.active.data.position, text: input.value, font: commands.active.data.font, height: commands.active.data.height } });
     redraw();
   }
 });
@@ -1552,24 +1182,24 @@ viewport.addEventListener('contextmenu', (event) => {
     return;
   }
   const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
-  if (gripController.isDragging && gripEditLatched) {
+  if (gripController.isDragging && gripInteraction.isLatched) {
     if (menuTitle) menuTitle.textContent = 'Object snap';
     gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
       const mode = button.dataset.gripMode as GripMode;
       button.hidden = false;
-      button.classList.toggle('active', gripTargetSnapMode === mode);
+      button.classList.toggle('active', gripInteraction.targetSnapMode === mode);
     });
     gripMenu.style.left = `${event.clientX}px`;
     gripMenu.style.top = `${event.clientY}px`;
     gripMenu.hidden = false;
     return;
   }
-  if (isDrawingPointStep()) {
+  if (drawingInteraction.isPointStep) {
     if (menuTitle) menuTitle.textContent = 'Object snap';
     gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
       const mode = button.dataset.gripMode as GripMode;
       button.hidden = false;
-      button.classList.toggle('active', drawingTargetSnapMode === mode);
+      button.classList.toggle('active', drawingInteraction.targetSnapMode === mode);
     });
     gripMenu.style.left = `${event.clientX}px`;
     gripMenu.style.top = `${event.clientY}px`;
@@ -1623,8 +1253,8 @@ viewport.addEventListener('contextmenu', (event) => {
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
   button.addEventListener('click', () => {
     const mode = button.dataset.gripMode as GripMode;
-    if (gripController.isDragging && gripEditLatched) gripTargetSnapMode = mode;
-    else if (isDrawingPointStep()) drawingTargetSnapMode = mode;
+    if (gripController.isDragging && gripInteraction.isLatched) gripInteraction.setTargetSnapMode(mode);
+    else if (drawingInteraction.isPointStep) drawingInteraction.setTargetSnapMode(mode);
     else gripController.mode = mode;
     gripController.hoveredGrip = -1;
     gripMenu.hidden = true;
@@ -1654,7 +1284,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-view-action]').forEach((butt
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     commands.cancelActive();
-    gripController.cancel();
+    gripInteraction.cancel();
     const action = button.dataset.viewAction;
     if (action === 'zoom-all') {
       zoomWindowMode = false;
@@ -1695,7 +1325,7 @@ get<HTMLButtonElement>('wcs-reset').addEventListener('click', () => {
   commands.cancelActive();
   cadDocument.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
   renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-  snapMarker.hidden = true;
+  previewController.hideSnap();
   cadDocument.notify();
   log('World Coordinate System restored.');
   redraw();
@@ -1706,224 +1336,23 @@ get('file-menu-button').addEventListener('click', (event) => {
 });
 get('save-project').addEventListener('click', async () => {
   fileMenu.hidden = true;
-  await saveProject();
+  await projectController.save();
 });
-function newProject(): void {
-  fileMenu.hidden = true;
-  if ((cadDocument.entities.length > 0 || cadDocument.solids.length > 0)
-    && !window.confirm('Create a new project? Unsaved changes will be lost.')) return;
-  commands.cancelActive();
-  gripController.clear();
-  cadDocument.transaction(() => {
-    cadDocument.entities = [];
-    cadDocument.solids = [];
-    cadDocument.selectedEntityIds.clear();
-    cadDocument.selectedSolidIds.clear();
-    cadDocument.currentLayer = '0';
-    cadDocument.layers = ['0'];
-    cadDocument.layerColors = { '0': 0xffffff };
-    cadDocument.hiddenLayers.clear();
-    cadDocument.gridSize = 1;
-    cadDocument.snapSize = 0.5;
-    cadDocument.snapEnabled = true;
-    cadDocument.viewMode = '2d';
-    cadDocument.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
-    cadDocument.notify();
-  });
-  history.clear();
-  currentProjectPath = undefined;
-  preview = undefined;
-  renderer2d.pan = { x: 0, y: 0 };
-  renderer2d.zoom = 20;
-  renderer3d.clearFaceHighlight();
-  renderer3d.clearEdgeHighlight();
-  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-  renderer3d.frameContent([], []);
-  snapMarker.hidden = true;
-  measureOrigin.hidden = true;
-  measureTarget.hidden = true;
-  logElement.replaceChildren();
-  log('New project created.');
-  redraw();
-  input.focus();
-}
-get('new-project').addEventListener('click', newProject);
+get('new-project').addEventListener('click', () => { fileMenu.hidden = true; projectController.newProject(); });
 get('open-project').addEventListener('click', async () => {
   fileMenu.hidden = true;
-  try {
-    let content: string | undefined;
-    let fileName = 'project.mycad';
-    if (window.mycadAPI) {
-      const result = await window.mycadAPI.openFile({ filters: [{ name: 'MyCAD project', extensions: ['mycad'] }] });
-      if (result.canceled) return;
-      content = result.content;
-      fileName = result.filePath ?? fileName;
-      currentProjectPath = result.filePath;
-    } else {
-      const picker = document.createElement('input');
-      picker.type = 'file';
-      picker.accept = '.mycad,application/json';
-      const file = await new Promise<File | undefined>((resolve) => {
-        picker.addEventListener('change', () => resolve(picker.files?.[0]), { once: true });
-        picker.click();
-      });
-      if (!file) return;
-      content = await file.text();
-      fileName = file.name;
-    }
-    if (!content) throw new Error('The file is empty.');
-    commands.cancelActive();
-    gripController.clear();
-    const savedView = loadProject(cadDocument, content);
-    renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-    if (savedView) {
-      renderer2d.pan = { ...savedView.twoD.pan };
-      renderer2d.zoom = savedView.twoD.zoom;
-      renderer3d.restoreViewState(savedView.threeD);
-    }
-    history.clear();
-    preview = undefined;
-    if (!savedView) renderer2d.zoomExtents(cadDocument, width, height);
-    log(`Opened: ${fileName}`);
-    redraw();
-  } catch (error) {
-    log(`Open failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await projectController.open();
 });
 get('import-dxf').addEventListener('click', async () => {
   fileMenu.hidden = true;
-  try {
-    let content: string | undefined;
-    let fileName = 'drawing.dxf';
-    if (window.mycadAPI) {
-      const result = await window.mycadAPI.openFile({ filters: [{ name: 'AutoCAD DXF', extensions: ['dxf'] }] });
-      if (result.canceled) return;
-      content = result.content;
-      fileName = result.filePath ?? fileName;
-    } else {
-      const picker = document.createElement('input');
-      picker.type = 'file';
-      picker.accept = '.dxf,application/dxf';
-      const file = await new Promise<File | undefined>((resolve) => {
-        picker.addEventListener('change', () => resolve(picker.files?.[0]), { once: true });
-        picker.click();
-      });
-      if (!file) return;
-      content = await file.text();
-      fileName = file.name;
-    }
-    if (!content) throw new Error('The file is empty.');
-    commands.cancelActive();
-    gripController.clear();
-    const result = importAsciiDxf(cadDocument, content);
-    if (result.entities.length === 0) throw new Error('No supported 2D entities were found.');
-    result.layers.forEach((layer) => {
-      if (!cadDocument.layers.includes(layer)) cadDocument.layers.push(layer);
-      cadDocument.layerColors[layer] ??= 0xffffff;
-    });
-    // Switch before the history edit notifies subscribers. Otherwise importing
-    // from a 3D view needlessly constructs a Three.js object for every DXF item.
-    cadDocument.viewMode = '2d';
-    cadDocument.transaction(() => {
-      cadDocument.clearSelection();
-      history.execute(new AddEntitiesEdit('Import DXF', result.entities));
-    });
-    renderer2d.zoomExtents(cadDocument, width, height);
-    renderLayers();
-    log(`Imported DXF: ${fileName} · ${result.entities.length} object(s)${result.ignored ? ` · ${result.ignored} unsupported object(s) skipped` : ''}.`);
-    redraw();
-  } catch (error) {
-    log(`DXF import failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await projectController.importDxf();
 });
 get('export-stl').addEventListener('click', async () => {
   fileMenu.hidden = true;
-  if (cadDocument.solids.length === 0) {
-    log('STL export: the document contains no 3D solids.');
-    return;
-  }
-  await saveTextFile(exportAsciiStl(cadDocument), 'model.stl', 'STL model', 'stl');
+  await projectController.exportStl();
 });
 window.addEventListener('pointerdown', (event) => {
   if (!fileMenu.contains(event.target as Node) && event.target !== get('file-menu-button')) fileMenu.hidden = true;
 });
-window.addEventListener('keydown', (event) => {
-  if (event.target instanceof HTMLInputElement && event.target !== input) return;
-  if ((event.key === 'Delete' || event.key === 'Backspace')
-    && (cadDocument.selectedEntityIds.size > 0 || cadDocument.selectedSolidIds.size > 0)) {
-    event.preventDefault();
-    event.stopPropagation();
-    gripController.cancel();
-    const entities = cadDocument.getSelectedEntities().map(cloneEntity);
-    const solids = cadDocument.getSelectedSolids().map(cloneSolid);
-    history.execute(new ReplaceObjectsEdit('Delete selected objects', entities, solids, [], []));
-    gripController.mode = null;
-    gripController.hoveredGrip = -1;
-    preview = undefined;
-    log(`Deleted objects: ${entities.length + solids.length}`);
-    redraw();
-    return;
-  }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-    event.preventDefault();
-    void quickSaveProject();
-    return;
-  }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
-    event.preventDefault();
-    newProject();
-    return;
-  }
-  if (event.metaKey && event.key.toLowerCase() === 'o') {
-    event.preventDefault();
-    get<HTMLButtonElement>('open-project').click();
-    return;
-  }
-  if (event.metaKey && event.key.toLowerCase() === 'e') {
-    event.preventDefault();
-    get<HTMLButtonElement>('export-stl').click();
-    return;
-  }
-});
-
-// Capture typing before a toolbar button or the WebGL canvas can consume it.
-// This makes numeric command entry independent of the currently focused UI node.
-window.addEventListener('keydown', (event) => {
-  const target = event.target as HTMLElement | null;
-  const isTextEntry = target instanceof HTMLInputElement
-    || target instanceof HTMLTextAreaElement
-    || target instanceof HTMLSelectElement
-    || Boolean(target?.isContentEditable);
-  if ((event.key === ' ' || event.code === 'Space') && !isTextEntry && !event.metaKey && !event.ctrlKey && !event.altKey) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.repeat) return;
-    cadDocument.viewMode = '2d';
-    cadDocument.notify();
-    redraw();
-    return;
-  }
-  if (isTextEntry || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    input.focus({ preventScroll: true });
-    get<HTMLFormElement>('command-form').requestSubmit();
-  } else if (event.key === 'Backspace') {
-    if (!commands.active && input.value.length === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    input.value = input.value.slice(0, -1);
-    input.focus({ preventScroll: true });
-  } else if (event.key.length === 1) {
-    event.preventDefault();
-    event.stopPropagation();
-    input.value += event.key;
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-    suggestionIndex = 0;
-    updateCommandSuggestions();
-  }
-}, { capture: true });
 log('MyCAD ready. Enter HELP for a list of commands.');
 resize();

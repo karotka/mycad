@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import type { Document } from '../core/Document';
 import type { ProjectViewState } from '../io/ProjectIO';
+import { entityRenderKey } from './entityRenderKey';
 import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection } from '../core/entities/types';
-import { curvePoints, entityBounds, getEntityPoints } from '../core/entities/types';
+import { curvePoints, entityBounds } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
+import { standardViewDelta } from './ViewportCoordinates';
+import { ViewportProjection } from './ViewportProjection';
+import { ViewportPicking } from './ViewportPicking';
 
 export class Canvas2DRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -354,14 +358,13 @@ export class Viewport3D {
   renderer: THREE.WebGLRenderer;
   private solidMeshes = new Map<string, THREE.Mesh>();
   private entityObjects = new Map<string, THREE.Object3D>();
+  private entityRenderKeys = new Map<string, string>();
   private previewObject: THREE.Object3D | null = null;
   private gripObjects: THREE.Points | null = null;
   private faceHighlight: THREE.Mesh | null = null;
   private edgeHighlight: THREE.Line | null = null;
   private grid: THREE.GridHelper;
   private axisTriad: THREE.Group;
-  private raycaster = new THREE.Raycaster();
-  private mouse = new THREE.Vector2();
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -372,6 +375,8 @@ export class Viewport3D {
   orbitPhi = Math.PI / 4;
   orbitRadius = 30;
   orbitTarget = new THREE.Vector3(0, 0, 0);
+  private readonly projection = new ViewportProjection(() => this.camera, () => this.orbitTarget);
+  private readonly picking = new ViewportPicking(() => this.camera);
   activeStandardView: 'top' | 'front' | 'left' | 'right' | null = null;
   private viewportAspect = 1;
   private activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
@@ -631,6 +636,8 @@ export class Viewport3D {
   }
 
   orbitByScreenDelta(dx: number, dy: number): void {
+    this.switchToPerspective();
+    this.activeStandardView = null;
     const offset = this.camera.position.clone().sub(this.orbitTarget);
     const ucsZ = new THREE.Vector3(
       this.activeWorkPlane.zAxis.x,
@@ -653,6 +660,16 @@ export class Viewport3D {
     this.orbitRadius = offset.length();
     this.camera.position.copy(this.orbitTarget).add(offset);
     this.camera.up.copy(ucsZ);
+    this.camera.lookAt(this.orbitTarget);
+    this.updateProjection();
+  }
+
+  zoomByWheelDelta(deltaY: number): void {
+    const factor = Math.exp(deltaY * 0.0025);
+    const nextRadius = Math.max(2, Math.min(10000, this.orbitRadius * factor));
+    const offset = this.camera.position.clone().sub(this.orbitTarget).setLength(nextRadius);
+    this.orbitRadius = nextRadius;
+    this.camera.position.copy(this.orbitTarget).add(offset);
     this.camera.lookAt(this.orbitTarget);
     this.updateProjection();
   }
@@ -744,27 +761,6 @@ export class Viewport3D {
       this.isDragging = false;
       this.orbitDragStarted = false;
     });
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      if (e.metaKey) {
-        // Command is an orbit-only modifier: neither axis may zoom.
-        if (Math.abs(e.deltaX) <= 0.01 && Math.abs(e.deltaY) <= 0.01) return;
-        onOrbitStart?.();
-        this.switchToPerspective();
-        this.activeStandardView = null;
-        this.orbitByScreenDelta(e.deltaX * 0.6, e.deltaY * 0.6);
-      } else if (Math.abs(e.deltaY) > 0.01) {
-        // Zoom is available only without Command.
-        const zoomFactor = Math.exp(e.deltaY * 0.0025);
-        const nextRadius = Math.max(2, Math.min(10000, this.orbitRadius * zoomFactor));
-        const offset = this.camera.position.clone().sub(this.orbitTarget).setLength(nextRadius);
-        this.orbitRadius = nextRadius;
-        this.camera.position.copy(this.orbitTarget).add(offset);
-        this.camera.lookAt(this.orbitTarget);
-        this.updateProjection();
-      }
-      this.render();
-    }, { passive: false });
   }
 
   panByScreenDelta(dx: number, dy: number): void {
@@ -851,17 +847,24 @@ export class Viewport3D {
         this.scene.remove(object);
         this.disposeObject(object);
         this.entityObjects.delete(id);
+        this.entityRenderKeys.delete(id);
       }
     }
 
     for (const entity of entities) {
       const previous = this.entityObjects.get(entity.id);
+      // Entities are still mutable in the current document model, so object
+      // identity alone cannot identify changes. A compact serialized render key
+      // avoids disposing and rebuilding every Three.js object on every redraw.
+      const renderKey = entityRenderKey(entity);
+      if (previous && this.entityRenderKeys.get(entity.id) === renderKey) continue;
       if (previous) {
         this.scene.remove(previous);
         this.disposeObject(previous);
       }
       const object = this.entityToObject(entity);
       this.entityObjects.set(entity.id, object);
+      this.entityRenderKeys.set(entity.id, renderKey);
       this.scene.add(object);
     }
   }
@@ -1044,20 +1047,7 @@ export class Viewport3D {
     sy: number,
     tolerance = 12
   ): number {
-    const rect = canvas.getBoundingClientRect();
-    let best = -1;
-    let bestDistance = tolerance;
-    for (const grip of grips) {
-      const projected = new THREE.Vector3(grip.point.x, grip.point.z ?? 0, -grip.point.y).project(this.camera);
-      const px = rect.left + (projected.x + 1) * rect.width / 2;
-      const py = rect.top + (1 - projected.y) * rect.height / 2;
-      const distance = Math.hypot(sx - px, sy - py);
-      if (projected.z >= -1 && projected.z <= 1 && distance <= bestDistance) {
-        bestDistance = distance;
-        best = grip.index;
-      }
-    }
-    return best;
+    return this.picking.pickGripIndex(canvas, grips, sx, sy, tolerance);
   }
 
   pickEntity(canvas: HTMLCanvasElement, entities: Entity[], sx: number, sy: number, tolerance = 12): Entity | null {
@@ -1290,11 +1280,7 @@ export class Viewport3D {
   }
 
   pickSolidFace(canvas: HTMLCanvasElement, sx: number, sy: number): SolidFaceSelection | null {
-    const rect = canvas.getBoundingClientRect();
-    this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const hit = this.raycaster.intersectObjects(Array.from(this.solidMeshes.values()))[0];
+    const hit = this.picking.firstIntersection(canvas, sx, sy, this.solidMeshes.values());
     if (!hit || hit.faceIndex == null) return null;
     const entry = Array.from(this.solidMeshes.entries()).find(([, object]) => object === hit.object);
     if (!entry) return null;
@@ -1329,49 +1315,8 @@ export class Viewport3D {
     };
   }
 
-  nearestMeasurementPoint(
-    canvas: HTMLCanvasElement,
-    entities: Entity[],
-    solids: Solid[],
-    sx: number,
-    sy: number,
-    tolerance = 14,
-  ): Vec3 | null {
-    const rect = canvas.getBoundingClientRect();
-    let result: Vec3 | null = null;
-    let best = tolerance;
-    const consider = (point: Vec3): void => {
-      const projected = new THREE.Vector3(point.x, point.z, -point.y).project(this.camera);
-      const px = rect.left + (projected.x + 1) * rect.width / 2;
-      const py = rect.top + (1 - projected.y) * rect.height / 2;
-      const distance = Math.hypot(sx - px, sy - py);
-      if (projected.z >= -1 && projected.z <= 1 && distance <= best) {
-        best = distance;
-        result = point;
-      }
-    };
-    for (const entity of entities) {
-      for (const point of getEntityPoints(entity)) {
-        consider(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point));
-      }
-    }
-    for (const solid of solids) {
-      const positions = solid.mesh.positions;
-      for (let i = 0; i < positions.length; i += 3) {
-        consider({ x: positions[i], y: positions[i + 1], z: positions[i + 2] });
-      }
-    }
-    return result;
-  }
-
   projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): Vec2 | null {
-    const rect = canvas.getBoundingClientRect();
-    const projected = new THREE.Vector3(point.x, point.z, -point.y).project(this.camera);
-    if (projected.z < -1 || projected.z > 1) return null;
-    return {
-      x: (projected.x + 1) * rect.width / 2,
-      y: (1 - projected.y) * rect.height / 2,
-    };
+    return this.projection.projectCadPoint(canvas, point);
   }
 
   clearFaceHighlight(): void {
@@ -1460,85 +1405,28 @@ export class Viewport3D {
   }
 
   pickSolid(canvas: HTMLCanvasElement, sx: number, sy: number, excludedIds: ReadonlySet<string> = new Set()): string | null {
-    const rect = canvas.getBoundingClientRect();
-    this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const meshes = Array.from(this.solidMeshes.values());
-    const hits = this.raycaster.intersectObjects(meshes);
-    if (hits.length === 0) return null;
-    let fallback: string | null = null;
-    for (const hit of hits) {
-      for (const [id, mesh] of this.solidMeshes) {
-        if (mesh !== hit.object) continue;
-        fallback ??= id;
-        if (!excludedIds.has(id)) return id;
-      }
-    }
-    return fallback;
+    return this.picking.pickObjectId(canvas, sx, sy, this.solidMeshes, excludedIds);
   }
 
   groundPoint(canvas: HTMLCanvasElement, sx: number, sy: number): Vec2 | null {
-    const rect = canvas.getBoundingClientRect();
-    this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const hit = new THREE.Vector3();
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
-    return { x: hit.x, y: -hit.z };
+    return this.projection.groundPoint(canvas, sx, sy);
   }
 
   workPlanePoint(canvas: HTMLCanvasElement, sx: number, sy: number, plane: WorkPlane = this.activeWorkPlane): Vec2 | null {
-    const rect = canvas.getBoundingClientRect();
-    this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const normal = new THREE.Vector3(
-      plane.zAxis.x,
-      plane.zAxis.z,
-      -plane.zAxis.y,
-    );
-    const origin = new THREE.Vector3(
-      plane.origin.x,
-      plane.origin.z,
-      -plane.origin.y,
-    );
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin), hit)) return null;
-    const local = worldToLocal(plane, { x: hit.x, y: -hit.z, z: hit.y });
-    return { x: local.x, y: local.y };
+    return this.projection.workPlanePoint(canvas, sx, sy, plane);
   }
 
   viewPlanePoint(canvas: HTMLCanvasElement, sx: number, sy: number): Vec2 | null {
-    const rect = canvas.getBoundingClientRect();
-    this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const normal = new THREE.Vector3();
-    this.camera.getWorldDirection(normal);
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, this.orbitTarget);
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
-    const offset = hit.sub(this.orbitTarget);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    return { x: offset.dot(right), y: offset.dot(up) };
+    return this.projection.viewPlanePoint(canvas, sx, sy);
   }
 
   cadPointToViewPlane(point: Vec3): Vec2 {
-    const threePoint = new THREE.Vector3(point.x, point.z, -point.y);
-    const offset = threePoint.sub(this.orbitTarget);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    return { x: offset.dot(right), y: offset.dot(up) };
+    return this.projection.cadPointToViewPlane(point);
   }
 
   screenDeltaToCad(delta: Vec2): { x: number; y: number; z: number } {
-    if (this.activeStandardView === 'top') return { x: delta.x, y: delta.y, z: 0 };
-    if (this.activeStandardView === 'front') return { x: delta.x, y: 0, z: delta.y };
-    if (this.activeStandardView === 'left') return { x: 0, y: -delta.x, z: delta.y };
-    if (this.activeStandardView === 'right') return { x: 0, y: delta.x, z: delta.y };
+    const standardDelta = standardViewDelta(delta, this.activeStandardView);
+    if (standardDelta) return standardDelta;
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
     const world = right.multiplyScalar(delta.x).add(up.multiplyScalar(delta.y));

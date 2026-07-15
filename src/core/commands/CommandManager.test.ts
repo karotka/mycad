@@ -42,7 +42,6 @@ describe('CommandManager history integration', () => {
     doc.entities.push(...lines);
     lines.forEach((line) => doc.selectEntity(line.id, true));
     manager.startCommand('JOIN');
-    await manager.submitInput('');
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
   });
@@ -54,7 +53,6 @@ describe('CommandManager history integration', () => {
     doc.entities.push(line, bezier);
     doc.selectEntity(line.id, true); doc.selectEntity(bezier.id, true);
     manager.startCommand('JOIN');
-    await manager.submitInput('');
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
     expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.length).toBeGreaterThan(40);

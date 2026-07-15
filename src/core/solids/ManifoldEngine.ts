@@ -1,14 +1,16 @@
-import Module from 'manifold-3d';
+import type ModuleFactory from 'manifold-3d';
 import type { Vec2 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
 import type { Entity, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane } from '../../math/workplane';
 
-let manifoldReady: Promise<Awaited<ReturnType<typeof Module>>> | null = null;
+type ManifoldModule = Awaited<ReturnType<typeof ModuleFactory>>;
+
+let manifoldReady: Promise<ManifoldModule> | null = null;
 
 export async function initManifold() {
   if (!manifoldReady) {
-    manifoldReady = Module().then((manifold) => {
+    manifoldReady = import('manifold-3d').then(({ default: createModule }) => createModule()).then((manifold) => {
       manifold.setup();
       return manifold;
     });
@@ -54,13 +56,13 @@ function ensureCCW(verts: Vec2[]): Vec2[] {
   return verts;
 }
 
-function vec2ToManifoldPoly(manifold: Awaited<ReturnType<typeof Module>>, verts: Vec2[]) {
+function vec2ToManifoldPoly(manifold: ManifoldModule, verts: Vec2[]) {
   const closed = closePolyline(verts);
   const ccw = ensureCCW(closed);
   return ccw.slice(0, -1).map((v): [number, number] => [v.x, v.y]);
 }
 
-function manifoldToMesh(manifold: Awaited<ReturnType<typeof Module>>, m: InstanceType<Awaited<ReturnType<typeof Module>>['Manifold']>): SolidMesh {
+function manifoldToMesh(manifold: ManifoldModule, m: InstanceType<ManifoldModule['Manifold']>): SolidMesh {
   const mesh = m.getMesh();
   return {
     positions: new Float32Array(mesh.vertProperties),
