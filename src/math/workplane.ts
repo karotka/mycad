@@ -84,9 +84,8 @@ export function workPlaneFromXYAxes(origin: Vec3, xPoint: Vec3, yPoint: Vec3): W
     z: rawY.z - xAxis.z * alongX,
   };
   const yAxis = normalize(yDirection);
-  // In the interactive three-point UCS the normal points toward the viewer:
-  // Y × X, rather than the conventional X × Y direction away from it.
-  const zAxis = normalize(cross(yAxis, xAxis));
+  // AutoCAD-style UCS is right-handed: positive Z follows X × Y.
+  const zAxis = normalize(cross(xAxis, yAxis));
   return { origin: { ...origin }, xAxis, yAxis, zAxis };
 }
 

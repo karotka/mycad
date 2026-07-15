@@ -1,6 +1,5 @@
 export interface InputControllerCallbacks {
   escape(): void;
-  enter3d(): void;
   undo(): void;
   redo(): void;
 }
@@ -12,7 +11,6 @@ export class InputController {
       this.callbacks.escape();
       return;
     }
-    if (event.key === 'Meta') this.callbacks.enter3d();
     if (event.metaKey && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       if (event.shiftKey) this.callbacks.redo();

@@ -98,6 +98,21 @@ describe('GripController', () => {
     expect(rectangle).toMatchObject({ first: { x: 0, y: 0 }, opposite: { x: 14, y: 5 } });
   });
 
+  it('accepts a signed relative distance for a selected edge grip', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+    grips.begin(rectangle, undefined, 5, { x: 10, y: 2.5 });
+    expect(grips.applyRelativeDistance(-3)).toBe(true);
+    grips.commit();
+    expect(rectangle.opposite.x).toBe(7);
+    history.undo();
+    expect(doc.getEntity(rectangle.id)).toMatchObject({ opposite: { x: 10, y: 5 } });
+  });
+
   it('shows five circle grips and changes radius from a quadrant grip', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

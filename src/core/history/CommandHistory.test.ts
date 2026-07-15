@@ -3,6 +3,7 @@ import { Document } from '../Document';
 import { CommandHistory } from './CommandHistory';
 import {
   AddEntityEdit,
+  DeleteLayerEdit,
   ReplaceObjectsEdit,
   UpdateSolidEdit,
   cloneSolid,
@@ -88,5 +89,33 @@ describe('CommandHistory', () => {
     expect(history.undo()).toBe(true);
     expect(history.undo()).toBe(true);
     expect(history.undo()).toBe(false);
+  });
+
+  it('deletes a layer with its objects and restores everything on undo', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    doc.layers.push('Parts');
+    doc.layerColors.Parts = 0x123456;
+    doc.currentLayer = 'Parts';
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+    doc.addEntity(line);
+    const solid = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'extrusion', 1, [],
+    );
+    doc.addSolid(solid);
+
+    history.execute(new DeleteLayerEdit(doc, 'Parts'));
+    expect(doc.layers).toEqual(['0']);
+    expect(doc.entities).toHaveLength(0);
+    expect(doc.solids).toHaveLength(0);
+    expect(doc.currentLayer).toBe('0');
+
+    history.undo();
+    expect(doc.layers).toEqual(['0', 'Parts']);
+    expect(doc.entities[0].id).toBe(line.id);
+    expect(doc.solids[0].id).toBe(solid.id);
+    expect(doc.layerColors.Parts).toBe(0x123456);
+    expect(doc.currentLayer).toBe('Parts');
   });
 });

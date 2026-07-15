@@ -1,7 +1,7 @@
 import Module from 'manifold-3d';
 import type { Vec2 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
-import type { Entity, SolidFeature, SolidMesh } from '../entities/types';
+import type { Entity, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane } from '../../math/workplane';
 
 let manifoldReady: Promise<Awaited<ReturnType<typeof Module>>> | null = null;
@@ -93,6 +93,68 @@ export async function extrudeProfile(entities: Entity[], height: number): Promis
     return manifoldToMesh(manifold, result);
   } finally {
     result.delete();
+  }
+}
+
+export async function modifySolidEdge(
+  mesh: SolidMesh,
+  edge: SolidEdgeSelection,
+  amount: number,
+  rounded: boolean,
+): Promise<SolidMesh | null> {
+  if (amount <= 0) return null;
+  const manifold = await initManifold();
+  const sourceMesh = new manifold.Mesh({ numProp: 3, vertProperties: mesh.positions, triVerts: mesh.indices });
+  let solid = manifold.Manifold.ofMesh(sourceMesh);
+  const normalize = (v: [number, number, number]): [number, number, number] => {
+    const length = Math.hypot(...v);
+    return [v[0] / length, v[1] / length, v[2] / length];
+  };
+  const a = normalize([edge.normalA.x, edge.normalA.y, edge.normalA.z]);
+  const b = normalize([edge.normalB.x, edge.normalB.y, edge.normalB.z]);
+  const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  const angle = Math.acos(dot);
+  if (angle < 1e-4 || angle > Math.PI - 1e-4) { solid.delete(); return null; }
+  const bisector = normalize([a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
+  const p: [number, number, number] = [edge.start.x, edge.start.y, edge.start.z];
+  const planes: Array<{ normal: [number, number, number]; offset: number }> = [];
+  if (!rounded) {
+    const threshold = bisector[0] * p[0] + bisector[1] * p[1] + bisector[2] * p[2]
+      - amount * Math.sin(angle / 2);
+    planes.push({ normal: bisector, offset: threshold });
+  } else {
+    const centerDistance = amount / Math.sin(angle / 2);
+    const center: [number, number, number] = [
+      p[0] - bisector[0] * centerDistance,
+      p[1] - bisector[1] * centerDistance,
+      p[2] - bisector[2] * centerDistance,
+    ];
+    const segments = 12;
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments;
+      const sinAngle = Math.sin(angle);
+      const wa = Math.sin((1 - t) * angle) / sinAngle;
+      const wb = Math.sin(t * angle) / sinAngle;
+      const normal = normalize([a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb]);
+      planes.push({
+        normal,
+        offset: normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] + amount,
+      });
+    }
+  }
+  try {
+    for (const plane of planes) {
+      const next = solid.trimByPlane(
+        [-plane.normal[0], -plane.normal[1], -plane.normal[2]],
+        -plane.offset,
+      );
+      solid.delete();
+      solid = next;
+    }
+    if (solid.isEmpty()) return null;
+    return manifoldToMesh(manifold, solid);
+  } finally {
+    solid.delete();
   }
 }
 

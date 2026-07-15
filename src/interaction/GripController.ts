@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneEntity, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
@@ -28,6 +28,33 @@ export class GripController {
   constructor(private readonly doc: Document, private readonly history: CommandHistory) {}
 
   get isDragging(): boolean { return this.drag !== null; }
+  get draggingObjectId(): string | null { return this.drag?.objectId ?? null; }
+
+  applyRelativeDistance(distance: number): boolean {
+    if (!this.drag || !Number.isFinite(distance) || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return false;
+    const entity = this.drag.originalEntity;
+    let direction: Vec2 = { x: 1, y: 0 };
+    if (entity.type === 'rectangle') {
+      if (this.drag.gripIndex >= 4) direction = (this.drag.gripIndex - 4) % 2 === 0 ? { x: 0, y: 1 } : { x: 1, y: 0 };
+      else {
+        const opposite = this.drag.gripIndex === 0 ? entity.opposite : entity.first;
+        const dx = this.drag.origin.x - opposite.x, dy = this.drag.origin.y - opposite.y;
+        const length = Math.hypot(dx, dy) || 1;
+        direction = { x: dx / length, y: dy / length };
+      }
+    } else if (entity.type === 'line' && this.drag.gripIndex < 2) {
+      const other = this.drag.gripIndex === 0 ? entity.end : entity.start;
+      const dx = this.drag.origin.x - other.x, dy = this.drag.origin.y - other.y;
+      const length = Math.hypot(dx, dy) || 1;
+      direction = { x: dx / length, y: dy / length };
+    } else if (entity.type === 'circle' && this.drag.gripIndex > 0) {
+      const dx = this.drag.origin.x - entity.center.x, dy = this.drag.origin.y - entity.center.y;
+      const length = Math.hypot(dx, dy) || 1;
+      direction = { x: dx / length, y: dy / length };
+    }
+    this.update({ x: this.drag.origin.x + direction.x * distance, y: this.drag.origin.y + direction.y * distance });
+    return true;
+  }
 
   changedDimension(): string | null {
     if (!this.drag || this.mode === 'center') return null;
@@ -126,6 +153,9 @@ export class GripController {
         : entity.vertices;
       return vertices.map((point, index) => ({ point, index, shape: 'square' }));
     }
+    if (entity?.type === 'bezier' && !this.mode) return [entity.start,entity.control1,entity.control2,entity.end].map((point,index)=>({point,index,shape:'square'}));
+    if (entity?.type === 'arc' && !this.mode) { const point=(a:number)=>({x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}); return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
+    if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (!entity && solid && !this.mode) {
       const b = solidBounds(solid);
       return [b.minZ, b.maxZ].flatMap((z, level) => [
@@ -185,7 +215,7 @@ export class GripController {
           });
         }
       } else {
-        const points = entity.type === 'octagon' ? entity.vertices : entity.vertices;
+        const points = getEntityPoints(entity);
         points.forEach((point, index) => grips.push({ point, index: base + index, shape: 'square' }));
       }
     });
@@ -289,7 +319,9 @@ export class GripController {
       if (entity.closed && this.drag.gripIndex === 0) {
         entity.vertices[entity.vertices.length - 1] = { ...cursor };
       }
-    }
+    } else if(entity.type==='bezier'&&original.type==='bezier'){ if(this.drag.gripIndex===0)entity.start={...cursor};else if(this.drag.gripIndex===1)entity.control1={...cursor};else if(this.drag.gripIndex===2)entity.control2={...cursor};else entity.end={...cursor};
+    } else if(entity.type==='arc'&&original.type==='arc'){ if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
+    } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
     else if (entity.type === 'rectangle' && original.type === 'rectangle') {
       if (this.mode === 'center') {
         entity.first = { x: original.first.x + dx, y: original.first.y + dy };

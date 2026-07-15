@@ -48,4 +48,24 @@ describe('ProjectIO', () => {
     expect(target.solids[0].mesh.indices).toBeInstanceOf(Uint32Array);
     expect(target.activeWorkPlane.origin).toEqual({ x: 2, y: 3, z: 4 });
   });
+
+  it('round-trips the saved 2D and 3D camera state', () => {
+    const source = new Document();
+    const view = {
+      mode: '3d' as const,
+      twoD: { pan: { x: 12, y: -8 }, zoom: 0.25 },
+      threeD: {
+        position: { x: 30, y: 20, z: -10 },
+        target: { x: 5, y: 6, z: 7 },
+        up: { x: 0, y: 1, z: 0 },
+        projection: 'perspective' as const,
+        orbitRadius: 40,
+        activeStandardView: null,
+      },
+    };
+    const target = new Document();
+    const restored = loadProject(target, serializeProject(source, view));
+    expect(restored).toEqual(view);
+    expect(target.viewMode).toBe('3d');
+  });
 });

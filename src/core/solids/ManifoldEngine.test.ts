@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ExtrusionFeature } from '../entities/types';
-import { createBoxMesh, pressPullFace, regenerateSolidFeature } from './ManifoldEngine';
+import { createBoxMesh, modifySolidEdge, pressPullFace, regenerateSolidFeature } from './ManifoldEngine';
 
 describe('parametric solid regeneration', () => {
   it('moves a selected side face along its normal', () => {
@@ -34,5 +34,20 @@ describe('parametric solid regeneration', () => {
     expect(Math.max(...ys)).toBeCloseTo(-2, 4);
     expect(Math.min(...zs)).toBeCloseTo(0, 4);
     expect(Math.max(...zs)).toBeCloseTo(5, 4);
+  });
+
+  it('chamfers and fillets a convex solid edge into valid meshes', async () => {
+    const mesh = createBoxMesh(10, 6, 4);
+    const edge = {
+      solidId: 'box',
+      start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    };
+    const chamfer = await modifySolidEdge(mesh, edge, 1, false);
+    const fillet = await modifySolidEdge(mesh, edge, 1, true);
+    expect(chamfer).not.toBeNull();
+    expect(fillet).not.toBeNull();
+    expect(chamfer!.indices.length).toBeGreaterThan(mesh.indices.length);
+    expect(fillet!.indices.length).toBeGreaterThan(chamfer!.indices.length);
   });
 });

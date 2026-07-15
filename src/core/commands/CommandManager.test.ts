@@ -47,6 +47,34 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
   });
 
+  it('joins a Bezier curve to a connected line', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    const bezier = doc.createBezier({ x: 5, y: 0 }, { x: 7, y: 0 }, { x: 8, y: 4 }, { x: 10, y: 4 });
+    doc.entities.push(line, bezier);
+    doc.selectEntity(line.id, true); doc.selectEntity(bezier.id, true);
+    manager.startCommand('JOIN');
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
+    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.length).toBeGreaterThan(40);
+  });
+
+  it('joins an arc to a connected line', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    const arc = doc.createArc({ x: 5, y: 5 }, 5, -Math.PI / 2, Math.PI / 2);
+    doc.entities.push(line, arc);
+    manager.startCommand('JOIN');
+    await manager.handleClick({ x: 2, y: 0 }, line);
+    await manager.handleClick({ x: 7, y: 1 }, arc);
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
+    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.length).toBeGreaterThan(40);
+    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.at(-1)).toMatchObject({ x: 10, y: 5 });
+  });
+
   it('extends a line to a selected boundary', async () => {
     const { doc, manager } = setup();
     const boundary = doc.createLine({ x: 10, y: -5 }, { x: 10, y: 5 });
@@ -81,6 +109,29 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[1]).toMatchObject({ type: 'line', start: { x: 0, y: 2 }, end: { x: 10, y: 2 } });
   });
 
+  it('offsets a circle outward or inward according to the picked side', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 10);
+    doc.entities.push(circle);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 10, y: 0 }, circle);
+    expect(doc.selectedEntityIds.has(circle.id)).toBe(true);
+    await manager.submitInput('2');
+    await manager.handleClick({ x: 15, y: 0 });
+    expect(doc.entities[1]).toMatchObject({ type: 'circle', center: { x: 0, y: 0 }, radius: 12 });
+  });
+
+  it('offsets a closed rectangle outward', async () => {
+    const { doc, manager } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.entities.push(rectangle);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 0, y: 0 }, rectangle);
+    await manager.submitInput('1');
+    await manager.handleClick({ x: 12, y: 3 });
+    expect(doc.entities[1]).toMatchObject({ type: 'rectangle', first: { x: -1, y: -1 }, opposite: { x: 11, y: 6 } });
+  });
+
   it('records a complete line as one undoable edit', async () => {
     const { doc, history, manager } = setup();
     manager.startCommand('LINE');
@@ -92,6 +143,27 @@ describe('CommandManager history integration', () => {
     expect(doc.entities).toHaveLength(0);
     expect(history.redo()).toBe(true);
     expect(doc.entities[0]).toMatchObject({ type: 'line', start: { x: 1, y: 2 }, end: { x: 4, y: 6 } });
+  });
+
+  it('accepts relative Cartesian coordinates for the next point', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('LINE');
+    await manager.submitInput('20,30');
+    await manager.submitInput('@10,10');
+    expect(doc.entities[0]).toMatchObject({
+      type: 'line', start: { x: 20, y: 30 }, end: { x: 30, y: 40 },
+    });
+  });
+
+  it('accepts AutoCAD-style relative polar coordinates for a line', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('LINE');
+    await manager.submitInput('0,0');
+    await manager.submitInput('@10<180');
+    expect(doc.entities[0].type).toBe('line');
+    if (doc.entities[0].type !== 'line') return;
+    expect(doc.entities[0].end.x).toBeCloseTo(-10, 10);
+    expect(doc.entities[0].end.y).toBeCloseTo(0, 10);
   });
 
   it('keeps line and rectangle tools active for repeated drawing', async () => {
@@ -130,6 +202,18 @@ describe('CommandManager history integration', () => {
       type: 'circle', center: { x: 10, y: 20 }, radius: 7.5,
     });
     expect(manager.active).toMatchObject({ name: 'CIRCLE', stepIndex: 0 });
+  });
+
+  it('selects text font and height before the insertion point', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('TEXT');
+    await manager.submitInput('Times New Roman');
+    await manager.submitInput('6.5');
+    await manager.handleClick({ x: 12, y: 8 });
+    await manager.submitInput('Title');
+    expect(doc.entities[0]).toMatchObject({
+      type: 'text', position: { x: 12, y: 8 }, text: 'Title', height: 6.5, font: 'Times New Roman',
+    });
   });
 
   it('undoes erase with the original entity id', async () => {
@@ -198,6 +282,47 @@ describe('CommandManager history integration', () => {
     await manager.handleClick({ x: 2, y: 3 });
     await manager.handleClick({ x: 7, y: 9 });
     expect(moveObject).toHaveBeenCalledWith(line, { x: 5, y: 6 });
+  });
+
+  it('uses the exact 3D delta when MOVE points come from object snaps', async () => {
+    const { doc, manager, moveObject } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 4, y: 2 });
+    doc.addEntity(rectangle);
+    manager.startCommand('MOVE');
+    await manager.handleClick({ x: 1, y: 1 }, rectangle);
+    manager.active!.data.pendingMoveWorldPoint = { x: 2, y: 3, z: 10 };
+    await manager.handleClick({ x: 0, y: 0 });
+    manager.active!.data.pendingMoveWorldPoint = { x: 12, y: 8, z: 14 };
+    await manager.handleClick({ x: 5, y: 2 });
+    expect(moveObject).toHaveBeenCalledWith(rectangle, { x: 5, y: 2 }, { x: 10, y: 5, z: 4 });
+  });
+
+  it('rotates a preselected line around a base point by entered degrees', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 2, y: 1 }, { x: 6, y: 1 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('ROTATE');
+    expect(manager.active).toMatchObject({ name: 'ROTATE', stepIndex: 1 });
+    await manager.handleClick({ x: 2, y: 1 });
+    await manager.submitInput('90');
+    expect(doc.entities[0].type).toBe('line');
+    if (doc.entities[0].type !== 'line') return;
+    expect(doc.entities[0].start.x).toBeCloseTo(2);
+    expect(doc.entities[0].start.y).toBeCloseTo(1);
+    expect(doc.entities[0].end.x).toBeCloseTo(2);
+    expect(doc.entities[0].end.y).toBeCloseTo(5);
+  });
+
+  it('converts a freely rotated rectangle into a closed polyline', async () => {
+    const { doc, manager } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 4, y: 2 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+    manager.startCommand('ROTATE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.submitInput('45');
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
   });
 
   it('measures spatial distance and remains active', async () => {

@@ -56,6 +56,12 @@ ipcMain.handle('write-file', async (_event, options: { filePath: string; content
   return { filePath: options.filePath };
 });
 
+ipcMain.handle('quick-save', async (_event, options: { filePath?: string; content: string }) => {
+  const filePath = options.filePath ?? path.join(app.getPath('documents'), 'model.mycad');
+  await fs.writeFile(filePath, options.content, 'utf8');
+  return { filePath };
+});
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {

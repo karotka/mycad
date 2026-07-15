@@ -20,6 +20,6 @@ describe('work plane transforms', () => {
     );
     expect(plane.xAxis).toEqual({ x: 0, y: 1, z: 0 });
     expect(plane.yAxis).toEqual({ x: 0, y: 0, z: 1 });
-    expect(plane.zAxis).toEqual({ x: -1, y: 0, z: 0 });
+    expect(plane.zAxis).toEqual({ x: 1, y: 0, z: 0 });
   });
 });

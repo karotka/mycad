@@ -38,8 +38,59 @@ export class AddEntityEdit implements DocumentEdit {
 
 export class AddEntitiesEdit implements DocumentEdit {
   constructor(readonly label: string, private readonly entities: Entity[]) {}
-  apply(doc: Document): void { for (const entity of this.entities) replaceEntity(doc, entity); }
-  revert(doc: Document): void { for (const entity of this.entities) doc.removeEntity(entity.id); }
+  apply(doc: Document): void {
+    const ids = new Set(this.entities.map((entity) => entity.id));
+    doc.entities = doc.entities.filter((entity) => !ids.has(entity.id));
+    doc.entities.push(...this.entities.map(cloneEntity));
+    doc.notify();
+  }
+  revert(doc: Document): void {
+    const ids = new Set(this.entities.map((entity) => entity.id));
+    doc.entities = doc.entities.filter((entity) => !ids.has(entity.id));
+    doc.pruneSelection();
+    doc.notify();
+  }
+}
+
+export class DeleteLayerEdit implements DocumentEdit {
+  readonly label: string;
+  private readonly entities: Entity[];
+  private readonly solids: Solid[];
+  private readonly index: number;
+  private readonly color: number;
+  private readonly hidden: boolean;
+  private readonly wasCurrent: boolean;
+
+  constructor(docAtCreation: Document, private readonly layer: string) {
+    this.label = `Delete layer ${layer}`;
+    this.entities = docAtCreation.entities.filter((entity) => entity.layer === layer).map(cloneEntity);
+    this.solids = docAtCreation.solids.filter((solid) => solid.layer === layer).map(cloneSolid);
+    this.index = docAtCreation.layers.indexOf(layer);
+    this.color = docAtCreation.layerColors[layer] ?? 0xffffff;
+    this.hidden = docAtCreation.hiddenLayers.has(layer);
+    this.wasCurrent = docAtCreation.currentLayer === layer;
+  }
+
+  apply(doc: Document): void {
+    doc.entities = doc.entities.filter((entity) => entity.layer !== this.layer);
+    doc.solids = doc.solids.filter((solid) => solid.layer !== this.layer);
+    doc.layers = doc.layers.filter((layer) => layer !== this.layer);
+    delete doc.layerColors[this.layer];
+    doc.hiddenLayers.delete(this.layer);
+    if (doc.currentLayer === this.layer) doc.currentLayer = doc.layers[0] ?? '0';
+    doc.pruneSelection();
+    doc.notify();
+  }
+
+  revert(doc: Document): void {
+    if (!doc.layers.includes(this.layer)) doc.layers.splice(Math.max(0, this.index), 0, this.layer);
+    doc.layerColors[this.layer] = this.color;
+    if (this.hidden) doc.hiddenLayers.add(this.layer);
+    doc.entities.push(...this.entities.map(cloneEntity));
+    doc.solids.push(...this.solids.map(cloneSolid));
+    if (this.wasCurrent) doc.currentLayer = this.layer;
+    doc.notify();
+  }
 }
 
 export class RemoveEntityEdit implements DocumentEdit {

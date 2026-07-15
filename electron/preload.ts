@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('mycadAPI', {
     ipcRenderer.invoke('open-file', options),
   writeFile: (options: { filePath: string; content: string }) =>
     ipcRenderer.invoke('write-file', options),
+  quickSave: (options: { filePath?: string; content: string }) =>
+    ipcRenderer.invoke('quick-save', options),
 });

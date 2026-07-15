@@ -4,6 +4,9 @@ import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workpl
 import {
   genId,
   type CircleEntity,
+  type ArcEntity,
+  type BezierEntity,
+  type TextEntity,
   type Entity,
   type LineEntity,
   type OctagonEntity,
@@ -34,6 +37,9 @@ export class Document {
   selectedEntityIds = new Set<string>();
   selectedSolidIds = new Set<string>();
   currentLayer = '0';
+  layers: string[] = ['0'];
+  layerColors: Record<string, number> = { '0': 0xffffff };
+  hiddenLayers = new Set<string>();
   gridSize = 1;
   snapSize = 0.5;
   snapEnabled = true;
@@ -143,12 +149,12 @@ export class Document {
     return this.solids.filter((s) => this.selectedSolidIds.has(s.id));
   }
 
-  createLine(start: Vec2, end: Vec2, color = 0xffffff): LineEntity {
+  createLine(start: Vec2, end: Vec2, color?: number): LineEntity {
     return {
       id: genId('line'),
       type: 'line',
       layer: this.currentLayer,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       start,
@@ -156,25 +162,34 @@ export class Document {
     };
   }
 
-  createCircle(center: Vec2, radius: number, color = 0xffffff): CircleEntity {
+  createCircle(center: Vec2, radius: number, color?: number): CircleEntity {
     return {
       id: genId('circle'),
       type: 'circle',
       layer: this.currentLayer,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       center,
       radius,
     };
   }
+  createArc(center: Vec2, radius: number, startAngle: number, sweepAngle: number): ArcEntity {
+    return { id: genId('arc'), type: 'arc', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), center, radius, startAngle, sweepAngle };
+  }
+  createBezier(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2): BezierEntity {
+    return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, control1, control2, end };
+  }
+  createText(position: Vec2, text: string, height = 2.5, font = 'Arial'): TextEntity {
+    return { id: genId('text'), type: 'text', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
+  }
 
-  createRectangle(first: Vec2, opposite: Vec2, color = 0xffffff): RectangleEntity {
+  createRectangle(first: Vec2, opposite: Vec2, color?: number): RectangleEntity {
     return {
       id: genId('rect'),
       type: 'rectangle',
       layer: this.currentLayer,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       first,
@@ -182,12 +197,12 @@ export class Document {
     };
   }
 
-  createOctagon(center: Vec2, radius: number, color = 0xffffff): OctagonEntity {
+  createOctagon(center: Vec2, radius: number, color?: number): OctagonEntity {
     return {
       id: genId('octagon'),
       type: 'octagon',
       layer: this.currentLayer,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       center,
@@ -196,12 +211,12 @@ export class Document {
     };
   }
 
-  createPolyline(vertices: Vec2[], closed = false, color = 0xffffff): PolylineEntity {
+  createPolyline(vertices: Vec2[], closed = false, color?: number): PolylineEntity {
     return {
       id: genId('poly'),
       type: 'polyline',
       layer: this.currentLayer,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       vertices: closed ? closePolyline(vertices) : [...vertices],
@@ -214,14 +229,15 @@ export class Document {
     name: string,
     height: number,
     sourceEntityIds: string[],
-    color = 0x4488cc,
+    color?: number,
     feature: SolidFeature = { kind: 'mesh' }
   ): Solid {
     return {
       id: genId('solid'),
       name,
+      layer: this.currentLayer,
       mesh,
-      color,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
       selected: false,
       height,
       sourceEntityIds,

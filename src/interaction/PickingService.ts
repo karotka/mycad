@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import type { Entity, Solid } from '../core/entities/types';
+import { entityBounds, type Entity, type Solid } from '../core/entities/types';
 import { hitTestEntity } from '../core/commands/CommandManager';
 import type { Vec2 } from '../math/geometry';
 
@@ -30,6 +30,7 @@ export function hitTestSolid2d(
   let fallback: Solid | undefined;
   for (let i = doc.solids.length - 1; i >= 0; i--) {
     const solid = doc.solids[i];
+    if (doc.hiddenLayers.has(solid.layer)) continue;
     const bounds = solidBounds(solid);
     if (point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY) {
       fallback ??= solid;
@@ -40,8 +41,33 @@ export function hitTestSolid2d(
 }
 
 export function pickEntityAt(doc: Document, point: Vec2, tolerance: number): Entity | null {
-  const unselected = doc.entities.filter((entity) => !doc.selectedEntityIds.has(entity.id));
-  return hitTestEntity(unselected, point, tolerance) ?? hitTestEntity(doc.entities, point, tolerance);
+  const visible = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer));
+  const unselected = visible.filter((entity) => !doc.selectedEntityIds.has(entity.id));
+  const edge = hitTestEntity(unselected, point, tolerance) ?? hitTestEntity(visible, point, tolerance);
+  if (edge) return edge;
+  const contains = (entity: Entity): boolean => {
+    if (entity.type === 'circle') return Math.hypot(point.x - entity.center.x, point.y - entity.center.y) <= entity.radius;
+    if (entity.type === 'rectangle') {
+      const bounds = entityBounds(entity);
+      return point.x >= bounds.min.x && point.x <= bounds.max.x && point.y >= bounds.min.y && point.y <= bounds.max.y;
+    }
+    if (entity.type !== 'octagon' && !(entity.type === 'polyline' && entity.closed)) return false;
+    const vertices = entity.vertices;
+    let inside = false;
+    for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
+      const a = vertices[index], b = vertices[previous];
+      if ((a.y > point.y) !== (b.y > point.y)
+        && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+  };
+  return visible
+    .filter(contains)
+    .sort((a, b) => {
+      const boundsA = entityBounds(a), boundsB = entityBounds(b);
+      return (boundsA.max.x - boundsA.min.x) * (boundsA.max.y - boundsA.min.y)
+        - (boundsB.max.x - boundsB.min.x) * (boundsB.max.y - boundsB.min.y);
+    })[0] ?? null;
 }
 
 export function selectionExclusions(doc: Document, activeData?: Record<string, unknown>): Set<string> {

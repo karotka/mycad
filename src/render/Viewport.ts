@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import type { Document } from '../core/Document';
-import type { Entity, Solid, SolidFaceSelection } from '../core/entities/types';
-import { entityBounds, getEntityPoints } from '../core/entities/types';
+import type { ProjectViewState } from '../io/ProjectIO';
+import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection } from '../core/entities/types';
+import { curvePoints, entityBounds, getEntityPoints } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
-import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 
 export class Canvas2DRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -35,15 +36,25 @@ export class Canvas2DRenderer {
     const topLeft = this.screenToWorld(0, 0, w, h);
     const bottomRight = this.screenToWorld(w, h, w, h);
 
-    const startX = Math.floor(topLeft.x / gridSize) * gridSize;
-    const endX = Math.ceil(bottomRight.x / gridSize) * gridSize;
-    const startY = Math.floor(bottomRight.y / gridSize) * gridSize;
-    const endY = Math.ceil(topLeft.y / gridSize) * gridSize;
+    // A fixed 1 mm grid becomes prohibitively expensive after zoom-to-extents on
+    // architectural DXFs. Keep the logical grid size unchanged for snapping, but
+    // draw only every Nth line so adjacent lines stay several pixels apart.
+    const minimumPixelSpacing = 8;
+    const multiplier = Math.max(1, Math.ceil(minimumPixelSpacing / (gridSize * this.zoom)));
+    const magnitude = 10 ** Math.floor(Math.log10(multiplier));
+    const normalized = multiplier / magnitude;
+    const pleasantMultiplier = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+    const visibleGridSize = gridSize * pleasantMultiplier;
+
+    const startX = Math.floor(topLeft.x / visibleGridSize) * visibleGridSize;
+    const endX = Math.ceil(bottomRight.x / visibleGridSize) * visibleGridSize;
+    const startY = Math.floor(bottomRight.y / visibleGridSize) * visibleGridSize;
+    const endY = Math.ceil(topLeft.y / visibleGridSize) * visibleGridSize;
 
     this.ctx.strokeStyle = '#1c2333';
     this.ctx.lineWidth = 1;
 
-    for (let x = startX; x <= endX; x += gridSize) {
+    for (let x = startX; x <= endX; x += visibleGridSize) {
       const s = worldToScreen({ x, y: 0 }, w, h, this.pan, this.zoom);
       this.ctx.beginPath();
       this.ctx.moveTo(s.x, 0);
@@ -51,7 +62,7 @@ export class Canvas2DRenderer {
       this.ctx.stroke();
     }
 
-    for (let y = startY; y <= endY; y += gridSize) {
+    for (let y = startY; y <= endY; y += visibleGridSize) {
       const s = worldToScreen({ x: 0, y }, w, h, this.pan, this.zoom);
       this.ctx.beginPath();
       this.ctx.moveTo(0, s.y);
@@ -89,11 +100,11 @@ export class Canvas2DRenderer {
     this.clear(w, h);
     this.drawGrid(w, h, doc.gridSize);
 
-    for (const solid of doc.solids) {
+    for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer))) {
       this.drawSolidProjection(solid, w, h);
     }
 
-    for (const entity of doc.entities) {
+    for (const entity of doc.entities.filter((item) => !doc.hiddenLayers.has(item.layer))) {
       this.drawEntity(entity, w, h, entity.selected);
     }
 
@@ -187,6 +198,18 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
+      case 'arc':
+      case 'bezier': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=worldToScreen(v,w,h,this.pan,this.zoom); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
+      case 'text': {
+        const p=worldToScreen(entity.position,w,h,this.pan,this.zoom);
+        this.ctx.save();
+        this.ctx.translate(p.x, p.y);
+        this.ctx.rotate(-(entity.rotation ?? 0));
+        this.ctx.font=`${Math.max(8,entity.height*this.zoom)}px ${JSON.stringify(entity.font ?? 'Arial')}`;
+        this.ctx.fillText(entity.text,0,0);
+        this.ctx.restore();
+        break;
+      }
     }
   }
 
@@ -200,7 +223,30 @@ export class Canvas2DRenderer {
     let label = '';
     let labelPoint: Vec2 | undefined;
 
-    if (preview.type === 'line' && d.start && d.end) {
+    if (preview.type === 'rotate') {
+      const rotation = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.95;
+      this.ctx.setLineDash([5, 4]);
+      rotation.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
+      this.ctx.restore();
+      this.ctx.strokeStyle = '#ffc857';
+      this.ctx.lineWidth = 1.5;
+      this.ctx.setLineDash([]);
+      const a = worldToScreen(rotation.start, w, h, this.pan, this.zoom);
+      const b = worldToScreen(rotation.end, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.moveTo(a.x, a.y);
+      this.ctx.lineTo(b.x, b.y);
+      this.ctx.stroke();
+      const angle = Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x);
+      const radius = Math.min(38, Math.max(16, Math.hypot(b.x - a.x, b.y - a.y) * 0.35));
+      this.ctx.beginPath();
+      this.ctx.arc(a.x, a.y, radius, 0, -angle, angle > 0);
+      this.ctx.stroke();
+      label = `A = ${(Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x) * 180 / Math.PI).toFixed(2)}°`;
+      labelPoint = rotation.end;
+    } else if (preview.type === 'line' && d.start && d.end) {
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
       this.ctx.beginPath();
@@ -253,6 +299,12 @@ export class Canvas2DRenderer {
       this.ctx.stroke();
       label = `a = ${apothem.toFixed(2)} mm · ${sides} sides`;
       labelPoint = cursor;
+    } else if (preview.type === 'arc') {
+      const q=preview.data as {center:Vec2;start:Vec2;cursor:Vec2}; const c=worldToScreen(q.center,w,h,this.pan,this.zoom); const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y); let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);if(sweep<=0)sweep+=Math.PI*2; this.ctx.beginPath();this.ctx.arc(c.x,c.y,r*this.zoom,-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x),-(Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x)+sweep),true);this.ctx.stroke();
+    } else if (preview.type === 'bezier') {
+      const q=preview.data as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2}; const a=worldToScreen(q.start,w,h,this.pan,this.zoom),b=worldToScreen(q.control1,w,h,this.pan,this.zoom),c=worldToScreen(q.control2,w,h,this.pan,this.zoom),d2=worldToScreen(q.end,w,h,this.pan,this.zoom);this.ctx.beginPath();this.ctx.moveTo(a.x,a.y);this.ctx.bezierCurveTo(b.x,b.y,c.x,c.y,d2.x,d2.y);this.ctx.stroke();
+    } else if (preview.type === 'text') {
+      const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const p=worldToScreen(q.position,w,h,this.pan,this.zoom);this.ctx.setLineDash([]);this.ctx.font=`${Math.max(8,(q.height ?? 2.5)*this.zoom)}px ${JSON.stringify(q.font ?? 'Arial')}`;this.ctx.fillStyle='#888';this.ctx.fillText(q.text,p.x,p.y);
     }
 
     this.ctx.setLineDash([]);
@@ -269,9 +321,10 @@ export class Canvas2DRenderer {
 
   zoomExtents(doc: Document, w: number, h: number): void {
     let minX = -10, minY = -10, maxX = 10, maxY = 10;
-    if (doc.entities.length > 0) {
+    const visibleEntities = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer));
+    if (visibleEntities.length > 0) {
       minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
-      for (const e of doc.entities) {
+      for (const e of visibleEntities) {
         const b = entityBounds(e);
         minX = Math.min(minX, b.min.x);
         minY = Math.min(minY, b.min.y);
@@ -285,6 +338,14 @@ export class Canvas2DRenderer {
     this.pan = { x: cx, y: cy };
     this.zoom = Math.min(w, h) / (span * 1.4);
   }
+
+  zoomWindow(a: Vec2, b: Vec2, w: number, h: number): void {
+    const windowWidth = Math.abs(b.x - a.x);
+    const windowHeight = Math.abs(b.y - a.y);
+    if (windowWidth < 1e-9 || windowHeight < 1e-9) return;
+    this.pan = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    this.zoom = Math.max(1e-6, Math.min(100_000, Math.min(w / windowWidth, h / windowHeight) * 0.94));
+  }
 }
 
 export class Viewport3D {
@@ -292,16 +353,21 @@ export class Viewport3D {
   camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   renderer: THREE.WebGLRenderer;
   private solidMeshes = new Map<string, THREE.Mesh>();
-  private entityObjects = new Map<string, THREE.Line>();
-  private previewObject: THREE.Line | null = null;
+  private entityObjects = new Map<string, THREE.Object3D>();
+  private previewObject: THREE.Object3D | null = null;
   private gripObjects: THREE.Points | null = null;
   private faceHighlight: THREE.Mesh | null = null;
+  private edgeHighlight: THREE.Line | null = null;
   private grid: THREE.GridHelper;
+  private axisTriad: THREE.Group;
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private orbitDragStarted = false;
   orbitTheta = Math.PI / 4;
   orbitPhi = Math.PI / 4;
   orbitRadius = 30;
@@ -329,8 +395,8 @@ export class Viewport3D {
     dir.position.set(10, 20, 10);
     this.scene.add(dir);
 
-    const axes = new THREE.AxesHelper(5);
-    this.scene.add(axes);
+    this.axisTriad = this.createAxisTriad();
+    this.scene.add(this.axisTriad);
 
     this.updateCamera();
   }
@@ -364,7 +430,82 @@ export class Viewport3D {
     this.grid.matrixAutoUpdate = false;
     this.grid.matrix.copy(matrix);
     this.grid.updateMatrixWorld(true);
+    const triadBasis = new THREE.Matrix4().makeBasis(newX, newY, newZ);
+    this.axisTriad.position.copy(origin);
+    this.axisTriad.quaternion.setFromRotationMatrix(triadBasis);
+    this.axisTriad.updateMatrixWorld(true);
     this.render();
+  }
+
+  captureViewState(): ProjectViewState['threeD'] {
+    const vector = (value: THREE.Vector3): { x: number; y: number; z: number } => ({ x: value.x, y: value.y, z: value.z });
+    return {
+      position: vector(this.camera.position),
+      target: vector(this.orbitTarget),
+      up: vector(this.camera.up),
+      projection: this.camera instanceof THREE.OrthographicCamera ? 'orthographic' : 'perspective',
+      orbitRadius: this.orbitRadius,
+      activeStandardView: this.activeStandardView,
+    };
+  }
+
+  restoreViewState(state: ProjectViewState['threeD']): void {
+    if (state.projection === 'orthographic') this.switchToOrthographic();
+    else this.switchToPerspective();
+    this.orbitTarget.set(state.target.x, state.target.y, state.target.z);
+    this.orbitRadius = state.orbitRadius;
+    this.camera.position.set(state.position.x, state.position.y, state.position.z);
+    this.camera.up.set(state.up.x, state.up.y, state.up.z).normalize();
+    this.activeStandardView = state.activeStandardView;
+    this.camera.lookAt(this.orbitTarget);
+    this.updateProjection();
+    this.render();
+  }
+
+  private createAxisTriad(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'ucs-axis-triad';
+    const length = 5;
+    const headLength = 0.65;
+    const headWidth = 0.36;
+    const axes: Array<{ name: string; direction: THREE.Vector3; color: number; labelPosition: THREE.Vector3 }> = [
+      { name: 'X', direction: new THREE.Vector3(1, 0, 0), color: 0xf05b5b, labelPosition: new THREE.Vector3(5.7, 0, 0) },
+      { name: 'Y', direction: new THREE.Vector3(0, 1, 0), color: 0x62d47a, labelPosition: new THREE.Vector3(0, 5.7, 0) },
+      { name: 'Z', direction: new THREE.Vector3(0, 0, 1), color: 0x58a6ff, labelPosition: new THREE.Vector3(0, 0, 5.7) },
+    ];
+    for (const axis of axes) {
+      const arrow = new THREE.ArrowHelper(axis.direction, new THREE.Vector3(), length, axis.color, headLength, headWidth);
+      (arrow.line.material as THREE.Material).depthTest = false;
+      (arrow.cone.material as THREE.Material).depthTest = false;
+      arrow.renderOrder = 5;
+      group.add(arrow);
+      const label = this.createAxisLabel(axis.name, axis.color);
+      label.position.copy(axis.labelPosition);
+      label.renderOrder = 6;
+      group.add(label);
+    }
+    return group;
+  }
+
+  private createAxisLabel(text: string, color: number): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 96;
+    const context = canvas.getContext('2d')!;
+    context.font = '700 64px Arial';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.lineWidth = 8;
+    context.strokeStyle = '#0d1117';
+    context.strokeText(text, 48, 50);
+    context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    context.fillText(text, 48, 50);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(1.15, 1.15, 1.15);
+    return sprite;
   }
 
   setVisualStyle(style: 'wireframe' | 'shaded'): void {
@@ -384,7 +525,7 @@ export class Viewport3D {
   private applySolidStyle(mesh: THREE.Mesh, selected: boolean): void {
     const material = mesh.material as THREE.MeshPhongMaterial;
     material.wireframe = this.visualStyle === 'wireframe';
-    material.color.setHex(selected ? 0x65c7ff : this.visualStyle === 'wireframe' ? 0xffffff : 0xaeb9c4);
+    material.color.setHex(selected ? 0x65c7ff : (mesh.userData.baseColor as number ?? 0xffffff));
     material.shininess = this.visualStyle === 'wireframe' ? 0 : 18;
     this.disposeSolidEdges(mesh);
     if (this.visualStyle === 'shaded') {
@@ -399,6 +540,7 @@ export class Viewport3D {
     mesh.userData.styledVisualStyle = this.visualStyle;
     mesh.userData.styledSelected = selected;
     mesh.userData.styledRevision = mesh.userData.revision;
+    mesh.userData.styledColor = mesh.userData.baseColor;
   }
 
   resize(w: number, h: number): void {
@@ -488,7 +630,7 @@ export class Viewport3D {
     this.camera.updateProjectionMatrix();
   }
 
-  private orbitByScreenDelta(dx: number, dy: number): void {
+  orbitByScreenDelta(dx: number, dy: number): void {
     const offset = this.camera.position.clone().sub(this.orbitTarget);
     const ucsZ = new THREE.Vector3(
       this.activeWorkPlane.zAxis.x,
@@ -566,17 +708,30 @@ export class Viewport3D {
     this.updateCamera();
   }
 
-  attachControls(canvas: HTMLElement): void {
+  attachControls(canvas: HTMLElement, onOrbitStart?: () => void): void {
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0 && e.metaKey) {
-        this.switchToPerspective();
         this.isDragging = true;
         this.lastX = e.clientX;
         this.lastY = e.clientY;
+        this.dragStartX = e.clientX;
+        this.dragStartY = e.clientY;
+        this.orbitDragStarted = false;
       }
     });
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
+      if (!e.metaKey) {
+        this.isDragging = false;
+        this.orbitDragStarted = false;
+        return;
+      }
+      if (!this.orbitDragStarted) {
+        if (Math.hypot(e.clientX - this.dragStartX, e.clientY - this.dragStartY) < 3) return;
+        this.orbitDragStarted = true;
+        onOrbitStart?.();
+        this.switchToPerspective();
+      }
       this.activeStandardView = null;
       const dx = e.clientX - this.lastX;
       const dy = e.clientY - this.lastY;
@@ -587,11 +742,14 @@ export class Viewport3D {
     });
     window.addEventListener('mouseup', () => {
       this.isDragging = false;
+      this.orbitDragStarted = false;
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       if (e.metaKey) {
         // Command is an orbit-only modifier: neither axis may zoom.
+        if (Math.abs(e.deltaX) <= 0.01 && Math.abs(e.deltaY) <= 0.01) return;
+        onOrbitStart?.();
         this.switchToPerspective();
         this.activeStandardView = null;
         this.orbitByScreenDelta(e.deltaX * 0.6, e.deltaY * 0.6);
@@ -617,6 +775,22 @@ export class Viewport3D {
     this.orbitTarget.add(shift);
     this.camera.position.add(shift);
     this.camera.lookAt(this.orbitTarget);
+  }
+
+  zoomScreenWindow(x1: number, y1: number, x2: number, y2: number, w: number, h: number): void {
+    const windowWidth = Math.abs(x2 - x1);
+    const windowHeight = Math.abs(y2 - y1);
+    if (windowWidth < 4 || windowHeight < 4) return;
+    const centerX = (x1 + x2) / 2;
+    const centerY = (y1 + y2) / 2;
+    this.panByScreenDelta(centerX - w / 2, centerY - h / 2);
+    const factor = Math.max(windowWidth / w, windowHeight / h) / 0.94;
+    const nextRadius = Math.max(1e-6, Math.min(1e9, this.orbitRadius * factor));
+    const offset = this.camera.position.clone().sub(this.orbitTarget).setLength(nextRadius);
+    this.orbitRadius = nextRadius;
+    this.camera.position.copy(this.orbitTarget).add(offset);
+    this.camera.lookAt(this.orbitTarget);
+    this.updateProjection();
   }
 
   syncSolids(solids: Solid[]): void {
@@ -645,6 +819,7 @@ export class Viewport3D {
         mesh = new THREE.Mesh(geom, mat);
         mesh.userData.revision = solid.revision;
         mesh.userData.selected = solid.selected;
+        mesh.userData.baseColor = solid.color;
         this.applySolidStyle(mesh, solid.selected);
         this.solidMeshes.set(solid.id, mesh);
         this.scene.add(mesh);
@@ -658,9 +833,11 @@ export class Viewport3D {
           geometryChanged = true;
         }
         mesh.userData.selected = solid.selected;
+        mesh.userData.baseColor = solid.color;
         if (geometryChanged
           || mesh.userData.styledVisualStyle !== this.visualStyle
-          || mesh.userData.styledSelected !== solid.selected) {
+          || mesh.userData.styledSelected !== solid.selected
+          || mesh.userData.styledColor !== solid.color) {
           this.applySolidStyle(mesh, solid.selected);
         }
       }
@@ -672,8 +849,7 @@ export class Viewport3D {
     for (const [id, object] of this.entityObjects) {
       if (!ids.has(id)) {
         this.scene.remove(object);
-        object.geometry.dispose();
-        (object.material as THREE.Material).dispose();
+        this.disposeObject(object);
         this.entityObjects.delete(id);
       }
     }
@@ -682,8 +858,7 @@ export class Viewport3D {
       const previous = this.entityObjects.get(entity.id);
       if (previous) {
         this.scene.remove(previous);
-        previous.geometry.dispose();
-        (previous.material as THREE.Material).dispose();
+        this.disposeObject(previous);
       }
       const object = this.entityToObject(entity);
       this.entityObjects.set(entity.id, object);
@@ -694,11 +869,101 @@ export class Viewport3D {
   syncPreview(preview?: { type: string; data: unknown }): void {
     if (this.previewObject) {
       this.scene.remove(this.previewObject);
-      this.previewObject.geometry.dispose();
-      (this.previewObject.material as THREE.Material).dispose();
+      this.disposeObject(this.previewObject);
       this.previewObject = null;
     }
     if (!preview) return;
+    if (preview.type === 'ucs') {
+      const data = preview.data as { origin?: Vec3; xPoint?: Vec3; yPoint?: Vec3; hover?: Vec3; step: number };
+      const group = new THREE.Group();
+      const toThree = (point: Vec3): THREE.Vector3 => new THREE.Vector3(point.x, point.z, -point.y);
+      const marked = [data.origin, data.xPoint, data.yPoint, data.hover].filter((point): point is Vec3 => Boolean(point));
+      if (marked.length > 0) {
+        const points = new THREE.Points(
+          new THREE.BufferGeometry().setFromPoints(marked.map(toThree)),
+          new THREE.PointsMaterial({ color: 0xffd84d, size: 11, sizeAttenuation: false, depthTest: false }),
+        );
+        points.renderOrder = 50;
+        group.add(points);
+      }
+      const origin = data.origin;
+      const xPoint = data.xPoint ?? (data.step === 1 ? data.hover : undefined);
+      if (origin && xPoint) {
+        const origin3 = toThree(origin);
+        const xVector = toThree(xPoint).sub(origin3);
+        const length = Math.max(0.5, xVector.length());
+        if (xVector.lengthSq() > 1e-10) {
+          const xArrow = new THREE.ArrowHelper(xVector.normalize(), origin3, length, 0xf05b5b, Math.min(0.7, length * 0.18), Math.min(0.38, length * 0.1));
+          (xArrow.line.material as THREE.Material).depthTest = false;
+          (xArrow.cone.material as THREE.Material).depthTest = false;
+          group.add(xArrow);
+        }
+        const yPoint = data.yPoint ?? (data.step === 2 ? data.hover : undefined);
+        if (yPoint) {
+          try {
+            const plane = workPlaneFromXYAxes(origin, xPoint, yPoint);
+            const axisLength = length;
+            const axes = [
+              { direction: plane.yAxis, color: 0x62d47a, name: 'Y' },
+              { direction: plane.zAxis, color: 0x58a6ff, name: 'Z' },
+            ];
+            axes.forEach((axis) => {
+              const direction = new THREE.Vector3(axis.direction.x, axis.direction.z, -axis.direction.y).normalize();
+              const arrow = new THREE.ArrowHelper(direction, origin3, axisLength, axis.color, Math.min(0.7, axisLength * 0.18), Math.min(0.38, axisLength * 0.1));
+              (arrow.line.material as THREE.Material).depthTest = false;
+              (arrow.cone.material as THREE.Material).depthTest = false;
+              group.add(arrow);
+              const label = this.createAxisLabel(axis.name, axis.color);
+              label.position.copy(origin3).add(direction.multiplyScalar(axisLength + 0.55));
+              group.add(label);
+            });
+          } catch { /* Collinear hover point: keep showing the selected points. */ }
+        }
+      }
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
+    if (preview.type === 'rotate') {
+      const rotation = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
+      const group = new THREE.Group();
+      for (const entity of rotation.entities) {
+        const object = this.entityToObject(entity);
+        object.traverse((child) => {
+          const renderable = child as THREE.Line | THREE.Mesh;
+          if (!renderable.material) return;
+          const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
+          materials.forEach((material) => {
+            material.transparent = true;
+            material.opacity = 0.9;
+            material.depthTest = false;
+          });
+        });
+        group.add(object);
+      }
+      const guideGeometry = new THREE.BufferGeometry().setFromPoints([rotation.start, rotation.end].map((point) => {
+        const world = localToWorld(this.activeWorkPlane, point, 0.04);
+        return new THREE.Vector3(world.x, world.z, -world.y);
+      }));
+      const guide = new THREE.Line(guideGeometry, new THREE.LineBasicMaterial({ color: 0xffc857, depthTest: false }));
+      guide.renderOrder = 21;
+      group.add(guide);
+      group.renderOrder = 20;
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
+    if (preview.type === 'text') {
+      const text = preview.data as { position: Vec2; text: string; font?: string; height?: number };
+      if (!text.text) return;
+      this.previewObject = this.textToObject(
+        text.position, text.text, text.height ?? 2.5, text.font ?? 'Arial',
+        this.activeWorkPlane, 0xaaaaaa, 0.72,
+      );
+      this.previewObject.renderOrder = 20;
+      this.scene.add(this.previewObject);
+      return;
+    }
     const data = preview.data as Record<string, Vec2> & { sides?: number };
     const points: Vec2[] = [];
     let loop = false;
@@ -730,6 +995,10 @@ export class Viewport3D {
         points.push({ x: data.center.x + Math.cos(angle) * radius, y: data.center.y + Math.sin(angle) * radius });
       }
       loop = true;
+    } else if (preview.type === 'arc') {
+      const q=preview.data as unknown as {center:Vec2;start:Vec2;cursor:Vec2};const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y);const start=Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-start;if(sweep<=0)sweep+=Math.PI*2;for(let i=0;i<=64;i++){const a=start+sweep*i/64;points.push({x:q.center.x+Math.cos(a)*r,y:q.center.y+Math.sin(a)*r});}
+    } else if (preview.type === 'bezier') {
+      const q=preview.data as unknown as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2};for(let i=0;i<=64;i++){const t=i/64,u=1-t;points.push({x:u**3*q.start.x+3*u*u*t*q.control1.x+3*u*t*t*q.control2.x+t**3*q.end.x,y:u**3*q.start.y+3*u*u*t*q.control1.y+3*u*t*t*q.control2.y+t**3*q.end.y});}
     }
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(
@@ -791,7 +1060,95 @@ export class Viewport3D {
     return best;
   }
 
-  private entityToObject(entity: Entity): THREE.Line {
+  pickEntity(canvas: HTMLCanvasElement, entities: Entity[], sx: number, sy: number, tolerance = 12): Entity | null {
+    const rect = canvas.getBoundingClientRect();
+    const project = (entity: Entity, point: Vec2): Vec2 | null => {
+      const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point);
+      const projected = new THREE.Vector3(world.x, world.z, -world.y).project(this.camera);
+      if (projected.z < -1 || projected.z > 1) return null;
+      return {
+        x: rect.left + (projected.x + 1) * rect.width / 2,
+        y: rect.top + (1 - projected.y) * rect.height / 2,
+      };
+    };
+    const distanceToSegment = (point: Vec2, start: Vec2, end: Vec2): number => {
+      const dx = end.x - start.x, dy = end.y - start.y;
+      const lengthSquared = dx * dx + dy * dy;
+      const t = lengthSquared > 0
+        ? Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+        : 0;
+      return Math.hypot(point.x - start.x - dx * t, point.y - start.y - dy * t);
+    };
+    const cursor = { x: sx, y: sy };
+    const polygonContains = (point: Vec2, polygon: Vec2[]): boolean => {
+      let inside = false;
+      for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+        const a = polygon[index], b = polygon[previous];
+        if ((a.y > point.y) !== (b.y > point.y)
+          && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+      }
+      return inside;
+    };
+    const polygonArea = (polygon: Vec2[]): number => Math.abs(polygon.reduce((area, point, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      return area + point.x * next.y - next.x * point.y;
+    }, 0)) / 2;
+    let bestEdgeDistance = tolerance;
+    let edgeResult: Entity | null = null;
+    let bestInsideArea = Number.POSITIVE_INFINITY;
+    let insideResult: Entity | null = null;
+    for (let entityIndex = entities.length - 1; entityIndex >= 0; entityIndex--) {
+      const entity = entities[entityIndex];
+      let points: Vec2[] = [];
+      let closed = false;
+      switch (entity.type) {
+        case 'line': points = [entity.start, entity.end]; break;
+        case 'circle':
+          for (let index = 0; index < 72; index++) {
+            const angle = index * Math.PI * 2 / 72;
+            points.push({ x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius });
+          }
+          closed = true;
+          break;
+        case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
+        case 'octagon': points = entity.vertices; closed = true; break;
+        case 'polyline': points = entity.vertices; closed = entity.closed; break;
+        case 'arc':
+        case 'bezier': points = curvePoints(entity, 64); break;
+        case 'text': {
+          const bounds = entityBounds(entity);
+          points = [bounds.min, { x: bounds.max.x, y: bounds.min.y }, bounds.max, { x: bounds.min.x, y: bounds.max.y }];
+          closed = true;
+          break;
+        }
+      }
+      const projected = points.map((point) => project(entity, point));
+      const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
+      if (closed && projectedPolygon.length === projected.length && polygonContains(cursor, projectedPolygon)) {
+        const area = polygonArea(projectedPolygon);
+        if (area < bestInsideArea) {
+          bestInsideArea = area;
+          insideResult = entity;
+        }
+      }
+      const segmentCount = closed ? projected.length : projected.length - 1;
+      for (let index = 0; index < segmentCount; index++) {
+        const start = projected[index], end = projected[(index + 1) % projected.length];
+        if (!start || !end) continue;
+        const distance = distanceToSegment(cursor, start, end);
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = entity; }
+      }
+    }
+    return edgeResult ?? insideResult;
+  }
+
+  private entityToObject(entity: Entity): THREE.Object3D {
+    if (entity.type === 'text') {
+      return this.textToObject(
+        entity.position, entity.text, entity.height, entity.font ?? 'Arial',
+        entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, entity.rotation ?? 0,
+      );
+    }
     const points: Vec2[] = [];
     let loop = false;
     switch (entity.type) {
@@ -827,6 +1184,8 @@ export class Viewport3D {
         points.push(...entity.vertices);
         loop = entity.closed;
         break;
+      case 'arc': points.push(...curvePoints(entity)); break;
+      case 'bezier': points.push(...curvePoints(entity)); break;
     }
 
     const geometry = new THREE.BufferGeometry().setFromPoints(
@@ -842,6 +1201,72 @@ export class Viewport3D {
     const object = loop ? new THREE.LineLoop(geometry, material) : new THREE.Line(geometry, material);
     object.renderOrder = 10;
     return object;
+  }
+
+  private textToObject(
+    position: Vec2,
+    text: string,
+    height: number,
+    font: string,
+    plane: WorkPlane,
+    color: number,
+    opacity = 1,
+    rotation = 0,
+  ): THREE.Mesh {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d')!;
+    const pixelHeight = 192;
+    context.font = `${pixelHeight}px ${JSON.stringify(font)}`;
+    const measuredWidth = Math.max(1, Math.ceil(context.measureText(text).width));
+    canvas.width = measuredWidth + 16;
+    canvas.height = pixelHeight + 32;
+    context.font = `${pixelHeight}px ${JSON.stringify(font)}`;
+    context.textBaseline = 'alphabetic';
+    context.fillStyle = '#ffffff';
+    context.fillText(text, 8, pixelHeight + 8);
+
+    const aspect = canvas.width / canvas.height;
+    const objectHeight = Math.max(0.001, height);
+    const objectWidth = objectHeight * aspect;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      color,
+      transparent: true,
+      opacity,
+      depthTest: false,
+      side: THREE.DoubleSide,
+    });
+    const object = new THREE.Mesh(new THREE.PlaneGeometry(objectWidth, objectHeight), material);
+    const centerOffset = {
+      x: Math.cos(rotation) * objectWidth / 2 - Math.sin(rotation) * objectHeight / 2,
+      y: Math.sin(rotation) * objectWidth / 2 + Math.cos(rotation) * objectHeight / 2,
+    };
+    const center = localToWorld(plane, { x: position.x + centerOffset.x, y: position.y + centerOffset.y }, 0.02);
+    object.position.set(center.x, center.z, -center.y);
+    const toThree = (axis: Vec3): THREE.Vector3 => new THREE.Vector3(axis.x, axis.z, -axis.y).normalize();
+    const basis = new THREE.Matrix4().makeBasis(toThree(plane.xAxis), toThree(plane.yAxis), toThree(plane.zAxis));
+    object.quaternion.setFromRotationMatrix(basis);
+    object.rotateZ(rotation);
+    object.renderOrder = 10;
+    return object;
+  }
+
+  private disposeObject(object: THREE.Object3D): void {
+    object.traverse((child) => {
+      const renderable = child as THREE.Mesh | THREE.Line;
+      renderable.geometry?.dispose();
+      const materials = renderable.material
+        ? (Array.isArray(renderable.material) ? renderable.material : [renderable.material])
+        : [];
+      for (const material of materials) {
+        const mapped = material as THREE.Material & { map?: THREE.Texture };
+        mapped.map?.dispose();
+        material.dispose();
+      }
+    });
   }
 
   private solidToGeometry(solid: Solid): THREE.BufferGeometry {
@@ -957,6 +1382,73 @@ export class Viewport3D {
     this.faceHighlight = null;
   }
 
+  clearEdgeHighlight(): void {
+    if (!this.edgeHighlight) return;
+    this.scene.remove(this.edgeHighlight);
+    this.edgeHighlight.geometry.dispose();
+    (this.edgeHighlight.material as THREE.Material).dispose();
+    this.edgeHighlight = null;
+  }
+
+  pickSolidEdge(canvas: HTMLCanvasElement, solids: Solid[], sx: number, sy: number, tolerance = 11): SolidEdgeSelection | null {
+    const rect = canvas.getBoundingClientRect();
+    type EdgeData = { a: number; b: number; normals: Vec3[] };
+    let best = tolerance;
+    let result: SolidEdgeSelection | null = null;
+    const project = (point: Vec3): { x: number; y: number; z: number } => {
+      const p = new THREE.Vector3(point.x, point.z, -point.y).project(this.camera);
+      return { x: rect.left + (p.x + 1) * rect.width / 2, y: rect.top + (1 - p.y) * rect.height / 2, z: p.z };
+    };
+    for (const solid of solids) {
+      const positions = solid.mesh.positions;
+      const indices = solid.mesh.indices;
+      const edges = new Map<string, EdgeData>();
+      for (let i = 0; i < indices.length; i += 3) {
+        const ids = [indices[i], indices[i + 1], indices[i + 2]];
+        const point = (id: number): Vec3 => ({ x: positions[id * 3], y: positions[id * 3 + 1], z: positions[id * 3 + 2] });
+        const p0 = point(ids[0]); const p1 = point(ids[1]); const p2 = point(ids[2]);
+        const ux = p1.x - p0.x; const uy = p1.y - p0.y; const uz = p1.z - p0.z;
+        const vx = p2.x - p0.x; const vy = p2.y - p0.y; const vz = p2.z - p0.z;
+        const length = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) || 1;
+        const normal = { x: (uy * vz - uz * vy) / length, y: (uz * vx - ux * vz) / length, z: (ux * vy - uy * vx) / length };
+        for (let e = 0; e < 3; e++) {
+          const a = ids[e]; const b = ids[(e + 1) % 3];
+          const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+          const edge = edges.get(key) ?? { a: Math.min(a, b), b: Math.max(a, b), normals: [] };
+          edge.normals.push(normal);
+          edges.set(key, edge);
+        }
+      }
+      for (const edge of edges.values()) {
+        if (edge.normals.length !== 2) continue;
+        const dot = edge.normals[0].x * edge.normals[1].x + edge.normals[0].y * edge.normals[1].y + edge.normals[0].z * edge.normals[1].z;
+        if (dot > 0.995) continue; // internal triangulation edge
+        const a = { x: positions[edge.a * 3], y: positions[edge.a * 3 + 1], z: positions[edge.a * 3 + 2] };
+        const b = { x: positions[edge.b * 3], y: positions[edge.b * 3 + 1], z: positions[edge.b * 3 + 2] };
+        const pa = project(a); const pb = project(b);
+        if (pa.z < -1 || pa.z > 1 || pb.z < -1 || pb.z > 1) continue;
+        const dx = pb.x - pa.x; const dy = pb.y - pa.y;
+        const t = Math.max(0, Math.min(1, ((sx - pa.x) * dx + (sy - pa.y) * dy) / (dx * dx + dy * dy || 1)));
+        const distance = Math.hypot(sx - (pa.x + dx * t), sy - (pa.y + dy * t));
+        if (distance <= best) {
+          best = distance;
+          result = { solidId: solid.id, start: a, end: b, normalA: edge.normals[0], normalB: edge.normals[1] };
+        }
+      }
+    }
+    this.clearEdgeHighlight();
+    if (result) {
+      const points = [result.start, result.end].map((point) => new THREE.Vector3(point.x, point.z, -point.y));
+      this.edgeHighlight = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0x32aaff, depthTest: false }),
+      );
+      this.edgeHighlight.renderOrder = 50;
+      this.scene.add(this.edgeHighlight);
+    }
+    return result;
+  }
+
   private showFaceHighlight(positions: number[]): void {
     this.clearFaceHighlight();
     const geometry = new THREE.BufferGeometry();
@@ -997,24 +1489,24 @@ export class Viewport3D {
     return { x: hit.x, y: -hit.z };
   }
 
-  workPlanePoint(canvas: HTMLCanvasElement, sx: number, sy: number): Vec2 | null {
+  workPlanePoint(canvas: HTMLCanvasElement, sx: number, sy: number, plane: WorkPlane = this.activeWorkPlane): Vec2 | null {
     const rect = canvas.getBoundingClientRect();
     this.mouse.x = ((sx - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((sy - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const normal = new THREE.Vector3(
-      this.activeWorkPlane.zAxis.x,
-      this.activeWorkPlane.zAxis.z,
-      -this.activeWorkPlane.zAxis.y,
+      plane.zAxis.x,
+      plane.zAxis.z,
+      -plane.zAxis.y,
     );
     const origin = new THREE.Vector3(
-      this.activeWorkPlane.origin.x,
-      this.activeWorkPlane.origin.z,
-      -this.activeWorkPlane.origin.y,
+      plane.origin.x,
+      plane.origin.z,
+      -plane.origin.y,
     );
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin), hit)) return null;
-    const local = worldToLocal(this.activeWorkPlane, { x: hit.x, y: -hit.z, z: hit.y });
+    const local = worldToLocal(plane, { x: hit.x, y: -hit.z, z: hit.y });
     return { x: local.x, y: local.y };
   }
 
@@ -1029,6 +1521,14 @@ export class Viewport3D {
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
     const offset = hit.sub(this.orbitTarget);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    return { x: offset.dot(right), y: offset.dot(up) };
+  }
+
+  cadPointToViewPlane(point: Vec3): Vec2 {
+    const threePoint = new THREE.Vector3(point.x, point.z, -point.y);
+    const offset = threePoint.sub(this.orbitTarget);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
     return { x: offset.dot(right), y: offset.dot(up) };

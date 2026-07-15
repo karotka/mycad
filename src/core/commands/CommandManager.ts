@@ -3,7 +3,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { dist2, dist3, formatPoint, midpoint2, mirrorPoint2 } from '../../math/geometry';
 import { workPlaneFromXYAxes } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, genId, getEntityPoints, transformEntityPoints, type Entity, type SolidFaceSelection } from '../entities/types';
+import { cloneEntity, curvePoints, entityBounds, genId, getEntityPoints, transformEntityPoints, type Entity, type SolidEdgeSelection, type SolidFaceSelection } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -21,6 +21,7 @@ import {
   extrudeProfile,
   pressPullSolid,
   pressPullFace,
+  modifySolidEdge,
   regenerateSolidFeature,
 } from '../solids/ManifoldEngine';
 
@@ -30,6 +31,7 @@ export type CommandName =
   | 'RECTANGLE'
   | 'OCTAGON'
   | 'POLYGON'
+  | 'ARC' | 'BEZIER' | 'TEXT'
   | 'EXTRUDE'
   | 'SUBTRACT'
   | 'UNION'
@@ -38,7 +40,10 @@ export type CommandName =
   | 'EXTEND'
   | 'TRIM'
   | 'OFFSET'
+  | 'CHAMFER'
+  | 'FILLET'
   | 'MOVE'
+  | 'ROTATE'
   | 'PRESSPULL'
   | 'MEASURE'
   | 'UCS'
@@ -60,7 +65,7 @@ export interface CommandContext {
   getCursor: () => Vec2;
   redraw: () => void;
   history: CommandHistory;
-  moveObject: (object: Entity | string, screenDelta: Vec2) => void;
+  moveObject: (object: Entity | string, screenDelta: Vec2, worldDelta?: Vec3) => void;
   workPlaneChanged?: () => void;
 }
 
@@ -69,6 +74,8 @@ export type CommandStep =
   | { kind: 'number'; label: string; optional?: boolean }
   | { kind: 'entity'; label: string; optional?: boolean }
   | { kind: 'solid'; label: string; optional?: boolean }
+  | { kind: 'edge'; label: string; optional?: boolean }
+  | { kind: 'text'; label: string; optional?: boolean }
   | { kind: 'done' };
 
 export interface ActiveCommand {
@@ -92,6 +99,7 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   OCTAGON: 'OCTAGON',
   POL: 'POLYGON',
   POLYGON: 'POLYGON',
+  A: 'ARC', ARC: 'ARC', B: 'BEZIER', BEZIER: 'BEZIER', T: 'TEXT', TEXT: 'TEXT',
   E: 'EXTRUDE',
   EXT: 'EXTRUDE',
   EXTRUDE: 'EXTRUDE',
@@ -114,7 +122,13 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   OFFSET: 'OFFSET',
   EQUID: 'OFFSET',
   EKVID: 'OFFSET',
+  CHA: 'CHAMFER',
+  CHAMFER: 'CHAMFER',
+  F: 'FILLET',
+  FILLET: 'FILLET',
   MOVE: 'MOVE',
+  RO: 'ROTATE',
+  ROTATE: 'ROTATE',
   PP: 'PRESSPULL',
   PRESSPULL: 'PRESSPULL',
   DI: 'MEASURE',
@@ -155,6 +169,103 @@ function sameWorkPlane(a: Entity, b: Entity): boolean {
   return JSON.stringify(a.workPlane ?? WORLD_WORK_PLANE) === JSON.stringify(b.workPlane ?? WORLD_WORK_PLANE);
 }
 
+function isOffsetEntity(entity: Entity): boolean {
+  return entity.type === 'line' || entity.type === 'circle' || entity.type === 'rectangle'
+    || entity.type === 'octagon' || (entity.type === 'polyline' && entity.closed);
+}
+
+function closedVertices(entity: Entity): Vec2[] | null {
+  if (entity.type === 'rectangle') return [
+    entity.first,
+    { x: entity.opposite.x, y: entity.first.y },
+    entity.opposite,
+    { x: entity.first.x, y: entity.opposite.y },
+  ];
+  if (entity.type === 'octagon') return entity.vertices.map((point) => ({ ...point }));
+  if (entity.type === 'polyline' && entity.closed) {
+    const vertices = entity.vertices.map((point) => ({ ...point }));
+    if (vertices.length > 1 && dist2(vertices[0], vertices.at(-1)!) < 1e-9) vertices.pop();
+    return vertices;
+  }
+  return null;
+}
+
+function pointInClosedPolygon(point: Vec2, vertices: Vec2[]): boolean {
+  let inside = false;
+  for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
+    const a = vertices[index], b = vertices[previous];
+    if ((a.y > point.y) !== (b.y > point.y)
+      && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function offsetPolygon(vertices: Vec2[], distance: number): Vec2[] | null {
+  if (vertices.length < 3) return null;
+  let twiceArea = 0;
+  for (let index = 0; index < vertices.length; index++) {
+    const a = vertices[index], b = vertices[(index + 1) % vertices.length];
+    twiceArea += a.x * b.y - b.x * a.y;
+  }
+  if (Math.abs(twiceArea) < 1e-9) return null;
+  const orientation = twiceArea > 0 ? 1 : -1;
+  const shiftedEdges = vertices.map((start, index) => {
+    const end = vertices[(index + 1) % vertices.length];
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-9) return null;
+    const normal = orientation > 0 ? { x: dy / length, y: -dx / length } : { x: -dy / length, y: dx / length };
+    const offset = { x: normal.x * distance, y: normal.y * distance };
+    return {
+      start: { x: start.x + offset.x, y: start.y + offset.y },
+      end: { x: end.x + offset.x, y: end.y + offset.y },
+    };
+  });
+  if (shiftedEdges.some((edge) => !edge)) return null;
+  const result: Vec2[] = [];
+  for (let index = 0; index < vertices.length; index++) {
+    const previous = shiftedEdges[(index - 1 + vertices.length) % vertices.length]!;
+    const current = shiftedEdges[index]!;
+    const intersection = lineIntersectionParameters(previous.start, previous.end, current.start, current.end);
+    if (!intersection) return null;
+    result.push(intersection.point);
+  }
+  return result;
+}
+
+function rotatePoint(point: Vec2, base: Vec2, angle: number): Vec2 {
+  const dx = point.x - base.x, dy = point.y - base.y;
+  const cosine = Math.cos(angle), sine = Math.sin(angle);
+  return { x: base.x + dx * cosine - dy * sine, y: base.y + dx * sine + dy * cosine };
+}
+
+function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document): Entity {
+  if (entity.type === 'rectangle') {
+    const corners = closedVertices(entity)!;
+    const polyline = doc.createPolyline(corners.map((point) => rotatePoint(point, base, angle)), true, entity.color);
+    polyline.layer = entity.layer;
+    polyline.workPlane = cloneEntity(entity).workPlane;
+    return polyline;
+  }
+  const result = cloneEntity(entity);
+  switch (result.type) {
+    case 'line': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); break;
+    case 'circle': result.center = rotatePoint(result.center, base, angle); break;
+    case 'octagon': result.center = rotatePoint(result.center, base, angle); result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
+    case 'polyline': result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
+    case 'arc': result.center = rotatePoint(result.center, base, angle); result.startAngle += angle; break;
+    case 'bezier':
+      result.start = rotatePoint(result.start, base, angle);
+      result.control1 = rotatePoint(result.control1, base, angle);
+      result.control2 = rotatePoint(result.control2, base, angle);
+      result.end = rotatePoint(result.end, base, angle);
+      break;
+    case 'text': result.position = rotatePoint(result.position, base, angle); result.rotation = (result.rotation ?? 0) + angle; break;
+    case 'rectangle': break;
+  }
+  return result;
+}
+
 export class CommandManager {
   active: ActiveCommand | null = null;
   history: string[] = [];
@@ -175,7 +286,7 @@ export class CommandManager {
     const prefix = input.trim().toUpperCase();
     if (!prefix) return [];
     const commands: CommandName[] = [
-      'LINE', 'RECTANGLE', 'CIRCLE', 'POLYGON', 'MEASURE', 'MOVE', 'MIRROR', 'JOIN', 'EXTEND', 'TRIM', 'OFFSET',
+      'LINE', 'RECTANGLE', 'CIRCLE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT', 'MEASURE', 'MOVE', 'ROTATE', 'MIRROR', 'JOIN', 'EXTEND', 'TRIM', 'OFFSET', 'CHAMFER', 'FILLET',
       'EXTRUDE', 'PRESSPULL', 'UNION', 'SUBTRACT',
       'UCS',
     ];
@@ -246,6 +357,20 @@ export class CommandManager {
           data: {},
         };
         break;
+      case 'ARC': this.active = { name, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }], stepIndex: 0, data: {} }; break;
+      case 'BEZIER': this.active = { name, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }], stepIndex: 0, data: {} }; break;
+      case 'TEXT': this.active = {
+        name,
+        steps: [
+          { kind: 'text', label: 'Select font:' },
+          { kind: 'number', label: 'Enter text height in mm:' },
+          { kind: 'point', label: 'Specify text insertion point:' },
+          { kind: 'text', label: 'Enter text:' },
+          { kind: 'done' },
+        ],
+        stepIndex: 0,
+        data: {},
+      }; break;
       case 'EXTRUDE':
         {
         const selectedProfile = this.ctx.doc.getSelectedEntities()[0]
@@ -300,17 +425,17 @@ export class CommandManager {
         };
         break;
       case 'JOIN': {
-        const selectedLines = this.ctx.doc.getSelectedEntities().filter((entity) => entity.type === 'line');
+        const selectedLines = this.ctx.doc.getSelectedEntities().filter((entity) => entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier');
         this.active = {
           name,
           steps: [
-            { kind: 'entity', label: 'Select connected lines, then press Enter:' },
+            { kind: 'entity', label: 'Select connected lines or curves, then press Enter:' },
             { kind: 'done' },
           ],
           stepIndex: 0,
           data: { entities: selectedLines },
         };
-        if (selectedLines.length > 0) this.ctx.log(`${selectedLines.length} preselected line(s). Press Enter to join.`);
+        if (selectedLines.length > 0) this.ctx.log(`${selectedLines.length} preselected object(s). Press Enter to join.`);
         break;
       }
       case 'EXTEND':
@@ -330,11 +455,11 @@ export class CommandManager {
         break;
       }
       case 'OFFSET': {
-        const selectedLine = this.ctx.doc.getSelectedEntities().find((entity) => entity.type === 'line');
+        const selectedLine = this.ctx.doc.getSelectedEntities().find(isOffsetEntity);
         this.active = {
           name,
           steps: [
-            { kind: 'entity', label: 'Select line to offset:' },
+            { kind: 'entity', label: 'Select line or closed 2D object to offset:' },
             { kind: 'number', label: 'Enter offset distance:' },
             { kind: 'point', label: 'Specify side for offset:' },
             { kind: 'done' },
@@ -342,9 +467,22 @@ export class CommandManager {
           stepIndex: selectedLine ? 1 : 0,
           data: { entity: selectedLine },
         };
-        if (selectedLine) this.ctx.log('Line preselected. Enter offset distance.');
+        if (selectedLine) this.ctx.log('Object preselected. Enter offset distance.');
         break;
       }
+      case 'CHAMFER':
+      case 'FILLET':
+        this.active = {
+          name,
+          steps: [
+            { kind: 'edge', label: `Select solid edge to ${name === 'CHAMFER' ? 'chamfer' : 'fillet'}:` },
+            { kind: 'number', label: `Enter ${name === 'CHAMFER' ? 'chamfer distance' : 'fillet radius'}:` },
+            { kind: 'done' },
+          ],
+          stepIndex: 0,
+          data: {},
+        };
+        break;
       case 'MOVE':
         this.active = {
           name,
@@ -358,6 +496,22 @@ export class CommandManager {
           data: {},
         };
         break;
+      case 'ROTATE': {
+        const selected = this.ctx.doc.getSelectedEntities();
+        this.active = {
+          name,
+          steps: [
+            { kind: 'entity', label: 'Select 2D object(s), then press Enter:' },
+            { kind: 'point', label: 'Specify rotation base point:' },
+            { kind: 'point', label: 'Specify rotation angle or enter degrees:' },
+            { kind: 'done' },
+          ],
+          stepIndex: selected.length > 0 ? 1 : 0,
+          data: { entities: [...selected] },
+        };
+        if (selected.length > 0) this.ctx.log(`${selected.length} object(s) preselected. Specify rotation base point.`);
+        break;
+      }
       case 'PRESSPULL':
         this.active = {
           name,
@@ -457,6 +611,8 @@ export class CommandManager {
       'EXTEND (EX)    — extend a line to a boundary',
       'TRIM (TR)      — trim a line at a cutting edge',
       'OFFSET (O)     — create an equidistant parallel line',
+      'CHAMFER (CHA)  — chamfer a solid edge',
+      'FILLET (F)     — round a solid edge',
       'MOVE (MO)      — move in view plane',
       'PRESSPULL (PP) — modify a solid face',
       'ERASE          — delete object',
@@ -510,7 +666,7 @@ export class CommandManager {
         await this.advanceStep(null);
         return;
       }
-      if ((this.active.name === 'MIRROR' || this.active.name === 'JOIN')
+      if ((this.active.name === 'MIRROR' || this.active.name === 'JOIN' || this.active.name === 'ROTATE')
         && step.kind === 'entity' && (this.active.data.entities as Entity[]).length > 0) {
         await this.advanceStep(null);
         return;
@@ -524,20 +680,30 @@ export class CommandManager {
     await this.processStepInput(trimmed, step);
   }
 
-  async handleClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection): Promise<void> {
+  async handleClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection): Promise<void> {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
 
     if (step.kind === 'point') {
       await this.advanceStep(world);
     } else if (step.kind === 'entity' && pickEntity) {
+      const additive = this.active.stepIndex === 0 && ['MIRROR', 'JOIN', 'ROTATE'].includes(this.active.name);
+      this.ctx.doc.selectEntity(pickEntity.id, additive);
       if (this.active.name === 'TRIM' && this.active.stepIndex === 1) this.active.data.targetPickPoint = world;
       await this.advanceStep(pickEntity);
+    } else if (step.kind === 'edge' && pickEdge) {
+      this.ctx.doc.selectSolid(pickEdge.solidId);
+      await this.advanceStep(pickEdge);
     } else if (this.active.name === 'MOVE' && step.kind === 'entity' && pickSolidId) {
+      this.ctx.doc.selectSolid(pickSolidId);
       await this.advanceStep(pickSolidId);
     } else if (this.active.name === 'ERASE' && step.kind === 'entity' && pickSolidId) {
+      this.ctx.doc.selectSolid(pickSolidId);
       await this.advanceStep(pickSolidId);
     } else if (step.kind === 'solid' && (pickSolidId || pickFace)) {
+      const solidId = pickFace?.solidId ?? pickSolidId!;
+      const additive = ['UNION', 'SUBTRACT'].includes(this.active.name);
+      this.ctx.doc.selectSolid(solidId, additive);
       await this.advanceStep(this.active.name === 'PRESSPULL' && pickFace ? pickFace : pickSolidId);
     }
   }
@@ -549,6 +715,19 @@ export class CommandManager {
   private async processStepInput(input: string, step: CommandStep): Promise<void> {
     switch (step.kind) {
       case 'point': {
+        if (this.active?.name === 'ROTATE' && this.active.stepIndex === 2) {
+          const degrees = Number(input);
+          const base = this.active.data.basePoint as Vec2 | undefined;
+          if (base && Number.isFinite(degrees)) {
+            const angle = degrees * Math.PI / 180;
+            await this.advanceStep({ x: base.x + Math.cos(angle), y: base.y + Math.sin(angle) });
+            return;
+          }
+        }
+        if (this.active?.name === 'ARC' && this.active.stepIndex === 2) {
+          const angle = Number(input); const center = this.active.data.center as Vec2; const start = this.active.data.start as Vec2;
+          if (Number.isFinite(angle) && center && start) { const a = Math.atan2(start.y-center.y,start.x-center.x) + angle*Math.PI/180; const r=dist2(center,start); await this.advanceStep({x:center.x+Math.cos(a)*r,y:center.y+Math.sin(a)*r}); return; }
+        }
         if (this.active?.name === 'CIRCLE' && this.active.stepIndex === 1) {
           const radius = Number(input);
           const center = this.active.data.center as Vec2 | undefined;
@@ -565,6 +744,28 @@ export class CommandManager {
             return;
           }
         }
+        if (input.startsWith('@')) {
+          const base = this.active?.data.lastPoint as Vec2 | undefined;
+          if (!base) {
+            this.ctx.log('Relative coordinates require a previous point.');
+            break;
+          }
+          const relative = input.slice(1).trim();
+          const polar = relative.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*<\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/);
+          if (polar) {
+            const distance = Number(polar[1]);
+            const angle = Number(polar[2]) * Math.PI / 180;
+            await this.advanceStep({ x: base.x + Math.cos(angle) * distance, y: base.y + Math.sin(angle) * distance });
+            return;
+          }
+          const cartesian = relative.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*[,;]\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/);
+          if (cartesian) {
+            await this.advanceStep({ x: base.x + Number(cartesian[1]), y: base.y + Number(cartesian[2]) });
+            return;
+          }
+          this.ctx.log('Invalid relative point. Use @x,y or @distance<angle.');
+          break;
+        }
         const parts = input.split(/[,;\s]+/).filter(Boolean);
         if (parts.length >= 2) {
           const p = { x: parseFloat(parts[0]), y: parseFloat(parts[1]) };
@@ -575,7 +776,7 @@ export class CommandManager {
         }
         this.ctx.log(this.active?.name === 'CIRCLE' && this.active.stepIndex === 1
           ? 'Invalid radius or point. Enter a positive number or point x,y.'
-          : 'Invalid point. Format: x,y');
+          : 'Invalid point. Use x,y, @x,y, or @distance<angle.');
         break;
       }
       case 'number': {
@@ -587,8 +788,10 @@ export class CommandManager {
         this.ctx.log('Invalid number.');
         break;
       }
+      case 'text': await this.advanceStep(input); return;
       case 'entity':
       case 'solid':
+      case 'edge':
         this.ctx.log('Click an object or enter coordinates.');
         break;
     }
@@ -598,6 +801,10 @@ export class CommandManager {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
     const data = this.active.data;
+    if (step.kind === 'point' && value && typeof value === 'object' && 'x' in value && 'y' in value) {
+      const point = value as Vec2;
+      data.lastPoint = { x: point.x, y: point.y };
+    }
 
     switch (this.active.name) {
       case 'LINE':
@@ -666,6 +873,29 @@ export class CommandManager {
           this.ctx.log(`Polygon created: ${sides} sides, apothem=${apothem.toFixed(3)} mm`);
         }
         break;
+      case 'ARC':
+        if (this.active.stepIndex === 0) data.center = value;
+        else if (this.active.stepIndex === 1) data.start = value;
+        else { const c=data.center as Vec2,s=data.start as Vec2,e=value as Vec2; const r=dist2(c,s); let sweep=Math.atan2(e.y-c.y,e.x-c.x)-Math.atan2(s.y-c.y,s.x-c.x); if(sweep<=0)sweep+=Math.PI*2; const arc=this.ctx.doc.createArc(c,r,Math.atan2(s.y-c.y,s.x-c.x),sweep); this.ctx.history.execute(new AddEntityEdit('Arc',arc)); }
+        break;
+      case 'BEZIER':
+        if(this.active.stepIndex===0)data.start=value; else if(this.active.stepIndex===1)data.control1=value; else if(this.active.stepIndex===2)data.control2=value; else { const bez=this.ctx.doc.createBezier(data.start as Vec2,data.control1 as Vec2,data.control2 as Vec2,value as Vec2); this.ctx.history.execute(new AddEntityEdit('Bezier',bez)); } break;
+      case 'TEXT':
+        if (this.active.stepIndex === 0) data.font = String(value);
+        else if (this.active.stepIndex === 1) {
+          const height = value as number;
+          if (height <= 0) {
+            this.ctx.log('Text height must be greater than zero.');
+            this.showCurrentPrompt();
+            return;
+          }
+          data.height = height;
+        } else if (this.active.stepIndex === 2) data.position = value;
+        else {
+          const text = this.ctx.doc.createText(data.position as Vec2, String(value), data.height as number, data.font as string);
+          this.ctx.history.execute(new AddEntityEdit('Text', text));
+        }
+        break;
 
       case 'EXTRUDE':
         if (step.kind === 'entity' && value) {
@@ -703,7 +933,7 @@ export class CommandManager {
               `Extrusion_${entities.map((e) => e.id).join('_')}`,
               height,
               entities.map((e) => e.id),
-              0x4488cc,
+              undefined,
               {
                 kind: 'extrusion',
                 profile: cloneEntity(entities[0]),
@@ -738,7 +968,7 @@ export class CommandManager {
           this.ctx.log('Subtracting…');
           const mesh = await booleanSubtract(baseSolid.mesh, toolSolid.mesh);
           if (mesh) {
-            const solid = this.ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], 0x4488cc, {
+            const solid = this.ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], undefined, {
               kind: 'boolean',
               operation: 'subtract',
               operands: [JSON.parse(JSON.stringify(baseSolid.feature)), JSON.parse(JSON.stringify(toolSolid.feature))],
@@ -765,7 +995,7 @@ export class CommandManager {
           const mesh = await booleanUnion(meshes as import('../entities/types').SolidMesh[]);
           if (mesh) {
             const sourceSolids = ids.map((id) => this.ctx.doc.getSolid(id)).filter((value): value is NonNullable<typeof value> => Boolean(value));
-            const solid = this.ctx.doc.createSolid(mesh, 'Union', 0, [], 0x4488cc, {
+            const solid = this.ctx.doc.createSolid(mesh, 'Union', 0, [], undefined, {
               kind: 'boolean',
               operation: 'union',
               operands: sourceSolids.map((source) => JSON.parse(JSON.stringify(source.feature))),
@@ -804,8 +1034,8 @@ export class CommandManager {
       case 'JOIN':
         if (step.kind === 'entity' && value) {
           const entity = value as Entity;
-          if (entity.type !== 'line') {
-            this.ctx.log('JOIN currently accepts line objects only.');
+          if (entity.type !== 'line' && entity.type !== 'arc' && entity.type !== 'bezier') {
+            this.ctx.log('JOIN accepts line, arc, and Bezier objects.');
             return;
           }
           const entities = data.entities as Entity[];
@@ -813,12 +1043,12 @@ export class CommandManager {
             entities.push(entity);
             this.ctx.doc.selectEntity(entity.id, true);
           }
-          this.ctx.log('Line added. Select another or press Enter.');
+          this.ctx.log('Object added. Select another or press Enter.');
           return;
         } else {
-          const lines = (data.entities as Entity[]).filter((entity) => entity.type === 'line');
+          const lines = (data.entities as Entity[]).filter((entity) => entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier');
           if (lines.length < 2) {
-            this.ctx.log('JOIN requires at least two lines.');
+            this.ctx.log('JOIN requires at least two connected objects.');
             this.showCurrentPrompt();
             return;
           }
@@ -830,27 +1060,29 @@ export class CommandManager {
           }
           const tolerance = 0.5;
           const near = (a: Vec2, b: Vec2): boolean => dist2(a, b) <= tolerance;
-          const first = lines[0];
-          if (first.type !== 'line') return;
-          const vertices: Vec2[] = [{ ...first.start }, { ...first.end }];
+          const pointsFor = (entity: Entity): Vec2[] => entity.type === 'line'
+            ? [{ ...entity.start }, { ...entity.end }]
+            : entity.type === 'arc' || entity.type === 'bezier' ? curvePoints(entity, 48) : [];
+          const vertices: Vec2[] = pointsFor(lines[0]);
           const remaining = lines.slice(1);
           while (remaining.length > 0) {
             const start = vertices[0];
             const end = vertices[vertices.length - 1];
-            const index = remaining.findIndex((candidate) => candidate.type === 'line'
-              && (near(candidate.start, end) || near(candidate.end, end)
-                || near(candidate.start, start) || near(candidate.end, start)));
+            const index = remaining.findIndex((candidate) => {
+              const points = pointsFor(candidate); const a = points[0], b = points.at(-1)!;
+              return near(a, end) || near(b, end) || near(a, start) || near(b, start);
+            });
             if (index < 0) {
-              this.ctx.log('JOIN failed: the selected lines do not form one connected chain.');
+              this.ctx.log('JOIN failed: the selected objects do not form one connected chain.');
               this.showCurrentPrompt();
               return;
             }
             const candidate = remaining.splice(index, 1)[0];
-            if (candidate.type !== 'line') continue;
-            if (near(candidate.start, end)) vertices.push({ ...candidate.end });
-            else if (near(candidate.end, end)) vertices.push({ ...candidate.start });
-            else if (near(candidate.end, start)) vertices.unshift({ ...candidate.start });
-            else vertices.unshift({ ...candidate.end });
+            const points = pointsFor(candidate); const a = points[0], b = points.at(-1)!;
+            if (near(a, end)) vertices.push(...points.slice(1));
+            else if (near(b, end)) vertices.push(...points.slice(0, -1).reverse());
+            else if (near(b, start)) vertices.unshift(...points.slice(0, -1));
+            else vertices.unshift(...points.slice(1).reverse());
           }
           const closed = vertices.length > 2 && near(vertices[0], vertices[vertices.length - 1]);
           if (closed) vertices.pop();
@@ -858,7 +1090,7 @@ export class CommandManager {
           joined.workPlane = cloneEntity(lines[0]).workPlane;
           this.ctx.history.execute(new ReplaceObjectsEdit('Join', lines, [], [joined], []));
           this.ctx.doc.selectEntity(joined.id);
-          this.ctx.log(`Joined ${lines.length} lines into one ${closed ? 'closed ' : ''}polyline.`);
+          this.ctx.log(`Joined ${lines.length} objects into one ${closed ? 'closed ' : ''}polyline.`);
         }
         break;
 
@@ -926,7 +1158,7 @@ export class CommandManager {
       case 'OFFSET':
         if (this.active.stepIndex === 0) {
           const entity = value as Entity;
-          if (entity.type !== 'line') { this.ctx.log('OFFSET currently accepts line objects only.'); return; }
+          if (!isOffsetEntity(entity)) { this.ctx.log('OFFSET accepts lines, circles, rectangles, and closed polylines.'); return; }
           data.entity = entity;
           this.ctx.doc.selectEntity(entity.id);
         } else if (this.active.stepIndex === 1) {
@@ -936,36 +1168,116 @@ export class CommandManager {
         } else {
           const entity = data.entity as Entity;
           const sidePoint = value as Vec2;
-          if (entity.type !== 'line') return;
-          const dx = entity.end.x - entity.start.x;
-          const dy = entity.end.y - entity.start.y;
-          const length = Math.hypot(dx, dy);
-          if (length < 1e-9) { this.ctx.log('Cannot offset a zero-length line.'); return; }
-          const midpoint = midpoint2(entity.start, entity.end);
-          const crossSide = dx * (sidePoint.y - midpoint.y) - dy * (sidePoint.x - midpoint.x);
-          const sign = crossSide >= 0 ? 1 : -1;
           const distance = data.distance as number;
-          const offset = { x: -dy / length * distance * sign, y: dx / length * distance * sign };
-          const parallel = this.ctx.doc.createLine(
-            { x: entity.start.x + offset.x, y: entity.start.y + offset.y },
-            { x: entity.end.x + offset.x, y: entity.end.y + offset.y },
-          );
+          let parallel: Entity | null = null;
+          if (entity.type === 'line') {
+            const dx = entity.end.x - entity.start.x, dy = entity.end.y - entity.start.y;
+            const length = Math.hypot(dx, dy);
+            if (length < 1e-9) { this.ctx.log('Cannot offset a zero-length line.'); return; }
+            const center = midpoint2(entity.start, entity.end);
+            const sign = dx * (sidePoint.y - center.y) - dy * (sidePoint.x - center.x) >= 0 ? 1 : -1;
+            const offset = { x: -dy / length * distance * sign, y: dx / length * distance * sign };
+            parallel = this.ctx.doc.createLine(
+              { x: entity.start.x + offset.x, y: entity.start.y + offset.y },
+              { x: entity.end.x + offset.x, y: entity.end.y + offset.y },
+            );
+          } else if (entity.type === 'circle') {
+            const outward = dist2(sidePoint, entity.center) >= entity.radius;
+            const radius = entity.radius + (outward ? distance : -distance);
+            if (radius <= 1e-6) { this.ctx.log('The inward offset is larger than the circle radius.'); return; }
+            parallel = this.ctx.doc.createCircle(entity.center, radius);
+          } else {
+            const vertices = closedVertices(entity);
+            if (!vertices) return;
+            const outward = !pointInClosedPolygon(sidePoint, vertices);
+            const offsetVertices = offsetPolygon(vertices, outward ? distance : -distance);
+            if (!offsetVertices) { this.ctx.log('OFFSET failed for this shape and distance.'); return; }
+            parallel = entity.type === 'rectangle'
+              ? this.ctx.doc.createRectangle(offsetVertices[0], offsetVertices[2])
+              : this.ctx.doc.createPolyline(offsetVertices, true);
+          }
+          if (!parallel) return;
           parallel.workPlane = cloneEntity(entity).workPlane;
           this.ctx.history.execute(new AddEntityEdit('Offset', parallel));
           this.ctx.doc.selectEntity(parallel.id);
-          this.ctx.log(`Parallel line created at ${distance.toFixed(3)} mm.`);
+          this.ctx.log(`Offset object created at ${distance.toFixed(3)} mm.`);
+        }
+        break;
+
+      case 'CHAMFER':
+      case 'FILLET':
+        if (this.active.stepIndex === 0) {
+          const edge = value as SolidEdgeSelection;
+          data.edge = edge;
+          this.ctx.doc.selectSolid(edge.solidId);
+          this.ctx.log('Edge selected.');
+        } else {
+          const amount = Math.abs(value as number);
+          if (amount < 1e-6) { this.ctx.log('Edge modification size must be greater than zero.'); return; }
+          const edge = data.edge as SolidEdgeSelection;
+          const solid = this.ctx.doc.getSolid(edge.solidId);
+          if (!solid) { this.ctx.log('Solid not found.'); return; }
+          const before = cloneSolid(solid);
+          const mesh = await modifySolidEdge(solid.mesh, edge, amount, this.active.name === 'FILLET');
+          if (!mesh) {
+            this.ctx.log(`${this.active.name} failed. Use a smaller value or select a convex edge.`);
+            return;
+          }
+          solid.mesh = mesh;
+          solid.feature = { kind: 'mesh' };
+          solid.revision++;
+          this.ctx.history.recordApplied(new UpdateSolidEdit(this.active.name === 'FILLET' ? 'Fillet edge' : 'Chamfer edge', before, cloneSolid(solid)));
+          this.ctx.doc.notify();
+          this.ctx.log(`${this.active.name === 'FILLET' ? 'Fillet' : 'Chamfer'} complete: ${amount.toFixed(3)} mm.`);
         }
         break;
 
       case 'MOVE':
         if (this.active.stepIndex === 0) data.object = value;
-        else if (this.active.stepIndex === 1) data.basePoint = value;
+        else if (this.active.stepIndex === 1) {
+          data.basePoint = value;
+          data.baseWorldPoint = data.pendingMoveWorldPoint;
+          delete data.pendingMoveWorldPoint;
+        }
         else if (this.active.stepIndex === 2) {
           const base = data.basePoint as Vec2;
           const target = value as Vec2;
           const delta = { x: target.x - base.x, y: target.y - base.y };
-          this.ctx.moveObject(data.object as Entity | string, delta);
+          const baseWorld = data.baseWorldPoint as Vec3 | undefined;
+          const targetWorld = data.pendingMoveWorldPoint as Vec3 | undefined;
+          const worldDelta = baseWorld && targetWorld ? {
+            x: targetWorld.x - baseWorld.x,
+            y: targetWorld.y - baseWorld.y,
+            z: targetWorld.z - baseWorld.z,
+          } : undefined;
+          if (worldDelta) this.ctx.moveObject(data.object as Entity | string, delta, worldDelta);
+          else this.ctx.moveObject(data.object as Entity | string, delta);
+          delete data.pendingMoveWorldPoint;
           this.ctx.log(`Object moved by ${formatPoint(delta)}`);
+        }
+        break;
+
+      case 'ROTATE':
+        if (this.active.stepIndex === 0 && step.kind === 'entity' && value) {
+          const entity = value as Entity;
+          const entities = data.entities as Entity[];
+          if (!entities.some((item) => item.id === entity.id)) {
+            entities.push(entity);
+            this.ctx.doc.selectEntity(entity.id, true);
+          }
+          this.ctx.log('Object added. Select another or press Enter.');
+          return;
+        } else if (this.active.stepIndex === 1) {
+          data.basePoint = value;
+        } else if (this.active.stepIndex === 2) {
+          const base = data.basePoint as Vec2;
+          const target = value as Vec2;
+          const angle = Math.atan2(target.y - base.y, target.x - base.x);
+          const originals = data.entities as Entity[];
+          const rotated = originals.map((entity) => rotateEntity(entity, base, angle, this.ctx.doc));
+          this.ctx.history.execute(new ReplaceObjectsEdit('Rotate', originals, [], rotated, []));
+          rotated.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
+          this.ctx.log(`Rotated ${rotated.length} object(s) by ${(angle * 180 / Math.PI).toFixed(3)}°.`);
         }
         break;
 
@@ -1056,7 +1368,7 @@ export class CommandManager {
 
     this.active.stepIndex++;
     while (this.active && this.active.steps[this.active.stepIndex]?.kind === 'done') {
-      if (this.active.name === 'LINE' || this.active.name === 'CIRCLE' || this.active.name === 'RECTANGLE' || this.active.name === 'POLYGON' || this.active.name === 'MEASURE') {
+      if (['LINE','CIRCLE','RECTANGLE','POLYGON','ARC','BEZIER','TEXT','MEASURE'].includes(this.active.name)) {
         // Drawing tools stay active until Escape or another command is chosen.
         this.active.stepIndex = 0;
         this.active.data = {};
@@ -1125,6 +1437,9 @@ export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5):
         }
         break;
       }
+      case 'arc':
+      case 'bezier': { const pts=curvePoints(e); for(let j=1;j<pts.length;j++){const a=pts[j-1],b=pts[j],dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy;const t=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/(l||1)));if(Math.hypot(point.x-(a.x+t*dx),point.y-(a.y+t*dy))<=tolerance)return e;} break; }
+      case 'text': { const b=entityBounds(e); if(point.x>=b.min.x-tolerance&&point.x<=b.max.x+tolerance&&point.y>=b.min.y-tolerance&&point.y<=b.max.y+tolerance)return e; break; }
     }
   }
   return null;
