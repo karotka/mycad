@@ -155,6 +155,25 @@ feature. Do not guess — pick one deliberately.
 sync. The model tree does it properly and is async throughout. So the properties
 panel probably should not offer size fields for feature-backed solids at all.
 
+### The CSP has to allow `unsafe-eval`, and should not have to
+
+`index.html` allows `'unsafe-eval'` for one reason: manifold's Emscripten
+bindings build their invokers with `new Function(args, body)`. embind composes
+JavaScript out of strings from the type signatures it registers, so compiling
+the WASM is not the part that needs permission and `'wasm-unsafe-eval'` alone is
+not enough. Without it every boolean, extrusion and sweep throws on its first
+call. Upstream still does this in 3.5.1, so upgrading does not fix it.
+
+The real fix is a manifold build with `-sDYNAMIC_EXECUTION=0`, which makes
+embind fall back to closures. That means building manifold from source and
+vendoring it, or getting the option upstream. Until then the policy stays as it
+is, and `csp.test.ts` pins the coupling — the tests run in Node, where there is
+no policy to violate, so tightening the CSP breaks the app while every test
+still passes. That is how this got shipped in the first place.
+
+Worth doing at the same time: **manifold 3.5.1** is out (we are on 2.5.1) and
+its WASM is 541 KB against our 916 KB. Its API differs; treat it as its own job.
+
 ### No truncated cone (frustum)
 
 A cone tapers to a point; a cylinder has one radius. Nothing has two. A trunk,

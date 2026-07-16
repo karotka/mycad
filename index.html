@@ -2,7 +2,22 @@
 <html lang="cs">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-src 'none'" />
+    <!--
+      'unsafe-eval' is here for manifold, and nothing else. Its Emscripten
+      bindings build their invokers with `new Function(args, body)` — embind
+      composes JavaScript out of strings from the type signatures it registers,
+      so compiling the WASM is not the part that needs permission, and
+      'wasm-unsafe-eval' alone is not enough. Without this every boolean,
+      extrusion and sweep fails at the first call. Upstream still does it in
+      3.5.1; the real fix is a build with -sDYNAMIC_EXECUTION=0. See BACKLOG.md.
+
+      What it costs is narrow: 'unsafe-eval' does not admit an injected <script>
+      — that would need 'unsafe-inline' or another source — so it only widens
+      what already-trusted code may do with a string. The renderer loads no
+      remote content (contextIsolation, sandbox, will-navigate blocked), and we
+      call neither eval nor Function ourselves.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-src 'none'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MyCAD</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
