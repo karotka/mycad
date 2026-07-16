@@ -184,14 +184,8 @@ Nothing here bites yet, but all of it is O(n) or worse per frame:
 > no interchange format holds it — which is why DXF is the export path and not the
 > native one.
 
-- **`electron/main.ts` `quick-save` can write outside the allowlist.** When
-  `options.filePath` is absent it builds
-  `path.join(app.getPath('documents'), defaultPath)`, and `defaultPath` comes from
-  the renderer and is only checked for being a non-empty string — so `../../..`
-  escapes. `path.basename()` fixes it. Requires a compromised renderer to matter,
-  but it is the one hole in an otherwise careful IPC model (sender checks, path
-  allowlist, sandbox, CSP all present and correct).
-- **`writableFiles` grows unbounded** for the session.
+- **`writableFiles` grows unbounded** for the session — after opening fifty
+  files the renderer may write to all fifty until it quits.
 - **`ProjectIO` serialises `doc.entities` directly** — the in-memory model *is*
   the file format, so any refactor of the entity types silently breaks saved
   files. Wants a DTO boundary.

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import { safeFileName } from './paths';
 
 // Names the application menu and the About box. Without it the menu reads
 // "Electron" in development, since the bundle name only exists once packaged.
@@ -178,8 +179,9 @@ ipcMain.handle('quick-save', async (event, options: { filePath?: string; default
   assertTrustedSender(event);
   validateContent(options?.content);
   if (options?.filePath !== undefined) validateFilePath(options.filePath);
-  const defaultPath = typeof options?.defaultPath === 'string' && options.defaultPath.trim() ? options.defaultPath : 'model.mycad';
-  const filePath = options.filePath ?? path.join(app.getPath('documents'), defaultPath);
+  // A quick save writes with no dialog, so the renderer may propose a name but
+  // never a path: joining one on would step outside the documents folder.
+  const filePath = options.filePath ?? path.join(app.getPath('documents'), safeFileName(options?.defaultPath, 'model.mycad'));
   if (options.filePath && !writableFiles.has(options.filePath)) throw new Error('The renderer cannot write to this path.');
   await fs.writeFile(filePath, options.content, 'utf8');
   writableFiles.add(filePath);
