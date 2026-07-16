@@ -9,6 +9,7 @@
  */
 import { curvePoints, dimensionGeometry, ellipsePoints, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
+import { isStrokeFont, strokeText } from '../text/strokeFont';
 
 export interface EntityPath {
   points: Vec2[];
@@ -75,7 +76,14 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
       return paths.filter((path) => hasLength(path.points));
     }
     case 'text':
-      return [];
+      // Only the single-stroke font has a path a pen could follow. A system
+      // font's glyphs are filled outlines, and following those engraves the
+      // edges of each letter rather than the letter — so it stays empty here
+      // and the caller reports it, which is the honest answer.
+      return isStrokeFont(entity.font)
+        ? strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })
+          .map((points) => ({ points, closed: false }))
+        : [];
   }
 }
 

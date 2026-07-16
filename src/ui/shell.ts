@@ -167,6 +167,7 @@ export function shellHtml(tools: ShellTools): string {
     <strong>Text style</strong>
     <label>Font
       <select id="text-font">
+        <option value="Single-stroke">Single-stroke (plottable)</option>
         <option value="Arial">Arial</option>
         <option value="Helvetica">Helvetica</option>
         <option value="Verdana">Verdana</option>

@@ -373,24 +373,26 @@ touches the file format, so it waits with the rest of that item.
 
 ## Text: single-stroke fonts
 
-`TextEntity` renders through the canvas with a system outline font. CAD wants
-**single-stroke** (engraving) fonts — one path down the middle of each glyph, the
-way AutoCAD's SHX fonts (txt, simplex, romans) or Hershey fonts work.
+> **Done for the plotter.** The Hershey simplex roman font ("rowmans") is
+> vendored as data in `core/text/hersheyData.ts` — public domain, with the
+> acknowledgement its licence asks for — and `strokeFont.ts` decodes it. Both the
+> 2D renderer and `entityToPaths` draw from that one function, so what is on the
+> screen is what the pen draws. `TextEntity.font` chooses: `Single-stroke` plots,
+> and a system font is still filled and still reported as unplottable, which is
+> the honest answer rather than a silent gap.
 
-Why it matters beyond looks: an outline font engraves as the *outline* of each
-letter, not the letter. Anything that drives a tool — G-code below, DXF export to
-a machine — needs the single stroke.
+What is left:
 
-Shape of the work:
-
-- A stroke font is glyph → list of polylines. Hershey fonts are public domain and
-  compact; SHX is AutoCAD's own format and would also make DXF text round-trip
-  better.
-- `TextEntity` would gain a font kind, and the renderer a stroke path instead of
-  `fillText`. Grips, bounds and picking would then work off the real geometry
-  rather than a measured box.
-- The 3D renderer currently has no text geometry at all; strokes would give it
-  some for free.
+- **No 3D text.** The 3D renderer has no text geometry at all, and now that
+  glyphs are polylines it could have some cheaply — they are just polylines on
+  the work plane.
+- **One font, ASCII only.** Anything outside 32..126 is skipped, so `č` draws
+  nothing. Hershey has cyrillic and a script face in the same format; the decoder
+  takes them unchanged, and the data is one more file each.
+- **DXF export of text** would want this too — it is the same reason: an outline
+  is not a path a machine can follow.
+- **`entityBounds` still guesses** for system fonts (`length × height × .62`).
+  A stroke font measures itself exactly, so only the unplottable case is a guess.
 
 ---
 

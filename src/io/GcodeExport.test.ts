@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { exportGcode } from './GcodeExport';
 import { defaultGcodeOptions } from '../core/settings';
+import { STROKE_FONT } from '../core/text/strokeFont';
 
 function setup() {
   const doc = new Document();
@@ -79,16 +80,34 @@ describe('exportGcode', () => {
     expect(gcode).not.toContain('G1 X');
   });
 
-  it('reports text rather than dropping it silently', () => {
+  it('reports a system font rather than dropping it silently', () => {
     const doc = setup();
     doc.addEntity(doc.createText({ x: 0, y: 0 }, 'HELLO', 5, 'Arial'));
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
     const { skipped, gcode } = exportGcode(doc);
-    // Its glyphs are filled outlines; a single stroke through them needs an
-    // engraving font. Saying so is the difference between a known gap and a
-    // file that quietly came out missing a label.
+    // Its glyphs are filled outlines; following those engraves the edges of each
+    // letter rather than the letter. Saying so is the difference between a known
+    // gap and a file that quietly came out missing its label.
     expect(skipped).toEqual({ text: 1 });
     expect(gcode).toContain('G1 X10 Y0 F800');
+  });
+
+  it('plots text in the single-stroke font', () => {
+    const doc = setup();
+    doc.addEntity(doc.createText({ x: 20, y: 10 }, 'AB', 5, STROKE_FONT));
+    const { skipped, moveCount, gcode } = exportGcode(doc);
+
+    expect(skipped).toEqual({});
+    expect(moveCount).toBeGreaterThan(5);
+    // Each run lifts the pen, travels to where the next begins and puts it down:
+    // letters are strokes, not one continuous scribble.
+    expect(gcode).toContain('G1 Z0 F800');
+    expect(gcode.split('\n').filter((line) => line.startsWith('G0 X')).length).toBeGreaterThan(2);
+    // And it lands where it was put.
+    const first = gcode.split('\n').find((line) => line.startsWith('G0 X'))!;
+    const [, x, y] = first.match(/G0 X([-\d.]+) Y([-\d.]+)/)!;
+    expect(Number(x)).toBeGreaterThanOrEqual(20);
+    expect(Number(y)).toBeGreaterThanOrEqual(10);
   });
 
   it('refuses geometry that does not lie on the world plane', () => {

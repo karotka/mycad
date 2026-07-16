@@ -1,5 +1,6 @@
 import type { Vec2, Vec3 } from '../../math/geometry';
 import type { WorkPlane } from '../../math/workplane';
+import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
 
 export type EntityType = 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
 
@@ -363,7 +364,11 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     case 'arc':
     case 'bezier': { const p = curvePoints(e); return { min: { x: Math.min(...p.map(v => v.x)), y: Math.min(...p.map(v => v.y)) }, max: { x: Math.max(...p.map(v => v.x)), y: Math.max(...p.map(v => v.y)) } }; }
     case 'text': {
-      const width = e.text.length * e.height * .62;
+      // A stroke font knows its own width exactly, so the box is the letters
+      // rather than a guess at them — which is what picking and zoom-extents
+      // work off. The .62 stays for system fonts, where measuring the glyphs
+      // needs a canvas this has no business holding.
+      const width = isStrokeFont(e.font) ? strokeTextWidth(e.text, e.height) : e.text.length * e.height * .62;
       const angle = e.rotation ?? 0;
       const rotate = (point: Vec2): Vec2 => ({
         x: e.position.x + point.x * Math.cos(angle) - point.y * Math.sin(angle),

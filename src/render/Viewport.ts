@@ -4,6 +4,7 @@ import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
 import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
+import { isStrokeFont, strokeText } from '../core/text/strokeFont';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
@@ -226,6 +227,20 @@ export class Canvas2DRenderer {
       case 'arc':
       case 'bezier': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=worldToScreen(v,w,h,this.pan,this.zoom); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
       case 'text': {
+        // The single-stroke font is drawn as the strokes it is, from the same
+        // function the exporter uses — so what is on the screen is what the pen
+        // will draw. A system font has no strokes and is still filled.
+        if (isStrokeFont(entity.font)) {
+          this.ctx.beginPath();
+          for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })) {
+            stroke.forEach((point, index) => {
+              const screen = worldToScreen(point, w, h, this.pan, this.zoom);
+              if (index === 0) this.ctx.moveTo(screen.x, screen.y); else this.ctx.lineTo(screen.x, screen.y);
+            });
+          }
+          this.ctx.stroke();
+          break;
+        }
         const p=worldToScreen(entity.position,w,h,this.pan,this.zoom);
         this.ctx.save();
         this.ctx.translate(p.x, p.y);
