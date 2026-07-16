@@ -25,6 +25,7 @@ import { DrawingInteractionController } from './interaction/DrawingInteractionCo
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { resolveDraftingPoint } from './interaction/DraftingService';
+import { resolvePointerGesture } from './interaction/PointerGesture';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -1141,43 +1142,54 @@ viewport.addEventListener('pointermove', (event) => {
   redraw();
 });
 
+/** True when the press landed on an object that is already selected. */
+function pressedOnSelectedObject(event: PointerEvent): boolean {
+  const point = cadDocument.viewMode === '2d' ? rawWorldPoint(event) : rawWorldPoint3d(event);
+  const tolerance = cadDocument.viewMode === '2d' ? 8 / renderer2d.zoom : Math.max(0.2, renderer3d.orbitRadius * 0.025);
+  const entity = point ? hitTestEntity(cadDocument.entities, point, tolerance) : null;
+  const solid = cadDocument.viewMode === '3d'
+    ? renderer3d.pickSolid(renderer3d.renderer.domElement, event.clientX, event.clientY)
+    : point ? hitTestSolid2d(cadDocument, point)?.id : null;
+  return Boolean(
+    (entity && cadDocument.selectedEntityIds.has(entity.id))
+    || (solid && cadDocument.selectedSolidIds.has(solid))
+  );
+}
+
 viewport.addEventListener('pointerdown', async (event) => {
-  if ((event.target as HTMLElement).closest('.view-toggle')) return;
-  if (zoomWindowMode && event.button === 0) {
+  const gesture = resolvePointerGesture({
+    button: event.button,
+    metaKey: event.metaKey,
+    altKey: event.altKey,
+    onViewToggle: Boolean((event.target as HTMLElement).closest('.view-toggle')),
+    zoomWindowArmed: zoomWindowMode,
+    gripLatched: gripController.isDragging && gripInteraction.isLatched,
+    awaitingPoint: drawingInteraction.isPointStep,
+    // Only the right button can open an object menu, and only that asks for a pick.
+    overSelectedObject: event.button === 2 && pressedOnSelectedObject(event),
+  });
+
+  if (gesture.kind === 'ignore' || gesture.kind === 'objectMenu') return;
+  if (gesture.kind === 'zoomWindow') {
     selectionController.beginWindow(event, 'zoom');
     event.preventDefault();
     return;
   }
-  // Command+click is only the beginning of a possible orbit gesture. The 3D
-  // transition is deferred until Viewport3D observes real pointer movement.
-  if (event.button === 0 && event.metaKey) {
+  // The 3D transition is deferred until Viewport3D observes real pointer movement.
+  if (gesture.kind === 'orbit') {
     event.preventDefault();
     return;
   }
-  if (event.button === 2) {
-    if (gripController.isDragging && gripInteraction.isLatched) return;
-    if (drawingInteraction.isPointStep) return;
-    const point = cadDocument.viewMode === '2d' ? rawWorldPoint(event) : rawWorldPoint3d(event);
-    const tolerance = cadDocument.viewMode === '2d' ? 8 / renderer2d.zoom : Math.max(0.2, renderer3d.orbitRadius * 0.025);
-    const entity = point ? hitTestEntity(cadDocument.entities, point, tolerance) : null;
-    const solid = cadDocument.viewMode === '3d'
-      ? renderer3d.pickSolid(renderer3d.renderer.domElement, event.clientX, event.clientY)
-      : point ? hitTestSolid2d(cadDocument, point)?.id : null;
-    const opensObjectMenu = Boolean(
-      (entity && cadDocument.selectedEntityIds.has(entity.id))
-      || (solid && cadDocument.selectedSolidIds.has(solid))
-    );
-    if (opensObjectMenu) return;
-    suppressNextContextMenu = true;
-    window.setTimeout(() => { suppressNextContextMenu = false; }, 800);
-  }
-  if (event.button === 1 || event.button === 2 || (event.button === 0 && event.altKey)) {
+  if (gesture.kind === 'pan') {
+    if (gesture.suppressContextMenu) {
+      suppressNextContextMenu = true;
+      window.setTimeout(() => { suppressNextContextMenu = false; }, 800);
+    }
     const rect = viewport.getBoundingClientRect();
     navigation.beginPan({ x: event.clientX - rect.left, y: event.clientY - rect.top }, event.pointerId);
     event.preventDefault();
     return;
   }
-  if (event.button !== 0) return;
   if (gripController.isDragging && gripInteraction.isLatched) {
     const snap = nearestGripTargetSnap(event);
     const point = gripEditingPoint(event, snap);
