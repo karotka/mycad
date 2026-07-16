@@ -412,6 +412,7 @@ const menuActions: Record<string, () => void> = {
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': () => { void projectController.exportStl(); },
+  'export-gcode': () => { void projectController.exportGcode(); },
   undo: () => { log(history.undo() ? 'Undo complete.' : 'Nothing to undo.'); redraw(); },
   redo: () => { log(history.redo() ? 'Redo complete.' : 'Nothing to redo.'); redraw(); },
 };

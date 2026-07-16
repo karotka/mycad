@@ -5,6 +5,7 @@ import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
+import { DEFAULT_GCODE_OPTIONS, exportGcode, type GcodeOptions } from '../io/GcodeExport';
 
 export interface ProjectControllerCallbacks {
   captureView(): ProjectViewState;
@@ -143,6 +144,23 @@ export class ProjectController {
       return;
     }
     await this.saveText(exportAsciiStl(this.doc), 'model.stl', 'STL model', 'stl');
+  }
+
+  async exportGcode(options: GcodeOptions = DEFAULT_GCODE_OPTIONS): Promise<void> {
+    const result = exportGcode(this.doc, options);
+    if (result.layers.length === 0) {
+      this.callbacks.log('G-code export: no visible 2D geometry to cut.');
+      return;
+    }
+    // What came out, in the order it came out, because that order is the thing
+    // the layer panel is for and the thing a wrong file gets wrong.
+    this.callbacks.log(`G-code: ${result.moveCount} moves over ${result.layers.length} layer(s): ${result.layers.join(' → ')}.`);
+    const skipped = Object.entries(result.skipped).map(([type, count]) => `${type}×${count}`).join(', ');
+    if (skipped) this.callbacks.log(`No tool path for: ${skipped}. Text needs a single-stroke font.`);
+    if (result.offPlane > 0) {
+      this.callbacks.log(`${result.offPlane} object(s) skipped: they do not lie on the world XY plane, and Z belongs to the tool.`);
+    }
+    await this.saveText(result.gcode, 'model.gcode', 'G-code', 'gcode');
   }
 
   private async pickFile(accept: string, name: string, extension: string): Promise<{ content: string; name: string; path?: string } | undefined> {

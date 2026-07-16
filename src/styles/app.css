@@ -477,7 +477,7 @@ html, body, #app {
 .layer-panel header strong { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; }
 .layer-panel header button { width: 24px; height: 20px; border: 1px solid #52606c; background: #28313a; color: #fff; cursor: pointer; }
 .layer-list { max-height: 210px; overflow-y: auto; border-top: 1px solid #343d46; }
-.layer-row { display: grid; grid-template-columns: 42px 25px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
+.layer-row { display: grid; grid-template-columns: 18px 42px 25px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
 .layer-row { cursor: pointer; }
 .layer-row:hover { background: #242d35; }
 .layer-row.active { background: #094771; box-shadow: inset 2px 0 #67c9ff; }
@@ -495,6 +495,13 @@ html, body, #app {
 .layer-row .layer-delete { color: #e18b8b; font-size: 18px; line-height: 1; }
 .layer-row .layer-delete:hover:not(:disabled) { background: #672b31; color: #fff; }
 .layer-row .layer-delete:disabled { color: #4e5861; cursor: default; }
+.layer-row .layer-drag { padding: 0; color: #5c6873; cursor: grab; font-size: 11px; line-height: 1; }
+.layer-row .layer-drag:active { cursor: grabbing; }
+.layer-row:hover .layer-drag { color: #9aa6b1; }
+.layer-row.dragging { opacity: 0.4; }
+/* The line sits where the layer would land, so the order is visible before the
+   drop rather than after it. */
+.layer-row.drop-before { box-shadow: inset 0 2px #67c9ff; }
 
 .statusbar .coords {
   font-family: 'SF Mono', monospace;

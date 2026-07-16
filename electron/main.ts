@@ -36,7 +36,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'undo' | 'redo';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-gcode' | 'undo' | 'redo';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -67,7 +67,13 @@ function buildMenu(win: BrowserWindow): void {
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
         { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: send('save-as') },
         { type: 'separator' },
-        { label: 'Export STL…', accelerator: 'CmdOrCtrl+E', click: send('export-stl') },
+        {
+          label: 'Export',
+          submenu: [
+            { label: 'STL…', accelerator: 'CmdOrCtrl+E', click: send('export-stl') },
+            { label: 'G-code…', accelerator: 'Shift+CmdOrCtrl+G', click: send('export-gcode') },
+          ],
+        },
         ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const }]),
       ],
     },
