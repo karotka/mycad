@@ -3,11 +3,16 @@ export interface InputControllerCallbacks {
   undo(): void;
   redo(): void;
   save(): void;
+  saveAs(): void;
   newProject(): void;
   open(): void;
   export(): void;
   deleteSelection(): boolean;
   show2d(): void;
+  toggleObjectSnap(): void;
+  toggleOrtho(): void;
+  togglePolar(): void;
+  toggleProperties(): void;
   commandActive(): boolean;
   commandInputChanged(): void;
 }
@@ -21,6 +26,15 @@ export class InputController {
       return;
     }
 
+    if (event.key === 'F3' || event.key === 'F8' || event.key === 'F10') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'F3') this.callbacks.toggleObjectSnap();
+      else if (event.key === 'F8') this.callbacks.toggleOrtho();
+      else this.callbacks.togglePolar();
+      return;
+    }
+
     const key = event.key.toLowerCase();
     const primaryModifier = event.metaKey || event.ctrlKey;
     if (primaryModifier && key === 'z') {
@@ -28,7 +42,8 @@ export class InputController {
       if (event.shiftKey) this.callbacks.redo(); else this.callbacks.undo();
       return;
     }
-    if (primaryModifier && key === 's') { event.preventDefault(); this.callbacks.save(); return; }
+    if (primaryModifier && key === 's') { event.preventDefault(); if (event.shiftKey) this.callbacks.saveAs(); else this.callbacks.save(); return; }
+    if (primaryModifier && key === '1') { event.preventDefault(); this.callbacks.toggleProperties(); return; }
     if (primaryModifier && key === 'n') { event.preventDefault(); this.callbacks.newProject(); return; }
     if (event.metaKey && key === 'o') { event.preventDefault(); this.callbacks.open(); return; }
     if (event.metaKey && key === 'e') { event.preventDefault(); this.callbacks.export(); return; }

@@ -1,12 +1,13 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneEntity, dimensionGeometry, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
 import { solidBounds } from './PickingService';
 
 export type GripMode = 'end' | 'center' | 'middle';
-export type Grip = { point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge' };
+/** `angle` (radians) orients an edge grip along the edge it sits on. */
+export type Grip = { point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge'; angle?: number };
 
 type DragState = {
   objectId: string;
@@ -29,6 +30,8 @@ export class GripController {
 
   get isDragging(): boolean { return this.drag !== null; }
   get draggingObjectId(): string | null { return this.drag?.objectId ?? null; }
+  get draggingGripIndex(): number | null { return this.drag?.gripIndex ?? null; }
+  get draggingOrigin(): Vec2 | null { return this.drag ? { ...this.drag.origin } : null; }
 
   applyRelativeDistance(distance: number): boolean {
     if (!this.drag || !Number.isFinite(distance) || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return false;
@@ -56,6 +59,56 @@ export class GripController {
     return true;
   }
 
+  applyRelativeOffset(offset: Vec2): boolean {
+    if (!this.drag || this.drag.objectType !== 'entity') return false;
+    this.update({ x: this.drag.origin.x + offset.x, y: this.drag.origin.y + offset.y });
+    return true;
+  }
+
+  applyRelativePolar(distance: number, angleDegrees: number): boolean {
+    if (!this.drag || !Number.isFinite(distance) || !Number.isFinite(angleDegrees) || this.drag.objectType !== 'entity') return false;
+    const angle = angleDegrees * Math.PI / 180;
+    this.update({ x: this.drag.origin.x + Math.cos(angle) * distance, y: this.drag.origin.y + Math.sin(angle) * distance });
+    return true;
+  }
+
+  endpointGuide(cursor: Vec2, referencePointOverride: Vec2 | null = null): { lineStart: Vec2; lineEnd: Vec2; snapPoint: Vec2; angle: number } | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const referencePoint = referencePointOverride;
+    if (!referencePoint) return null;
+    const snapPoint = Math.abs(cursor.x - referencePoint.x) >= Math.abs(cursor.y - referencePoint.y)
+      ? { x: cursor.x, y: referencePoint.y }
+      : { x: referencePoint.x, y: cursor.y };
+    return {
+      lineStart: referencePoint,
+      lineEnd: snapPoint,
+      snapPoint,
+      angle: Math.atan2(snapPoint.y - referencePoint.y, snapPoint.x - referencePoint.x) * 180 / Math.PI,
+    };
+  }
+
+  endpointBase(referencePointOverride: Vec2 | null = null): Vec2 | null {
+    if (!referencePointOverride) return null;
+    return { ...referencePointOverride };
+  }
+
+  polylineEndpointAnchor(cursor: Vec2, tolerance: number): Vec2 | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity || this.drag.originalEntity.type !== 'polyline' || this.drag.originalEntity.closed) return null;
+    const original = this.drag.originalEntity;
+    let best = tolerance;
+    let result: Vec2 | null = null;
+    for (let index = 0; index < original.vertices.length; index++) {
+      if (index === this.drag.gripIndex) continue;
+      const point = original.vertices[index];
+      const distance = Math.hypot(cursor.x - point.x, cursor.y - point.y);
+      if (distance <= best) {
+        best = distance;
+        result = { ...point };
+      }
+    }
+    return result;
+  }
+
   changedDimension(): string | null {
     if (!this.drag || this.mode === 'center') return null;
     if (this.drag.objectType === 'entity') {
@@ -72,6 +125,9 @@ export class GripController {
       }
       if (entity?.type === 'circle') {
         return `R ${entity.radius.toFixed(2)} mm · Ø ${(entity.radius * 2).toFixed(2)} mm`;
+      }
+      if (entity?.type === 'dimension') {
+        return `Dimension: ${Math.hypot(entity.end.x - entity.start.x, entity.end.y - entity.start.y).toFixed(entity.precision)}`;
       }
       if (entity?.type === 'polyline') {
         const count = entity.closed ? entity.vertices.length - 1 : entity.vertices.length;
@@ -100,18 +156,23 @@ export class GripController {
     return `Edge: ${Math.abs(length).toFixed(2)} mm`;
   }
 
+  /** Angle of the edge a midpoint grip belongs to, so it can be drawn along it. */
+  private static edgeAngle(a: Vec2, b: Vec2): number {
+    return Math.atan2(b.y - a.y, b.x - a.x);
+  }
+
   activeGrips(): Grip[] {
     const entity = this.doc.getSelectedEntities()[0];
     const solid = this.doc.getSelectedSolids()[0];
     // Lines and rectangles expose their ordinary AutoCAD-like edit grips as
     // soon as they are selected; no context-menu mode is required.
     if (entity?.type === 'line' && this.mode === 'middle') {
-      return [{ point: midpoint2(entity.start, entity.end), index: 0, shape: 'edge' }];
+      return [{ point: midpoint2(entity.start, entity.end), index: 0, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) }];
     }
     if (entity?.type === 'line') return [
       { point: entity.start, index: 0, shape: 'square' },
       { point: entity.end, index: 1, shape: 'square' },
-      { point: midpoint2(entity.start, entity.end), index: 2, shape: 'edge' },
+      { point: midpoint2(entity.start, entity.end), index: 2, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) },
     ];
     if (entity?.type === 'rectangle' && this.mode === 'center') {
       return [{ point: midpoint2(entity.first, entity.opposite), index: 0, shape: 'square' }];
@@ -129,6 +190,7 @@ export class GripController {
           point: midpoint2(point, corners[(index + 1) % 4]),
           index: index + 4,
           shape: 'edge' as const,
+          angle: GripController.edgeAngle(point, corners[(index + 1) % 4]),
         })),
       ];
     }
@@ -156,6 +218,14 @@ export class GripController {
     if (entity?.type === 'bezier' && !this.mode) return [entity.start,entity.control1,entity.control2,entity.end].map((point,index)=>({point,index,shape:'square'}));
     if (entity?.type === 'arc' && !this.mode) { const point=(a:number)=>({x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}); return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
+    if (entity?.type === 'dimension' && !this.mode) {
+      const geometry = dimensionGeometry(entity);
+      return [
+        { point: entity.start, index: 0, shape: 'square' },
+        { point: entity.end, index: 1, shape: 'square' },
+        { point: entity.dimensionKind === 'aligned' ? midpoint2(geometry.dimensionLine[0], geometry.dimensionLine[1]) : entity.offset, index: 2, shape: 'edge' },
+      ];
+    }
     if (!entity && solid && !this.mode) {
       const b = solidBounds(solid);
       return [b.minZ, b.maxZ].flatMap((z, level) => [
@@ -191,7 +261,7 @@ export class GripController {
         grips.push(
           { point: entity.start, index: base, shape: 'square' },
           { point: entity.end, index: base + 1, shape: 'square' },
-          { point: midpoint2(entity.start, entity.end), index: base + 2, shape: 'edge' },
+          { point: midpoint2(entity.start, entity.end), index: base + 2, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) },
         );
       } else if (entity.type === 'rectangle') {
         const corners = [
@@ -202,7 +272,12 @@ export class GripController {
         ];
         corners.forEach((point, index) => {
           grips.push({ point, index: base + index, shape: 'square' });
-          grips.push({ point: midpoint2(point, corners[(index + 1) % 4]), index: base + index + 4, shape: 'edge' });
+          grips.push({
+            point: midpoint2(point, corners[(index + 1) % 4]),
+            index: base + index + 4,
+            shape: 'edge',
+            angle: GripController.edgeAngle(point, corners[(index + 1) % 4]),
+          });
         });
       } else if (entity.type === 'circle') {
         grips.push({ point: entity.center, index: base, shape: 'square' });
@@ -322,6 +397,11 @@ export class GripController {
     } else if(entity.type==='bezier'&&original.type==='bezier'){ if(this.drag.gripIndex===0)entity.start={...cursor};else if(this.drag.gripIndex===1)entity.control1={...cursor};else if(this.drag.gripIndex===2)entity.control2={...cursor};else entity.end={...cursor};
     } else if(entity.type==='arc'&&original.type==='arc'){ if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
+    else if (entity.type === 'dimension' && original.type === 'dimension') {
+      if (this.drag.gripIndex === 0) entity.start = { ...cursor };
+      else if (this.drag.gripIndex === 1) entity.end = { ...cursor };
+      else entity.offset = { ...cursor };
+    }
     else if (entity.type === 'rectangle' && original.type === 'rectangle') {
       if (this.mode === 'center') {
         entity.first = { x: original.first.x + dx, y: original.first.y + dy };

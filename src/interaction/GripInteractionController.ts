@@ -1,17 +1,18 @@
 import type { Entity, Solid } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
-import { GripController, type GripMode } from './GripController';
+import { GripController } from './GripController';
+import type { ObjectSnapMode } from './SnapService';
 
 export class GripInteractionController {
   private latched = false;
-  private snapMode: GripMode | null = null;
+  private snapMode: ObjectSnapMode | null = null;
 
   constructor(private readonly grips: GripController, private readonly viewport: HTMLElement) {}
 
   get isLatched(): boolean { return this.latched; }
-  get targetSnapMode(): GripMode | null { return this.snapMode; }
+  get targetSnapMode(): ObjectSnapMode | null { return this.snapMode; }
 
-  setTargetSnapMode(mode: GripMode | null): void { this.snapMode = mode; }
+  setTargetSnapMode(mode: ObjectSnapMode | null): void { this.snapMode = mode; }
 
   begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, point: Vec2, pointerId: number): void {
     this.grips.begin(entity, solid, gripIndex, point);

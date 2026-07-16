@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PreviewController } from './PreviewController';
 
 function element() {
-  return { textContent: '', style: { left: '', top: '' }, hidden: true } as unknown as HTMLElement;
+  return { textContent: '', style: { left: '', top: '' }, hidden: true, dataset: {} } as unknown as HTMLElement;
 }
 
 describe('PreviewController', () => {

@@ -7,6 +7,7 @@ import {
   type ArcEntity,
   type BezierEntity,
   type TextEntity,
+  type DimensionEntity,
   type Entity,
   type LineEntity,
   type OctagonEntity,
@@ -16,6 +17,7 @@ import {
   type SolidFeature,
   type SolidMesh,
 } from './entities/types';
+import { defaultDimensionStyle, defaultDraftingSettings, type DimensionStyle, type DraftingSettings } from './settings';
 
 export type ViewMode = '2d' | '3d';
 
@@ -29,6 +31,8 @@ export interface DocumentState {
   snapSize: number;
   snapEnabled: boolean;
   viewMode: ViewMode;
+  drafting: DraftingSettings;
+  dimensionStyle: DimensionStyle;
 }
 
 export class Document {
@@ -45,6 +49,8 @@ export class Document {
   snapEnabled = true;
   viewMode: ViewMode = '2d';
   activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
+  drafting: DraftingSettings = defaultDraftingSettings();
+  dimensionStyle: DimensionStyle = defaultDimensionStyle();
 
   private listeners: Array<(doc: Document) => void> = [];
   private transactionDepth = 0;
@@ -182,6 +188,22 @@ export class Document {
   }
   createText(position: Vec2, text: string, height = 2.5, font = 'Arial'): TextEntity {
     return { id: genId('text'), type: 'text', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
+  }
+
+  createDimension(start: Vec2, end: Vec2, offset: Vec2, dimensionKind: DimensionEntity['dimensionKind'] = 'aligned'): DimensionEntity {
+    const layer = this.dimensionStyle.layer || 'dims';
+    if (!this.layers.includes(layer)) this.layers.push(layer);
+    if (!(layer in this.layerColors)) this.layerColors[layer] = 0xffffff;
+    return {
+      id: genId('dim'), type: 'dimension', layer,
+      color: this.layerColors[layer] ?? 0xffffff, selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane), start, end, offset, dimensionKind,
+      textHeight: this.dimensionStyle.textHeight, arrowSize: this.dimensionStyle.arrowSize,
+      arrowType: this.dimensionStyle.arrowType, extensionBeyond: this.dimensionStyle.extensionBeyond,
+      extensionOffset: this.dimensionStyle.extensionOffset, textOffset: this.dimensionStyle.textOffset,
+      precision: this.dimensionStyle.precision,
+      scale: this.dimensionStyle.scale,
+    };
   }
 
   createRectangle(first: Vec2, opposite: Vec2, color?: number): RectangleEntity {

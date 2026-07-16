@@ -13,6 +13,7 @@ export class PreviewController {
     readonly measureTarget: HTMLElement,
     readonly snapMarker: HTMLElement,
     private readonly projectPoint?: (point: { x: number; y: number; z: number }) => { x: number; y: number } | null,
+    private readonly copyWorldDelta?: (delta: Vec2) => { x: number; y: number; z: number } | undefined,
   ) {}
 
   get preview(): PreviewFrame | undefined { return this.frame; }
@@ -29,6 +30,10 @@ export class PreviewController {
         type: 'ucs',
         data: { origin: active.data.origin, xPoint: active.data.xPoint, yPoint: active.data.yPoint, hover: ucsHoverPoint, step: active.stepIndex },
       });
+      return;
+    }
+    if (active.name === 'POLYLINE' && active.data.start) {
+      this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor } });
       return;
     }
     if (active.name === 'POLYGON' && active.stepIndex === 2 && active.data.center && active.data.sides) {
@@ -48,11 +53,73 @@ export class PreviewController {
       this.setPreview({ type: 'line', data: { start: active.data.basePoint, end: cursor } });
       return;
     }
+    if (active.name === 'COPY' && active.stepIndex === 2 && active.data.basePoint) {
+      const base = active.data.basePoint as Vec2;
+      const delta = { x: cursor.x - base.x, y: cursor.y - base.y };
+      const entities = (active.data.entities as Entity[]).map((entity) => {
+        const worldDelta = this.copyWorldDelta?.(delta);
+        const copy = worldDelta ? cloneEntity(entity) : transformEntityPoints(entity, (point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
+        if (worldDelta) {
+          const plane = cloneWorkPlane(copy.workPlane ?? WORLD_WORK_PLANE);
+          plane.origin.x += worldDelta.x; plane.origin.y += worldDelta.y; plane.origin.z += worldDelta.z;
+          copy.workPlane = plane;
+        }
+        copy.color = 0xe6f4ff;
+        copy.selected = false;
+        return copy;
+      });
+      this.setPreview({ type: 'copy', data: { start: base, end: cursor, entities } });
+      return;
+    }
+    if (active.name === 'SCALE' && active.stepIndex === 2 && active.data.basePoint) {
+      const base = active.data.basePoint as Vec2;
+      const factor = Math.hypot(cursor.x - base.x, cursor.y - base.y);
+      const entities = (active.data.entities as Entity[]).map((entity) => {
+        const scaled = transformEntityPoints(entity, (point) => ({ x: base.x + (point.x - base.x) * factor, y: base.y + (point.y - base.y) * factor }));
+        if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
+        if (scaled.type === 'text') scaled.height *= factor;
+        scaled.color = 0xe6f4ff;
+        scaled.selected = false;
+        return scaled;
+      });
+      this.setPreview({ type: 'scale', data: { start: base, end: cursor, entities, factor } });
+      return;
+    }
     if (active.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
       const base = active.data.basePoint as Vec2;
       const angle = Math.atan2(cursor.y - base.y, cursor.x - base.x);
       const entities = (active.data.entities as Entity[]).map((entity) => rotateEntity(entity, base, angle));
       this.setPreview({ type: 'rotate', data: { start: base, end: cursor, entities } });
+      return;
+    }
+    if ((active.name === 'BOX' || active.name === 'WEDGE') && active.stepIndex === 1 && active.data.start) {
+      this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
+      return;
+    }
+    if (['CYLINDER', 'SPHERE', 'CONE', 'PYRAMID'].includes(active.name) && active.stepIndex === 1 && active.data.center) {
+      this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
+      return;
+    }
+    if (active.name === 'MEASURE' && active.stepIndex === 2 && active.data.start && active.data.end) {
+      this.setPreview({ type: 'dimension', data: { start: active.data.start, end: active.data.end, offset: cursor, style: active.data.dimensionStyle } });
+      return;
+    }
+    if ((active.name === 'DIMRADIUS' || active.name === 'DIMDIAMETER') && active.stepIndex === 1 && active.data.entity) {
+      const entity = active.data.entity as Entity;
+      if (entity.type === 'circle' || entity.type === 'arc') {
+        let dx = cursor.x - entity.center.x, dy = cursor.y - entity.center.y;
+        const distance = Math.hypot(dx, dy) || 1; dx /= distance; dy /= distance;
+        this.setPreview({
+          type: 'dimension',
+          data: {
+            start: entity.center,
+            end: { x: entity.center.x + dx * entity.radius, y: entity.center.y + dy * entity.radius },
+            offset: cursor,
+            kind: active.name === 'DIMRADIUS' ? 'radius' : 'diameter',
+            style: active.data.dimensionStyle,
+          },
+        });
+      }
       return;
     }
     if (active.stepIndex !== 1) return;
@@ -78,8 +145,11 @@ export class PreviewController {
     marker.hidden = false;
   }
 
-  showSnap(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number): void {
+  showSnap(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: string): void {
     const projected = this.projectPoint?.(point);
+    // The symbol tells the modes apart the way AutoCAD does — a square for an
+    // endpoint, a right angle for perpendicular, and so on.
+    this.snapMarker.dataset.snap = mode ?? 'end';
     this.showMarker(this.snapMarker, projected?.x ?? fallbackX, projected?.y ?? fallbackY);
   }
 
@@ -120,10 +190,12 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
     case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
     case 'bezier': result.start = rotate(result.start); result.control1 = rotate(result.control1); result.control2 = rotate(result.control2); result.end = rotate(result.end); break;
     case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
+    case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); break;
     case 'rectangle': break;
   }
   return result;
 }
 import type { ActiveCommand } from '../core/commands/CommandManager';
-import { cloneEntity, type Entity } from '../core/entities/types';
+import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
+import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';

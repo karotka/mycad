@@ -7,6 +7,14 @@ contextBridge.exposeInMainWorld('mycadAPI', {
     ipcRenderer.invoke('open-file', options),
   writeFile: (options: { filePath: string; content: string }) =>
     ipcRenderer.invoke('write-file', options),
-  quickSave: (options: { filePath?: string; content: string }) =>
+  quickSave: (options: { filePath?: string; defaultPath?: string; content: string }) =>
     ipcRenderer.invoke('quick-save', options),
+});
+
+contextBridge.exposeInMainWorld('mycadEvents', {
+  onMenuAction: (callback: (action: string) => void) => {
+    const listener = (_event: unknown, action: string) => callback(action);
+    ipcRenderer.on('mycad-menu', listener);
+    return () => ipcRenderer.removeListener('mycad-menu', listener);
+  },
 });

@@ -16,89 +16,9 @@ html, body, #app {
 .app {
   --command-panel-height: 58px;
   display: grid;
-  grid-template-rows: 36px 50px 1fr 28px var(--command-panel-height);
+  grid-template-rows: 50px 1fr 22px var(--command-panel-height);
   grid-template-columns: 1fr;
   height: 100%;
-}
-
-.titlebar {
-  grid-column: 1 / -1;
-  background: #0078d4;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  -webkit-app-region: drag;
-  gap: 10px;
-}
-
-.titlebar strong {
-  font-size: 13px;
-}
-
-.titlebar .brand { margin-left: auto; }
-
-.file-menu-wrap {
-  position: relative;
-  -webkit-app-region: no-drag;
-}
-
-.file-menu-button {
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: white;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.file-menu-button:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.file-menu {
-  position: absolute;
-  top: 27px;
-  left: 0;
-  z-index: 200;
-  min-width: 220px;
-  padding: 5px;
-  border: 1px solid #4a5568;
-  border-radius: 4px;
-  background: #20252d;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-.file-menu[hidden] { display: none; }
-
-.file-menu button {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: #e5e7eb;
-  text-align: left;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.file-menu button:hover { background: #094771; }
-.file-menu kbd { color: #94a3b8; font: inherit; }
-
-.titlebar span {
-  opacity: 0.85;
-  font-weight: 400;
-  margin-left: 12px;
-  font-size: 11px;
 }
 
 .visual-style {
@@ -106,35 +26,28 @@ html, body, #app {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid #3c3c3c;
   border-radius: 3px;
-  background: rgba(0, 38, 72, 0.24);
-  -webkit-app-region: no-drag;
+  background: #1e1e1e;
 }
-
 .visual-style button {
-  width: 25px;
-  height: 20px;
+  width: 22px;
+  height: 17px;
   display: grid;
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 2px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.78);
+  color: #8b949e;
   cursor: pointer;
 }
-
-.visual-style button:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
-.visual-style button.active { border-color: #b9e5ff; background: rgba(0, 35, 61, 0.42); color: #fff; }
-.visual-style svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.25; }
+.visual-style button:hover { background: rgba(255, 255, 255, 0.08); color: #dce4eb; }
+.visual-style button.active { border-color: #67c9ff; background: #094771; color: #fff; }
+.visual-style svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.25; }
 .visual-style .shade-top { fill: #e9f0f5; }
 .visual-style .shade-left { fill: #8fa2b2; }
 .visual-style .shade-right { fill: #536b7e; }
-
-@media (prefers-reduced-motion: no-preference) {
-  .visual-style button { transition: background 100ms, border-color 100ms, color 100ms; }
-}
 
 .toolbar {
   background: linear-gradient(#292d33, #22262c);
@@ -152,6 +65,25 @@ html, body, #app {
   align-items: center;
   gap: 3px;
 }
+
+.primitive-tool { position: relative; display: flex; }
+.primitive-main .flyout-caret { position: absolute; right: 1px; bottom: -1px; font-size: 9px; color: #aeb8c2; }
+.primitive-flyout {
+  position: absolute;
+  z-index: 500;
+  top: 41px;
+  left: 0;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid #596473;
+  border-radius: 3px;
+  background: #20252b;
+  box-shadow: 0 7px 20px rgba(0,0,0,.55);
+}
+.primitive-flyout[hidden] { display: none; }
+.primitive-flyout button { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 3px 8px; border: 0; background: transparent; color: #e5ebf0; cursor: pointer; font: 11px 'SF Mono', monospace; }
+.primitive-flyout button:hover { background: #0b5688; }
+.primitive-flyout svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.4; }
 
 .tool-divider {
   align-self: stretch;
@@ -277,6 +209,9 @@ html, body, #app {
   border-radius: 50%;
 }
 
+/* Object snap marker. The shape says which snap was found, as in AutoCAD:
+   square = endpoint, triangle = midpoint, circle = centre, X = intersection,
+   right angle = perpendicular. */
 .snap-marker {
   position: absolute;
   z-index: 46;
@@ -287,6 +222,78 @@ html, body, #app {
   background: rgba(13, 17, 23, 0.88);
   pointer-events: none;
   box-shadow: 0 0 0 2px rgba(13, 17, 23, 0.7);
+}
+
+/* Perpendicular: the ⊥ right-angle mark — a left upright and a base line. */
+.snap-marker[data-snap='perpendicular'] {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  width: 13px;
+  height: 13px;
+  border-left: 2px solid #65ff9a;
+  border-bottom: 2px solid #65ff9a;
+}
+.snap-marker[data-snap='perpendicular']::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 2px;
+  height: 8px;
+  background: #65ff9a;
+}
+
+.snap-marker[data-snap='center'] {
+  border-radius: 50%;
+}
+
+/* Midpoint: a triangle, drawn with borders so it needs no extra element. */
+.snap-marker[data-snap='middle'],
+.snap-marker[data-snap='mid2p'] {
+  width: 0;
+  height: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 11px solid #65ff9a;
+}
+
+/* Intersection: an X. */
+.snap-marker[data-snap='intersection'],
+.snap-marker[data-snap='apparent-intersection'] {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.snap-marker[data-snap='intersection']::before,
+.snap-marker[data-snap='intersection']::after,
+.snap-marker[data-snap='apparent-intersection']::before,
+.snap-marker[data-snap='apparent-intersection']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  margin-left: -1px;
+  background: #65ff9a;
+}
+.snap-marker[data-snap='intersection']::before,
+.snap-marker[data-snap='apparent-intersection']::before { transform: rotate(45deg); }
+.snap-marker[data-snap='intersection']::after,
+.snap-marker[data-snap='apparent-intersection']::after { transform: rotate(-45deg); }
+
+.tracking-line {
+  position: absolute;
+  z-index: 33;
+  height: 1px;
+  transform-origin: 0 50%;
+  border-top: 1px dashed rgba(103, 201, 255, 0.92);
+  pointer-events: none;
+  filter: drop-shadow(0 0 2px rgba(40, 150, 220, 0.6));
 }
 
 #viewport3d {
@@ -329,6 +336,8 @@ html, body, #app {
 .viewport-wrap.object-pick .crosshair::before,
 .viewport-wrap.object-pick .crosshair::after { display: none; }
 
+.viewport-wrap.context-menu-cursor-pending .crosshair { visibility: hidden; }
+
 .dimension-toast {
   position: absolute;
   z-index: 40;
@@ -364,30 +373,88 @@ html, body, #app {
 
 .statusbar {
   grid-column: 1 / -1;
-  background: #007acc;
-  color: #fff;
+  background: #252526;
+  color: #aeb8c2;
+  border-top: 1px solid #3c3c3c;
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  font-size: 11px;
-  gap: 24px;
+  padding: 0 10px;
+  font-size: 10px;
+  gap: 16px;
   position: relative;
 }
+
+.drafting-status {
+  display: flex;
+  align-self: stretch;
+  margin-left: auto;
+}
+.drafting-status button {
+  min-width: 56px;
+  padding: 0 7px;
+  border: 0;
+  border-left: 1px solid #3c3c3c;
+  background: transparent;
+  color: #8b949e;
+  font: 600 9px 'SF Mono', monospace;
+  cursor: pointer;
+}
+.drafting-status button:hover { background: rgba(255, 255, 255, 0.06); color: #dce4eb; }
+.drafting-status button.active { background: #1e1e1e; color: #dce4eb; box-shadow: inset 0 2px #67c9ff; }
+.drafting-status kbd { margin-left: 3px; color: inherit; font: 8px 'SF Mono', monospace; opacity: .72; }
 
 .layer-toggle {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 22px;
+  height: 18px;
   min-width: 48px;
   padding: 0 7px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid #3c3c3c;
   border-radius: 2px;
-  background: rgba(0, 38, 72, 0.24);
-  color: #fff;
-  font: 600 10px 'SF Mono', monospace;
+  background: #1e1e1e;
+  color: #dce4eb;
+  font: 600 9px 'SF Mono', monospace;
   cursor: pointer;
 }
+.properties-toggle {
+  height: 18px;
+  padding: 0 8px;
+  border: 1px solid #3c3c3c;
+  border-radius: 2px;
+  background: #1e1e1e;
+  color: #dce4eb;
+  font: 600 9px 'SF Mono', monospace;
+  cursor: pointer;
+}
+.properties-toggle:hover { background: rgba(255,255,255,.14); }
+.properties-panel {
+  position: absolute;
+  right: 8px;
+  bottom: 31px;
+  z-index: 310;
+  width: 300px;
+  max-height: min(620px, calc(100vh - 150px));
+  overflow: hidden;
+  border: 1px solid #56616d;
+  border-radius: 3px;
+  background: #1b2026;
+  color: #dce4eb;
+  box-shadow: 0 -7px 24px rgba(0,0,0,.48);
+}
+.properties-panel[hidden] { display: none; }
+.dimension-style-panel { right: 316px; width: 270px; }
+.properties-panel header { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #343d46; }
+.properties-panel header strong { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.properties-panel header button { border: 0; background: transparent; color: #aeb8c2; font-size: 18px; cursor: pointer; }
+.properties-content { max-height: calc(min(620px, 100vh - 150px) - 38px); overflow-y: auto; padding: 5px; }
+.properties-empty { padding: 22px 8px; color: #8f9aa4; text-align: center; }
+.property-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; font-size: 11px; }
+.property-row > span { padding-left: 6px; color: #aeb8c2; }
+.property-row input, .property-row select { min-width: 0; height: 24px; padding: 2px 5px; border: 1px solid #46525e; background: #11161b; color: #eef5fa; font: 11px 'SF Mono', monospace; }
+.property-row input[type="color"] { padding: 2px; }
+.property-row output { padding: 0 6px; color: #7fcef5; font: 11px 'SF Mono', monospace; }
+.property-row.readonly { background: rgba(255,255,255,.018); }
 .layer-toggle:hover { background: rgba(255, 255, 255, 0.14); }
 .layer-toggle svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .layer-toggle span { max-width: 72px; overflow: hidden; text-overflow: ellipsis; }
@@ -705,6 +772,19 @@ html, body, #app {
   font-size: 10px;
   text-transform: uppercase;
 }
+.persistent-snaps {
+  margin-top: 5px;
+  padding-top: 3px;
+  border-top: 1px solid #3b4653;
+}
+.context-menu button[data-persistent-snap]::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  margin-right: 5px;
+  color: #74d4ff;
+}
+.context-menu button[data-persistent-snap].active::before { content: '✓'; }
 
 .text-options {
   position: fixed;

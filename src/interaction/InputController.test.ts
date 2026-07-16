@@ -21,8 +21,10 @@ describe('InputController', () => {
     const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn() } as unknown as HTMLInputElement;
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
-      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), newProject: vi.fn(),
+      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     const controller = new InputController(input, form, callbacks, target);
@@ -31,8 +33,12 @@ describe('InputController', () => {
     expect(callbacks.show2d).not.toHaveBeenCalled();
     target.dispatchEvent(keyboard('s', { metaKey: true }));
     expect(callbacks.save).toHaveBeenCalledOnce();
+    target.dispatchEvent(keyboard('s', { metaKey: true, shiftKey: true }));
+    expect(callbacks.saveAs).toHaveBeenCalledOnce();
     target.dispatchEvent(keyboard('z', { metaKey: true, shiftKey: true }));
     expect(callbacks.redo).toHaveBeenCalledOnce();
+    target.dispatchEvent(keyboard('1', { ctrlKey: true }));
+    expect(callbacks.toggleProperties).toHaveBeenCalledOnce();
     controller.dispose();
   });
 
@@ -41,8 +47,10 @@ describe('InputController', () => {
     const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn() } as unknown as HTMLInputElement;
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
-      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), newProject: vi.fn(),
+      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     const controller = new InputController(input, form, callbacks, target);
@@ -54,6 +62,29 @@ describe('InputController', () => {
     expect(callbacks.show2d).toHaveBeenCalledOnce();
     target.dispatchEvent(keyboard('Delete'));
     expect(callbacks.deleteSelection).toHaveBeenCalledOnce();
+    controller.dispose();
+  });
+
+  it('routes standard CAD drafting function keys even while the command input is focused', () => {
+    const target = new EventTarget();
+    const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn(), tagName: 'INPUT' } as unknown as HTMLInputElement;
+    const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
+    const callbacks = {
+      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
+      open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleProperties: vi.fn(),
+      commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
+    };
+    const controller = new InputController(input, form, callbacks, target);
+
+    target.dispatchEvent(keyboard('F3'));
+    target.dispatchEvent(keyboard('F8'));
+    target.dispatchEvent(keyboard('F10'));
+
+    expect(callbacks.toggleObjectSnap).toHaveBeenCalledOnce();
+    expect(callbacks.toggleOrtho).toHaveBeenCalledOnce();
+    expect(callbacks.togglePolar).toHaveBeenCalledOnce();
     controller.dispose();
   });
 });

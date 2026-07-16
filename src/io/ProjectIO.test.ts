@@ -49,6 +49,36 @@ describe('ProjectIO', () => {
     expect(target.activeWorkPlane.origin).toEqual({ x: 2, y: 3, z: 4 });
   });
 
+  it('round-trips drafting and dimension settings', () => {
+    const source = new Document();
+    source.drafting.orthoEnabled = true;
+    source.drafting.polarEnabled = true;
+    source.drafting.polarAngles = [15, 30, 90];
+    source.drafting.objectSnapModes = ['end', 'perpendicular'];
+    source.dimensionStyle = { textHeight: 3.5, arrowSize: 2, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.5, textOffset: 0.8, precision: 3, scale: 2, layer: 'dimensions' };
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.drafting).toEqual(source.drafting);
+    expect(target.dimensionStyle).toEqual(source.dimensionStyle);
+  });
+
+  it('uses drafting defaults when loading an older project', () => {
+    const source = new Document();
+    const saved = JSON.parse(serializeProject(source));
+    delete saved.settings.drafting;
+    delete saved.settings.dimensionStyle;
+    const target = new Document();
+    target.drafting.orthoEnabled = true;
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.drafting.orthoEnabled).toBe(false);
+    expect(target.drafting.objectSnapModes).toEqual(['end', 'center', 'intersection']);
+    expect(target.dimensionStyle.precision).toBe(2);
+  });
+
   it('round-trips the saved 2D and 3D camera state', () => {
     const source = new Document();
     const view = {

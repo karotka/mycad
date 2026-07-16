@@ -1,6 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+
+// Names the application menu and the About box. Without it the menu reads
+// "Electron" in development, since the bundle name only exists once packaged.
+app.setName('MyCAD');
 
 const writableFiles = new Set<string>();
 const MAX_TEXT_FILE_BYTES = 256 * 1024 * 1024;
@@ -30,6 +34,72 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
   })) throw new Error('Invalid file dialog filters.');
 }
 
+/** Menu actions are names the renderer already has callbacks for. */
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'undo' | 'redo';
+
+function buildMenu(win: BrowserWindow): void {
+  const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
+  const isMac = process.platform === 'darwin';
+
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' as const },
+        { type: 'separator' as const },
+        { role: 'services' as const },
+        { type: 'separator' as const },
+        { role: 'hide' as const },
+        { role: 'hideOthers' as const },
+        { role: 'unhide' as const },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: send('new') },
+        { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: send('open') },
+        { label: 'Import DXF…', click: send('import-dxf') },
+        { type: 'separator' },
+        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
+        { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: send('save-as') },
+        { type: 'separator' },
+        { label: 'Export STL…', accelerator: 'CmdOrCtrl+E', click: send('export-stl') },
+        ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const }]),
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        // The drawing's history, not the text field's.
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        ...(process.env.VITE_DEV_SERVER_URL ? [{ type: 'separator' as const }, { role: 'toggleDevTools' as const }] : []),
+      ],
+    },
+    { role: 'windowMenu' },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -45,6 +115,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+
+  buildMenu(win);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -102,11 +174,12 @@ ipcMain.handle('write-file', async (event, options: { filePath: string; content:
   return { filePath: options.filePath };
 });
 
-ipcMain.handle('quick-save', async (event, options: { filePath?: string; content: string }) => {
+ipcMain.handle('quick-save', async (event, options: { filePath?: string; defaultPath?: string; content: string }) => {
   assertTrustedSender(event);
   validateContent(options?.content);
   if (options?.filePath !== undefined) validateFilePath(options.filePath);
-  const filePath = options.filePath ?? path.join(app.getPath('documents'), 'model.mycad');
+  const defaultPath = typeof options?.defaultPath === 'string' && options.defaultPath.trim() ? options.defaultPath : 'model.mycad';
+  const filePath = options.filePath ?? path.join(app.getPath('documents'), defaultPath);
   if (options.filePath && !writableFiles.has(options.filePath)) throw new Error('The renderer cannot write to this path.');
   await fs.writeFile(filePath, options.content, 'utf8');
   writableFiles.add(filePath);

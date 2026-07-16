@@ -3,7 +3,7 @@ import type { Document } from '../core/Document';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
 import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection } from '../core/entities/types';
-import { curvePoints, entityBounds } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, entityBounds } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -99,7 +99,8 @@ export class Canvas2DRenderer {
     w: number,
     h: number,
     preview?: { type: string; data: unknown },
-    grips: Array<{ point: Vec2; hot: boolean; shape?: 'square' | 'edge' }> = []
+    grips: Array<{ point: Vec2; hot: boolean; shape?: 'square' | 'edge' }> = [],
+    joinMode = false
   ): void {
     this.clear(w, h);
     this.drawGrid(w, h, doc.gridSize);
@@ -109,7 +110,7 @@ export class Canvas2DRenderer {
     }
 
     for (const entity of doc.entities.filter((item) => !doc.hiddenLayers.has(item.layer))) {
-      this.drawEntity(entity, w, h, entity.selected);
+      this.drawEntity(entity, w, h, entity.selected, joinMode);
     }
 
     if (preview) this.drawPreview(preview, w, h);
@@ -137,7 +138,7 @@ export class Canvas2DRenderer {
     this.ctx.stroke();
   }
 
-  private drawGrips(grips: Array<{ point: Vec2; hot: boolean; shape?: 'square' | 'edge' }>, w: number, h: number): void {
+  private drawGrips(grips: Array<{ point: Vec2; hot: boolean; shape?: 'square' | 'edge'; angle?: number }>, w: number, h: number): void {
     for (const grip of grips) {
       const p = worldToScreen(grip.point, w, h, this.pan, this.zoom);
       const size = grip.hot ? 10 : 8;
@@ -146,8 +147,14 @@ export class Canvas2DRenderer {
       this.ctx.lineWidth = 1.5;
       const gripWidth = grip.shape === 'edge' ? size + 5 : size;
       const gripHeight = grip.shape === 'edge' ? Math.max(5, size - 3) : size;
-      this.ctx.fillRect(p.x - gripWidth / 2, p.y - gripHeight / 2, gripWidth, gripHeight);
-      this.ctx.strokeRect(p.x - gripWidth / 2, p.y - gripHeight / 2, gripWidth, gripHeight);
+      this.ctx.save();
+      this.ctx.translate(p.x, p.y);
+      // An edge grip is a bar lying along its edge, so it has to turn with it.
+      // Screen Y grows downward, hence the negated angle.
+      if (grip.shape === 'edge' && grip.angle) this.ctx.rotate(-grip.angle);
+      this.ctx.fillRect(-gripWidth / 2, -gripHeight / 2, gripWidth, gripHeight);
+      this.ctx.strokeRect(-gripWidth / 2, -gripHeight / 2, gripWidth, gripHeight);
+      this.ctx.restore();
     }
   }
 
@@ -156,10 +163,15 @@ export class Canvas2DRenderer {
     return `#${c.toString(16).padStart(6, '0')}`;
   }
 
-  private drawEntity(entity: Entity, w: number, h: number, selected: boolean): void {
+  private drawEntity(entity: Entity, w: number, h: number, selected: boolean, joinMode = false): void {
+    this.ctx.save();
     this.ctx.strokeStyle = this.colorHex(entity.color, selected);
     this.ctx.fillStyle = this.colorHex(entity.color, selected);
-    this.ctx.lineWidth = 1;
+    this.ctx.lineWidth = selected && joinMode ? 2.5 : 1;
+    if (selected && joinMode) {
+      this.ctx.shadowColor = '#65c7ff';
+      this.ctx.shadowBlur = 4;
+    }
 
     switch (entity.type) {
       case 'line': {
@@ -214,7 +226,31 @@ export class Canvas2DRenderer {
         this.ctx.restore();
         break;
       }
+      case 'dimension': {
+        const geometry = dimensionGeometry(entity);
+        const segment = ([start, end]: [Vec2, Vec2]): void => {
+          const a = worldToScreen(start, w, h, this.pan, this.zoom), b = worldToScreen(end, w, h, this.pan, this.zoom);
+          this.ctx.beginPath(); this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y); this.ctx.stroke();
+        };
+        segment(geometry.extensionStart); segment(geometry.extensionEnd); segment(geometry.dimensionLine);
+        for (const arrow of geometry.arrows) {
+          const points = arrow.map(point => worldToScreen(point, w, h, this.pan, this.zoom));
+          this.ctx.beginPath();
+          if (entity.arrowType === 'tick') {
+            this.ctx.moveTo(points[1].x, points[1].y); this.ctx.lineTo(points[2].x, points[2].y); this.ctx.stroke();
+          } else {
+            this.ctx.moveTo(points[0].x, points[0].y); this.ctx.lineTo(points[1].x, points[1].y); this.ctx.moveTo(points[0].x, points[0].y); this.ctx.lineTo(points[2].x, points[2].y);
+            if (entity.arrowType === 'closed') { this.ctx.lineTo(points[1].x, points[1].y); this.ctx.closePath(); this.ctx.fill(); } else this.ctx.stroke();
+          }
+        }
+        const text = worldToScreen(geometry.textPoint, w, h, this.pan, this.zoom);
+        this.ctx.save(); this.ctx.translate(text.x, text.y); this.ctx.rotate(-geometry.textAngle);
+        this.ctx.font = `${Math.max(8, entity.textHeight * entity.scale * this.zoom)}px Arial`;
+        this.ctx.textAlign = 'center'; this.ctx.textBaseline = 'middle'; this.ctx.fillText(geometry.text, 0, 0); this.ctx.restore();
+        break;
+      }
     }
+    this.ctx.restore();
   }
 
   private drawPreview(preview: { type: string; data: unknown }, w: number, h: number): void {
@@ -227,7 +263,22 @@ export class Canvas2DRenderer {
     let label = '';
     let labelPoint: Vec2 | undefined;
 
-    if (preview.type === 'rotate') {
+    if (preview.type === 'copy' || preview.type === 'scale') {
+      const copy = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.9;
+      this.ctx.setLineDash([5, 4]);
+      copy.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
+      this.ctx.restore();
+      const a = worldToScreen(copy.start, w, h, this.pan, this.zoom);
+      const b = worldToScreen(copy.end, w, h, this.pan, this.zoom);
+      this.ctx.strokeStyle = '#67c9ff';
+      this.ctx.beginPath(); this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y); this.ctx.stroke();
+      label = preview.type === 'scale'
+        ? `Scale ${(preview.data as { factor?: number }).factor?.toFixed(3) ?? ''}`
+        : `Copy ${Math.hypot(copy.end.x - copy.start.x, copy.end.y - copy.start.y).toFixed(2)} mm`;
+      labelPoint = copy.end;
+    } else if (preview.type === 'rotate') {
       const rotation = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       this.ctx.save();
       this.ctx.globalAlpha = 0.95;
@@ -250,6 +301,12 @@ export class Canvas2DRenderer {
       this.ctx.stroke();
       label = `A = ${(Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x) * 180 / Math.PI).toFixed(2)}°`;
       labelPoint = rotation.end;
+    } else if (preview.type === 'dimension') {
+      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; kind?: 'aligned' | 'radius' | 'diameter'; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
+      const style = value.style ?? { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed' as const, extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
+      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'aligned', color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
+      label = Math.hypot(value.end.x - value.start.x, value.end.y - value.start.y).toFixed(style.precision);
+      labelPoint = value.offset;
     } else if (preview.type === 'line' && d.start && d.end) {
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
@@ -380,7 +437,7 @@ export class Viewport3D {
   activeStandardView: 'top' | 'front' | 'left' | 'right' | null = null;
   private viewportAspect = 1;
   private activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
-  private visualStyle: 'wireframe' | 'shaded' = 'wireframe';
+  private visualStyle: 'wireframe' | 'shaded' | 'xray' = 'wireframe';
 
   constructor(container: HTMLElement) {
     this.scene = new THREE.Scene();
@@ -513,7 +570,7 @@ export class Viewport3D {
     return sprite;
   }
 
-  setVisualStyle(style: 'wireframe' | 'shaded'): void {
+  setVisualStyle(style: 'wireframe' | 'shaded' | 'xray'): void {
     this.visualStyle = style;
     for (const mesh of this.solidMeshes.values()) this.applySolidStyle(mesh, Boolean(mesh.userData.selected));
     this.render();
@@ -532,11 +589,20 @@ export class Viewport3D {
     material.wireframe = this.visualStyle === 'wireframe';
     material.color.setHex(selected ? 0x65c7ff : (mesh.userData.baseColor as number ?? 0xffffff));
     material.shininess = this.visualStyle === 'wireframe' ? 0 : 18;
+    material.transparent = this.visualStyle === 'xray';
+    material.opacity = this.visualStyle === 'xray' ? (selected ? 0.42 : 0.28) : 1;
+    material.depthWrite = this.visualStyle !== 'xray';
+    material.side = THREE.DoubleSide;
+    material.needsUpdate = true;
     this.disposeSolidEdges(mesh);
-    if (this.visualStyle === 'shaded') {
+    if (this.visualStyle === 'shaded' || this.visualStyle === 'xray') {
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry, 24),
-        new THREE.LineBasicMaterial({ color: selected ? 0x9fe2ff : 0x27313a }),
+        new THREE.LineBasicMaterial({
+          color: selected ? 0x9fe2ff : this.visualStyle === 'xray' ? 0x8fc8e8 : 0x27313a,
+          transparent: this.visualStyle === 'xray', opacity: this.visualStyle === 'xray' ? 0.9 : 1,
+          depthTest: this.visualStyle !== 'xray',
+        }),
       );
       edges.name = 'solid-edges';
       edges.renderOrder = 2;
@@ -927,6 +993,23 @@ export class Viewport3D {
       this.scene.add(group);
       return;
     }
+    if (preview.type === 'copy' || preview.type === 'scale') {
+      const copy = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
+      const group = new THREE.Group();
+      for (const entity of copy.entities) {
+        const object = this.entityToObject(entity);
+        object.traverse((child) => {
+          const renderable = child as THREE.Line | THREE.Mesh;
+          if (!renderable.material) return;
+          const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
+          materials.forEach((material) => { material.transparent = true; material.opacity = 0.75; material.depthTest = false; });
+        });
+        group.add(object);
+      }
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
     if (preview.type === 'rotate') {
       const rotation = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       const group = new THREE.Group();
@@ -1111,6 +1194,11 @@ export class Viewport3D {
           closed = true;
           break;
         }
+        case 'dimension': {
+          const geometry = dimensionGeometry(entity);
+          points = [geometry.extensionStart[0], geometry.extensionStart[1], geometry.dimensionLine[0], geometry.dimensionLine[1], geometry.extensionEnd[0], geometry.extensionEnd[1]];
+          break;
+        }
       }
       const projected = points.map((point) => project(entity, point));
       const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
@@ -1138,6 +1226,22 @@ export class Viewport3D {
         entity.position, entity.text, entity.height, entity.font ?? 'Arial',
         entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, entity.rotation ?? 0,
       );
+    }
+    if (entity.type === 'dimension') {
+      const geometry = dimensionGeometry(entity);
+      const group = new THREE.Group();
+      const material = new THREE.LineBasicMaterial({ color: entity.selected ? 0x65c7ff : entity.color });
+      const addLine = (points: Vec2[], loop = false): void => {
+        const vertices = points.map(point => { const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, 0.015); return new THREE.Vector3(world.x, world.z, -world.y); });
+        group.add(loop ? new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(vertices), material) : new THREE.Line(new THREE.BufferGeometry().setFromPoints(vertices), material));
+      };
+      addLine(geometry.extensionStart); addLine(geometry.extensionEnd); addLine(geometry.dimensionLine);
+      geometry.arrows.forEach(arrow => {
+        if (entity.arrowType === 'tick') addLine([arrow[1], arrow[2]]);
+        else addLine([arrow[1], arrow[0], arrow[2]], entity.arrowType === 'closed');
+      });
+      group.add(this.textToObject(geometry.textPoint, geometry.text, entity.textHeight * entity.scale, 'Arial', entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, geometry.textAngle, true));
+      return group;
     }
     const points: Vec2[] = [];
     let loop = false;
@@ -1202,6 +1306,7 @@ export class Viewport3D {
     color: number,
     opacity = 1,
     rotation = 0,
+    centered = false,
   ): THREE.Mesh {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d')!;
@@ -1234,7 +1339,7 @@ export class Viewport3D {
       x: Math.cos(rotation) * objectWidth / 2 - Math.sin(rotation) * objectHeight / 2,
       y: Math.sin(rotation) * objectWidth / 2 + Math.cos(rotation) * objectHeight / 2,
     };
-    const center = localToWorld(plane, { x: position.x + centerOffset.x, y: position.y + centerOffset.y }, 0.02);
+    const center = localToWorld(plane, centered ? position : { x: position.x + centerOffset.x, y: position.y + centerOffset.y }, 0.02);
     object.position.set(center.x, center.z, -center.y);
     const toThree = (axis: Vec3): THREE.Vector3 => new THREE.Vector3(axis.x, axis.z, -axis.y).normalize();
     const basis = new THREE.Matrix4().makeBasis(toThree(plane.xAxis), toThree(plane.yAxis), toThree(plane.zAxis));

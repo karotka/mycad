@@ -1,7 +1,7 @@
 import type { Vec2, Vec3 } from '../../math/geometry';
 import type { WorkPlane } from '../../math/workplane';
 
-export type EntityType = 'line' | 'circle' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text';
+export type EntityType = 'line' | 'circle' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
 
 export interface EntityBase {
   id: string;
@@ -45,8 +45,87 @@ export interface PolylineEntity extends EntityBase {
 export interface ArcEntity extends EntityBase { type: 'arc'; center: Vec2; radius: number; startAngle: number; sweepAngle: number; }
 export interface BezierEntity extends EntityBase { type: 'bezier'; start: Vec2; control1: Vec2; control2: Vec2; end: Vec2; }
 export interface TextEntity extends EntityBase { type: 'text'; position: Vec2; text: string; height: number; font?: string; rotation?: number; }
+export interface DimensionEntity extends EntityBase {
+  type: 'dimension';
+  dimensionKind: 'aligned' | 'radius' | 'diameter';
+  start: Vec2;
+  end: Vec2;
+  offset: Vec2;
+  textHeight: number;
+  arrowSize: number;
+  arrowType: 'closed' | 'open' | 'tick';
+  extensionBeyond: number;
+  extensionOffset: number;
+  textOffset: number;
+  precision: number;
+  scale: number;
+}
 
-export type Entity = LineEntity | CircleEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity;
+export type Entity = LineEntity | CircleEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
+
+export interface DimensionGeometry {
+  extensionStart: [Vec2, Vec2];
+  extensionEnd: [Vec2, Vec2];
+  dimensionLine: [Vec2, Vec2];
+  arrows: Array<[Vec2, Vec2, Vec2]>;
+  textPoint: Vec2;
+  textAngle: number;
+  text: string;
+}
+
+export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
+  const dx = entity.end.x - entity.start.x, dy = entity.end.y - entity.start.y;
+  const length = Math.hypot(dx, dy);
+  const ux = length > 1e-9 ? dx / length : 1, uy = length > 1e-9 ? dy / length : 0;
+  const nx = -uy, ny = ux;
+  const signedOffset = (entity.offset.x - entity.start.x) * nx + (entity.offset.y - entity.start.y) * ny;
+  const side = signedOffset < 0 ? -1 : 1;
+  const a = { x: entity.start.x + nx * signedOffset, y: entity.start.y + ny * signedOffset };
+  const b = { x: entity.end.x + nx * signedOffset, y: entity.end.y + ny * signedOffset };
+  const extensionA: Vec2 = { x: a.x + nx * side * entity.extensionBeyond * entity.scale, y: a.y + ny * side * entity.extensionBeyond * entity.scale };
+  const extensionB: Vec2 = { x: b.x + nx * side * entity.extensionBeyond * entity.scale, y: b.y + ny * side * entity.extensionBeyond * entity.scale };
+  const gapA: Vec2 = { x: entity.start.x + nx * side * entity.extensionOffset * entity.scale, y: entity.start.y + ny * side * entity.extensionOffset * entity.scale };
+  const gapB: Vec2 = { x: entity.end.x + nx * side * entity.extensionOffset * entity.scale, y: entity.end.y + ny * side * entity.extensionOffset * entity.scale };
+  const arrow = entity.arrowSize * entity.scale;
+  const wing = arrow * 0.36;
+  const textClearance = (entity.textOffset + entity.textHeight / 2) * entity.scale;
+  let textAngle = Math.atan2(dy, dx);
+  if (textAngle >= Math.PI / 2) textAngle -= Math.PI;
+  else if (textAngle < -Math.PI / 2) textAngle += Math.PI;
+  const triangle = (tip: Vec2, direction: number): [Vec2, Vec2, Vec2] => [
+    tip,
+    entity.arrowType === 'tick'
+      ? { x: tip.x - ux * arrow * 0.45 + nx * arrow * 0.45, y: tip.y - uy * arrow * 0.45 + ny * arrow * 0.45 }
+      : { x: tip.x + ux * arrow * direction + nx * wing, y: tip.y + uy * arrow * direction + ny * wing },
+    entity.arrowType === 'tick'
+      ? { x: tip.x + ux * arrow * 0.45 - nx * arrow * 0.45, y: tip.y + uy * arrow * 0.45 - ny * arrow * 0.45 }
+      : { x: tip.x + ux * arrow * direction - nx * wing, y: tip.y + uy * arrow * direction - ny * wing },
+  ];
+  if (entity.dimensionKind === 'radius') {
+    return {
+      extensionStart: [entity.start, entity.start], extensionEnd: [entity.end, entity.end],
+      dimensionLine: [entity.start, entity.offset], arrows: [triangle(entity.end, -1)],
+      textPoint: entity.offset, textAngle: 0, text: `R${length.toFixed(entity.precision)}`,
+    };
+  }
+  if (entity.dimensionKind === 'diameter') {
+    const opposite = { x: entity.start.x - dx, y: entity.start.y - dy };
+    return {
+      extensionStart: [opposite, opposite], extensionEnd: [entity.end, entity.end],
+      dimensionLine: [opposite, entity.end], arrows: [triangle(opposite, 1), triangle(entity.end, -1)],
+      textPoint: entity.offset, textAngle: 0, text: `Ø${(length * 2).toFixed(entity.precision)}`,
+    };
+  }
+  return {
+    extensionStart: [gapA, extensionA], extensionEnd: [gapB, extensionB], dimensionLine: [a, b],
+    arrows: [triangle(a, 1), triangle(b, -1)],
+    textPoint: {
+      x: (a.x + b.x) / 2 + nx * side * textClearance,
+      y: (a.y + b.y) / 2 + ny * side * textClearance,
+    },
+    textAngle, text: length.toFixed(entity.precision),
+  };
+}
 
 export function curvePoints(e: ArcEntity | BezierEntity, segments = 64): Vec2[] {
   const points: Vec2[] = [];
@@ -102,11 +181,31 @@ export interface BooleanFeature {
   operands: SolidFeature[];
 }
 
+export interface SweepFeature {
+  kind: 'sweep';
+  profile: Entity;
+  path: Entity;
+  workPlane?: WorkPlane;
+}
+
 export interface MeshFeature {
   kind: 'mesh';
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | MeshFeature;
+export interface PrimitiveFeature {
+  kind: 'primitive';
+  primitive: 'box' | 'wedge' | 'sphere' | 'cone' | 'cylinder' | 'pyramid' | 'torus';
+  center: Vec2;
+  width?: number;
+  depth?: number;
+  radius?: number;
+  /** Minor radius of a torus; `radius` is the distance from centre to tube centre. */
+  tubeRadius?: number;
+  height: number;
+  workPlane?: WorkPlane;
+}
+
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature;
 
 export interface Solid {
   id: string;
@@ -186,6 +285,11 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
         max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
       };
     }
+    case 'dimension': {
+      const geometry = dimensionGeometry(e);
+      const points = [e.start, e.end, ...geometry.dimensionLine, ...geometry.arrows.flat()];
+      return { min: { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) }, max: { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) } };
+    }
   }
 }
 
@@ -209,6 +313,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
     case 'arc': return [e.center, ...curvePoints(e, 2)];
     case 'bezier': return [e.start, e.control1, e.control2, e.end];
     case 'text': return [e.position];
+    case 'dimension': return [e.start, e.end, e.offset];
   }
 }
 
@@ -236,6 +341,24 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
     case 'arc': copy.center = fn(copy.center); break;
     case 'bezier': copy.start = fn(copy.start); copy.control1 = fn(copy.control1); copy.control2 = fn(copy.control2); copy.end = fn(copy.end); break;
     case 'text': copy.position = fn(copy.position); break;
+    case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); break;
   }
   return copy;
+}
+
+/** A line or polyline: what TRIM and EXTEND can cut against or reach to. */
+export function isLineLikeEntity(entity: Entity): entity is Extract<Entity, { type: 'line' | 'polyline' }> {
+  return entity.type === 'line' || entity.type === 'polyline';
+}
+
+/** Something OFFSET can make a parallel copy of. */
+export function isOffsetEntity(entity: Entity): boolean {
+  return entity.type === 'line' || entity.type === 'circle' || entity.type === 'rectangle'
+    || entity.type === 'octagon' || (entity.type === 'polyline' && entity.closed);
+}
+
+/** A closed shape that can be swept or extruded into a solid. */
+export function isSweepProfileEntity(entity: Entity): boolean {
+  return entity.type === 'circle' || entity.type === 'rectangle' || entity.type === 'octagon'
+    || (entity.type === 'polyline' && entity.closed);
 }

@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { defaultDimensionStyle, defaultDraftingSettings, type DimensionStyle, type DraftingSettings, type ObjectSnapMode } from '../core/settings';
 
 export interface ProjectViewState {
   mode: '2d' | '3d';
@@ -27,6 +28,8 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       snapSize: doc.snapSize,
       snapEnabled: doc.snapEnabled,
       activeWorkPlane: doc.activeWorkPlane,
+      drafting: doc.drafting,
+      dimensionStyle: doc.dimensionStyle,
       view,
     },
     entities: doc.entities,
@@ -50,7 +53,21 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
   const settings = (value.settings ?? {}) as Record<string, unknown>;
   const view = validViewState(settings.view) ? settings.view : undefined;
   doc.transaction(() => {
-    doc.entities = entities.map((entity: unknown) => ({ ...(entity as object), selected: false })) as Document['entities'];
+    doc.entities = entities.map((entity: unknown) => {
+      const raw = entity as Record<string, unknown>;
+      if (raw.type === 'dimension') {
+        const defaults = defaultDimensionStyle();
+        return {
+          ...raw, selected: false,
+          dimensionKind: raw.dimensionKind === 'radius' || raw.dimensionKind === 'diameter' ? raw.dimensionKind : 'aligned',
+          arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
+          extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
+          extensionOffset: typeof raw.extensionOffset === 'number' ? raw.extensionOffset : defaults.extensionOffset,
+          textOffset: typeof raw.textOffset === 'number' ? raw.textOffset : defaults.textOffset,
+        };
+      }
+      return { ...raw, selected: false };
+    }) as Document['entities'];
     doc.solids = solids.map((raw: unknown) => {
       const solid = raw as Record<string, unknown>;
       const mesh = solid.mesh as { positions?: unknown; indices?: unknown };
@@ -75,6 +92,8 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.gridSize = typeof settings.gridSize === 'number' ? settings.gridSize : 1;
     doc.snapSize = typeof settings.snapSize === 'number' ? settings.snapSize : 0.5;
     doc.snapEnabled = typeof settings.snapEnabled === 'boolean' ? settings.snapEnabled : true;
+    doc.drafting = loadDraftingSettings(settings.drafting);
+    doc.dimensionStyle = loadDimensionStyle(settings.dimensionStyle);
     if (settings.activeWorkPlane && typeof settings.activeWorkPlane === 'object') {
       doc.activeWorkPlane = JSON.parse(JSON.stringify(settings.activeWorkPlane));
     }
@@ -84,6 +103,45 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.notify();
   });
   return view;
+}
+
+const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular']);
+
+function loadDraftingSettings(value: unknown): DraftingSettings {
+  const defaults = defaultDraftingSettings();
+  if (!value || typeof value !== 'object') return defaults;
+  const raw = value as Partial<Record<keyof DraftingSettings, unknown>>;
+  const angles = Array.isArray(raw.polarAngles)
+    ? raw.polarAngles.filter((angle): angle is number => typeof angle === 'number' && Number.isFinite(angle) && angle > 0 && angle <= 180)
+    : defaults.polarAngles;
+  const modes = Array.isArray(raw.objectSnapModes)
+    ? raw.objectSnapModes.filter((mode): mode is ObjectSnapMode => typeof mode === 'string' && OBJECT_SNAP_MODES.has(mode as ObjectSnapMode))
+    : defaults.objectSnapModes;
+  return {
+    orthoEnabled: typeof raw.orthoEnabled === 'boolean' ? raw.orthoEnabled : defaults.orthoEnabled,
+    polarEnabled: typeof raw.polarEnabled === 'boolean' ? raw.polarEnabled : defaults.polarEnabled,
+    polarAngles: angles.length > 0 ? Array.from(new Set(angles)) : defaults.polarAngles,
+    objectSnapEnabled: typeof raw.objectSnapEnabled === 'boolean' ? raw.objectSnapEnabled : defaults.objectSnapEnabled,
+    objectSnapModes: Array.from(new Set(modes)),
+  };
+}
+
+function loadDimensionStyle(value: unknown): DimensionStyle {
+  const defaults = defaultDimensionStyle();
+  if (!value || typeof value !== 'object') return defaults;
+  const raw = value as Partial<Record<keyof DimensionStyle, unknown>>;
+  const positive = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
+  return {
+    textHeight: positive(raw.textHeight, defaults.textHeight),
+    arrowSize: positive(raw.arrowSize, defaults.arrowSize),
+    arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' || raw.arrowType === 'closed' ? raw.arrowType : defaults.arrowType,
+    extensionBeyond: positive(raw.extensionBeyond, defaults.extensionBeyond),
+    extensionOffset: typeof raw.extensionOffset === 'number' && Number.isFinite(raw.extensionOffset) && raw.extensionOffset >= 0 ? raw.extensionOffset : defaults.extensionOffset,
+    textOffset: typeof raw.textOffset === 'number' && Number.isFinite(raw.textOffset) && raw.textOffset >= 0 ? raw.textOffset : defaults.textOffset,
+    precision: typeof raw.precision === 'number' && Number.isInteger(raw.precision) && raw.precision >= 0 && raw.precision <= 8 ? raw.precision : defaults.precision,
+    scale: positive(raw.scale, defaults.scale),
+    layer: typeof raw.layer === 'string' && raw.layer.trim() ? raw.layer : defaults.layer,
+  };
 }
 
 function validViewState(value: unknown): value is ProjectViewState {

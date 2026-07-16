@@ -2,6 +2,7 @@ import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
+import { defaultDimensionStyle, defaultDraftingSettings } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 
@@ -20,6 +21,7 @@ export interface ProjectControllerCallbacks {
 
 export class ProjectController {
   private currentPath: string | undefined;
+  private currentName = 'model.mycad';
 
   constructor(
     private readonly doc: Document,
@@ -27,16 +29,11 @@ export class ProjectController {
     private readonly callbacks: ProjectControllerCallbacks,
   ) {}
 
-  async save(): Promise<void> {
+  async saveAs(): Promise<void> {
     try {
       const content = serializeProject(this.doc, this.callbacks.captureView());
-      if (window.mycadAPI && this.currentPath) {
-        await window.mycadAPI.writeFile({ filePath: this.currentPath, content });
-        this.callbacks.log(`Saved: ${this.currentPath}`);
-        return;
-      }
-      const path = await this.saveText(content, 'model.mycad', 'MyCAD project', 'mycad');
-      if (path) this.currentPath = path;
+      const path = await this.saveText(content, this.currentPath ?? this.currentName, 'MyCAD project', 'mycad');
+      if (path) this.setCurrentFile(path);
     } catch (error) { this.report('Save failed', error); }
   }
 
@@ -44,15 +41,15 @@ export class ProjectController {
     try {
       const content = serializeProject(this.doc, this.callbacks.captureView());
       if (window.mycadAPI?.quickSave) {
-        const result = await window.mycadAPI.quickSave({ filePath: this.currentPath, content });
-        this.currentPath = result.filePath;
+        const result = await window.mycadAPI.quickSave({ filePath: this.currentPath, defaultPath: this.currentName, content });
+        this.setCurrentFile(result.filePath);
         this.callbacks.log(`Saved: ${result.filePath}`);
       } else if (this.currentPath && window.mycadAPI) {
         await window.mycadAPI.writeFile({ filePath: this.currentPath, content });
         this.callbacks.log(`Saved: ${this.currentPath}`);
       } else {
-        const path = await this.saveText(content, 'model.mycad', 'MyCAD project', 'mycad');
-        if (path) this.currentPath = path;
+        const path = await this.saveText(content, this.currentName, 'MyCAD project', 'mycad');
+        if (path) this.setCurrentFile(path);
       }
     } catch (error) { this.report('Save failed', error); }
   }
@@ -73,12 +70,15 @@ export class ProjectController {
       this.doc.gridSize = 1;
       this.doc.snapSize = 0.5;
       this.doc.snapEnabled = true;
+      this.doc.drafting = defaultDraftingSettings();
+      this.doc.dimensionStyle = defaultDimensionStyle();
       this.doc.viewMode = '2d';
       this.doc.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
       this.doc.notify();
     });
     this.history.clear();
     this.currentPath = undefined;
+    this.currentName = 'model.mycad';
     this.callbacks.resetView();
     this.callbacks.clearLog();
     this.callbacks.log('New project created.');
@@ -94,7 +94,7 @@ export class ProjectController {
       if (!file.content) throw new Error('The file is empty.');
       this.callbacks.cancelInteraction();
       const savedView = loadProject(this.doc, file.content);
-      this.currentPath = file.path;
+      this.setCurrentFile(file.path ?? file.name);
       this.callbacks.applyView(savedView);
       this.history.clear();
       if (!savedView) this.callbacks.zoomExtents();
@@ -113,7 +113,7 @@ export class ProjectController {
       if (result.entities.length === 0) throw new Error('No supported 2D entities were found.');
       result.layers.forEach((layer) => {
         if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
-        this.doc.layerColors[layer] ??= 0xffffff;
+        this.doc.layerColors[layer] ??= result.layerColors[layer] ?? 0xffffff;
       });
       this.doc.viewMode = '2d';
       this.doc.transaction(() => {
@@ -122,7 +122,17 @@ export class ProjectController {
       });
       this.callbacks.zoomExtents();
       this.callbacks.renderLayers();
-      this.callbacks.log(`Imported DXF: ${file.name} · ${result.entities.length} object(s)${result.ignored ? ` · ${result.ignored} unsupported object(s) skipped` : ''}.`);
+      this.callbacks.log(`Imported DXF: ${file.name} · ${result.entities.length} object(s).`);
+      // Name what was dropped and what was only approximated: a silently
+      // straightened arc looks like a valid drawing but is not the same one.
+      const skipped = Object.entries(result.ignoredTypes)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${type}×${count}`)
+        .join(', ');
+      if (skipped) this.callbacks.log(`Not supported, skipped: ${skipped}.`);
+      if (result.approximated > 0) {
+        this.callbacks.log(`${result.approximated} object(s) approximated: arcs in polylines expanded to segments, any Z flattened.`);
+      }
       this.callbacks.redraw();
     } catch (error) { this.report('DXF import failed', error); }
   }
@@ -164,6 +174,17 @@ export class ProjectController {
     URL.revokeObjectURL(url);
     this.callbacks.log(`Downloaded: ${defaultPath}`);
     return undefined;
+  }
+
+  private setCurrentFile(filePathOrName: string): void {
+    this.currentPath = filePathOrName.includes('/') || filePathOrName.includes('\\') ? filePathOrName : undefined;
+    this.currentName = this.basename(filePathOrName);
+  }
+
+  private basename(filePathOrName: string): string {
+    const normalized = filePathOrName.replaceAll('\\', '/');
+    const name = normalized.split('/').filter(Boolean).pop();
+    return name && name.trim() ? name : 'model.mycad';
   }
 
   private report(prefix: string, error: unknown): void {

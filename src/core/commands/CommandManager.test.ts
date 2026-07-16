@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager } from './CommandManager';
+import { COMMAND_LIST, commandDef } from './registry';
 
 function setup() {
   const doc = new Document();
@@ -12,6 +13,7 @@ function setup() {
     doc,
     history,
     moveObject,
+    copyWorldDelta: () => undefined,
     log,
     prompt: vi.fn(),
     getCursor: () => ({ x: 0, y: 0 }),
@@ -24,7 +26,10 @@ describe('CommandManager history integration', () => {
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
     expect(manager.commandSuggestions('m')).toEqual(['MEASURE', 'MOVE', 'MIRROR']);
-    expect(manager.commandSuggestions('p')).toEqual(['POLYGON', 'PRESSPULL']);
+    expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL']);
+    expect(manager.resolveAlias('pl')).toBe('POLYLINE');
+    expect(manager.resolveAlias('p')).toBe('POLYGON');
+    expect(manager.resolveAlias('mo')).toBe('MOVE');
     expect(manager.resolveAlias('e')).toBe('EXTRUDE');
     expect(manager.resolveAlias('s')).toBe('SUBTRACT');
     expect(manager.resolveAlias('u')).toBe('UNION');
@@ -44,6 +49,20 @@ describe('CommandManager history integration', () => {
     manager.startCommand('JOIN');
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
+  });
+
+  it('joins a preselected line and polyline without asking again', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    const polyline = doc.createPolyline([{ x: 5, y: 0 }, { x: 5, y: 4 }, { x: 0, y: 4 }], false);
+    doc.entities.push(line, polyline);
+    doc.selectEntity(line.id, true);
+    doc.selectEntity(polyline.id, true);
+
+    manager.startCommand('JOIN');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
   });
 
   it('joins a Bezier curve to a connected line', async () => {
@@ -75,24 +94,28 @@ describe('CommandManager history integration', () => {
 
   it('extends a line to a selected boundary', async () => {
     const { doc, manager } = setup();
-    const boundary = doc.createLine({ x: 10, y: -5 }, { x: 10, y: 5 });
-    const target = doc.createLine({ x: 0, y: 0 }, { x: 6, y: 0 });
+    const boundary = doc.createPolyline([{ x: 10, y: -5 }, { x: 10, y: 5 }], false);
+    const target = doc.createPolyline([{ x: 0, y: 0 }, { x: 6, y: 0 }], false);
     doc.entities.push(boundary, target);
     manager.startCommand('EXTEND');
     await manager.handleClick({ x: 10, y: 0 }, boundary);
     await manager.handleClick({ x: 5, y: 0 }, target);
-    expect(doc.getEntity(target.id)).toMatchObject({ type: 'line', end: { x: 10, y: 0 } });
+    const extended = doc.getEntity(target.id);
+    expect(extended).toMatchObject({ type: 'polyline' });
+    if (extended?.type === 'polyline') expect(extended.vertices[1]).toMatchObject({ x: 10, y: 0 });
   });
 
   it('trims the clicked side of a line at a cutting edge', async () => {
     const { doc, manager } = setup();
-    const cutter = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
-    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const cutter = doc.createPolyline([{ x: 5, y: -5 }, { x: 5, y: 5 }], false);
+    const target = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false);
     doc.entities.push(cutter, target);
     manager.startCommand('TRIM');
     await manager.handleClick({ x: 5, y: 0 }, cutter);
     await manager.handleClick({ x: 8, y: 0 }, target);
-    expect(doc.getEntity(target.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
+    const trimmed = doc.getEntity(target.id);
+    expect(trimmed).toMatchObject({ type: 'polyline' });
+    if (trimmed?.type === 'polyline') expect(trimmed.vertices[1]).toMatchObject({ x: 5, y: 0 });
   });
 
   it('creates an equal-length offset line on the clicked side', async () => {
@@ -295,6 +318,208 @@ describe('CommandManager history integration', () => {
     expect(moveObject).toHaveBeenCalledWith(rectangle, { x: 5, y: 2 }, { x: 10, y: 5, z: 4 });
   });
 
+  it('copies preselected entities repeatedly from one base point', async () => {
+    const { doc, manager, history } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 2, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('COPY');
+    expect(manager.active).toMatchObject({ name: 'COPY', stepIndex: 1 });
+
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 5, y: 3 });
+    await manager.handleClick({ x: -2, y: 4 });
+
+    expect(doc.entities).toHaveLength(3);
+    const copies = doc.entities.filter((entity) => entity.id !== line.id);
+    expect(copies.map((entity) => entity.type === 'line' ? entity.start : null)).toEqual(expect.arrayContaining([
+      { x: 5, y: 3 }, { x: -2, y: 4 },
+    ]));
+    expect(manager.active).toMatchObject({ name: 'COPY', stepIndex: 2 });
+    history.undo();
+    expect(doc.entities).toHaveLength(2);
+  });
+
+  it('creates a rectangular array of preselected entities', async () => {
+    const { doc, manager, history } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('ARRAY_RECTANGULAR');
+
+    await manager.submitInput('2');
+    await manager.submitInput('3');
+    await manager.submitInput('5');
+    await manager.submitInput('10');
+
+    expect(doc.entities).toHaveLength(6);
+    const starts = doc.entities
+      .filter((entity): entity is typeof line => entity.type === 'line')
+      .map((entity) => entity.start)
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+    expect(starts).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 20, y: 0 },
+      { x: 0, y: 5 },
+      { x: 10, y: 5 },
+      { x: 20, y: 5 },
+    ]);
+    expect(manager.active).toBeNull();
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+  });
+
+  it('creates a rectangular array of solids in world space', async () => {
+    const { doc, manager, history } = setup();
+    const mesh = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const solid = doc.createSolid(mesh, 'solid', 1, []);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+    manager.startCommand('ARRAY_RECTANGULAR');
+
+    await manager.submitInput('1');
+    await manager.submitInput('2');
+    await manager.submitInput('1.5');
+    await manager.submitInput('4');
+
+    expect(doc.solids).toHaveLength(2);
+    expect(doc.solids[1].mesh.positions[0]).toBeCloseTo(4);
+    expect(doc.solids[1].mesh.positions[1]).toBeCloseTo(0);
+    history.undo();
+    expect(doc.solids).toHaveLength(1);
+  });
+
+  it('creates a polar array of preselected entities', async () => {
+    const { doc, manager, history } = setup();
+    const line = doc.createLine({ x: 2, y: 0 }, { x: 4, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('ARRAY_POLAR');
+
+    await manager.submitInput('0,0');
+    await manager.submitInput('2');
+    await manager.submitInput('90');
+
+    expect(doc.entities).toHaveLength(2);
+    const endpoints = doc.entities.filter((entity): entity is typeof line => entity.type === 'line').map((entity) => entity.end);
+    const rotated = endpoints.find((point) => Math.abs(point.y - 4) < 1e-6);
+    const original = endpoints.find((point) => point.x === 4 && point.y === 0);
+    expect(rotated).toBeTruthy();
+    expect(rotated?.x).toBeCloseTo(0);
+    expect(rotated?.y).toBeCloseTo(4);
+    expect(original).toBeTruthy();
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+  });
+
+  it('creates a polar array of solids in world space', async () => {
+    const { doc, manager, history } = setup();
+    const mesh = {
+      positions: new Float32Array([2, 0, 0, 4, 0, 0, 2, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const solid = doc.createSolid(mesh, 'solid', 1, []);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+    manager.startCommand('ARRAY_POLAR');
+
+    await manager.submitInput('0,0');
+    await manager.submitInput('2');
+    await manager.submitInput('90');
+
+    expect(doc.solids).toHaveLength(2);
+    expect(doc.solids[1].mesh.positions[0]).toBeCloseTo(0);
+    expect(doc.solids[1].mesh.positions[1]).toBeCloseTo(2);
+    history.undo();
+    expect(doc.solids).toHaveLength(1);
+  });
+
+  it('creates a sweep solid from a closed profile and a path', async () => {
+    const { doc, manager, history } = setup();
+    const profile = doc.createRectangle({ x: 0, y: 0 }, { x: 2, y: 1 });
+    const path = doc.createLine({ x: 0, y: 0 }, { x: 8, y: 0 });
+    doc.entities.push(profile, path);
+    manager.startCommand('SWEEP');
+
+    await manager.handleClick({ x: 0, y: 0 }, profile);
+    await manager.handleClick({ x: 4, y: 0 }, path);
+
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].feature.kind).toBe('sweep');
+    expect(doc.entities).toHaveLength(1);
+    history.undo();
+    expect(doc.solids).toHaveLength(0);
+    expect(doc.entities).toHaveLength(2);
+  });
+
+  it('accepts a window selection while COPY is selecting objects', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 2, y: 0 });
+    const second = doc.createCircle({ x: 5, y: 5 }, 2);
+    doc.entities.push(first, second);
+    manager.startCommand('COPY');
+    doc.selectEntity(first.id, true);
+    doc.selectEntity(second.id, true);
+
+    expect(manager.syncWindowSelection()).toBe(true);
+    await manager.submitInput('');
+
+    expect(manager.active).toMatchObject({ name: 'COPY', stepIndex: 1 });
+    expect(manager.active?.data.entities).toHaveLength(2);
+  });
+
+  it('accepts a window selection while JOIN is selecting objects', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 2, y: 0 });
+    const second = doc.createLine({ x: 2, y: 0 }, { x: 4, y: 0 });
+    doc.entities.push(first, second);
+    manager.startCommand('JOIN');
+    doc.selectEntity(first.id, true);
+    doc.selectEntity(second.id, true);
+
+    expect(manager.syncWindowSelection()).toBe(true);
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline' });
+  });
+
+  it('scales a preselected entity around a base point by a numeric factor', async () => {
+    const { doc, manager, history } = setup();
+    const circle = doc.createCircle({ x: 3, y: 2 }, 2);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+    manager.startCommand('SCALE');
+    expect(manager.active).toMatchObject({ name: 'SCALE', stepIndex: 1 });
+
+    await manager.handleClick({ x: 1, y: 2 });
+    await manager.submitInput('2');
+
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 5, y: 2 }, radius: 4 });
+    history.undo();
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 3, y: 2 }, radius: 2 });
+  });
+
+  it('explodes a preselected rectangle into four undoable lines', async () => {
+    const { doc, manager, history } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 8, y: 3 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(4);
+    expect(doc.entities.every((entity) => entity.type === 'line')).toBe(true);
+    expect(doc.getSelectedEntities()).toHaveLength(4);
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('rectangle');
+  });
+
   it('rotates a preselected line around a base point by entered degrees', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 2, y: 1 }, { x: 6, y: 1 });
@@ -323,13 +548,62 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
   });
 
-  it('measures spatial distance and remains active', async () => {
-    const { log, manager } = setup();
+  it('creates a persistent aligned dimension and remains active', async () => {
+    const { doc, log, manager } = setup();
     manager.startCommand('MEASURE');
-    await manager.handleClick({ x: 0, y: 0, z: 0 });
-    await manager.handleClick({ x: 3, y: 4, z: 12 });
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Distance: 13.000 mm'));
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 3, y: 4 });
+    await manager.handleClick({ x: 0, y: 8 });
+    expect(doc.entities[0]).toMatchObject({ type: 'dimension', start: { x: 0, y: 0 }, end: { x: 3, y: 4 }, offset: { x: 0, y: 8 } });
+    expect(doc.entities[0].layer).toBe('dims');
+    expect(doc.layers).toContain('dims');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Dimension created: 5.00 mm'));
     expect(manager.active).toMatchObject({ name: 'MEASURE', stepIndex: 0 });
+  });
+
+  it('creates radius and diameter dimensions from a selected circle', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 2, y: 3 }, 5);
+    doc.entities.push(circle); doc.selectEntity(circle.id);
+
+    manager.startCommand('DIMRADIUS');
+    await manager.handleClick({ x: 12, y: 3 });
+    expect(doc.entities.at(-1)).toMatchObject({ type: 'dimension', dimensionKind: 'radius', start: { x: 2, y: 3 }, end: { x: 7, y: 3 } });
+
+    doc.selectEntity(circle.id);
+    manager.startCommand('DIMDIAMETER');
+    await manager.handleClick({ x: 2, y: 13 });
+    expect(doc.entities.at(-1)).toMatchObject({ type: 'dimension', dimensionKind: 'diameter', end: { x: 2, y: 8 } });
+  });
+
+  it('creates parametric box and cylinder primitives with undo support', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('BOX');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 6 });
+    await manager.submitInput('4');
+    expect(doc.solids[0]).toMatchObject({ name: 'Box', feature: { kind: 'primitive', primitive: 'box', width: 10, depth: 6, height: 4 } });
+    history.undo(); expect(doc.solids).toHaveLength(0);
+    history.redo(); expect(doc.solids).toHaveLength(1);
+
+    manager.startCommand('CYLINDER');
+    await manager.handleClick({ x: 20, y: 0 });
+    await manager.submitInput('3');
+    await manager.submitInput('8');
+    expect(doc.solids.at(-1)).toMatchObject({ name: 'Cylinder', feature: { kind: 'primitive', primitive: 'cylinder', radius: 3, height: 8 } });
+  });
+
+  it('creates wedge, sphere, cone and pyramid primitives', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('WEDGE');
+    await manager.handleClick({ x: 0, y: 0 }); await manager.handleClick({ x: 6, y: 4 }); await manager.submitInput('3');
+    manager.startCommand('SPHERE');
+    await manager.handleClick({ x: 10, y: 0 }); await manager.submitInput('2');
+    manager.startCommand('CONE');
+    await manager.handleClick({ x: 20, y: 0 }); await manager.submitInput('3'); await manager.submitInput('7');
+    manager.startCommand('PYRAMID');
+    await manager.handleClick({ x: 30, y: 0 }); await manager.submitInput('4'); await manager.submitInput('9');
+    expect(doc.solids.map((solid) => solid.feature.kind === 'primitive' ? solid.feature.primitive : '')).toEqual(['wedge', 'sphere', 'cone', 'pyramid']);
   });
 
   it('creates a polygon from center, side count and apothem', async () => {
@@ -342,5 +616,309 @@ describe('CommandManager history integration', () => {
     const polygon = doc.entities[0];
     expect(polygon.type === 'polyline' && polygon.vertices).toHaveLength(7);
     expect(manager.active).toMatchObject({ name: 'POLYGON', stepIndex: 0 });
+  });
+});
+
+describe('object selection steps', () => {
+  // Window select, additive clicking and window consumption used to be gated on
+  // three different hardcoded command-name lists that disagreed with each other.
+  // They are all derived from the active step now, so these must stay in lockstep.
+  const MULTI = ['COPY', 'SCALE', 'EXPLODE', 'MIRROR', 'JOIN', 'ROTATE', 'ARRAY_RECTANGULAR', 'ARRAY_POLAR'] as const;
+
+  it.each(MULTI)('%s offers window select on its object step', (name) => {
+    const { manager } = setup();
+    manager.startCommand(name);
+    expect(manager.isMultiObjectStep).toBe(true);
+    expect(manager.isAdditiveStep).toBe(true);
+  });
+
+  // The real flow: the command starts with nothing selected, the user drags a
+  // window, and the resulting document selection is synced back into the step.
+  it('lets every multi-object step consume a window selection', () => {
+    for (const name of MULTI) {
+      const { doc, manager } = setup();
+      manager.startCommand(name);
+      const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+      doc.addEntity(line);
+      doc.selectEntity(line.id);
+      expect(manager.syncWindowSelection()).toBe(true);
+      expect(manager.active?.data.entities).toHaveLength(1);
+    }
+  });
+
+  it('keeps single-object steps free of window select', () => {
+    for (const name of ['MOVE', 'ERASE', 'OFFSET', 'TRIM', 'EXTEND'] as const) {
+      const { manager } = setup();
+      manager.startCommand(name);
+      expect(manager.isMultiObjectStep).toBe(false);
+      expect(manager.syncWindowSelection()).toBe(false);
+    }
+  });
+
+  it('advances boolean operations additively without offering a window', () => {
+    for (const name of ['UNION', 'SUBTRACT'] as const) {
+      const { manager } = setup();
+      manager.startCommand(name);
+      expect(manager.isAdditiveStep).toBe(true);
+      expect(manager.isMultiObjectStep).toBe(false);
+    }
+  });
+
+  it('reports which picks the active step accepts', () => {
+    const { manager } = setup();
+    manager.startCommand('MOVE');
+    expect(manager.stepAccepts('entity')).toBe(true);
+    expect(manager.stepAccepts('solid')).toBe(true);
+
+    manager.startCommand('OFFSET');
+    expect(manager.stepAccepts('entity')).toBe(true);
+    expect(manager.stepAccepts('solid')).toBe(false);
+
+    manager.startCommand('UNION');
+    expect(manager.stepAccepts('solid')).toBe(true);
+    expect(manager.stepAccepts('entity')).toBe(false);
+  });
+});
+
+describe('Enter finishes a multi-object step', () => {
+  // ARRAY prompts "Select objects to array, then press Enter" but was missing
+  // from the hardcoded list that handled Enter, so Enter cancelled it instead.
+  // Enter must consume the gathered objects — either advancing to the next step
+  // or completing the command. What it must never do is cancel.
+  it.each(['MIRROR', 'JOIN', 'ROTATE', 'COPY', 'SCALE', 'EXPLODE', 'ARRAY_RECTANGULAR', 'ARRAY_POLAR'] as const)(
+    '%s acts on Enter instead of cancelling',
+    async (name) => {
+      const { doc, log, manager } = setup();
+      manager.startCommand(name);
+      // Two connected lines: JOIN needs at least two, and the extra pick is
+      // harmless for the others.
+      const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+      const second = doc.createLine({ x: 10, y: 0 }, { x: 10, y: 5 });
+      doc.addEntity(first);
+      doc.addEntity(second);
+      await manager.handleClick({ x: 0, y: 0 }, first);
+      await manager.handleClick({ x: 10, y: 5 }, second);
+      expect(manager.active, `${name} should still be running after picking`).not.toBeNull();
+      const stepAfterPick = manager.active?.stepIndex ?? -1;
+
+      await manager.submitInput('');
+      expect(log, `${name} cancelled on Enter`).not.toHaveBeenCalledWith('Command canceled.');
+      const advanced = manager.active === null || (manager.active?.stepIndex ?? -1) > stepAfterPick;
+      expect(advanced, `${name} ignored Enter`).toBe(true);
+    },
+  );
+
+  it('still cancels on Enter when nothing was gathered', async () => {
+    const { log, manager } = setup();
+    manager.startCommand('MIRROR');
+    await manager.submitInput('');
+    expect(manager.active).toBeNull();
+    expect(log).toHaveBeenCalledWith('Command canceled.');
+  });
+});
+
+describe('TORUS command', () => {
+  it('creates an undoable torus solid from centre, radius and tube radius', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('TORUS');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('2');
+
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].feature).toMatchObject({
+      kind: 'primitive', primitive: 'torus', radius: 10, tubeRadius: 2,
+    });
+    expect(doc.viewMode).toBe('3d');
+
+    expect(history.undo()).toBe(true);
+    expect(doc.solids).toHaveLength(0);
+  });
+
+  it('is reachable by name and by prefix like every other primitive', () => {
+    const { manager } = setup();
+    expect(manager.resolveAlias('torus')).toBe('TORUS');
+    expect(manager.resolveAlias('tor')).toBe('TORUS');
+    expect(manager.commandSuggestions('TOR')).toContain('TORUS');
+  });
+
+  it('refuses a tube that is thicker than the torus itself', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('TORUS');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 5, y: 0 });
+    await manager.submitInput('9');
+
+    expect(doc.solids).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('Tube radius must be smaller than the torus radius.');
+  });
+});
+
+describe('POLYLINE command', () => {
+  it('appends a vertex per pick and stays on the same step', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    expect(manager.active?.stepIndex).toBe(1);
+
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    // The repeating step must not advance while it is collecting.
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(doc.entities).toHaveLength(0);
+    expect(manager.active?.data.vertices).toHaveLength(3);
+  });
+
+  it('creates one undoable polyline on Enter', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
+    const polyline = doc.entities[0];
+    expect(polyline.type === 'polyline' && polyline.vertices).toHaveLength(3);
+
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('closes the polyline on C', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.submitInput('C');
+
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
+  });
+
+  it('restarts itself after finishing, like the other drawing tools', async () => {
+    const { manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'POLYLINE', stepIndex: 0 });
+  });
+
+  it('tracks ortho and the rubber band from the last vertex', async () => {
+    const { manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    expect(manager.active?.data.start).toMatchObject({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    expect(manager.active?.data.start).toMatchObject({ x: 10, y: 5 });
+  });
+
+  it('drops a polyline that never got a second point', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('A polyline needs at least two points.');
+  });
+
+  it('refuses to close a polyline with only two points', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('C');
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('A closed polyline needs at least three points.');
+  });
+});
+
+describe('commands built from the registry', () => {
+  it('takes its steps from the registry definition', () => {
+    const { manager } = setup();
+    for (const command of COMMAND_LIST) {
+      if (!command.steps) continue;
+      manager.startCommand(command.name);
+      expect(manager.active?.name, `${command.name} did not start`).toBe(command.name);
+      expect(manager.active?.steps, `${command.name} steps differ`).toEqual(command.steps);
+      expect(manager.active?.stepIndex).toBe(0);
+    }
+  });
+
+  // The registry holds one definition; the wizard must never mutate it.
+  it('does not let a run mutate the shared definition', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(1);
+
+    manager.startCommand('POLYLINE');
+    expect(manager.active?.data.vertices, 'vertices leaked into the next run').toHaveLength(0);
+    expect(commandDef('POLYLINE').steps).toEqual(commandDef('POLYLINE').steps);
+    expect(manager.active?.steps).not.toBe(commandDef('POLYLINE').steps);
+  });
+});
+
+describe('Enter repeats the last command', () => {
+  it('restarts the last command at an empty prompt', async () => {
+    const { manager } = setup();
+    manager.startCommand('CIRCLE');
+    manager.cancelActive();
+    expect(manager.active).toBeNull();
+
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'CIRCLE', stepIndex: 0 });
+  });
+
+  it('repeats a command started from the toolbar, not just a typed one', async () => {
+    const { manager } = setup();
+    // startCommand is what the toolbar calls; nothing was typed.
+    manager.startCommand('RECTANGLE');
+    manager.cancelActive();
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'RECTANGLE' });
+  });
+
+  it('repeats after a command completes', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('LINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 5, y: 0 });
+    expect(doc.entities).toHaveLength(1);
+    manager.cancelActive();
+
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'LINE' });
+  });
+
+  it('repeats an immediate command too', async () => {
+    const { doc, log, manager } = setup();
+    const before = doc.snapEnabled;
+    manager.startCommand('SNAP');
+    expect(doc.snapEnabled).toBe(!before);
+    await manager.submitInput('');
+    expect(doc.snapEnabled).toBe(before);
+    expect(log).toHaveBeenCalledTimes(2);
+  });
+
+  it('does nothing at an empty prompt before any command has run', async () => {
+    const { manager } = setup();
+    await manager.submitInput('');
+    expect(manager.active).toBeNull();
+  });
+
+  // While a command is running, Enter belongs to that command's step.
+  it('does not hijack Enter from a running command', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('POLYLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(1);
   });
 });
