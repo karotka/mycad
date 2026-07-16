@@ -271,6 +271,11 @@ export interface PrimitiveFeature {
   radius?: number;
   /** Minor radius of a torus; `radius` is the distance from centre to tube centre. */
   tubeRadius?: number;
+  /**
+   * The far radius of a cone, cutting its point off: absent or 0 is a cone,
+   * anything else a frustum. `radius` is the one at the work plane.
+   */
+  radiusTop?: number;
   height: number;
   /**
    * Stretches the primitive along its own axes before the work plane places it.

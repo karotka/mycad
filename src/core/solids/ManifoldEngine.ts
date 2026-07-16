@@ -261,7 +261,7 @@ export function primitiveMesh(feature: PrimitiveFeature): SolidMesh {
   const local = feature.primitive === 'box' ? createBoxMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
     : feature.primitive === 'wedge' ? createWedgeMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
     : feature.primitive === 'sphere' ? createSphereMesh(feature.radius ?? 1, feature.center.x, feature.center.y)
-    : feature.primitive === 'cone' ? createConeMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
+    : feature.primitive === 'cone' ? createConeMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64, feature.radiusTop ?? 0)
     : feature.primitive === 'pyramid' ? createPyramidMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
     : feature.primitive === 'torus' ? createTorusMesh(feature.radius ?? 1, feature.tubeRadius ?? 0.25, feature.center.x, feature.center.y)
     : createCylinderMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64);
@@ -466,7 +466,16 @@ export function createCylinderMesh(radius: number, height: number, cx = 0, cy = 
   };
 }
 
-export function createConeMesh(radius: number, height: number, cx = 0, cy = 0, segments = 64): SolidMesh {
+/**
+ * `radiusTop` cuts the point off: 0 is a cone, anything else is a frustum, and
+ * the same value as `radius` is a cylinder.
+ *
+ * Nothing here had two radii, and almost everything tapered does — a table leg,
+ * a chamfer, a draft angle, an elephant's trunk. Faking one meant a chain of
+ * overlapping capsules, which is what the elephant's trunk still is.
+ */
+export function createConeMesh(radius: number, height: number, cx = 0, cy = 0, segments = 64, radiusTop = 0): SolidMesh {
+  if (radiusTop > 1e-9) return createFrustumMesh(radius, radiusTop, height, cx, cy, segments);
   const positions: number[] = [cx, cy, height, cx, cy, 0];
   for (let i = 0; i < segments; i++) {
     const angle = i * Math.PI * 2 / segments;
@@ -476,6 +485,31 @@ export function createConeMesh(radius: number, height: number, cx = 0, cy = 0, s
   for (let i = 0; i < segments; i++) {
     const a = 2 + i, b = 2 + (i + 1) % segments;
     indices.push(0, a, b, 1, b, a);
+  }
+  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
+}
+
+/** Two rings and two caps, wound the way the cylinder is — Manifold needs that. */
+function createFrustumMesh(radius: number, radiusTop: number, height: number, cx: number, cy: number, segments: number): SolidMesh {
+  const positions: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    const angle = i * Math.PI * 2 / segments;
+    positions.push(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, 0);
+    positions.push(cx + Math.cos(angle) * radiusTop, cy + Math.sin(angle) * radiusTop, height);
+  }
+  const indices: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    const base = i * 2, next = ((i + 1) % segments) * 2;
+    indices.push(base, next, base + 1, base + 1, next, next + 1);
+  }
+  const bottomCenter = positions.length / 3;
+  positions.push(cx, cy, 0);
+  const topCenter = positions.length / 3;
+  positions.push(cx, cy, height);
+  for (let i = 0; i < segments; i++) {
+    const base = i * 2, next = ((i + 1) % segments) * 2;
+    indices.push(bottomCenter, next, base);
+    indices.push(topCenter, base + 1, next + 1);
   }
   return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
 }

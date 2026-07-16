@@ -34,7 +34,9 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       const round = (value: number) => Number(value.toFixed(2));
       const size = feature.primitive === 'box' || feature.primitive === 'wedge'
         ? `${round(feature.width ?? 1)} × ${round(feature.depth ?? 1)} × ${round(feature.height)}`
-        : `r ${round(feature.radius ?? 1)}`;
+        : feature.primitive === 'cone' && feature.radiusTop
+          ? `r ${round(feature.radius ?? 1)} → ${round(feature.radiusTop)}`
+          : `r ${round(feature.radius ?? 1)}`;
       // A scale is what makes it an ellipsoid rather than a ball, so it belongs
       // in the line: two spheres of the same radius can be different shapes.
       const scale = feature.scale && (feature.scale.x !== 1 || feature.scale.y !== 1 || feature.scale.z !== 1)

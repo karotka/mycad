@@ -177,13 +177,13 @@ still passes. That is how this got shipped in the first place.
 Worth doing at the same time: **manifold 3.5.1** is out (we are on 2.5.1) and
 its WASM is 541 KB against our 916 KB. Its API differs; treat it as its own job.
 
-### No truncated cone (frustum)
+### ~~No truncated cone~~ — done
 
-A cone tapers to a point; a cylinder has one radius. Nothing has two. A trunk,
-a table leg, a chamfer, a draft angle — all of it is a frustum. It is why the
-elephant's trunk still costs four overlapping capsules instead of one, and it is
-the cheapest real modelling win left: one mesh builder, one `radiusTop` field,
-one entry in `primitiveParams`.
+`createConeMesh` takes a `radiusTop`: 0 is a cone, anything else a frustum, the
+same value as `radius` a cylinder. `PrimitiveFeature.radiusTop` carries it, both
+panels offer it, and the tree line says `r 10 → 4` — because two cones of one
+radius can be different shapes. The elephant's trunk is four tapered cones now
+rather than four capsules of one radius each pretending to taper.
 
 ### No loft, no freeform surface
 

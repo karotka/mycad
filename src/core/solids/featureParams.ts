@@ -92,6 +92,11 @@ export function primitiveParams(feature: PrimitiveFeature): FeatureParam[] {
     case 'torus':
       params.push(radius, { key: 'tubeRadius', label: 'Tube radius', value: feature.tubeRadius ?? 0.25, min: 1e-6 });
       break;
+    case 'cone':
+      // Zero is the point of a cone, so this one is allowed down to it — unlike
+      // every other radius here, which stops being a shape at zero.
+      params.push(radius, { key: 'radiusTop', label: 'Top radius', value: feature.radiusTop ?? 0, min: 0 }, height);
+      break;
     default:
       params.push(radius, height);
   }
@@ -126,6 +131,7 @@ export function setPrimitiveParam(feature: PrimitiveFeature, key: string, value:
   if (key === 'width') { feature.width = value; return true; }
   if (key === 'depth') { feature.depth = value; return true; }
   if (key === 'tubeRadius') { feature.tubeRadius = value; return true; }
+  if (key === 'radiusTop') { feature.radiusTop = value; return true; }
   if (key === 'radius') {
     feature.radius = value;
     if (feature.primitive === 'sphere') feature.height = value * 2;

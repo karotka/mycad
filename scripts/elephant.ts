@@ -80,6 +80,12 @@ const spike = (from: Vec3, to: Vec3, radius: number): PrimitiveFeature => ({
   workPlane: workPlaneFromAxis(from, to),
 });
 
+/** A cone with its point cut off: one piece of a taper, at two radii. */
+const taper = (from: Vec3, to: Vec3, radius: number, radiusTop: number): PrimitiveFeature => ({
+  kind: 'primitive', primitive: 'cone', center: { x: 0, y: 0 }, radius, radiusTop, height: distance(from, to),
+  workPlane: workPlaneFromAxis(from, to),
+});
+
 /** Both sides at once: an elephant is symmetric about y = 0. */
 const mirrored = (build: (side: 1 | -1) => PrimitiveFeature[]): PrimitiveFeature[] => [...build(1), ...build(-1)];
 
@@ -94,13 +100,16 @@ const head = [
   egg(at(31, 0, 14), { x: 9, y: 10, z: 10 }), // the brow, above the trunk
 ];
 
-// Curves and tapers at once, which no primitive does — so it stays a chain, but
-// of overlapping capsules rather than forty round spheres.
+// It curves *and* tapers, so it is still a chain — but each link is now one
+// truncated cone that tapers by itself, rather than a capsule of one radius
+// pretending to. The joints are balls, because two cones meeting at an angle
+// leave a notch on the outside of the bend.
 const trunk = [
-  capsule(at(35, 0, 10), at(48, 0, 6), 5.4),
-  capsule(at(48, 0, 6), at(62, 0, 3.6), 4.4),
-  capsule(at(62, 0, 3.6), at(76, 0, 2.6), 3.4),
-  capsule(at(76, 0, 2.6), at(92, 0, 2.2), 2.6),
+  taper(at(35, 0, 10), at(48, 0, 6), 5.6, 4.6),
+  taper(at(48, 0, 6), at(62, 0, 3.6), 4.6, 3.6),
+  taper(at(62, 0, 3.6), at(76, 0, 2.6), 3.6, 2.9),
+  taper(at(76, 0, 2.6), at(92, 0, 2.2), 2.9, 2.4),
+  ball(at(48, 0, 6), 4.6), ball(at(62, 0, 3.6), 3.6), ball(at(76, 0, 2.6), 2.9), ball(at(92, 0, 2.2), 2.4),
 ];
 
 // As big as the head and sweeping back over the shoulder, as in the picture.

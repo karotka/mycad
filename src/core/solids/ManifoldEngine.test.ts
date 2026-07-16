@@ -168,6 +168,47 @@ describe('createTorusMesh', () => {
     });
   });
 
+  describe('a cone with its point cut off', () => {
+    const cone = (radiusTop?: number): PrimitiveFeature =>
+      ({ kind: 'primitive', primitive: 'cone', center: { x: 0, y: 0 }, radius: 10, height: 20, radiusTop });
+
+    const radiusAt = (positions: Float32Array, z: number) => {
+      let widest = 0;
+      for (let i = 0; i < positions.length; i += 3) {
+        if (Math.abs(positions[i + 2] - z) > 1e-4) continue;
+        widest = Math.max(widest, Math.hypot(positions[i], positions[i + 1]));
+      }
+      return widest;
+    };
+
+    it('is wide at the top when asked, and a point when not', async () => {
+      // Nothing here had two radii, and almost everything tapered does: a table
+      // leg, a chamfer, a draft angle, an elephant's trunk.
+      const frustum = (await regenerateSolidFeature(cone(4)))!;
+      expect(radiusAt(frustum.positions, 0)).toBeCloseTo(10, 2);
+      expect(radiusAt(frustum.positions, 20)).toBeCloseTo(4, 2);
+
+      const pointed = (await regenerateSolidFeature(cone()))!;
+      expect(radiusAt(pointed.positions, 20)).toBeCloseTo(0, 6);
+    });
+
+    it('comes out wound the right way, which is the only thing Manifold asks', async () => {
+      // A boolean is the test: Manifold refuses a mesh that is inside out or
+      // not closed, so surviving a union says the frustum is a real solid.
+      const united = await regenerateSolidFeature({
+        kind: 'boolean', operation: 'union',
+        operands: [cone(4), { ...cone(4), center: { x: 6, y: 0 } }],
+      });
+      expect(united?.indices.length).toBeGreaterThan(0);
+    });
+
+    it('is a cylinder when both radii agree', async () => {
+      const mesh = (await regenerateSolidFeature(cone(10)))!;
+      expect(radiusAt(mesh.positions, 0)).toBeCloseTo(10, 2);
+      expect(radiusAt(mesh.positions, 20)).toBeCloseTo(10, 2);
+    });
+  });
+
   it('places the hole at the centre and honours the work plane origin', () => {
     const mesh = createTorusMesh(10, 2, 5, -3, 24, 12);
     let minDistance = Infinity;
