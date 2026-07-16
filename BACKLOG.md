@@ -104,12 +104,6 @@ Candidates, in order:
 
 - **`PointerRouter`** — the `pointerdown`/`pointermove` handlers (~380 lines) are
   where the bugs live.
-- **Toolbar data and icons** — `drawTools`…`zoomTools` arrays plus ~40 inline SVG
-  paths are pure data (`ui/toolbar/`).
-- **Shell HTML** — ~145 lines of markup in one `innerHTML` template string.
-- **`FlyoutTool` class** — the flyout logic is copy-pasted **six** times (~230
-  lines), each with its own hold timer and its own `450` ms magic number. The
-  circle/diameter/ellipse flyout added the sixth; the next one should extract it.
 - **`Panel` interface `{ isOpen, render() }`** — three controllers already
   implement it informally; the subscriber has a hand-written `if` per panel.
 - **One "click outside" manager** — there are seven separate global `pointerdown`

@@ -32,26 +32,29 @@ import {
 } from './ui/toolbar';
 import { toolIcon } from './ui/toolIcons';
 import { shellHtml } from './ui/shell';
+import { FlyoutTool } from './ui/FlyoutTool';
 import { resolveDraftingPoint } from './interaction/DraftingService';
 import { resolvePointerGesture } from './interaction/PointerGesture';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
 
+// What each flyout last used, validated against the tools that still exist. Only
+// a starting point: the FlyoutTool owns the choice from here on.
 const savedPrimitive = localStorage.getItem('mycad.lastPrimitive') as CommandName | null;
-let currentPrimitive: CommandName = primitiveTools.some(([, command]) => command === savedPrimitive) ? savedPrimitive! : 'BOX';
+const initialPrimitive: CommandName = primitiveTools.some(([, command]) => command === savedPrimitive) ? savedPrimitive! : 'BOX';
 const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | null;
-let currentCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
+const initialCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
 const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandName | null;
-let currentDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
+const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
-let currentZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
+const initialZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
 
 app.innerHTML = shellHtml({
-  primitive: currentPrimitive,
-  circle: currentCircle,
-  dimension: currentDimension,
-  zoom: currentZoom,
+  primitive: initialPrimitive,
+  circle: initialCircle,
+  dimension: initialDimension,
+  zoom: initialZoom,
 });
 
 const viewport = get<HTMLElement>('viewport');
@@ -1466,183 +1469,64 @@ document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) 
   });
 });
 
-const primitiveMain = get<HTMLButtonElement>('primitive-main');
-const primitiveFlyoutElement = get<HTMLElement>('primitive-flyout');
-let primitiveHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let primitiveHoldOpened = false;
-
-function activatePrimitive(command = currentPrimitive): void {
+/** Starts a tool from the toolbar without taking focus off the command line. */
+function runTool(command: CommandName): void {
   commands.startCommand(command);
   redraw();
   input.focus({ preventScroll: true });
 }
 
-function updatePrimitiveMain(command: CommandName): void {
-  currentPrimitive = command;
-  localStorage.setItem('mycad.lastPrimitive', command);
-  const label = primitiveTools.find(([, value]) => value === command)?.[0] ?? command;
-  primitiveMain.dataset.label = label;
-  primitiveMain.title = `${label} · hold for more`;
-  primitiveMain.setAttribute('aria-label', `${label} · hold for more`);
-  primitiveMain.innerHTML = `${toolIcon(command)}<span class="flyout-caret">▾</span>`;
-}
-
-primitiveMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  primitiveHoldOpened = false;
-  primitiveHoldTimer = setTimeout(() => {
-    primitiveHoldOpened = true;
-    primitiveFlyoutElement.hidden = false;
-  }, 450);
-});
-primitiveMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (primitiveHoldTimer) clearTimeout(primitiveHoldTimer);
-  primitiveHoldTimer = null;
-  if (!primitiveHoldOpened) activatePrimitive();
-});
-primitiveMain.addEventListener('pointerleave', () => {
-  if (primitiveHoldTimer) clearTimeout(primitiveHoldTimer);
-  primitiveHoldTimer = null;
-});
-primitiveFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-primitive-command]').forEach((button) => {
-  button.addEventListener('pointerdown', (event) => {
-    event.preventDefault(); event.stopPropagation();
-    const command = button.dataset.primitiveCommand as CommandName;
-    updatePrimitiveMain(command);
-    primitiveFlyoutElement.hidden = true;
-    activatePrimitive(command);
-  });
-});
-window.addEventListener('pointerdown', (event) => {
-  if (!primitiveFlyoutElement.contains(event.target as Node) && event.target !== primitiveMain) primitiveFlyoutElement.hidden = true;
+const primitiveFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('primitive-main'),
+  flyout: get('primitive-flyout'),
+  initial: initialPrimitive,
+  run: runTool,
+  memory: {
+    attribute: 'data-primitive-command',
+    storageKey: 'mycad.lastPrimitive',
+    labelOf: (value) => primitiveTools.find((tool) => tool[1] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
 });
 
-const arrayMain = get<HTMLButtonElement>('array-main');
-const arrayFlyoutElement = get<HTMLElement>('array-flyout');
-let arrayHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let arrayHoldOpened = false;
-arrayMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  arrayHoldOpened = false;
-  arrayHoldTimer = setTimeout(() => {
-    arrayHoldOpened = true;
-    arrayFlyoutElement.hidden = false;
-  }, 450);
-});
-arrayMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (arrayHoldTimer) clearTimeout(arrayHoldTimer);
-  arrayHoldTimer = null;
-  if (!arrayHoldOpened) {
-    commands.startCommand('ARRAY_RECTANGULAR');
-    redraw();
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-  }
-});
-arrayMain.addEventListener('pointerleave', () => {
-  if (arrayHoldTimer) clearTimeout(arrayHoldTimer);
-  arrayHoldTimer = null;
-});
-arrayFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
-  event.preventDefault(); event.stopPropagation();
-  arrayFlyoutElement.hidden = true;
-}));
-window.addEventListener('pointerdown', (event) => {
-  if (!arrayFlyoutElement.contains(event.target as Node) && event.target !== arrayMain) arrayFlyoutElement.hidden = true;
+const arrayFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('array-main'),
+  flyout: get('array-flyout'),
+  initial: 'ARRAY_RECTANGULAR',
+  run: runTool,
 });
 
-const extrudeMain = get<HTMLButtonElement>('extrude-main');
-const extrudeFlyoutElement = get<HTMLElement>('extrude-flyout');
-let extrudeHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let extrudeHoldOpened = false;
-extrudeMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  extrudeHoldOpened = false;
-  extrudeHoldTimer = setTimeout(() => {
-    extrudeHoldOpened = true;
-    extrudeFlyoutElement.hidden = false;
-  }, 450);
-});
-extrudeMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (extrudeHoldTimer) clearTimeout(extrudeHoldTimer);
-  extrudeHoldTimer = null;
-  if (!extrudeHoldOpened) {
-    commands.startCommand('EXTRUDE');
-    redraw();
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-  }
-});
-extrudeMain.addEventListener('pointerleave', () => {
-  if (extrudeHoldTimer) clearTimeout(extrudeHoldTimer);
-  extrudeHoldTimer = null;
-});
-extrudeFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
-  event.preventDefault(); event.stopPropagation();
-  extrudeFlyoutElement.hidden = true;
-}));
-window.addEventListener('pointerdown', (event) => {
-  if (!extrudeFlyoutElement.contains(event.target as Node) && event.target !== extrudeMain) extrudeFlyoutElement.hidden = true;
+const extrudeFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('extrude-main'),
+  flyout: get('extrude-flyout'),
+  initial: 'EXTRUDE',
+  run: runTool,
 });
 
-const circleMain = get<HTMLButtonElement>('circle-main');
-const circleFlyoutElement = get<HTMLElement>('circle-flyout');
-let circleHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let circleHoldOpened = false;
-circleMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return; event.preventDefault(); circleHoldOpened = false;
-  circleHoldTimer = setTimeout(() => { circleHoldOpened = true; circleFlyoutElement.hidden = false; }, 450);
-});
-circleMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (circleHoldTimer) clearTimeout(circleHoldTimer); circleHoldTimer = null;
-  if (!circleHoldOpened) { commands.startCommand(currentCircle); redraw(); input.focus({ preventScroll: true }); }
-});
-circleMain.addEventListener('pointerleave', () => { if (circleHoldTimer) clearTimeout(circleHoldTimer); circleHoldTimer = null; });
-circleFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-circle-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
-  event.preventDefault(); event.stopPropagation();
-  currentCircle = button.dataset.circleCommand as CommandName;
-  localStorage.setItem('mycad.lastCircle', currentCircle);
-  const label = circleTools.find(([, , command]) => command === currentCircle)?.[0] ?? currentCircle;
-  circleMain.dataset.label = label; circleMain.title = `${label} · hold for more`; circleMain.setAttribute('aria-label', `${label} · hold for more`);
-  circleMain.innerHTML = `${toolIcon(currentCircle)}<span class="flyout-caret">▾</span>`;
-  circleFlyoutElement.hidden = true; commands.startCommand(currentCircle); redraw(); input.focus({ preventScroll: true });
-}));
-window.addEventListener('pointerdown', (event) => {
-  if (!circleFlyoutElement.contains(event.target as Node) && event.target !== circleMain) circleFlyoutElement.hidden = true;
+const circleFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('circle-main'),
+  flyout: get('circle-flyout'),
+  initial: initialCircle,
+  run: runTool,
+  memory: {
+    attribute: 'data-circle-command',
+    storageKey: 'mycad.lastCircle',
+    labelOf: (value) => circleTools.find((tool) => tool[2] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
 });
 
-const dimensionMain = get<HTMLButtonElement>('dimension-main');
-const dimensionFlyoutElement = get<HTMLElement>('dimension-flyout');
-let dimensionHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let dimensionHoldOpened = false;
-dimensionMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return; event.preventDefault(); dimensionHoldOpened = false;
-  dimensionHoldTimer = setTimeout(() => { dimensionHoldOpened = true; dimensionFlyoutElement.hidden = false; }, 450);
-});
-dimensionMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (dimensionHoldTimer) clearTimeout(dimensionHoldTimer); dimensionHoldTimer = null;
-  if (!dimensionHoldOpened) { commands.startCommand(currentDimension); redraw(); input.focus({ preventScroll: true }); }
-});
-dimensionMain.addEventListener('pointerleave', () => { if (dimensionHoldTimer) clearTimeout(dimensionHoldTimer); dimensionHoldTimer = null; });
-dimensionFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-dimension-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
-  event.preventDefault(); event.stopPropagation();
-  currentDimension = button.dataset.dimensionCommand as CommandName;
-  localStorage.setItem('mycad.lastDimension', currentDimension);
-  const label = dimensionTools.find(([, command]) => command === currentDimension)?.[0] ?? currentDimension;
-  dimensionMain.dataset.label = label; dimensionMain.title = `${label} · hold for more`; dimensionMain.setAttribute('aria-label', `${label} · hold for more`);
-  dimensionMain.innerHTML = `${toolIcon(currentDimension)}<span class="flyout-caret">▾</span>`;
-  dimensionFlyoutElement.hidden = true; commands.startCommand(currentDimension); redraw(); input.focus({ preventScroll: true });
-}));
-window.addEventListener('pointerdown', (event) => {
-  if (!dimensionFlyoutElement.contains(event.target as Node) && event.target !== dimensionMain) dimensionFlyoutElement.hidden = true;
+const dimensionFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('dimension-main'),
+  flyout: get('dimension-flyout'),
+  initial: initialDimension,
+  run: runTool,
+  memory: {
+    attribute: 'data-dimension-command',
+    storageKey: 'mycad.lastDimension',
+    labelOf: (value) => dimensionTools.find((tool) => tool[2] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
 });
 
 function activateZoom(action: 'ZOOM_ALL' | 'ZOOM_WINDOW'): void {
@@ -1658,31 +1542,17 @@ function activateZoom(action: 'ZOOM_ALL' | 'ZOOM_WINDOW'): void {
   }
 }
 
-const zoomMain = get<HTMLButtonElement>('zoom-main');
-const zoomFlyoutElement = get<HTMLElement>('zoom-flyout');
-let zoomHoldTimer: ReturnType<typeof setTimeout> | null = null;
-let zoomHoldOpened = false;
-zoomMain.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) return; event.preventDefault(); zoomHoldOpened = false;
-  zoomHoldTimer = setTimeout(() => { zoomHoldOpened = true; zoomFlyoutElement.hidden = false; }, 450);
-});
-zoomMain.addEventListener('pointerup', (event) => {
-  if (event.button !== 0) return;
-  if (zoomHoldTimer) clearTimeout(zoomHoldTimer); zoomHoldTimer = null;
-  if (!zoomHoldOpened) activateZoom(currentZoom);
-});
-zoomMain.addEventListener('pointerleave', () => { if (zoomHoldTimer) clearTimeout(zoomHoldTimer); zoomHoldTimer = null; });
-zoomFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-zoom-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
-  event.preventDefault(); event.stopPropagation();
-  currentZoom = button.dataset.zoomCommand as 'ZOOM_ALL' | 'ZOOM_WINDOW';
-  localStorage.setItem('mycad.lastZoom', currentZoom);
-  const label = zoomTools.find(([, action]) => action === currentZoom)?.[0] ?? currentZoom;
-  zoomMain.dataset.label = label; zoomMain.title = `${label} · hold for more`; zoomMain.setAttribute('aria-label', `${label} · hold for more`);
-  zoomMain.innerHTML = `${toolIcon(currentZoom)}<span class="flyout-caret">▾</span>`;
-  zoomFlyoutElement.hidden = true; activateZoom(currentZoom);
-}));
-window.addEventListener('pointerdown', (event) => {
-  if (!zoomFlyoutElement.contains(event.target as Node) && event.target !== zoomMain) zoomFlyoutElement.hidden = true;
+const zoomFlyoutTool = new FlyoutTool<'ZOOM_ALL' | 'ZOOM_WINDOW'>({
+  main: get<HTMLButtonElement>('zoom-main'),
+  flyout: get('zoom-flyout'),
+  initial: initialZoom,
+  run: (action) => activateZoom(action),
+  memory: {
+    attribute: 'data-zoom-command',
+    storageKey: 'mycad.lastZoom',
+    labelOf: (value) => zoomTools.find((tool) => tool[1] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
 });
 
 document.querySelectorAll<HTMLButtonElement>('[data-view-action]').forEach((button) => {
