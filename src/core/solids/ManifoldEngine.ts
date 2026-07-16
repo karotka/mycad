@@ -1,7 +1,7 @@
 import type ModuleFactory from 'manifold-3d';
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
-import type { Entity, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
+import type { Entity, PrimitiveFeature, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
 import { curvePoints } from '../entities/types';
 import { localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, type WorkPlane } from '../../math/workplane';
 
@@ -240,23 +240,32 @@ export async function modifySolidEdge(
   }
 }
 
+/**
+ * A primitive, built and placed. Needs no WASM, so it stays synchronous and can
+ * be called from anywhere — which matters, because the properties panel had
+ * copied this whole switch rather than await a promise, and the copy had
+ * already drifted: it never learned about scale, so editing the radius of an
+ * ellipsoid quietly collapsed it back into a ball.
+ */
+export function primitiveMesh(feature: PrimitiveFeature): SolidMesh {
+  const local = feature.primitive === 'box' ? createBoxMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
+    : feature.primitive === 'wedge' ? createWedgeMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
+    : feature.primitive === 'sphere' ? createSphereMesh(feature.radius ?? 1, feature.center.x, feature.center.y)
+    : feature.primitive === 'cone' ? createConeMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
+    : feature.primitive === 'pyramid' ? createPyramidMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
+    : feature.primitive === 'torus' ? createTorusMesh(feature.radius ?? 1, feature.tubeRadius ?? 0.25, feature.center.x, feature.center.y)
+    : createCylinderMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64);
+  const scaled = feature.scale ? scaleMesh(local, feature.scale) : local;
+  if (!feature.workPlane) return scaled;
+  return {
+    positions: transformMeshByWorkPlane(scaled.positions, feature.workPlane),
+    indices: transformMeshIndicesByWorkPlane(scaled.indices, feature.workPlane),
+  };
+}
+
 export async function regenerateSolidFeature(feature: SolidFeature): Promise<SolidMesh | null> {
   if (feature.kind === 'mesh') return null;
-  if (feature.kind === 'primitive') {
-    const local = feature.primitive === 'box' ? createBoxMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'wedge' ? createWedgeMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'sphere' ? createSphereMesh(feature.radius ?? 1, feature.center.x, feature.center.y)
-      : feature.primitive === 'cone' ? createConeMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'pyramid' ? createPyramidMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'torus' ? createTorusMesh(feature.radius ?? 1, feature.tubeRadius ?? 0.25, feature.center.x, feature.center.y)
-      : createCylinderMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64);
-    const scaled = feature.scale ? scaleMesh(local, feature.scale) : local;
-    if (!feature.workPlane) return scaled;
-    return {
-      positions: transformMeshByWorkPlane(scaled.positions, feature.workPlane),
-      indices: transformMeshIndicesByWorkPlane(scaled.indices, feature.workPlane),
-    };
-  }
+  if (feature.kind === 'primitive') return primitiveMesh(feature);
   if (feature.kind === 'extrusion') {
     const polygon = entityToPolygon(feature.profile);
     if (!polygon) return null;

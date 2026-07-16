@@ -3,8 +3,7 @@ import { cloneEntity, type Entity, type Solid } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
-import { createBoxMesh, createConeMesh, createCylinderMesh, createPyramidMesh, createSphereMesh, createWedgeMesh } from '../core/solids/ManifoldEngine';
-import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane } from '../math/workplane';
+import { primitiveMesh } from '../core/solids/ManifoldEngine';
 
 type ObjectValue = Entity | Solid;
 
@@ -146,16 +145,10 @@ function updateSolid(solid: Solid, key: string, value: number): void {
     else if (key === 'radius' && ['cylinder', 'sphere', 'cone', 'pyramid'].includes(feature.primitive)) { feature.radius = value; if (feature.primitive === 'sphere') feature.height = value * 2; }
     else if (key === 'height' && feature.primitive !== 'sphere') feature.height = value;
     else return;
-    const local = feature.primitive === 'box' ? createBoxMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'wedge' ? createWedgeMesh(feature.width ?? 1, feature.depth ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'sphere' ? createSphereMesh(feature.radius ?? 1, feature.center.x, feature.center.y)
-      : feature.primitive === 'cone' ? createConeMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
-      : feature.primitive === 'pyramid' ? createPyramidMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
-      : createCylinderMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64);
-    solid.mesh = feature.workPlane ? {
-      positions: transformMeshByWorkPlane(local.positions, feature.workPlane),
-      indices: transformMeshIndicesByWorkPlane(local.indices, feature.workPlane),
-    } : local;
+    // The engine builds primitives; this panel only says what changed. The copy
+    // that used to live here had already fallen behind it — it never applied a
+    // scale, and it had never heard of a torus.
+    solid.mesh = primitiveMesh(feature);
     solid.height = feature.height; solid.revision++;
     return;
   }
