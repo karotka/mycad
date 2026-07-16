@@ -247,13 +247,19 @@ bar: F3, F8, F10. The rest of the map, with what it would cost:
 | **F11** | Object snap tracking | **Done** — key and status button. |
 | F12 | Dynamic input | No dynamic input. The dimension toast is a different thing. Medium. |
 
-### Still missing: setting the step
+### Settings are per drawing, not per application
 
-`doc.snapSize` decides how far the cursor steps, and nothing exposes it — F9 only
-turns stepping on and off. AutoCAD puts the value behind the same button. Note
-also that `snapEnabled`, `snapSize` and `gridSize` sit on `Document` while the
-other three toggles live in `drafting`, which is why F9 needs its own toggle
-function rather than going through `toggleDraftingMode`.
+`snapSize`, `gridSize` and the polar angles are saved into the `.mycad` file, so
+they travel with it: open someone else's drawing and you get their snap step.
+AutoCAD does the same, so this is a defensible default — but there is no
+application-level settings store at all (localStorage only remembers which tool a
+flyout last used), so "my step is always 0.5" has nowhere to live. Worth deciding
+before the first release.
+
+Note also that `snapEnabled`, `snapSize` and `gridSize` sit on `Document` while
+the other drafting toggles live in `drafting`, which is why F9 needs its own
+toggle function rather than going through `toggleDraftingMode`. Tidying that
+touches the file format, so it waits with the rest of that item.
 
 ---
 

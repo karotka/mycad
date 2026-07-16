@@ -25,6 +25,7 @@ import { GripInteractionController } from './interaction/GripInteractionControll
 import { DrawingInteractionController } from './interaction/DrawingInteractionController';
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
+import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import { resolveDraftingPoint } from './interaction/DraftingService';
 import { resolvePointerGesture } from './interaction/PointerGesture';
 
@@ -223,6 +224,7 @@ app.innerHTML = `
         <span id="layer-current">0</span>
       </button>
       <button class="properties-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
+      <button class="properties-toggle" id="drafting-settings-toggle" title="Drafting Settings — snap step, grid, polar angles" aria-label="Drafting Settings">DRAFTING</button>
       <button class="properties-toggle" id="dimension-style-toggle" title="Dimension Style" aria-label="Dimension Style">DIM STYLE</button>
       <section class="layer-panel" id="layer-panel" hidden>
         <header><strong>Layers</strong><button id="layer-add" title="New layer">+</button></header>
@@ -231,6 +233,14 @@ app.innerHTML = `
       <section class="properties-panel" id="properties-panel" hidden>
         <header><strong>Object Properties</strong><button id="properties-close" title="Close">×</button></header>
         <div class="properties-content" id="properties-content"></div>
+      </section>
+      <section class="properties-panel dimension-style-panel" id="drafting-settings-panel" hidden>
+        <header><strong>Drafting Settings</strong><button id="drafting-settings-close" title="Close">×</button></header>
+        <form class="properties-content" id="drafting-settings-form">
+          <label class="property-row"><span>Snap step (F9)</span><input id="drafting-snap-size" type="number" min="0.001" step="0.1"></label>
+          <label class="property-row"><span>Grid spacing</span><input id="drafting-grid-size" type="number" min="0.001" step="0.1"></label>
+          <label class="property-row"><span>Polar angles (F10)</span><input id="drafting-polar-angles" type="text" inputmode="numeric" placeholder="30, 45, 90"></label>
+        </form>
       </section>
       <section class="properties-panel dimension-style-panel" id="dimension-style-panel" hidden>
         <header><strong>Dimension Style</strong><button id="dimension-style-close" title="Close">×</button></header>
@@ -381,6 +391,14 @@ const propertiesController = new PropertiesController(
   get('properties-content'),
   get('properties-toggle'),
   get('properties-close'),
+  redraw,
+);
+const draftingSettingsController = new DraftingSettingsController(
+  cadDocument,
+  get('drafting-settings-panel'),
+  get<HTMLFormElement>('drafting-settings-form'),
+  get('drafting-settings-toggle'),
+  get('drafting-settings-close'),
   redraw,
 );
 const dimensionStyleController = new DimensionStyleController(
@@ -1017,6 +1035,7 @@ cadDocument.subscribe(() => {
   if (layerController.isOpen) layerController.render();
   if (propertiesController.isOpen) propertiesController.render();
   if (dimensionStyleController.isOpen) dimensionStyleController.render();
+  if (draftingSettingsController.isOpen) draftingSettingsController.render();
 });
 new ResizeObserver(resize).observe(viewport);
 
