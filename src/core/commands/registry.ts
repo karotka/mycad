@@ -162,16 +162,13 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify scale base point:' }, { kind: 'point', label: 'Specify scale factor or enter a number:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify scale base point.`) },
+  // Takes solids, like SCALE beside it. It used to say "2D object(s)" and mean
+  // it: a solid could be scaled but not turned, which is not a rule anyone
+  // decided, only one command's step that never grew the other's.
   { name: 'ROTATE', aliases: ['RO', 'ROTATE'], suggest: true, pointInput: true, transformsObjects: true,
-    steps: [{ kind: 'entity', label: 'Select 2D object(s), then press Enter:', multi: true }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
-    data: () => ({ entities: [] }),
-    onStart: (active, ctx) => {
-      const selected = ctx.doc.getSelectedEntities();
-      if (selected.length === 0) return;
-      active.data.entities = [...selected];
-      active.stepIndex = 1;
-      ctx.log(`${selected.length} object(s) preselected. Specify rotation base point.`);
-    } },
+    steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Specify rotation base point.`) },
   { name: 'MIRROR', aliases: ['MI', 'MIRROR'], help: 'mirror objects', suggest: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
     data: () => ({ entities: [] }),
     onStart: preselectEntities((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },

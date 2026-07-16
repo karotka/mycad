@@ -1213,6 +1213,28 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
     expect(maxX).toBeCloseTo(8, 3);
   });
 
+  // Reported next: rotation only worked on 2D objects. It did — ROTATE's step
+  // said "Select 2D object(s)" and its onStart only ever looked at entities, so
+  // a solid could be scaled but not turned. Nobody decided that; SCALE grew
+  // solids and ROTATE beside it did not.
+  it('turns a solid at all', async () => {
+    const kit = setup();
+    const solid = ball(kit);
+    solid.feature = { kind: 'mesh' }; // the feature is a separate question
+    kit.manager.startCommand('ROTATE');
+    // Preselected, so it starts at the base point: the proof it took the solid.
+    expect(kit.manager.active).toMatchObject({ stepIndex: 1 });
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.submitInput('180');
+
+    // Half a turn about x = 10 takes a ball at the origin to x = 20.
+    let maxX = -Infinity;
+    for (let i = 0; i < kit.doc.solids[0].mesh.positions.length; i += 3) {
+      maxX = Math.max(maxX, kit.doc.solids[0].mesh.positions[i]);
+    }
+    expect(maxX).toBeCloseTo(24, 3);
+  });
+
   it('a rotated sphere is still a sphere', async () => {
     const kit = setup();
     ball(kit);
@@ -1224,6 +1246,20 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
     expect(solid.feature.kind).toBe('primitive');
     if (solid.feature.kind !== 'primitive') throw new Error('expected a primitive');
     expect(solid.feature.radius).toBe(4);
+  });
+
+  it('rotates a solid and a drawing together, which is what selecting both asks', async () => {
+    const kit = setup();
+    ball(kit);
+    const line = kit.doc.createLine({ x: 0, y: 0 }, { x: 6, y: 0 });
+    kit.doc.addEntity(line);
+    kit.doc.selectEntity(line.id, true);
+
+    kit.manager.startCommand('ROTATE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('90');
+
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('Rotated 2 object(s)'));
   });
 
   it('still bakes what it honestly cannot write down', async () => {

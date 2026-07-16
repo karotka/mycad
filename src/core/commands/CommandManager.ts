@@ -1728,10 +1728,18 @@ export class CommandManager {
           const target = value as Vec2;
           const angle = Math.atan2(target.y - base.y, target.x - base.x);
           const originals = data.entities as Entity[];
+          const originalSolids = (data.solids as Solid[] | undefined) ?? [];
           const rotated = originals.map((entity) => rotateEntity(entity, base, angle, this.ctx.doc));
-          this.ctx.history.execute(new ReplaceObjectsEdit('Rotate', originals, [], rotated, []));
+          // Solids turn about the same axis the drawing does: the work plane's
+          // normal, through the base point. ARRAY has always rotated them this
+          // way; ROTATE simply never asked for them.
+          const plane = this.ctx.doc.activeWorkPlane;
+          const rotatedSolids = originalSolids.map((solid) => rotateSolidAroundPlane(cloneSolid(solid), { x: base.x, y: base.y, z: 0 }, angle, plane));
+          this.ctx.history.execute(new ReplaceObjectsEdit('Rotate', originals, originalSolids, rotated, rotatedSolids));
+          this.ctx.doc.clearSelection();
           rotated.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          this.ctx.log(`Rotated ${rotated.length} object(s) by ${(angle * 180 / Math.PI).toFixed(3)}°.`);
+          rotatedSolids.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
+          this.ctx.log(`Rotated ${rotated.length + rotatedSolids.length} object(s) by ${(angle * 180 / Math.PI).toFixed(3)}°.`);
         }
         break;
 
