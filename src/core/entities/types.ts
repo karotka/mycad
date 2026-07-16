@@ -271,6 +271,17 @@ export interface PrimitiveFeature {
   /** Minor radius of a torus; `radius` is the distance from centre to tube centre. */
   tubeRadius?: number;
   height: number;
+  /**
+   * Stretches the primitive along its own axes before the work plane places it.
+   * A sphere with a scale is an ellipsoid — the shape most rounded things
+   * actually are, and the one no primitive here draws. Without it an egg costs
+   * forty spheres unioned into a blob.
+   *
+   * Applied in the primitive's own frame, about the work plane origin: for a
+   * sphere at center {0,0} that is its centre, and for a cylinder it is the
+   * middle of the base, so scaling z lengthens it away from there.
+   */
+  scale?: Vec3;
   workPlane?: WorkPlane;
 }
 

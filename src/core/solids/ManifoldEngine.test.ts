@@ -114,6 +114,60 @@ describe('createTorusMesh', () => {
     expect([...edges.values()].every((count) => count === 2)).toBe(true);
   });
 
+  describe('scaling a primitive', () => {
+    const bounds = (positions: Float32Array) => {
+      const span = (axis: number) => {
+        let min = Infinity, max = -Infinity;
+        for (let i = axis; i < positions.length; i += 3) { min = Math.min(min, positions[i]); max = Math.max(max, positions[i]); }
+        return { min, max };
+      };
+      return { x: span(0), y: span(1), z: span(2) };
+    };
+
+    const sphere = (scale?: { x: number; y: number; z: number }): PrimitiveFeature => ({
+      kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 10, height: 0, scale,
+    });
+
+    it('turns a sphere into an ellipsoid', async () => {
+      const mesh = await regenerateSolidFeature(sphere({ x: 3, y: 1, z: 0.4 }));
+      const box = bounds(mesh!.positions);
+      // The shape the primitives cannot draw: three different radii. Faking it
+      // cost forty spheres unioned together.
+      expect(box.x.max).toBeCloseTo(30, 4);
+      expect(box.y.max).toBeCloseTo(10, 4);
+      expect(box.z.max).toBeCloseTo(4, 4);
+      expect(box.z.min).toBeCloseTo(-4, 4);
+    });
+
+    it('leaves a primitive alone when it has no scale', async () => {
+      const box = bounds((await regenerateSolidFeature(sphere()))!.positions);
+      expect([box.x.max, box.y.max, box.z.max]).toEqual([10, 10, 10].map((value) => expect.closeTo(value, 4)));
+    });
+
+    it('scales a cylinder from its base, not through it', async () => {
+      const mesh = await regenerateSolidFeature({
+        kind: 'primitive', primitive: 'cylinder', center: { x: 0, y: 0 }, radius: 4, height: 10,
+        scale: { x: 1, y: 1, z: 2 },
+      });
+      const box = bounds(mesh!.positions);
+      // The base sits on z = 0, so doubling the height must grow upwards only.
+      expect(box.z.min).toBeCloseTo(0, 4);
+      expect(box.z.max).toBeCloseTo(20, 4);
+    });
+
+    it('keeps a mirrored primitive right side out', async () => {
+      const mesh = await regenerateSolidFeature(sphere({ x: -1, y: 1, z: 1 }));
+      // Manifold refuses an inside-out mesh, so a mesh at all is the assertion:
+      // a negative scale reflects, and reflecting reverses every triangle.
+      expect(mesh).not.toBeNull();
+      const united = await regenerateSolidFeature({
+        kind: 'boolean', operation: 'union',
+        operands: [sphere({ x: -1, y: 1, z: 1 }), sphere({ x: 1, y: 1, z: 1 })],
+      });
+      expect(united?.indices.length).toBeGreaterThan(0);
+    });
+  });
+
   it('places the hole at the centre and honours the work plane origin', () => {
     const mesh = createTorusMesh(10, 2, 5, -3, 24, 12);
     let minDistance = Infinity;

@@ -1,5 +1,5 @@
 import type ModuleFactory from 'manifold-3d';
-import type { Vec2 } from '../../math/geometry';
+import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
 import type { Entity, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
 import { curvePoints } from '../entities/types';
@@ -250,10 +250,11 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
       : feature.primitive === 'pyramid' ? createPyramidMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y)
       : feature.primitive === 'torus' ? createTorusMesh(feature.radius ?? 1, feature.tubeRadius ?? 0.25, feature.center.x, feature.center.y)
       : createCylinderMesh(feature.radius ?? 1, feature.height, feature.center.x, feature.center.y, 64);
-    if (!feature.workPlane) return local;
+    const scaled = feature.scale ? scaleMesh(local, feature.scale) : local;
+    if (!feature.workPlane) return scaled;
     return {
-      positions: transformMeshByWorkPlane(local.positions, feature.workPlane),
-      indices: transformMeshIndicesByWorkPlane(local.indices, feature.workPlane),
+      positions: transformMeshByWorkPlane(scaled.positions, feature.workPlane),
+      indices: transformMeshIndicesByWorkPlane(scaled.indices, feature.workPlane),
     };
   }
   if (feature.kind === 'extrusion') {
@@ -458,6 +459,34 @@ export function createConeMesh(radius: number, height: number, cx = 0, cy = 0, s
     indices.push(0, a, b, 1, b, a);
   }
   return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
+}
+
+/**
+ * Stretches a mesh along the axes it was built on. A sphere scaled this way is
+ * an ellipsoid, which is the whole point: the primitives are all surfaces of
+ * revolution, so without it every squashed or stretched shape has to be faked
+ * out of dozens of round ones.
+ */
+export function scaleMesh(mesh: SolidMesh, scale: Vec3): SolidMesh {
+  const positions = mesh.positions.slice();
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] *= scale.x;
+    positions[i + 1] *= scale.y;
+    positions[i + 2] *= scale.z;
+  }
+  // An odd number of negative factors mirrors the mesh, which turns it inside
+  // out. Manifold refuses a mesh wound the wrong way, so the winding is put
+  // back — the same care transformMeshIndicesByWorkPlane takes for a left-
+  // handed plane, and for the same reason.
+  const indices = mesh.indices.slice();
+  if (scale.x * scale.y * scale.z < 0) {
+    for (let i = 0; i + 2 < indices.length; i += 3) {
+      const second = indices[i + 1];
+      indices[i + 1] = indices[i + 2];
+      indices[i + 2] = second;
+    }
+  }
+  return { positions, indices };
 }
 
 export function createSphereMesh(radius: number, cx = 0, cy = 0, segments = 32, rings = 16): SolidMesh {
