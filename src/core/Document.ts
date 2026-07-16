@@ -206,14 +206,14 @@ export class Document {
     return { id: genId('text'), type: 'text', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
   }
 
-  createDimension(start: Vec2, end: Vec2, offset: Vec2, dimensionKind: DimensionEntity['dimensionKind'] = 'aligned'): DimensionEntity {
+  createDimension(start: Vec2, end: Vec2, offset: Vec2, dimensionKind: DimensionEntity['dimensionKind'] = 'linear', rotation?: number): DimensionEntity {
     const layer = this.dimensionStyle.layer || 'dims';
     if (!this.layers.includes(layer)) this.layers.push(layer);
     if (!(layer in this.layerColors)) this.layerColors[layer] = 0xffffff;
     return {
       id: genId('dim'), type: 'dimension', layer,
       color: this.layerColors[layer] ?? 0xffffff, selected: false,
-      workPlane: cloneWorkPlane(this.activeWorkPlane), start, end, offset, dimensionKind,
+      workPlane: cloneWorkPlane(this.activeWorkPlane), start, end, offset, dimensionKind, rotation,
       textHeight: this.dimensionStyle.textHeight, arrowSize: this.dimensionStyle.arrowSize,
       arrowType: this.dimensionStyle.arrowType, extensionBeyond: this.dimensionStyle.extensionBeyond,
       extensionOffset: this.dimensionStyle.extensionOffset, textOffset: this.dimensionStyle.textOffset,

@@ -24,7 +24,8 @@ export const primitiveTools: Array<[string, CommandName]> = [['Box', 'BOX'], ['W
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
 export const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', 'Extrude', 'EXTRUDE'], ['Sweep', 'Sweep Along Path', 'SWEEP']];
 export const dimensionTools: Array<[string, string, CommandName]> = [
-  ['Linear', 'Linear Dimension', 'MEASURE'],
+  ['Linear', 'Linear Dimension — horizontal or vertical', 'MEASURE'],
+  ['Aligned', 'Aligned Dimension — the true distance', 'DIMALIGNED'],
   ['Radius', 'Radius Dimension', 'DIMRADIUS'],
   ['Diameter', 'Diameter Dimension', 'DIMDIAMETER'],
 ];

@@ -221,16 +221,15 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       if (override && override !== '<>') approximated++;
 
       if (kind === 0 || kind === 1) {
-        // Linear and aligned: 13/14 are the extension line origins, 10 sits on
-        // the dimension line.
+        // 13/14 are the extension line origins and 10 sits on the dimension line.
+        // Type 0 is rotated/linear and measures along code 50; type 1 is aligned
+        // and measures point to point. Both map exactly now.
         const start = point(13, 23);
         const end = point(14, 24);
-        const measured = number(fields, 42, Number.NaN);
-        // A rotated dimension measures the projection onto its own direction;
-        // ours always measures start→end, so say so when they disagree.
-        if (Number.isFinite(measured)
-          && Math.abs(measured * scale - Math.hypot(end.x - start.x, end.y - start.y)) > 1e-6) approximated++;
-        finish(doc.createDimension(start, end, point(10, 20), 'aligned'), fields, layer);
+        finish(kind === 1
+          ? doc.createDimension(start, end, point(10, 20), 'aligned')
+          : doc.createDimension(start, end, point(10, 20), 'linear', number(fields, 50, 0) * Math.PI / 180),
+          fields, layer);
       } else if (kind === 3) {
         // Diameter: 10 and 15 are opposite ends of the diameter, so the centre
         // is between them; we store centre → rim.

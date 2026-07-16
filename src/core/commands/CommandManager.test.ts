@@ -3,6 +3,7 @@ import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
 import { COMMAND_LIST, commandDef } from './registry';
+import { dimensionGeometry } from '../entities/types';
 
 function setup() {
   const doc = new Document();
@@ -552,16 +553,21 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: true });
   });
 
-  it('creates a persistent aligned dimension and remains active', async () => {
+  // A 3-4-5 triangle: the legs are 3 and 4, the diagonal is 5. MEASURE is the
+  // linear dimension, so it reads a leg — reading 5 is what DIMALIGNED is for.
+  it('creates a persistent linear dimension and remains active', async () => {
     const { doc, log, manager } = setup();
     manager.startCommand('MEASURE');
     await manager.handleClick({ x: 0, y: 0 });
     await manager.handleClick({ x: 3, y: 4 });
-    await manager.handleClick({ x: 0, y: 8 });
-    expect(doc.entities[0]).toMatchObject({ type: 'dimension', start: { x: 0, y: 0 }, end: { x: 3, y: 4 }, offset: { x: 0, y: 8 } });
+    await manager.handleClick({ x: 0, y: 8 }); // pulled upwards, so it reads across
+    expect(doc.entities[0]).toMatchObject({
+      type: 'dimension', dimensionKind: 'linear', rotation: 0,
+      start: { x: 0, y: 0 }, end: { x: 3, y: 4 }, offset: { x: 0, y: 8 },
+    });
     expect(doc.entities[0].layer).toBe('dims');
     expect(doc.layers).toContain('dims');
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Dimension created: 5.00 mm'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Dimension created: 3.00 mm'));
     expect(manager.active).toMatchObject({ name: 'MEASURE', stepIndex: 0 });
   });
 
@@ -1172,5 +1178,42 @@ describe('MOVE takes as many objects as you give it', () => {
     await manager.handleClick({ x: 5, y: 5 });
     expect(moveObjects).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith('Nothing to move.');
+  });
+});
+
+describe('linear and aligned dimensions', () => {
+  // The points form a 3-4-5 triangle, so the answer says which one it measured.
+  const measure = async (name: 'MEASURE' | 'DIMALIGNED', offset: { x: number; y: number }) => {
+    const kit = setup();
+    kit.manager.startCommand(name);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 3, y: 4 });
+    await kit.manager.handleClick(offset);
+    const dimension = kit.doc.entities[0];
+    return { dimension, text: dimension.type === 'dimension' ? dimensionGeometry(dimension).text : '' };
+  };
+
+  it('reads the horizontal leg when the dimension line is pulled up', async () => {
+    const { dimension, text } = await measure('MEASURE', { x: 1.5, y: 9 });
+    expect(dimension).toMatchObject({ dimensionKind: 'linear', rotation: 0 });
+    expect(text).toBe('3.00');
+  });
+
+  it('reads the vertical leg when the dimension line is pulled aside', async () => {
+    const { dimension, text } = await measure('MEASURE', { x: -6, y: 2 });
+    expect(dimension).toMatchObject({ dimensionKind: 'linear', rotation: Math.PI / 2 });
+    expect(text).toBe('4.00');
+  });
+
+  it('reads the diagonal only when asked for an aligned dimension', async () => {
+    const { dimension, text } = await measure('DIMALIGNED', { x: -4, y: 5 });
+    expect(dimension).toMatchObject({ dimensionKind: 'aligned' });
+    expect(text).toBe('5.00');
+  });
+
+  it('is reachable as its own command', () => {
+    const { manager } = setup();
+    expect(manager.resolveAlias('dal')).toBe('DIMALIGNED');
+    expect(manager.commandSuggestions('DIM')).toContain('DIMALIGNED');
   });
 });

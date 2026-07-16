@@ -107,8 +107,19 @@ export class PreviewController {
       this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
       return;
     }
-    if (active.name === 'MEASURE' && active.stepIndex === 2 && active.data.start && active.data.end) {
-      this.setPreview({ type: 'dimension', data: { start: active.data.start, end: active.data.end, offset: cursor, style: active.data.dimensionStyle } });
+    if ((active.name === 'MEASURE' || active.name === 'DIMALIGNED') && active.stepIndex === 2 && active.data.start && active.data.end) {
+      const start = active.data.start as Vec2;
+      const end = active.data.end as Vec2;
+      const aligned = active.name === 'DIMALIGNED';
+      this.setPreview({
+        type: 'dimension',
+        data: {
+          start, end, offset: cursor,
+          kind: aligned ? 'aligned' : 'linear',
+          rotation: aligned ? undefined : linearDimensionRotation(start, end, cursor),
+          style: active.data.dimensionStyle,
+        },
+      });
       return;
     }
     if ((active.name === 'DIMRADIUS' || active.name === 'DIMDIAMETER') && active.stepIndex === 1 && active.data.entity) {
@@ -203,7 +214,7 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
   }
   return result;
 }
-import type { ActiveCommand } from '../core/commands/CommandManager';
+import { linearDimensionRotation, type ActiveCommand } from '../core/commands/CommandManager';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';

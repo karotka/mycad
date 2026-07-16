@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { importAsciiDxf } from './DxfImport';
+import { dimensionGeometry } from '../core/entities/types';
 
 const dxf = (entities: string, units = 4) => `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n${units}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`;
 
@@ -192,15 +193,31 @@ describe('DXF DIMENSION', () => {
     expect(result.layers).toContain('MyDims');
   });
 
-  it('reports a rotated dimension, whose measurement is a projection we cannot hold', () => {
+  // A rotated dimension measures the projection onto its own direction, which is
+  // what the linear kind is for. It used to import as aligned and read 11.66.
+  it('imports a rotated dimension exactly, reading what the file says it reads', () => {
     const doc = new Document();
-    // Points 10 apart in x but also 6 in y; a horizontal dimension reads 10,
-    // while start→end is 11.66.
+    // Points 10 apart in x and 6 in y; the file states the measurement as 10.
     const result = importAsciiDxf(doc, dxf(
       '0\nDIMENSION\n8\nDims\n70\n0\n50\n0\n10\n5\n20\n-4\n13\n0\n23\n0\n14\n10\n24\n6\n42\n10\n',
     ));
-    expect(result.entities).toHaveLength(1);
-    expect(result.approximated).toBe(1);
+    const dimension = result.entities[0];
+    expect(dimension).toMatchObject({ type: 'dimension', dimensionKind: 'linear', rotation: 0 });
+    if (dimension.type !== 'dimension') return;
+    // Reads the leg the file measured, not the diagonal between the points.
+    expect(dimensionGeometry(dimension).text).toBe('10.00');
+    expect(result.approximated).toBe(0);
+  });
+
+  it('keeps an aligned dimension aligned', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf(
+      '0\nDIMENSION\n8\nDims\n70\n1\n10\n5\n20\n8\n13\n0\n23\n0\n14\n3\n24\n4\n',
+    ));
+    const dimension = result.entities[0];
+    expect(dimension).toMatchObject({ dimensionKind: 'aligned' });
+    if (dimension.type !== 'dimension') return;
+    expect(dimensionGeometry(dimension).text).toBe('5.00');
   });
 
   it('reports an overridden dimension text as lost', () => {

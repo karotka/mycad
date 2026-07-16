@@ -44,6 +44,7 @@ export function toolIcon(command: ToolbarIcon): string {
     PRESSPULL: '<path d="M3 17l9 4 9-4-9-4-9 4zM12 13V4M9 7l3-3 3 3M9 10l3 3 3-3"/>',
     ERASE: '<path d="M4 16L14 4l6 5-9 11H7l-3-4zM11 20h10"/>',
     MEASURE: '<path d="M4 19L19 4M3 15l6 6M15 3l6 6M8 14l2 2M11 11l2 2M14 8l2 2"/>',
+    DIMALIGNED: '<path d="M4 20L20 4"/><path d="M2 14l4 4M18 2l4 4" stroke-dasharray="2 2"/><path d="M6 18l3 1-1-3M18 6l-3-1 1 3"/>',
     DIMRADIUS: '<circle cx="11" cy="12" r="7"/><path d="M11 12l5-5M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">R</text>',
     DIMDIAMETER: '<circle cx="11" cy="12" r="7"/><path d="M6 17L16 7M6 15v2h2M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">Ø</text>',
     UCS: '<path d="M5 19V7M5 19h12M5 19l7-7M5 7l-2 3M5 7l2 3M17 19l-3-2M17 19l-3 2M12 12l-1-4M12 12l4-1"/>',

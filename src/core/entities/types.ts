@@ -58,7 +58,12 @@ export interface BezierEntity extends EntityBase { type: 'bezier'; start: Vec2; 
 export interface TextEntity extends EntityBase { type: 'text'; position: Vec2; text: string; height: number; font?: string; rotation?: number; }
 export interface DimensionEntity extends EntityBase {
   type: 'dimension';
-  dimensionKind: 'aligned' | 'radius' | 'diameter';
+  /**
+   * `linear` measures along its own `rotation` — the horizontal or vertical
+   * distance, which is what a drawing usually wants. `aligned` measures the true
+   * point-to-point distance, which is the diagonal.
+   */
+  dimensionKind: 'linear' | 'aligned' | 'radius' | 'diameter';
   start: Vec2;
   end: Vec2;
   offset: Vec2;
@@ -70,6 +75,8 @@ export interface DimensionEntity extends EntityBase {
   textOffset: number;
   precision: number;
   scale: number;
+  /** The direction a `linear` dimension measures along, in radians. Ignored by the rest. */
+  rotation?: number;
 }
 
 export type Entity = LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
@@ -86,9 +93,21 @@ export interface DimensionGeometry {
 
 export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
   const dx = entity.end.x - entity.start.x, dy = entity.end.y - entity.start.y;
-  const length = Math.hypot(dx, dy);
-  const ux = length > 1e-9 ? dx / length : 1, uy = length > 1e-9 ? dy / length : 0;
+  const span = Math.hypot(dx, dy);
+  // Every kind is the same construction, differing only in which way the
+  // dimension line runs: a linear one runs along its own rotation, and the rest
+  // run from start to end. An aligned dimension is that with the direction taken
+  // from the points, which is why there is no separate case for it.
+  const linear = entity.dimensionKind === 'linear';
+  const direction = linear ? entity.rotation ?? 0 : Math.atan2(dy, dx);
+  // Taken from the points rather than from the angle where it can be: dx / span
+  // is exact for an axis-aligned dimension, where cos(atan2(...)) is 6e-17.
+  const ux = linear ? Math.cos(direction) : (span > 1e-9 ? dx / span : 1);
+  const uy = linear ? Math.sin(direction) : (span > 1e-9 ? dy / span : 0);
   const nx = -uy, ny = ux;
+  // What it reads: how far the points are apart *along the dimension line*. For
+  // an aligned one that is the full distance; for a linear one it is the leg.
+  const length = Math.abs(dx * ux + dy * uy);
   const signedOffset = (entity.offset.x - entity.start.x) * nx + (entity.offset.y - entity.start.y) * ny;
   const side = signedOffset < 0 ? -1 : 1;
   const a = { x: entity.start.x + nx * signedOffset, y: entity.start.y + ny * signedOffset };
@@ -100,7 +119,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
   const arrow = entity.arrowSize * entity.scale;
   const wing = arrow * 0.36;
   const textClearance = (entity.textOffset + entity.textHeight / 2) * entity.scale;
-  let textAngle = Math.atan2(dy, dx);
+  let textAngle = direction;
   if (textAngle >= Math.PI / 2) textAngle -= Math.PI;
   else if (textAngle < -Math.PI / 2) textAngle += Math.PI;
   const triangle = (tip: Vec2, direction: number): [Vec2, Vec2, Vec2] => [
@@ -116,7 +135,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     return {
       extensionStart: [entity.start, entity.start], extensionEnd: [entity.end, entity.end],
       dimensionLine: [entity.start, entity.offset], arrows: [triangle(entity.end, -1)],
-      textPoint: entity.offset, textAngle: 0, text: `R${length.toFixed(entity.precision)}`,
+      textPoint: entity.offset, textAngle: 0, text: `R${span.toFixed(entity.precision)}`,
     };
   }
   if (entity.dimensionKind === 'diameter') {
@@ -124,7 +143,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     return {
       extensionStart: [opposite, opposite], extensionEnd: [entity.end, entity.end],
       dimensionLine: [opposite, entity.end], arrows: [triangle(opposite, 1), triangle(entity.end, -1)],
-      textPoint: entity.offset, textAngle: 0, text: `Ø${(length * 2).toFixed(entity.precision)}`,
+      textPoint: entity.offset, textAngle: 0, text: `\u00d8${(span * 2).toFixed(entity.precision)}`,
     };
   }
   return {

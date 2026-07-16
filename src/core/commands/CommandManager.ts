@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, curvePoints, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { cloneEntity, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -1750,6 +1750,7 @@ export class CommandManager {
         }
         break;
 
+      case 'DIMALIGNED':
       case 'MEASURE':
         if (this.active.stepIndex === 0) data.start = value;
         else if (this.active.stepIndex === 1) data.end = value;
@@ -1758,11 +1759,16 @@ export class CommandManager {
           const end = data.end as Vec2 | Vec3;
           const a: Vec3 = { x: start.x, y: start.y, z: 'z' in start ? start.z : 0 };
           const b: Vec3 = { x: end.x, y: end.y, z: 'z' in end ? end.z : 0 };
+          const offset = value as Vec2;
+          const aligned = this.active.name === 'DIMALIGNED';
           const dimension = this.ctx.doc.createDimension(
-            { x: start.x, y: start.y }, { x: end.x, y: end.y }, value as Vec2,
+            { x: start.x, y: start.y }, { x: end.x, y: end.y }, offset,
+            aligned ? 'aligned' : 'linear',
+            aligned ? undefined : linearDimensionRotation({ x: start.x, y: start.y }, { x: end.x, y: end.y }, offset),
           );
           this.ctx.history.execute(new AddEntityEdit('Dimension', dimension));
-          this.ctx.log(`Dimension created: ${dist3(a, b).toFixed(dimension.precision)} mm (${formatPoint(a)} -> ${formatPoint(b)})`);
+          const measured = aligned ? dist3(a, b) : Number(dimensionGeometry(dimension).text);
+          this.ctx.log(`Dimension created: ${measured.toFixed(dimension.precision)} mm (${formatPoint(a)} -> ${formatPoint(b)})`);
         }
         break;
 
@@ -1870,6 +1876,17 @@ export class CommandManager {
     if (this.historyIndex >= this.history.length) return '';
     return this.history[this.historyIndex];
   }
+}
+
+/**
+ * Which way a linear dimension measures, from where its line was pulled: drag it
+ * up or down and it reads the horizontal distance, drag it aside and it reads the
+ * vertical one. This is what AutoCAD does while you place it.
+ */
+export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
+  const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  const pulled = { x: offset.x - midpoint.x, y: offset.y - midpoint.y };
+  return Math.abs(pulled.y) >= Math.abs(pulled.x) ? 0 : Math.PI / 2;
 }
 
 /** Distance from a point to a segment — the basis of every stroke hit test. */

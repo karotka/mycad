@@ -310,9 +310,9 @@ export class Canvas2DRenderer {
       label = `A = ${(Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x) * 180 / Math.PI).toFixed(2)}°`;
       labelPoint = rotation.end;
     } else if (preview.type === 'dimension') {
-      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; kind?: 'aligned' | 'radius' | 'diameter'; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
+      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; kind?: 'linear' | 'aligned' | 'radius' | 'diameter'; rotation?: number; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
       const style = value.style ?? { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed' as const, extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
-      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'aligned', color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
+      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
       label = Math.hypot(value.end.x - value.start.x, value.end.y - value.start.y).toFixed(style.precision);
       labelPoint = value.offset;
     } else if (preview.type === 'line' && d.start && d.end) {
