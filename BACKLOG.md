@@ -21,6 +21,7 @@ TEXT, MTEXT, SPLINE and DIMENSION. What is left:
 | **3DFACE** | Genuinely 3D: a 3- or 4-corner flat face. Could become a `Solid` with `feature: { kind: 'mesh' }`, which already exists — but a face soup is *not watertight*, and our `Solid` assumes a closed body, so Manifold would reject it in a boolean. It would import for viewing and break on UNION/SUBTRACT. Also a legacy entity. | Medium |
 | **DIMENSION: angular (types 2, 5) and ordinate (type 6)** | `DimensionEntity.dimensionKind` only has `aligned \| radius \| diameter`. Angular needs an arc dimension line and an angle readout; ordinate needs a leader. Both are new kinds in the model + renderer. | Medium |
 | **Dimension refinements** | Style details from the file (DIMSTYLE: arrow size, text height, precision) are ignored; imported dimensions take the current document style. | Medium |
+| **DIMENSION: rotated/linear (type 0)** | Imports as `aligned`, which measures the wrong thing — see *Linear dimensions* below. Reported as approximated today. | — |
 
 ### Known fidelity limits in what *is* imported
 
@@ -311,3 +312,51 @@ Notes for whoever picks this up:
   above.
 - Export in general is parked until the import is good enough; G-code is a
   separate track from DXF export and does not have to wait for it.
+
+---
+
+## Linear dimensions: the default measures the wrong thing
+
+Pick two points at different heights and MEASURE dimensions the **hypotenuse**.
+It should dimension the **leg** — the horizontal or vertical distance — because
+that is what a linear dimension is, and it is what a drawing almost always wants.
+Measuring the true point-to-point distance is a *different* kind of dimension,
+and needs its own command.
+
+The model only knows one of them:
+
+```ts
+dimensionKind: 'aligned' | 'radius' | 'diameter';   // core/entities/types.ts
+const length = Math.hypot(dx, dy);                  // always the hypotenuse
+```
+
+`createDimension` defaults to `'aligned'`, and MEASURE is registered as *"create
+an aligned dimension"*. So the default is the special case and the common case is
+missing. In AutoCAD this is DIMLINEAR (the default: horizontal, vertical or
+rotated) versus DIMALIGNED (the hypotenuse) — two commands, not one.
+
+### What it needs
+
+- A `linear` kind on `DimensionEntity`, carrying the **direction** it measures
+  along (DXF stores it as code 50; 0° horizontal, 90° vertical, anything else
+  rotated). The measurement is then the projection of `end - start` onto that
+  direction, and the extension lines run perpendicular to it — not along
+  `start → end` as they do now.
+- MEASURE placing a `linear` by default, choosing horizontal or vertical from
+  where the cursor pulls the dimension line, as AutoCAD does while you place it.
+- A separate command for `aligned`, which keeps today's behaviour.
+
+### It closes the DXF gap at the same time
+
+This is the same hole from the other side. DXF DIMENSION **type 0** is exactly a
+rotated/linear dimension, and the importer has to flag it:
+
+```ts
+// A rotated dimension measures the projection onto its own direction;
+// ours always measures start→end, so say so when they disagree.
+```
+
+It is detected by comparing against DXF code 42 (the drawing's own stated
+measurement) and counted as approximated. With a `linear` kind, type 0 imports
+exactly and the approximation disappears — so the two items are one piece of work
+and should be done together.
