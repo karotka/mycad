@@ -26,3 +26,52 @@ describe('DimensionStyleController', () => {
     expect(untouched).toMatchObject({ textHeight: 2.5, arrowType: 'closed', layer: 'notes' });
   });
 });
+
+describe('typing into an open dimension style panel', () => {
+  function setup() {
+    const doc = new Document();
+    const ids = [
+      'dimension-text-height', 'dimension-arrow-size', 'dimension-arrow-type', 'dimension-extension-beyond',
+      'dimension-extension-offset', 'dimension-text-offset', 'dimension-precision', 'dimension-scale',
+    ];
+    const fields = new Map(ids.map((id) => [id, { value: '' } as HTMLInputElement]));
+    // The layer field is a select the panel rebuilds when it renders.
+    fields.set('dimension-layer', { value: 'dims', replaceChildren: vi.fn() } as unknown as HTMLInputElement);
+    let onInput = (): void => {};
+    const form = {
+      querySelector: (selector: string) => fields.get(selector.slice(1)) ?? null,
+      addEventListener: (_type: string, listener: () => void) => { onInput = listener; },
+    } as unknown as HTMLFormElement;
+    const panel = { hidden: true } as HTMLElement;
+    const element = { addEventListener: vi.fn() } as unknown as HTMLElement;
+    // render() rebuilds the layer select, which is the only DOM it needs.
+    vi.stubGlobal('document', { createElement: () => ({ value: '', textContent: '' }) });
+    const controller = new DimensionStyleController(doc, panel, form, element, element, vi.fn());
+    doc.subscribe(() => { if (controller.isOpen) controller.render(); });
+    controller.toggle();
+    return { doc, fields, type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); } };
+  }
+
+  // The same round trip as the drafting panel: apply notifies, the notification
+  // renders, and render put the last good value back into the box being typed.
+  it('leaves a box alone while it is being cleared and retyped', () => {
+    const { doc, fields, type } = setup();
+    const height = fields.get('dimension-text-height')!;
+    expect(height.value).toBe('2.5');
+
+    type('dimension-text-height', '');
+    expect(height.value, 'the panel typed over an empty box').toBe('');
+    expect(doc.dimensionStyle.textHeight).toBe(2.5);
+
+    type('dimension-text-height', '4');
+    expect(height.value).toBe('4');
+    expect(doc.dimensionStyle.textHeight).toBe(4);
+  });
+
+  it('still follows a change made outside it', () => {
+    const { doc, fields } = setup();
+    doc.dimensionStyle = { ...doc.dimensionStyle, textHeight: 9 };
+    doc.notify();
+    expect(fields.get('dimension-text-height')!.value).toBe('9');
+  });
+});

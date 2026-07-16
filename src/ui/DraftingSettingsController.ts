@@ -21,6 +21,8 @@ export class DraftingSettingsController {
     form.addEventListener('input', () => this.apply());
   }
 
+  private applying = false;
+
   get isOpen(): boolean { return !this.panel.hidden; }
 
   toggle(): void {
@@ -28,13 +30,30 @@ export class DraftingSettingsController {
     if (!this.panel.hidden) this.render();
   }
 
+  /**
+   * The panel must not rewrite its own fields while they are being typed into.
+   * apply() notifies the document, the notification comes back here, and a
+   * half-typed ".2" would be replaced by the last good value on every keystroke
+   * — so the box could never be cleared to type a new number.
+   */
   render(): void {
+    if (this.applying) return;
+
     this.set('drafting-snap-size', this.doc.snapSize);
     this.set('drafting-grid-size', this.doc.gridSize);
     this.set('drafting-polar-angles', formatAngles(this.doc.drafting.polarAngles));
   }
 
   private apply(): void {
+    this.applying = true;
+    try {
+      this.write();
+    } finally {
+      this.applying = false;
+    }
+  }
+
+  private write(): void {
     const positive = (id: string, fallback: number): number => {
       const value = Number(this.get(id).value);
       return Number.isFinite(value) && value > 0 ? value : fallback;

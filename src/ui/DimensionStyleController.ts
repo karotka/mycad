@@ -15,6 +15,8 @@ export class DimensionStyleController {
     form.addEventListener('input', () => this.apply());
   }
 
+  private applying = false;
+
   get isOpen(): boolean { return !this.panel.hidden; }
 
   toggle(): void {
@@ -22,7 +24,15 @@ export class DimensionStyleController {
     if (!this.panel.hidden) this.render();
   }
 
+  /**
+   * The panel must not rewrite its own fields while they are being typed into.
+   * apply() notifies the document, the notification comes back here, and a
+   * half-typed ".2" would be replaced by the last good value on every keystroke
+   * — so the box could never be cleared to type a new number.
+   */
   render(): void {
+    if (this.applying) return;
+
     const style = this.doc.dimensionStyle;
     this.set('dimension-text-height', style.textHeight);
     this.set('dimension-arrow-size', style.arrowSize);
@@ -40,6 +50,15 @@ export class DimensionStyleController {
   }
 
   private apply(): void {
+    this.applying = true;
+    try {
+      this.write();
+    } finally {
+      this.applying = false;
+    }
+  }
+
+  private write(): void {
     const positive = (id: string, fallback: number): number => {
       const value = Number(this.get(id).value);
       return Number.isFinite(value) && value > 0 ? value : fallback;

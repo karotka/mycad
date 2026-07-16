@@ -23,7 +23,13 @@ function setup() {
   const close = { addEventListener: vi.fn() } as unknown as HTMLElement;
   const changed = vi.fn();
   const controller = new DraftingSettingsController(doc, panel, form, toggle, close, changed);
-  return { doc, controller, fields, changed, type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); } };
+  // Wired the way main.ts wires it: an open panel follows the document. Without
+  // this the tests miss anything the round trip does.
+  doc.subscribe(() => { if (controller.isOpen) controller.render(); });
+  return {
+    doc, controller, fields, changed, panel,
+    type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); },
+  };
 }
 
 describe('parseAngles', () => {
@@ -97,5 +103,61 @@ describe('DraftingSettingsController', () => {
     expect(fields.get('drafting-snap-size')!.value).toBe('3');
     controller.toggle();
     expect(controller.isOpen).toBe(false);
+  });
+});
+
+describe('typing into an open panel', () => {
+  const open = () => {
+    const kit = setup();
+    kit.controller.toggle();
+    expect(kit.controller.isOpen).toBe(true);
+    return kit;
+  };
+
+  // apply() notifies, the notification renders the panel, and render() used to
+  // put the last good value straight back into the box being typed into — so
+  // 0.5 could never be cleared to type 0.25.
+  it('leaves the box alone while it is being cleared and retyped', () => {
+    const { doc, fields, type } = open();
+    const snap = fields.get('drafting-snap-size')!;
+    expect(snap.value).toBe('0.5');
+
+    type('drafting-snap-size', '');
+    expect(snap.value, 'the panel typed over an empty box').toBe('');
+    type('drafting-snap-size', '.');
+    expect(snap.value, 'the panel typed over a half-written number').toBe('.');
+    type('drafting-snap-size', '.25');
+    expect(snap.value).toBe('.25');
+    expect(doc.snapSize).toBe(0.25);
+  });
+
+  it('holds the document steady through the half-typed states', () => {
+    const { doc, type } = open();
+    type('drafting-snap-size', '');
+    expect(doc.snapSize).toBe(0.5);
+    type('drafting-snap-size', '.');
+    expect(doc.snapSize).toBe(0.5);
+    type('drafting-snap-size', '.25');
+    expect(doc.snapSize).toBe(0.25);
+  });
+
+  it('lets the angle list be cleared and retyped too', () => {
+    const { doc, fields, type } = open();
+    const angles = fields.get('drafting-polar-angles')!;
+    type('drafting-polar-angles', '');
+    expect(angles.value).toBe('');
+    expect(doc.drafting.polarAngles).toEqual([30, 45, 90]);
+    type('drafting-polar-angles', '15');
+    expect(angles.value).toBe('15');
+    expect(doc.drafting.polarAngles).toEqual([15]);
+  });
+
+  // The guard is only for the panel's own round trip: a change from elsewhere
+  // still has to show up.
+  it('still follows a change made outside it', () => {
+    const { doc, fields } = open();
+    doc.snapSize = 7;
+    doc.notify();
+    expect(fields.get('drafting-snap-size')!.value).toBe('7');
   });
 });
