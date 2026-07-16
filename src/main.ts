@@ -26,34 +26,18 @@ import { DrawingInteractionController } from './interaction/DrawingInteractionCo
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
+import {
+  arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
+  extrudeFlyout, modifyTools, primitiveFlyout, primitiveTools, solidTools, toolButtons, zoomFlyout, zoomTools,
+} from './ui/toolbar';
+import { toolIcon } from './ui/toolIcons';
+import { shellHtml } from './ui/shell';
 import { resolveDraftingPoint } from './interaction/DraftingService';
 import { resolvePointerGesture } from './interaction/PointerGesture';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
 
-const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Bezier', 'BEZIER'], ['Text', 'TEXT'],
-];
-const circleTools: Array<[string, string, CommandName]> = [
-  ['Circle', 'Circle by radius', 'CIRCLE'],
-  ['Diameter', 'Circle by diameter', 'CIRCLE_DIAMETER'],
-  ['Ellipse', 'Ellipse', 'ELLIPSE'],
-];
-const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
-const solidTools: Array<[string, CommandName]> = [
-  ['Union', 'UNION'], ['Subtract', 'SUBTRACT'], ['PressPull', 'PRESSPULL'],
-  ['Chamfer', 'CHAMFER'], ['Fillet', 'FILLET'],
-];
-const primitiveTools: Array<[string, CommandName]> = [['Box', 'BOX'], ['Wedge', 'WEDGE'], ['Sphere', 'SPHERE'], ['Cone', 'CONE'], ['Cylinder', 'CYLINDER'], ['Pyramid', 'PYRAMID'], ['Torus', 'TORUS']];
-const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
-const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', 'Extrude', 'EXTRUDE'], ['Sweep', 'Sweep Along Path', 'SWEEP']];
-const dimensionTools: Array<[string, string, CommandName]> = [
-  ['Linear', 'Linear Dimension', 'MEASURE'],
-  ['Radius', 'Radius Dimension', 'DIMRADIUS'],
-  ['Diameter', 'Diameter Dimension', 'DIMDIAMETER'],
-];
-const zoomTools: Array<[string, 'ZOOM_ALL' | 'ZOOM_WINDOW']> = [['Zoom All', 'ZOOM_ALL'], ['Zoom Window', 'ZOOM_WINDOW']];
 const savedPrimitive = localStorage.getItem('mycad.lastPrimitive') as CommandName | null;
 let currentPrimitive: CommandName = primitiveTools.some(([, command]) => command === savedPrimitive) ? savedPrimitive! : 'BOX';
 const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | null;
@@ -62,247 +46,13 @@ const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandNam
 let currentDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
 let currentZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
-const editTools: Array<[string, CommandName]> = [
-  ['Extend', 'EXTEND'], ['Trim', 'TRIM'], ['Join', 'JOIN'], ['Explode', 'EXPLODE'], ['Offset', 'OFFSET'],
-];
-type ToolbarIcon = CommandName | 'ZOOM_ALL' | 'ZOOM_WINDOW';
 
-function toolIcon(command: ToolbarIcon): string {
-  const paths: Partial<Record<ToolbarIcon, string>> = {
-    LINE: '<line x1="4" y1="20" x2="20" y2="4"/><circle cx="4" cy="20" r="1.5"/><circle cx="20" cy="4" r="1.5"/>',
-    POLYLINE: '<path d="M3 19l5-7 5 4 8-11"/><circle cx="3" cy="19" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="13" cy="16" r="1.5"/><circle cx="21" cy="5" r="1.5"/>',
-    RECTANGLE: '<rect x="4" y="6" width="16" height="12"/><path d="M4 4v4M2 6h4M20 16v4M18 18h4"/>',
-    CIRCLE: '<circle cx="12" cy="12" r="8"/><path d="M12 2v20M2 12h20"/>',
-    CIRCLE_DIAMETER: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M6 10l-2 2 2 2M18 10l2 2-2 2"/>',
-    ELLIPSE: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/><path d="M3 12h18M12 6.5v11"/>',
-    POLYGON: '<path d="M12 3l8 6-3 10H7L4 9l8-6z"/><circle cx="12" cy="12" r="1"/>',
-    ARC: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/>',
-    BEZIER: '<path d="M3 18C8 3 16 21 21 6"/><path d="M3 18L8 6M21 6l-5 10" stroke-dasharray="2 2"/>',
-    TEXT: '<path d="M4 20L11 4h2l7 16M7 14h10"/>',
-    MOVE: '<path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M22 12l-3-3M22 12l-3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3"/>',
-    COPY: '<rect x="7" y="7" width="13" height="13"/><path d="M4 16V4h12M4 4l3 3M4 4l3-3"/>',
-    SCALE: '<path d="M4 20L20 4M4 20v-7M4 20h7M20 4v7M20 4h-7"/><rect x="8" y="8" width="8" height="8"/>',
-    ROTATE: '<path d="M19 8V3l-2 2a8 8 0 10 2.2 10M19 3h-5"/><circle cx="12" cy="12" r="1.5"/>',
-    BOX: '<path d="M4 8l8-4 8 4v9l-8 4-8-4V8zm0 0l8 4 8-4M12 12v9"/>',
-    CYLINDER: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 18c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
-    WEDGE: '<path d="M4 18h16L7 7H4v11zm3-11l13 5v6M4 18l3-3"/>',
-    SPHERE: '<circle cx="12" cy="12" r="8"/><ellipse cx="12" cy="12" rx="4" ry="8"/><path d="M4 12h16"/>',
-    TORUS: '<ellipse cx="12" cy="12" rx="9" ry="6"/><ellipse cx="12" cy="12" rx="3.5" ry="2"/><path d="M3 12a9 6 0 0018 0"/>',
-    CONE: '<ellipse cx="12" cy="18" rx="8" ry="3"/><path d="M4 18L12 3l8 15"/>',
-    PYRAMID: '<path d="M12 3L3 17l9 4 9-4L12 3zM3 17l9-3 9 3M12 14v7"/>',
-    ARRAY_RECTANGULAR: '<path d="M4 6h4v4H4V6zm6 0h4v4h-4V6zm6 0h4v4h-4V6zM4 12h4v4H4v-4zm6 0h4v4h-4v-4zm6 0h4v4h-4v-4z"/>',
-    ARRAY_POLAR: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.4"/><path d="M12 4.5v3M12 16.5v3M4.5 12h3M16.5 12h3M16.8 7.2l-2.1 2.1M9.3 14.7l-2.1 2.1M7.2 7.2l2.1 2.1M14.7 14.7l2.1 2.1"/>',
-    EXTRUDE: '<path d="M3 18h11l4-4H7L3 18zM12 11V2M8 6l4-4 4 4"/>',
-    SWEEP: '<path d="M4 17c4-1 6-4 8-7s4-5 8-6"/><path d="M14 4h6v6M10 14l4 4"/>',
-    UNION: '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 7.2a6 6 0 010 9.6"/>',
-    SUBTRACT: '<circle cx="9" cy="12" r="7"/><path d="M12 5.7a7 7 0 010 12.6M14 12h7"/>',
-    MIRROR: '<path d="M12 2v20M9 5L3 9v6l6 4V5zM15 5l6 4v6l-6 4" stroke-dasharray="2 2"/>',
-    JOIN: '<path d="M3 18l6-7 5 4 7-10M7 11h4M12 15h4"/><circle cx="9" cy="11" r="1.5"/><circle cx="14" cy="15" r="1.5"/>',
-    EXPLODE: '<rect x="7" y="7" width="10" height="10"/><path d="M7 7L3 3M17 7l4-4M7 17l-4 4M17 17l4 4M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4"/>',
-    EXTEND: '<path d="M4 19L19 4M3 9h8M8 6l3 3-3 3"/><path d="M14 9l5-5" stroke-dasharray="2 2"/>',
-    TRIM: '<path d="M4 20L20 4M4 5l15 15M8 9l3 3"/><circle cx="8" cy="9" r="1.5"/>',
-    OFFSET: '<path d="M4 17L17 4M7 20L20 7M8 14l3 3M14 8l3 3"/>',
-    CHAMFER: '<path d="M4 19V7h7l9 9v3H4zM11 7v5l5 5"/>',
-    FILLET: '<path d="M4 20V5h15M4 20c0-8.3 6.7-15 15-15"/>',
-    PRESSPULL: '<path d="M3 17l9 4 9-4-9-4-9 4zM12 13V4M9 7l3-3 3 3M9 10l3 3 3-3"/>',
-    ERASE: '<path d="M4 16L14 4l6 5-9 11H7l-3-4zM11 20h10"/>',
-    MEASURE: '<path d="M4 19L19 4M3 15l6 6M15 3l6 6M8 14l2 2M11 11l2 2M14 8l2 2"/>',
-    DIMRADIUS: '<circle cx="11" cy="12" r="7"/><path d="M11 12l5-5M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">R</text>',
-    DIMDIAMETER: '<circle cx="11" cy="12" r="7"/><path d="M6 17L16 7M6 15v2h2M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">Ø</text>',
-    UCS: '<path d="M5 19V7M5 19h12M5 19l7-7M5 7l-2 3M5 7l2 3M17 19l-3-2M17 19l-3 2M12 12l-1-4M12 12l4-1"/>',
-    ZOOM_ALL: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">ALL</text>',
-    ZOOM_WINDOW: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">WIN</text>',
-  };
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[command] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`;
-}
-
-function toolButtons(tools: Array<[string, CommandName]>): string {
-  return tools.map(([label, command]) =>
-    `<button class="tool-btn" data-command="${command}" data-label="${label}" title="${label}" aria-label="${label}">${toolIcon(command)}</button>`
-  ).join('');
-}
-
-function primitiveFlyout(): string {
-  const label = primitiveTools.find(([, command]) => command === currentPrimitive)?.[0] ?? 'Box';
-  return `<div class="primitive-tool">
-    <button class="tool-btn primitive-main" id="primitive-main" data-label="${label}" title="${label} · hold for more" aria-label="${label} · hold for more">${toolIcon(currentPrimitive)}<span class="flyout-caret">▾</span></button>
-    <div class="primitive-flyout" id="primitive-flyout" hidden>${primitiveTools.map(([name, command]) => `<button data-primitive-command="${command}" title="${name}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div>
-  </div>`;
-}
-
-function arrayFlyout(): string {
-  return `<div class="primitive-tool">
-    <button class="tool-btn primitive-main" id="array-main" data-label="Array" title="Array · hold for more" aria-label="Array · hold for more">${toolIcon('ARRAY_RECTANGULAR')}<span class="flyout-caret">▾</span></button>
-    <div class="primitive-flyout" id="array-flyout" hidden>${arrayTools.map(([name, tooltip, command]) => `<button data-command="${command}" title="${tooltip}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div>
-  </div>`;
-}
-
-function extrudeFlyout(): string {
-  return `<div class="primitive-tool">
-    <button class="tool-btn primitive-main" id="extrude-main" data-label="Extrude" title="Extrude · hold for more" aria-label="Extrude · hold for more">${toolIcon('EXTRUDE')}<span class="flyout-caret">▾</span></button>
-    <div class="primitive-flyout" id="extrude-flyout" hidden>${extrudeTools.map(([name, tooltip, command]) => `<button data-command="${command}" title="${tooltip}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div>
-  </div>`;
-}
-
-function circleFlyout(): string {
-  const current = circleTools.find(([, , command]) => command === currentCircle) ?? ['Circle', 'Circle by radius', 'CIRCLE'] as const;
-  const [label, tooltip] = current;
-  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="circle-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentCircle)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="circle-flyout" hidden>${circleTools.map(([name, tooltipText, command]) => `<button data-circle-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
-}
-
-function dimensionFlyout(): string {
-  const current = dimensionTools.find(([, , command]) => command === currentDimension) ?? ['Linear', 'Linear Dimension', 'MEASURE'] as const;
-  const [label, tooltip] = current;
-  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="dimension-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentDimension)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="dimension-flyout" hidden>${dimensionTools.map(([name, tooltipText, command]) => `<button data-dimension-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
-}
-
-function zoomFlyout(): string {
-  const label = zoomTools.find(([, action]) => action === currentZoom)?.[0] ?? 'Zoom All';
-  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="zoom-main" data-label="${label}" title="${label} · hold for more" aria-label="${label} · hold for more">${toolIcon(currentZoom)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="zoom-flyout" hidden>${zoomTools.map(([name, action]) => `<button data-zoom-command="${action}" title="${name}">${toolIcon(action)}<span>${name}</span></button>`).join('')}</div></div>`;
-}
-
-app.innerHTML = `
-  <main class="app">
-    <nav class="toolbar" aria-label="CAD tools">
-      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout()}</div>
-      <div class="tool-divider" aria-hidden="true"></div>
-      <div class="tool-group" role="group" aria-label="2D edit">${toolButtons(editTools)}</div>
-      <div class="tool-divider" aria-hidden="true"></div>
-      <div class="tool-group" role="group" aria-label="Modify">${toolButtons(modifyTools)}${arrayFlyout()}${dimensionFlyout()}</div>
-      <div class="tool-divider" aria-hidden="true"></div>
-      <div class="tool-group" role="group" aria-label="3D operations">${primitiveFlyout()}${extrudeFlyout()}${toolButtons(solidTools)}</div>
-      <div class="tool-divider" aria-hidden="true"></div>
-      <div class="tool-group" role="group" aria-label="View and coordinate system">
-        ${zoomFlyout()}
-        ${toolButtons([['UCS', 'UCS']])}
-      </div>
-    </nav>
-    <section class="viewport-wrap" id="viewport">
-      <canvas id="canvas2d"></canvas>
-      <div id="viewport3d"></div>
-      <div class="crosshair" id="crosshair"></div>
-      <div class="selection-window" id="selection-window" hidden></div>
-      <div class="measure-marker measure-origin" id="measure-origin" hidden></div>
-      <div class="measure-marker measure-target" id="measure-target" hidden></div>
-      <div class="snap-marker" id="snap-marker" hidden></div>
-      <div class="tracking-line" id="tracking-line" hidden></div>
-      <div class="dimension-toast" id="dimension-toast" hidden></div>
-      <div class="view-toggle">
-        <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
-          <button class="cube-face cube-top" data-standard-view="top" title="Top view"><span class="cube-label">TOP</span></button>
-          <button class="cube-face cube-right" data-standard-view="right" title="Right view"><span class="cube-label">RIGHT</span></button>
-          <button class="cube-face cube-front" data-standard-view="front" title="Front view"><span class="cube-label">FRONT</span></button>
-        </div>
-        <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M21 12l-3-3M21 12l-3 3"/><circle cx="12" cy="12" r="2"/></svg>
-          <span>WCS</span>
-        </button>
-      </div>
-    </section>
-    <footer class="statusbar">
-      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span><span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
-      <div class="drafting-status" role="group" aria-label="Drafting modes">
-        <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
-        <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
-        <button id="snap-toggle" title="Snap Mode — cursor stepping (F9)" aria-label="Snap Mode (F9)">SNAP <kbd>F9</kbd></button>
-        <button id="polar-toggle" title="Polar Tracking (F10)" aria-label="Polar Tracking (F10)">POLAR <kbd>F10</kbd></button>
-        <button id="otrack-toggle" title="Object Snap Tracking (F11)" aria-label="Object Snap Tracking (F11)">OTRACK <kbd>F11</kbd></button>
-      </div>
-      <div class="visual-style" role="group" aria-label="Visual style">
-        <button class="active" data-visual-style="wireframe" title="Wireframe" aria-label="Wireframe">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm0 0v9m8-4.5L12 12 4 7.5M12 12v9"/></svg>
-        </button>
-        <button data-visual-style="shaded" title="Shaded with Edges" aria-label="Shaded with Edges">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="shade-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="shade-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="shade-right" d="M20 7.5L12 12v9l8-4.5v-9z"/></svg>
-        </button>
-        <button data-visual-style="xray" title="X-Ray with Edges" aria-label="X-Ray with Edges">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="xray-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="xray-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="xray-right" d="M20 7.5L12 12v9l8-4.5v-9z"/><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"/></svg>
-        </button>
-      </div>
-      <button class="layer-toggle" id="layer-toggle" title="Layers" aria-label="Layers">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L3 8l9 5 9-5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg>
-        <span id="layer-current">0</span>
-      </button>
-      <button class="properties-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
-      <button class="properties-toggle" id="drafting-settings-toggle" title="Drafting Settings — snap step, grid, polar angles" aria-label="Drafting Settings">DRAFTING</button>
-      <button class="properties-toggle" id="dimension-style-toggle" title="Dimension Style" aria-label="Dimension Style">DIM STYLE</button>
-      <section class="layer-panel" id="layer-panel" hidden>
-        <header><strong>Layers</strong><button id="layer-add" title="New layer">+</button></header>
-        <div class="layer-list" id="layer-list"></div>
-      </section>
-      <section class="properties-panel" id="properties-panel" hidden>
-        <header><strong>Object Properties</strong><button id="properties-close" title="Close">×</button></header>
-        <div class="properties-content" id="properties-content"></div>
-      </section>
-      <section class="properties-panel dimension-style-panel" id="drafting-settings-panel" hidden>
-        <header><strong>Drafting Settings</strong><button id="drafting-settings-close" title="Close">×</button></header>
-        <form class="properties-content" id="drafting-settings-form">
-          <label class="property-row"><span>Snap step (F9)</span><input id="drafting-snap-size" type="number" min="0.001" step="0.1"></label>
-          <label class="property-row"><span>Grid spacing</span><input id="drafting-grid-size" type="number" min="0.001" step="0.1"></label>
-          <label class="property-row"><span>Polar angles (F10)</span><input id="drafting-polar-angles" type="text" inputmode="numeric" placeholder="30, 45, 90"></label>
-        </form>
-      </section>
-      <section class="properties-panel dimension-style-panel" id="dimension-style-panel" hidden>
-        <header><strong>Dimension Style</strong><button id="dimension-style-close" title="Close">×</button></header>
-        <form class="properties-content" id="dimension-style-form">
-          <label class="property-row"><span>Text height</span><input id="dimension-text-height" type="number" min="0.1" step="0.1"></label>
-          <label class="property-row"><span>Arrow size</span><input id="dimension-arrow-size" type="number" min="0.1" step="0.1"></label>
-          <label class="property-row"><span>Arrow type</span><select id="dimension-arrow-type"><option value="closed">Closed filled</option><option value="open">Open</option><option value="tick">Architectural tick</option></select></label>
-          <label class="property-row"><span>Extend beyond</span><input id="dimension-extension-beyond" type="number" min="0" step="0.1"></label>
-          <label class="property-row"><span>Offset from object</span><input id="dimension-extension-offset" type="number" min="0" step="0.1"></label>
-          <label class="property-row"><span>Text offset</span><input id="dimension-text-offset" type="number" min="0" step="0.1"></label>
-          <label class="property-row"><span>Precision</span><input id="dimension-precision" type="number" min="0" max="8" step="1"></label>
-          <label class="property-row"><span>Scale</span><input id="dimension-scale" type="number" min="0.01" step="0.1"></label>
-          <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
-        </form>
-      </section>
-    </footer>
-    <section class="command-panel">
-      <div class="command-resize-handle" id="command-resize-handle" title="Drag to resize command history"></div>
-      <div class="command-log" id="command-log"></div>
-      <form class="command-input-row" id="command-form">
-        <label class="command-prompt" id="command-prompt" for="command-input">Command:</label>
-        <input class="command-input" id="command-input" autocomplete="off" autofocus />
-        <div class="command-suggestions" id="command-suggestions" hidden></div>
-      </form>
-    </section>
-  </main>
-  <div class="context-menu" id="grip-menu" hidden>
-    <section class="one-shot-snaps">
-      <div class="context-menu-title">Object snap override</div>
-      <button data-grip-mode="mid2p">Mid between 2P</button>
-      <button data-grip-mode="end">Endpoint</button>
-      <button data-grip-mode="intersection">Intersection</button>
-      <button data-grip-mode="apparent-intersection">Apparent intersection</button>
-      <button data-grip-mode="center">Center</button>
-      <button data-grip-mode="perpendicular">Perpendicular</button>
-    </section>
-    <section class="persistent-snaps">
-      <div class="context-menu-title">Running object snaps · F3</div>
-      <button data-persistent-snap="end">Endpoint</button>
-      <button data-persistent-snap="middle">Midpoint</button>
-      <button data-persistent-snap="center">Center</button>
-      <button data-persistent-snap="intersection">Intersection</button>
-      <button data-persistent-snap="apparent-intersection">Apparent intersection</button>
-      <button data-persistent-snap="perpendicular">Perpendicular</button>
-    </section>
-  </div>
-  <section class="text-options" id="text-options" hidden>
-    <strong>Text style</strong>
-    <label>Font
-      <select id="text-font">
-        <option value="Arial">Arial</option>
-        <option value="Helvetica">Helvetica</option>
-        <option value="Verdana">Verdana</option>
-        <option value="Times New Roman">Times New Roman</option>
-        <option value="Courier New">Courier New</option>
-      </select>
-    </label>
-    <label>Height (mm)
-      <input id="text-height" type="number" min="0.1" step="0.5" value="2.5" />
-    </label>
-    <button id="text-options-continue" type="button">Specify insertion point</button>
-  </section>`;
+app.innerHTML = shellHtml({
+  primitive: currentPrimitive,
+  circle: currentCircle,
+  dimension: currentDimension,
+  zoom: currentZoom,
+});
 
 const viewport = get<HTMLElement>('viewport');
 const canvas2d = get<HTMLCanvasElement>('canvas2d');

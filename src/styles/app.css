@@ -498,6 +498,11 @@ html, body, #app {
 
 .statusbar .coords {
   font-family: 'SF Mono', monospace;
+  /* The readout is as wide as its text, so a minus sign or another digit used to
+     shove everything after it along the row. Hold a slot instead: monospace
+     means 1ch is one character, and this fits X and Y at ±99999.999. */
+  min-width: 33ch;
+  font-variant-numeric: tabular-nums;
 }
 
 .command-panel {
