@@ -9,9 +9,8 @@ import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import type { Solid } from '../core/entities/types';
-import { regenerateSolidFeature } from '../core/solids/ManifoldEngine';
-import { featureParams, setFeatureParam, type FeatureParam } from '../core/solids/featureParams';
-import { featureAt, featureRows, pathKey, type TreeRow } from './modelTree';
+import { featureParams, type FeatureParam } from '../core/solids/featureParams';
+import { editedSolid, featureRows, pathKey, type TreeRow } from './modelTree';
 
 export class ModelTreeController {
   private collapsed = new Set<string>();
@@ -27,6 +26,7 @@ export class ModelTreeController {
     private readonly toggleButton: HTMLElement,
     close: HTMLElement,
     private readonly redraw: () => void,
+    private readonly log: (message: string) => void,
   ) {
     toggleButton.addEventListener('click', () => this.toggle());
     close.addEventListener('click', () => { this.panel.hidden = true; this.syncToggle(); });
@@ -129,22 +129,15 @@ export class ModelTreeController {
    */
   private async apply(solid: Solid, path: number[], key: string, value: number, input: HTMLInputElement, previous: number): Promise<void> {
     const before = cloneSolid(solid);
-    const target = featureAt(solid.feature, path);
-    if (!target || !setFeatureParam(target, key, value)) {
+    const after = await editedSolid(solid, path, key, value);
+    if (!after) {
+      // Put the field back rather than leave the tree saying one thing and the
+      // model showing another, and say so: a silent refusal is indistinguishable
+      // from a change that did nothing.
       input.value = String(previous);
+      this.log(`${key} = ${value} would leave nothing to build.`);
       return;
     }
-    const mesh = await regenerateSolidFeature(solid.feature);
-    if (!mesh) {
-      // Put it back rather than leave the tree saying one thing and the model
-      // showing another: a scale of zero, or a subtraction with nothing left.
-      setFeatureParam(target, key, previous);
-      input.value = String(previous);
-      return;
-    }
-    const after = cloneSolid(solid);
-    after.mesh = mesh;
-    after.revision = solid.revision + 1;
 
     this.applying = true;
     try {

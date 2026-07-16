@@ -7,7 +7,10 @@
  * reach them was to edit the file. This is the part that turns the tree into
  * rows; the panel draws them.
  */
-import type { SolidFeature } from '../core/entities/types';
+import type { Solid, SolidFeature } from '../core/entities/types';
+import { cloneSolid } from '../core/history/edits';
+import { setFeatureParam } from '../core/solids/featureParams';
+import { regenerateSolidFeature } from '../core/solids/ManifoldEngine';
 
 export interface TreeRow {
   /** Which operand to take at each level to reach this feature from the root. */
@@ -70,6 +73,36 @@ export function featureRows(
 }
 
 export const pathKey = (path: readonly number[]): string => path.join('.');
+
+/**
+ * The solid as it would be with one number in its tree changed, or null if the
+ * change means nothing or cannot be built — a scale of zero, a subtraction with
+ * nothing left of it.
+ *
+ * Works on a copy throughout, so a failure leaves the original untouched rather
+ * than needing to be undone, and the caller gets a before and an after to hand
+ * to the history. The whole solid is rebuilt from its root because a primitive
+ * inside a boolean is not a shape on its own: what changed is what the union
+ * came out as.
+ */
+export async function editedSolid(
+  solid: Solid,
+  path: readonly number[],
+  key: string,
+  value: number,
+): Promise<Solid | null> {
+  const after = cloneSolid(solid);
+  const target = featureAt(after.feature, path);
+  if (!target || !setFeatureParam(target, key, value)) return null;
+  const mesh = await regenerateSolidFeature(after.feature);
+  if (!mesh) return null;
+  after.mesh = mesh;
+  // The 3D view rebuilds a solid's geometry when its revision moves, and not
+  // otherwise: forget this and the model keeps the shape it used to be.
+  after.revision = solid.revision + 1;
+  if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
+  return after;
+}
 
 /** The feature a row's path points at, or null if the tree has since changed. */
 export function featureAt(root: SolidFeature, path: readonly number[]): SolidFeature | null {

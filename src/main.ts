@@ -172,6 +172,7 @@ const modelTreeController = new ModelTreeController(
   get('model-tree-toggle'),
   get('model-tree-close'),
   redraw,
+  log,
 );
 
 let width = 1;

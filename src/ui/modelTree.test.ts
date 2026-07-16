@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { PrimitiveFeature, SolidFeature } from '../core/entities/types';
-import { featureAt, featureLabel, featureRows } from './modelTree';
+import { Document } from '../core/Document';
+import type { ExtrusionFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
+import { editedSolid, featureAt, featureLabel, featureRows } from './modelTree';
 
 const sphere = (radius: number, scale?: { x: number; y: number; z: number }): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius, height: radius * 2, scale });
@@ -53,6 +54,85 @@ describe('featureLabel', () => {
 
   it('counts what a boolean is made of', () => {
     expect(featureLabel(elephant)).toEqual({ label: 'Subtract', detail: '2 parts' });
+  });
+});
+
+describe('editedSolid', () => {
+  const bounds = (solid: { mesh: { positions: Float32Array } }) => {
+    let maxZ = -Infinity, maxX = -Infinity;
+    for (let i = 0; i < solid.mesh.positions.length; i += 3) {
+      maxX = Math.max(maxX, solid.mesh.positions[i]);
+      maxZ = Math.max(maxZ, solid.mesh.positions[i + 2]);
+    }
+    return { maxX, maxZ };
+  };
+
+  const extruded = () => {
+    const doc = new Document();
+    const profile = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    const feature: ExtrusionFeature = {
+      kind: 'extrusion', profile, height: 10, workPlane: profile.workPlane,
+      transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
+    };
+    return { doc, feature };
+  };
+
+  it('rebuilds an extrusion when its height changes', async () => {
+    const { doc, feature } = extruded();
+    const solid = doc.createSolid({ positions: new Float32Array(), indices: new Uint32Array() }, 'Extrusion', 10, [], undefined, feature);
+
+    const after = await editedSolid(solid, [], 'height', 25);
+
+    expect(after).not.toBeNull();
+    expect(bounds(after!).maxZ).toBeCloseTo(25, 4);
+    // The 3D view only rebuilds a solid's geometry when its revision moves, so
+    // a new mesh with the old number on it is a change that never appears.
+    expect(after!.revision).toBe(solid.revision + 1);
+    expect(after!.height).toBe(25);
+  });
+
+  it('stretches an extruded profile', async () => {
+    const { doc, feature } = extruded();
+    const solid = doc.createSolid({ positions: new Float32Array(), indices: new Uint32Array() }, 'Extrusion', 10, [], undefined, feature);
+    const after = await editedSolid(solid, [], 'scaleX', 3);
+    expect(bounds(after!).maxX).toBeCloseTo(30, 4);
+  });
+
+  it('leaves the original alone when the change cannot be built', async () => {
+    const { doc, feature } = extruded();
+    const solid = doc.createSolid({ positions: new Float32Array(), indices: new Uint32Array() }, 'Extrusion', 10, [], undefined, feature);
+
+    expect(await editedSolid(solid, [], 'height', 0)).toBeNull();
+    expect(await editedSolid(solid, [], 'radius', 4)).toBeNull();
+    // Working on a copy means a refusal needs no undoing.
+    expect((solid.feature as ExtrusionFeature).height).toBe(10);
+  });
+
+  it('does not touch the solid it was given', async () => {
+    const { doc, feature } = extruded();
+    const solid = doc.createSolid({ positions: new Float32Array(), indices: new Uint32Array() }, 'Extrusion', 10, [], undefined, feature);
+
+    await editedSolid(solid, [], 'height', 25);
+
+    // The caller hands the original to the history as the `before`, so an edit
+    // that changed it in place would make undo a no-op.
+    expect((solid.feature as ExtrusionFeature).height).toBe(10);
+    expect(solid.revision).toBe(0);
+  });
+
+  it('rebuilds the whole solid from a primitive buried in a boolean', async () => {
+    const doc = new Document();
+    const feature: SolidFeature = {
+      kind: 'boolean', operation: 'union',
+      operands: [sphere(10), { ...sphere(6), center: { x: 14, y: 0 } }],
+    };
+    const solid = doc.createSolid({ positions: new Float32Array(), indices: new Uint32Array() }, 'Two balls', 0, [], undefined, feature);
+
+    const after = await editedSolid(solid, [1], 'radius', 12);
+
+    // The union reaches further than it did, which is the point of the tree
+    // being a tree: the part changed, so what it was welded into changed too.
+    expect(bounds(after!).maxX).toBeCloseTo(26, 1);
   });
 });
 

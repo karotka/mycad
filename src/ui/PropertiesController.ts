@@ -5,6 +5,7 @@ import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { primitiveParams, setPrimitiveParam } from '../core/solids/featureParams';
+import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 
 type ObjectValue = Entity | Solid;
 
@@ -150,7 +151,19 @@ function updateSolid(solid: Solid, key: string, value: number): void {
       solid.height = feature.height; solid.revision++;
       return;
     }
-    // x, y and z are not the primitive's; they move it, which the bounds do.
+    // Moving it is the work plane's origin, so it moves there and the primitive
+    // is rebuilt. Dragging the vertices instead was what baked the feature away:
+    // nudging a sphere's X used to cost you the sphere.
+    if (key === 'x' || key === 'y' || key === 'z') {
+      const bounds = solidBounds(solid);
+      const from = key === 'x' ? bounds.minX : key === 'y' ? bounds.minY : bounds.minZ;
+      const plane = feature.workPlane ?? cloneWorkPlane(WORLD_WORK_PLANE);
+      plane.origin[key] += value - from;
+      feature.workPlane = plane;
+      solid.mesh = primitiveMesh(feature);
+      solid.revision++;
+      return;
+    }
   }
   const b = solidBounds(solid);
   const axis = key === 'x' || key === 'width' ? 0 : key === 'y' || key === 'depth' ? 1 : 2;

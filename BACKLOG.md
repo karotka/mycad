@@ -116,6 +116,75 @@ Candidates, in order:
 
 ---
 
+## Solid modelling: what is actually missing
+
+Modelling the reference elephant was a probe of the solid engine, and it turned
+up one missing capability, one primitive that cannot be expressed, and a
+systemic hole. `scale` and the model tree are done; the rest is here.
+
+### The feature tree is thrown away by half the app
+
+**This is the biggest one, and the least visible.** A `Solid` keeps how it was
+built in `feature`. Five places overwrite it with `{ kind: 'mesh' }`, and the
+model history is destroyed and cannot come back. Three of them need not:
+
+| Place | What bakes it | Could it be expressed instead? |
+|---|---|---|
+| `PropertiesController:162` | Any width/depth/height/x/y/z edit on a solid whose feature is not a bare primitive | **Yes**, mostly. See below. |
+| `CommandManager:317` | SCALE | **Yes** — `PrimitiveFeature.scale` now exists. It did not when this was written. |
+| `CommandManager:342` | ROTATE | **Yes** — a rotation is the feature's `workPlane` axes, which every primitive already carries. |
+| `CommandManager:1364` | FILLET / CHAMFER | **No.** There is no fillet feature, and the mesh is cut by `modifySolidEdge`. A legitimate bake — or the beginning of a fillet feature. |
+| `CommandManager:1730` | PRESSPULL **on a picked face** | **No** — an arbitrary face push is not a parameter of anything. |
+
+The three that need not bake all did it for the same reason: **the feature had
+nowhere to put the result**, so the mesh was mutated and the history dropped.
+That reason is now largely gone. A move is the work plane's origin, a rotation
+is its axes, a scale is `scale`.
+
+`PRESSPULL` already shows the pattern and is worth copying: on a picked face it
+bakes, but on an extrusion it edits `feature.height` and regenerates
+(`CommandManager:1731`). Express it where you can; bake only where you cannot.
+
+The awkward case is a resize of a **boolean** solid: there is no single work
+plane to move, and "make this union 20% wider" is not a question its operands can
+answer. Options: refuse it and point at the tree; or wrap the root in a transform
+feature. Do not guess — pick one deliberately.
+
+`PropertiesController` also cannot regenerate anything but a primitive, because
+`regenerateSolidFeature` is async for booleans (Manifold) and `updateSolid` is
+sync. The model tree does it properly and is async throughout. So the properties
+panel probably should not offer size fields for feature-backed solids at all.
+
+### No truncated cone (frustum)
+
+A cone tapers to a point; a cylinder has one radius. Nothing has two. A trunk,
+a table leg, a chamfer, a draft angle — all of it is a frustum. It is why the
+elephant's trunk still costs four overlapping capsules instead of one, and it is
+the cheapest real modelling win left: one mesh builder, one `radiusTop` field,
+one entry in `primitiveParams`.
+
+### No loft, no freeform surface
+
+The reference picture is a sculpted organic model. Everything here is a surface
+of revolution plus booleans, so anything genuinely freeform is out of reach.
+A loft through a stack of profiles would be the smallest useful step. Large, and
+only worth it if organic modelling is actually a goal — CSG is a different craft.
+
+### Primitives with no UI
+
+`torus` is reachable from `TORUS` and now from the panels. Check the rest: the
+lesson from `tubeRadius` is that a capability existing in `PrimitiveFeature` and
+`ManifoldEngine` says nothing about whether anything can reach it.
+
+### Sweep is a black box in the tree
+
+`featureParams` returns nothing for a sweep, because its profile and its path are
+shapes, not numbers. Editing it means picking a different entity — a different
+kind of control than a number field. Deliberate; revisit when there is a way to
+select geometry from a panel.
+
+---
+
 ## Extensibility: entities
 
 Adding an entity type still costs ~17 places across 11 files. The switches in
