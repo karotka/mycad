@@ -35,6 +35,7 @@ import { shellHtml } from './ui/shell';
 import { FlyoutTool } from './ui/FlyoutTool';
 import { resolveDraftingPoint } from './interaction/DraftingService';
 import { resolvePointerGesture } from './interaction/PointerGesture';
+import { grabsGrip, resolveViewportAction } from './interaction/ViewportAction';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -1051,14 +1052,6 @@ viewport.addEventListener('pointerdown', async (event) => {
     const gripIndex = gripController.nearest2d(rawWorldPoint(event), 10 / renderer2d.zoom);
     const selected = selectedEntity();
     const selectedBody = selectedSolid();
-    if (!commands.active && gripIndex >= 0 && (selected || selectedBody)) {
-      const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
-      const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
-      if (!gripPoint) return;
-      gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
-      event.preventDefault();
-      return;
-    }
     // Picking asks "what is under the cursor", so it must use the real cursor.
     // `point` is grid-snapped for placing geometry, which would test for a hit
     // at the nearest grid dot instead — only ever landing on snapped endpoints.
@@ -1066,25 +1059,38 @@ viewport.addEventListener('pointerdown', async (event) => {
     const entity = pickEntityAt(cadDocument, pickPoint, 8 / renderer2d.zoom)
       ?? (commands.active?.name === 'EXTRUDE' ? profileContainingPoint(pickPoint) : undefined);
     const solid = hitTestSolid2d(cadDocument, pickPoint, solidSelectionExclusions());
-    if (commands.isMultiObjectStep && !entity && !solid) {
-      selectionController.beginWindow(event, 'select');
+    const action = resolveViewportAction({
+      commandActive: Boolean(commands.active),
+      multiObjectStep: commands.isMultiObjectStep,
+      gripIndex,
+      hasSelection: Boolean(selected || selectedBody),
+      entityHit: Boolean(entity),
+      solidHit: Boolean(solid),
+      canWindowSelect: true,
+    });
+
+    if (action.kind === 'dragGrip') {
+      const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
+      const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
+      if (!gripPoint) return;
+      gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
       event.preventDefault();
       return;
     }
-    if (commands.active) {
-      await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
-    }
-    else if (entity) {
-      if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
-      selectionController.selectHit(entity, null, event.shiftKey);
-    } else if (solid) {
-      if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
-      selectionController.selectHit(null, solid.id, event.shiftKey);
-    } else {
+    if (action.kind === 'windowSelect') {
       gripController.mode = null;
       selectionController.beginWindow(event, 'select');
       event.preventDefault();
       return;
+    }
+    if (action.kind === 'commandClick') {
+      await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
+    } else if (action.kind === 'selectEntity' && entity) {
+      if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
+      selectionController.selectHit(entity, null, event.shiftKey);
+    } else if (action.kind === 'selectSolid' && solid) {
+      if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
+      selectionController.selectHit(null, solid.id, event.shiftKey);
     }
   } else {
     const activeStep = commands.active?.steps[commands.active.stepIndex];
@@ -1133,7 +1139,11 @@ viewport.addEventListener('pointerdown', async (event) => {
     );
     const selected = selectedEntity();
     const selectedBody = selectedSolid();
-    if (!commands.active && gripIndex >= 0 && (selected || selectedBody)) {
+    if (grabsGrip({
+      commandActive: Boolean(commands.active),
+      gripIndex,
+      hasSelection: Boolean(selected || selectedBody),
+    })) {
       const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
       const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
       if (!gripPoint) return;
@@ -1156,11 +1166,23 @@ viewport.addEventListener('pointerdown', async (event) => {
     const face = commands.active?.name === 'PRESSPULL'
       ? renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY)
       : null;
-    if (commands.active) {
+    const action = resolveViewportAction({
+      commandActive: Boolean(commands.active),
+      multiObjectStep: commands.isMultiObjectStep,
+      gripIndex,
+      hasSelection: Boolean(selected || selectedBody),
+      entityHit: Boolean(entity),
+      solidHit: Boolean(solidId),
+      // The 3D view cannot drag a selection rectangle yet, so an empty click
+      // clears instead. See "3D window select" in BACKLOG.md.
+      canWindowSelect: false,
+    });
+
+    if (action.kind === 'commandClick') {
       await drawingInteraction.handleClick(point, entity ?? undefined, solidId ?? undefined, face ?? undefined);
-    }
-    else if (entity || solidId) selectionController.selectHit(entity, solidId, event.shiftKey);
-    else {
+    } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid') {
+      selectionController.selectHit(entity, solidId, event.shiftKey);
+    } else if (action.kind === 'clearSelection') {
       cadDocument.clearSelection();
     }
   }

@@ -102,8 +102,9 @@ is not cosmetic.
 
 Candidates, in order:
 
-- **`PointerRouter`** — the `pointerdown`/`pointermove` handlers (~380 lines) are
-  where the bugs live.
+- **`pointermove`** (~146 lines) — the last of the pointer handling still doing
+  its own thinking. `pointerdown` now asks PointerGesture and ViewportAction and
+  only carries out what they say.
 - **`Panel` interface `{ isOpen, render() }`** — three controllers already
   implement it informally; the subscriber has a hand-written `if` per panel.
 - **One "click outside" manager** — there are seven separate global `pointerdown`
