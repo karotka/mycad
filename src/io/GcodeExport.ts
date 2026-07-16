@@ -12,27 +12,7 @@ import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
 import type { Vec2 } from '../math/geometry';
-
-export interface GcodeOptions {
-  /** Along the cut, in mm/min. */
-  feedRate: number;
-  /** Between cuts, tool lifted, in mm/min. */
-  travelRate: number;
-  /** Z the tool works at. Negative for a router, 0 for a pen. */
-  cutDepth: number;
-  /** Z the tool moves at, clear of the work. */
-  safeHeight: number;
-  /** How finely curves are broken into straight moves. */
-  segments: number;
-}
-
-export const DEFAULT_GCODE_OPTIONS: GcodeOptions = {
-  feedRate: 800,
-  travelRate: 2400,
-  cutDepth: 0,
-  safeHeight: 5,
-  segments: 64,
-};
+import type { GcodeOptions } from '../core/settings';
 
 export interface GcodeResult {
   gcode: string;
@@ -52,7 +32,7 @@ export interface GcodeResult {
   moveCount: number;
 }
 
-export function exportGcode(doc: Document, options: GcodeOptions = DEFAULT_GCODE_OPTIONS): GcodeResult {
+export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): GcodeResult {
   const lines: string[] = [
     '; MyCAD G-code',
     'G21 ; mm',

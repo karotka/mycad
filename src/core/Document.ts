@@ -18,7 +18,7 @@ import {
   type SolidFeature,
   type SolidMesh,
 } from './entities/types';
-import { defaultDimensionStyle, defaultDraftingSettings, type DimensionStyle, type DraftingSettings } from './settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions } from './settings';
 
 export type ViewMode = '2d' | '3d';
 
@@ -34,6 +34,7 @@ export interface DocumentState {
   viewMode: ViewMode;
   drafting: DraftingSettings;
   dimensionStyle: DimensionStyle;
+  gcode: GcodeOptions;
 }
 
 export class Document {
@@ -52,6 +53,7 @@ export class Document {
   activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
   drafting: DraftingSettings = defaultDraftingSettings();
   dimensionStyle: DimensionStyle = defaultDimensionStyle();
+  gcode: GcodeOptions = defaultGcodeOptions();
 
   private listeners: Array<(doc: Document) => void> = [];
   private transactionDepth = 0;

@@ -26,6 +26,7 @@ import { DrawingInteractionController } from './interaction/DrawingInteractionCo
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
+import { GcodeSettingsController } from './ui/GcodeSettingsController';
 import { pressPullFace, regenerateSolidFeature } from './core/solids/ManifoldEngine';
 import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
@@ -164,6 +165,14 @@ const dimensionStyleController = new DimensionStyleController(
   get<HTMLFormElement>('dimension-style-form'),
   get('dimension-style-toggle'),
   get('dimension-style-close'),
+  redraw,
+);
+const gcodeSettingsController = new GcodeSettingsController(
+  cadDocument,
+  get('gcode-settings-panel'),
+  get<HTMLFormElement>('gcode-settings-form'),
+  get('gcode-settings-toggle'),
+  get('gcode-settings-close'),
   redraw,
 );
 const modelTreeController = new ModelTreeController(
@@ -930,6 +939,7 @@ cadDocument.subscribe(() => {
   if (propertiesController.isOpen) propertiesController.render();
   if (dimensionStyleController.isOpen) dimensionStyleController.render();
   if (draftingSettingsController.isOpen) draftingSettingsController.render();
+  if (gcodeSettingsController.isOpen) gcodeSettingsController.render();
   modelTreeController.render();
 });
 new ResizeObserver(resize).observe(viewport);

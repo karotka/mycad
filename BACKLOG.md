@@ -396,7 +396,9 @@ Shape of the work:
 
 ## G-code export
 
-> **Decided: this is a plotter/router, not a printer.** One pass per visible
+> **Decided: a pen plotter. Slicing is a slicer's job and not this app's** —
+> the earlier idea of reading PrusaSlicer's configuration and producing print
+> G-code is withdrawn, along with the notes for it. One pass per visible
 > layer, in layer order, from the 2D geometry. `GcodeExport.ts` does that today:
 > `G28` first, points put back through `localToWorld` so the file agrees with the
 > screen, geometry off the world XY plane refused rather than cut flat in the
@@ -416,27 +418,9 @@ What is left, in the order it bites:
 - **No arcs.** Everything curved is broken into `G1` segments. Real machines take
   `G2`/`G3`, which is fewer lines and a smoother path. `entityToPaths` throws the
   arc away by flattening; emitting arcs means keeping them.
-- **No tool compensation.** The path runs along the geometry, so a cut is half a
-  tool-width off on each side. Fine for a pen or a laser; wrong for a router.
-
-### The 3D-printing track, which is a different thing
-
-Slicing solids by height, with perimeters and infill, and reading the local
-PrusaSlicer configuration to pick the printer. Not chosen; kept because it was
-asked for once and the notes are worth keeping:
-
-- **PrusaSlicer's config lives outside the app**: `~/Library/Application
-  Support/PrusaSlicer/` on macOS (`PrusaSlicer.ini` plus `printer/`, `print/`,
-  `filament/` directories of `.ini` files); `~/.config/PrusaSlicer/` on Linux;
-  `%APPDATA%\PrusaSlicer\` on Windows.
-- **The renderer cannot read it.** It is sandboxed, and the IPC surface only
-  writes to paths the user chose through a dialog. Reading these needs a new main
-  process channel, scoped to that directory and no wider — the same care the
-  existing handlers take, and worth getting right rather than opening a general
-  "read any file" hole.
-- Slicing is its own discipline. Perimeters, infill, supports, retraction and
-  seam placement are each a project; the plotter export above shares only the
-  `G28` and the file writing with it.
+- **No tool compensation.** The path runs along the geometry, which is exactly
+  right for a pen and for a laser. A router would cut half a tool-width off on
+  each side — only worth solving if this ever drives one.
 
 ---
 

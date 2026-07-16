@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { DEFAULT_GCODE_OPTIONS, exportGcode } from './GcodeExport';
+import { exportGcode } from './GcodeExport';
+import { defaultGcodeOptions } from '../core/settings';
 
 function setup() {
   const doc = new Document();
@@ -45,7 +46,7 @@ describe('exportGcode', () => {
   it('lifts the tool to travel and lowers it to cut', () => {
     const doc = setup();
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 5 }));
-    const { gcode } = exportGcode(doc, { ...DEFAULT_GCODE_OPTIONS, cutDepth: -1, safeHeight: 4 });
+    const { gcode } = exportGcode(doc, { ...defaultGcodeOptions(), cutDepth: -1, safeHeight: 4 });
     expect(gcode).toContain('G0 X0 Y0\nG1 Z-1 F800\nG1 X10 Y5 F800\nG0 Z4 F2400');
   });
 

@@ -87,6 +87,7 @@ export function shellHtml(tools: ShellTools): string {
       <button class="properties-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
       <button class="properties-toggle" id="drafting-settings-toggle" title="Drafting Settings — snap step, grid, polar angles" aria-label="Drafting Settings">DRAFTING</button>
       <button class="properties-toggle" id="dimension-style-toggle" title="Dimension Style" aria-label="Dimension Style">DIM STYLE</button>
+      <button class="properties-toggle" id="gcode-settings-toggle" title="G-code — feed rates and pen heights for the plotter" aria-label="G-code Settings">G-CODE</button>
       <section class="properties-panel model-tree-panel" id="model-tree-panel" hidden>
         <header><strong>Model Tree</strong><button id="model-tree-close" title="Close">×</button></header>
         <div class="properties-content" id="model-tree-list"></div>
@@ -105,6 +106,16 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Snap step (F9)</span><input id="drafting-snap-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Grid spacing</span><input id="drafting-grid-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Polar angles (F10)</span><input id="drafting-polar-angles" type="text" inputmode="numeric" placeholder="30, 45, 90"></label>
+        </form>
+      </section>
+      <section class="properties-panel dimension-style-panel" id="gcode-settings-panel" hidden>
+        <header><strong>G-code</strong><button id="gcode-settings-close" title="Close">×</button></header>
+        <form class="properties-content" id="gcode-settings-form">
+          <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
+          <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
+          <label class="property-row"><span>Pen down Z</span><input id="gcode-cut-depth" type="number" step="0.1" title="Z where the pen touches; negative cuts"></label>
+          <label class="property-row"><span>Pen up Z</span><input id="gcode-safe-height" type="number" min="0.1" step="0.5" title="Z to lift to before travelling"></label>
+          <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
         </form>
       </section>
       <section class="properties-panel dimension-style-panel" id="dimension-style-panel" hidden>

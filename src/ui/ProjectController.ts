@@ -2,10 +2,10 @@ import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
-import { defaultDimensionStyle, defaultDraftingSettings } from '../core/settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
-import { DEFAULT_GCODE_OPTIONS, exportGcode, type GcodeOptions } from '../io/GcodeExport';
+import { exportGcode } from '../io/GcodeExport';
 
 export interface ProjectControllerCallbacks {
   captureView(): ProjectViewState;
@@ -73,6 +73,7 @@ export class ProjectController {
       this.doc.snapEnabled = true;
       this.doc.drafting = defaultDraftingSettings();
       this.doc.dimensionStyle = defaultDimensionStyle();
+      this.doc.gcode = defaultGcodeOptions();
       this.doc.viewMode = '2d';
       this.doc.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
       this.doc.notify();
@@ -146,8 +147,8 @@ export class ProjectController {
     await this.saveText(exportAsciiStl(this.doc), 'model.stl', 'STL model', 'stl');
   }
 
-  async exportGcode(options: GcodeOptions = DEFAULT_GCODE_OPTIONS): Promise<void> {
-    const result = exportGcode(this.doc, options);
+  async exportGcode(): Promise<void> {
+    const result = exportGcode(this.doc);
     if (result.layers.length === 0) {
       this.callbacks.log('G-code export: no visible 2D geometry to cut.');
       return;

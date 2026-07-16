@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { defaultDimensionStyle, defaultDraftingSettings, type DimensionStyle, type DraftingSettings, type ObjectSnapMode } from '../core/settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
 
 export interface ProjectViewState {
   mode: '2d' | '3d';
@@ -30,6 +30,7 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       activeWorkPlane: doc.activeWorkPlane,
       drafting: doc.drafting,
       dimensionStyle: doc.dimensionStyle,
+      gcode: doc.gcode,
       view,
     },
     entities: doc.entities,
@@ -98,6 +99,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.snapEnabled = typeof settings.snapEnabled === 'boolean' ? settings.snapEnabled : true;
     doc.drafting = loadDraftingSettings(settings.drafting);
     doc.dimensionStyle = loadDimensionStyle(settings.dimensionStyle);
+    doc.gcode = loadGcodeOptions(settings.gcode);
     if (settings.activeWorkPlane && typeof settings.activeWorkPlane === 'object') {
       doc.activeWorkPlane = JSON.parse(JSON.stringify(settings.activeWorkPlane));
     }
@@ -146,6 +148,25 @@ function loadDimensionStyle(value: unknown): DimensionStyle {
     precision: typeof raw.precision === 'number' && Number.isInteger(raw.precision) && raw.precision >= 0 && raw.precision <= 8 ? raw.precision : defaults.precision,
     scale: positive(raw.scale, defaults.scale),
     layer: typeof raw.layer === 'string' && raw.layer.trim() ? raw.layer : defaults.layer,
+  };
+}
+
+/**
+ * A pen plotter's feed rates and pen heights belong to the drawing that was set
+ * up for it. Cut depth is the one that may be negative or zero — a pen touches
+ * the paper at Z 0 and a knife goes below it — so it cannot use `positive`.
+ */
+function loadGcodeOptions(value: unknown): GcodeOptions {
+  const defaults = defaultGcodeOptions();
+  if (!value || typeof value !== 'object') return defaults;
+  const raw = value as Partial<Record<keyof GcodeOptions, unknown>>;
+  const positive = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
+  return {
+    feedRate: positive(raw.feedRate, defaults.feedRate),
+    travelRate: positive(raw.travelRate, defaults.travelRate),
+    cutDepth: typeof raw.cutDepth === 'number' && Number.isFinite(raw.cutDepth) ? raw.cutDepth : defaults.cutDepth,
+    safeHeight: positive(raw.safeHeight, defaults.safeHeight),
+    segments: typeof raw.segments === 'number' && Number.isInteger(raw.segments) && raw.segments >= 3 ? raw.segments : defaults.segments,
   };
 }
 
