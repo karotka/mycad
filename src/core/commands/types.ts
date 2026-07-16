@@ -17,7 +17,8 @@ export interface CommandContext {
   getCursor: () => Vec2;
   redraw: () => void;
   history: CommandHistory;
-  moveObject: (object: Entity | string, screenDelta: Vec2, worldDelta?: Vec3) => void;
+  /** Moves objects as a single step in the history, however many there are. */
+  moveObjects: (objects: ReadonlyArray<Entity | string>, screenDelta: Vec2, worldDelta?: Vec3) => void;
   copyWorldDelta: (viewDelta: Vec2) => Vec3 | undefined;
   workPlaneChanged?: () => void;
 }

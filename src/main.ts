@@ -4,7 +4,8 @@ import { CommandManager, hitTestEntity, type CommandName } from './core/commands
 import { takesPointInput, transformsObjects } from './core/commands/registry';
 import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFeature } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
-import { ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
+import { CompositeEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
+import type { DocumentEdit } from './core/history/CommandHistory';
 import { snapPoint2, worldToScreen, type Vec2 } from './math/geometry';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
@@ -580,7 +581,7 @@ function updateViewCubeOrientation(): void {
 const commands = new CommandManager({
   doc: cadDocument,
   history,
-  moveObject,
+  moveObjects,
   copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? renderer3d.screenDeltaToCad(delta) : undefined,
   workPlaneChanged: () => renderer3d.setWorkPlane(cadDocument.activeWorkPlane),
   log,
@@ -798,10 +799,12 @@ function updateTrackingGuide(): void {
   trackingLine.hidden = false;
 }
 
-function moveObject(object: Entity | string, screenDelta: Vec2, snappedWorldDelta?: { x: number; y: number; z: number }): void {
-  const delta = snappedWorldDelta ?? (cadDocument.viewMode === '2d'
-    ? { x: screenDelta.x, y: screenDelta.y, z: 0 }
-    : renderer3d.screenDeltaToCad(screenDelta));
+/** The edit that moves one object, without running it — so many can share a step. */
+function moveObjectEdit(
+  object: Entity | string,
+  delta: { x: number; y: number; z: number },
+  snapped: boolean,
+): DocumentEdit | null {
   if (typeof object !== 'string') {
     const before = cloneEntity(object);
     let after: Entity;
@@ -812,7 +815,7 @@ function moveObject(object: Entity | string, screenDelta: Vec2, snappedWorldDelt
       plane.origin.y += delta.y;
       plane.origin.z += delta.z;
       after.workPlane = plane;
-    } else if (snappedWorldDelta) {
+    } else if (snapped) {
       const plane = object.workPlane ?? WORLD_WORK_PLANE;
       const localDelta = {
         x: delta.x * plane.xAxis.x + delta.y * plane.xAxis.y + delta.z * plane.xAxis.z,
@@ -822,11 +825,10 @@ function moveObject(object: Entity | string, screenDelta: Vec2, snappedWorldDelt
     } else {
       after = transformEntityPoints(object, (point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
     }
-    history.execute(new UpdateEntityEdit('Move object', before, after));
-    return;
+    return new UpdateEntityEdit('Move object', before, after);
   }
   const solid = cadDocument.getSolid(object);
-  if (!solid) return;
+  if (!solid) return null;
   const before = cloneSolid(solid);
   const after = cloneSolid(solid);
   for (let i = 0; i < after.mesh.positions.length; i += 3) {
@@ -836,7 +838,26 @@ function moveObject(object: Entity | string, screenDelta: Vec2, snappedWorldDelt
   }
   translateFeature(after.feature, delta);
   after.revision++;
-  history.execute(new UpdateSolidEdit('Move solid', before, after));
+  return new UpdateSolidEdit('Move solid', before, after);
+}
+
+/**
+ * Moves any number of objects as one step in the history: dragging three things
+ * is one thing the user did, so one Undo has to put all three back.
+ */
+function moveObjects(
+  objects: ReadonlyArray<Entity | string>,
+  screenDelta: Vec2,
+  snappedWorldDelta?: { x: number; y: number; z: number },
+): void {
+  const delta = snappedWorldDelta ?? (cadDocument.viewMode === '2d'
+    ? { x: screenDelta.x, y: screenDelta.y, z: 0 }
+    : renderer3d.screenDeltaToCad(screenDelta));
+  const edits = objects
+    .map((object) => moveObjectEdit(object, delta, Boolean(snappedWorldDelta)))
+    .filter((edit): edit is DocumentEdit => edit !== null);
+  if (edits.length === 0) return;
+  history.execute(edits.length === 1 ? edits[0] : new CompositeEdit('Move objects', edits));
 }
 
 function translateFeature(feature: SolidFeature, delta: { x: number; y: number; z: number }): void {

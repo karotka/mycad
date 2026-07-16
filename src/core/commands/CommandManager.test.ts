@@ -8,18 +8,18 @@ function setup() {
   const doc = new Document();
   const history = new CommandHistory(doc);
   const log = vi.fn();
-  const moveObject = vi.fn();
+  const moveObjects = vi.fn();
   const manager = new CommandManager({
     doc,
     history,
-    moveObject,
+    moveObjects,
     copyWorldDelta: () => undefined,
     log,
     prompt: vi.fn(),
     getCursor: () => ({ x: 0, y: 0 }),
     redraw: vi.fn(),
   });
-  return { doc, history, log, manager, moveObject };
+  return { doc, history, log, manager, moveObjects };
 }
 
 describe('CommandManager history integration', () => {
@@ -297,27 +297,29 @@ describe('CommandManager history integration', () => {
   });
 
   it('moves a selected object by the two picked view-plane points', async () => {
-    const { doc, manager, moveObject } = setup();
+    const { doc, manager, moveObjects } = setup();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
     doc.addEntity(line);
     manager.startCommand('MOVE');
     await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.submitInput(''); // MOVE gathers a selection, like the other object commands
     await manager.handleClick({ x: 2, y: 3 });
     await manager.handleClick({ x: 7, y: 9 });
-    expect(moveObject).toHaveBeenCalledWith(line, { x: 5, y: 6 });
+    expect(moveObjects).toHaveBeenCalledWith([line], { x: 5, y: 6 }, undefined);
   });
 
   it('uses the exact 3D delta when MOVE points come from object snaps', async () => {
-    const { doc, manager, moveObject } = setup();
+    const { doc, manager, moveObjects } = setup();
     const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 4, y: 2 });
     doc.addEntity(rectangle);
     manager.startCommand('MOVE');
     await manager.handleClick({ x: 1, y: 1 }, rectangle);
+    await manager.submitInput('');
     manager.active!.data.pendingMoveWorldPoint = { x: 2, y: 3, z: 10 };
     await manager.handleClick({ x: 0, y: 0 });
     manager.active!.data.pendingMoveWorldPoint = { x: 12, y: 8, z: 14 };
     await manager.handleClick({ x: 5, y: 2 });
-    expect(moveObject).toHaveBeenCalledWith(rectangle, { x: 5, y: 2 }, { x: 10, y: 5, z: 4 });
+    expect(moveObjects).toHaveBeenCalledWith([rectangle], { x: 5, y: 2 }, { x: 10, y: 5, z: 4 });
   });
 
   it('copies preselected entities repeatedly from one base point', async () => {
@@ -649,7 +651,7 @@ describe('object selection steps', () => {
   });
 
   it('keeps single-object steps free of window select', () => {
-    for (const name of ['MOVE', 'OFFSET', 'TRIM', 'EXTEND'] as const) {
+    for (const name of ['OFFSET', 'TRIM', 'EXTEND'] as const) {
       const { manager } = setup();
       manager.startCommand(name);
       expect(manager.isMultiObjectStep).toBe(false);
@@ -962,18 +964,11 @@ describe('commands take the selection you already made', () => {
     expect(doc.entities).toHaveLength(2);
   });
 
-  it('MOVE takes a single preselected object', () => {
-    const { manager } = withSelection(1);
-    manager.startCommand('MOVE');
-    expect(manager.active?.stepIndex).toBe(1);
-    expect(manager.active?.data.object).toBeTruthy();
-  });
-
-  // MOVE handles one object, so with several selected there is no right choice.
-  it('MOVE asks when the selection is ambiguous', () => {
+  it('MOVE takes however many objects were preselected', () => {
     const { manager } = withSelection(3);
     manager.startCommand('MOVE');
-    expect(manager.active?.stepIndex).toBe(0);
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(manager.active?.data.entities).toHaveLength(3);
   });
 });
 
@@ -1129,5 +1124,53 @@ describe('ELLIPSE and CIRCLE_DIAMETER', () => {
     expect(hitTestEntity(doc.entities, { x: 0, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
     // Outside the curve: 10 along X is on it, but 10 along Y is nowhere near.
     expect(hitTestEntity(doc.entities, { x: 0, y: 10 }, 0.2)).toBeNull();
+  });
+});
+
+describe('MOVE takes as many objects as you give it', () => {
+  it('gathers several picks and moves them all', async () => {
+    const { doc, manager, moveObjects } = setup();
+    const lines = [0, 1].map((index) => {
+      const line = doc.createLine({ x: index * 10, y: 0 }, { x: index * 10 + 5, y: 0 });
+      doc.addEntity(line);
+      return line;
+    });
+    manager.startCommand('MOVE');
+    for (const line of lines) await manager.handleClick({ x: line.start.x, y: 0 }, line);
+    expect(manager.active?.stepIndex, 'still gathering').toBe(0);
+
+    await manager.submitInput('');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 3, y: 4 });
+    expect(moveObjects).toHaveBeenCalledWith(lines, { x: 3, y: 4 }, undefined);
+  });
+
+  it('hands over solids by id alongside entities', async () => {
+    const { doc, manager, moveObjects } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    doc.addEntity(line);
+    const solid = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0]), indices: new Uint32Array([0]) },
+      'Box', 1, [], undefined, { kind: 'mesh' },
+    );
+    doc.addSolid(solid);
+
+    manager.startCommand('MOVE');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 1, y: 1 });
+    expect(moveObjects).toHaveBeenCalledWith([line, solid.id], { x: 1, y: 1 }, undefined);
+  });
+
+  it('says so rather than moving nothing', async () => {
+    const { log, manager, moveObjects } = setup();
+    manager.startCommand('MOVE');
+    manager.active!.stepIndex = 2;
+    manager.active!.data.basePoint = { x: 0, y: 0 };
+    await manager.handleClick({ x: 5, y: 5 });
+    expect(moveObjects).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('Nothing to move.');
   });
 });

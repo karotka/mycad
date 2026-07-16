@@ -19,7 +19,7 @@ function fakeContext(): CommandContext {
     log: () => {}, prompt: () => {}, redraw: () => {},
     getCursor: () => ({ x: 0, y: 0 }),
     history: new CommandHistory(new Document()),
-    moveObject: () => {},
+    moveObjects: () => {},
     copyWorldDelta: () => undefined,
   };
 }

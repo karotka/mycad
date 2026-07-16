@@ -1370,13 +1370,25 @@ export class CommandManager {
         break;
 
       case 'MOVE':
-        if (this.active.stepIndex === 0) data.object = value;
-        else if (this.active.stepIndex === 1) {
+        if (this.active.stepIndex === 0) {
+          if (typeof value === 'string') {
+            const solid = this.ctx.doc.getSolid(value);
+            const solids = data.solids as Solid[];
+            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
+          } else if (value) {
+            const entity = value as Entity;
+            const entities = data.entities as Entity[];
+            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
+          }
+          if (value) {
+            this.ctx.log('Object added. Select another or press Enter.');
+            return;
+          }
+        } else if (this.active.stepIndex === 1) {
           data.basePoint = value;
           data.baseWorldPoint = data.pendingMoveWorldPoint;
           delete data.pendingMoveWorldPoint;
-        }
-        else if (this.active.stepIndex === 2) {
+        } else if (this.active.stepIndex === 2) {
           const base = data.basePoint as Vec2;
           const target = value as Vec2;
           const delta = { x: target.x - base.x, y: target.y - base.y };
@@ -1387,10 +1399,15 @@ export class CommandManager {
             y: targetWorld.y - baseWorld.y,
             z: targetWorld.z - baseWorld.z,
           } : undefined;
-          if (worldDelta) this.ctx.moveObject(data.object as Entity | string, delta, worldDelta);
-          else this.ctx.moveObject(data.object as Entity | string, delta);
+          const objects: Array<Entity | string> = [
+            ...(data.entities as Entity[]),
+            ...(data.solids as Solid[]).map((solid) => solid.id),
+          ];
+          if (objects.length === 0) { this.ctx.log('Nothing to move.'); this.showCurrentPrompt(); return; }
+          // One drag is one thing the user did, so it is one step in the history.
+          this.ctx.moveObjects(objects, delta, worldDelta);
           delete data.pendingMoveWorldPoint;
-          this.ctx.log(`Object moved by ${formatPoint(delta)}`);
+          this.ctx.log(`${objects.length} object(s) moved by ${formatPoint(delta)}`);
         }
         break;
 

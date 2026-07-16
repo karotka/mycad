@@ -30,6 +30,23 @@ function replaceSolid(doc: Document, value: Solid): void {
   doc.notify();
 }
 
+/**
+ * Several edits that undo and redo as one. A command that touches many objects
+ * is still one thing the user did, so it must be one step in the history.
+ */
+export class CompositeEdit implements DocumentEdit {
+  constructor(readonly label: string, private readonly edits: readonly DocumentEdit[]) {}
+
+  apply(doc: Document): void {
+    for (const edit of this.edits) edit.apply(doc);
+  }
+
+  revert(doc: Document): void {
+    // Backwards: a later edit may rest on what an earlier one did.
+    for (let index = this.edits.length - 1; index >= 0; index--) this.edits[index].revert(doc);
+  }
+}
+
 export class AddEntityEdit implements DocumentEdit {
   constructor(readonly label: string, private readonly entity: Entity) {}
   apply(doc: Document): void { replaceEntity(doc, this.entity); }
