@@ -1,0 +1,141 @@
+import { describe, expect, it } from 'vitest';
+import type { PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
+import { regenerateSolidFeature } from './ManifoldEngine';
+import { rotatedFeature, scaledFeature } from './featureTransform';
+
+const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
+  ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
+
+/** What the old code did: drag every vertex, and forget how the solid was made. */
+function bakedScale(mesh: SolidMesh, base: { x: number; y: number; z: number }, factor: number): Float32Array {
+  const out = mesh.positions.slice();
+  for (let i = 0; i < out.length; i += 3) {
+    out[i] = base.x + (out[i] - base.x) * factor;
+    out[i + 1] = base.y + (out[i + 1] - base.y) * factor;
+    out[i + 2] = base.z + (out[i + 2] - base.z) * factor;
+  }
+  return out;
+}
+
+const bounds = (positions: Float32Array) => {
+  const span = (axis: number) => {
+    let min = Infinity, max = -Infinity;
+    for (let i = axis; i < positions.length; i += 3) { min = Math.min(min, positions[i]); max = Math.max(max, positions[i]); }
+    return { min, max };
+  };
+  return { x: span(0), y: span(1), z: span(2) };
+};
+
+const closeTo = (actual: ReturnType<typeof bounds>, expected: ReturnType<typeof bounds>, digits = 3) => {
+  for (const axis of ['x', 'y', 'z'] as const) {
+    expect(actual[axis].min, `${axis} min`).toBeCloseTo(expected[axis].min, digits);
+    expect(actual[axis].max, `${axis} max`).toBeCloseTo(expected[axis].max, digits);
+  }
+};
+
+describe('scaledFeature', () => {
+  it('gives the same solid the vertex-dragging did', async () => {
+    // The point of the whole exercise: keeping the history must not change the
+    // shape. If these disagree, the tree describes something else.
+    const feature = sphere();
+    const before = (await regenerateSolidFeature(feature))!;
+    const base = { x: 10, y: -4, z: 2 };
+
+    const after = (await regenerateSolidFeature(scaledFeature(feature, base, 3)!))!;
+
+    closeTo(bounds(after.positions), bounds(bakedScale(before, base, 3)));
+  });
+
+  it('scales about the base, so a solid centred on it does not move', async () => {
+    const feature = sphere();
+    const scaled = (await regenerateSolidFeature(scaledFeature(feature, { x: 0, y: 0, z: 0 }, 2)!))!;
+    closeTo(bounds(scaled.positions), { x: { min: -8, max: 8 }, y: { min: -8, max: 8 }, z: { min: -8, max: 8 } });
+  });
+
+  it('keeps a scaled ellipsoid an ellipsoid, and still a primitive', () => {
+    const feature = sphere({ scale: { x: 3, y: 1, z: 0.5 } });
+    const scaled = scaledFeature(feature, { x: 0, y: 0, z: 0 }, 2) as PrimitiveFeature;
+    expect(scaled.kind).toBe('primitive');
+    expect(scaled.radius).toBe(4);
+    // Multiplied, not replaced: a squashed sphere made twice as big is still
+    // squashed the same way.
+    expect(scaled.scale).toEqual({ x: 6, y: 2, z: 1 });
+  });
+
+  it('scales every part of a boolean, so what it welded still fits', async () => {
+    const feature: SolidFeature = {
+      kind: 'boolean', operation: 'union',
+      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 6, y: 0, z: 0 }) }],
+    };
+    const before = (await regenerateSolidFeature(feature))!;
+    const base = { x: 1, y: 2, z: 3 };
+    const after = (await regenerateSolidFeature(scaledFeature(feature, base, 2.5)!))!;
+    closeTo(bounds(after.positions), bounds(bakedScale(before, base, 2.5)), 1);
+  });
+
+  it('has nothing to say about a mesh or a sweep', () => {
+    expect(scaledFeature({ kind: 'mesh' }, { x: 0, y: 0, z: 0 }, 2)).toBeNull();
+    // One operand it cannot write down makes the whole tree a lie.
+    expect(scaledFeature({ kind: 'boolean', operation: 'union', operands: [sphere(), { kind: 'mesh' }] }, { x: 0, y: 0, z: 0 }, 2)).toBeNull();
+  });
+
+  it('refuses a factor that is not one', () => {
+    expect(scaledFeature(sphere(), { x: 0, y: 0, z: 0 }, 0)).toBeNull();
+    expect(scaledFeature(sphere(), { x: 0, y: 0, z: 0 }, Number.NaN)).toBeNull();
+  });
+});
+
+function plane(origin: { x: number; y: number; z: number }) {
+  return { origin, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } };
+}
+
+describe('rotatedFeature', () => {
+  const up = { x: 0, y: 0, z: 1 };
+
+  it('swings a solid about the axis and keeps it a primitive', async () => {
+    // A ball 6 along X, turned a quarter turn about Z through the origin,
+    // lands 6 along Y.
+    const feature = sphere({ radius: 1, height: 2, workPlane: plane({ x: 6, y: 0, z: 0 }) });
+    const turned = rotatedFeature(feature, { x: 0, y: 0, z: 0 }, up, Math.PI / 2) as PrimitiveFeature;
+
+    expect(turned.kind).toBe('primitive');
+    expect(turned.radius).toBe(1);
+    expect(turned.workPlane!.origin.x).toBeCloseTo(0, 6);
+    expect(turned.workPlane!.origin.y).toBeCloseTo(6, 6);
+
+    const mesh = (await regenerateSolidFeature(turned))!;
+    closeTo(bounds(mesh.positions), { x: { min: -1, max: 1 }, y: { min: 5, max: 7 }, z: { min: -1, max: 1 } });
+  });
+
+  it('turns the plane axes, not only its origin', () => {
+    const feature = sphere({ workPlane: plane({ x: 0, y: 0, z: 0 }) });
+    const turned = rotatedFeature(feature, { x: 0, y: 0, z: 0 }, up, Math.PI / 2) as PrimitiveFeature;
+    // Moving only the origin would leave a stretched or extruded shape pointing
+    // the way it used to, which is a rotation that does not rotate anything.
+    expect(turned.workPlane!.xAxis.x).toBeCloseTo(0, 6);
+    expect(turned.workPlane!.xAxis.y).toBeCloseTo(1, 6);
+    expect(turned.workPlane!.yAxis.x).toBeCloseTo(-1, 6);
+  });
+
+  it('turns an ellipsoid so its long axis follows', async () => {
+    const feature = sphere({ radius: 1, scale: { x: 8, y: 1, z: 1 }, workPlane: plane({ x: 0, y: 0, z: 0 }) });
+    const turned = rotatedFeature(feature, { x: 0, y: 0, z: 0 }, up, Math.PI / 2)!;
+    const mesh = (await regenerateSolidFeature(turned))!;
+    // Long in X becomes long in Y. Baking the mesh got this right too — but at
+    // the cost of the radii that said so.
+    closeTo(bounds(mesh.positions), { x: { min: -1, max: 1 }, y: { min: -8, max: 8 }, z: { min: -1, max: 1 } });
+  });
+
+  it('turns about any axis, not only Z', () => {
+    const feature = sphere({ workPlane: plane({ x: 0, y: 0, z: 5 }) });
+    const turned = rotatedFeature(feature, { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, Math.PI / 2) as PrimitiveFeature;
+    // 5 up, turned about X, lands 5 out along -Y.
+    expect(turned.workPlane!.origin.y).toBeCloseTo(-5, 6);
+    expect(turned.workPlane!.origin.z).toBeCloseTo(0, 6);
+  });
+
+  it('has nothing to say about a mesh, or about no axis at all', () => {
+    expect(rotatedFeature({ kind: 'mesh' }, { x: 0, y: 0, z: 0 }, up, 1)).toBeNull();
+    expect(rotatedFeature(sphere(), { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 1)).toBeNull();
+  });
+});

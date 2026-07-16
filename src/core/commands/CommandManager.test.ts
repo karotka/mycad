@@ -5,6 +5,7 @@ import { CommandManager, hitTestEntity, linearDimensionRotation } from './Comman
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
+import { primitiveMesh } from '../solids/ManifoldEngine';
 
 function setup() {
   const doc = new Document();
@@ -1180,6 +1181,65 @@ describe('MOVE takes as many objects as you give it', () => {
     await manager.handleClick({ x: 5, y: 5 });
     expect(moveObjects).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith('Nothing to move.');
+  });
+});
+
+describe('SCALE and ROTATE keep the history that built the solid', () => {
+  const ball = (kit: ReturnType<typeof setup>) => {
+    const feature = { kind: 'primitive' as const, primitive: 'sphere' as const, center: { x: 0, y: 0 }, radius: 4, height: 8 };
+    const solid = kit.doc.createSolid(primitiveMesh(feature), 'Ball', 8, [], undefined, feature);
+    kit.doc.addSolid(solid);
+    kit.doc.selectSolid(solid.id);
+    return solid;
+  };
+
+  // Reported from the app: scale a sphere and the model tree says "Mesh — no
+  // history". The radius that made it is gone, and no undo brings it back,
+  // because losing it *is* the operation.
+  it('a scaled sphere is still a sphere', async () => {
+    const kit = setup();
+    ball(kit);
+    kit.manager.startCommand('SCALE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('2');
+
+    const solid = kit.doc.solids[0];
+    expect(solid.feature.kind).toBe('primitive');
+    if (solid.feature.kind !== 'primitive') throw new Error('expected a primitive');
+    expect(solid.feature.radius).toBe(4);
+    expect(solid.feature.scale).toMatchObject({ x: 2, y: 2, z: 2 });
+    let maxX = -Infinity;
+    for (let i = 0; i < solid.mesh.positions.length; i += 3) maxX = Math.max(maxX, solid.mesh.positions[i]);
+    expect(maxX).toBeCloseTo(8, 3);
+  });
+
+  it('a rotated sphere is still a sphere', async () => {
+    const kit = setup();
+    ball(kit);
+    kit.manager.startCommand('ROTATE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('90');
+
+    const solid = kit.doc.solids[0];
+    expect(solid.feature.kind).toBe('primitive');
+    if (solid.feature.kind !== 'primitive') throw new Error('expected a primitive');
+    expect(solid.feature.radius).toBe(4);
+  });
+
+  it('still bakes what it honestly cannot write down', async () => {
+    const kit = setup();
+    const solid = kit.doc.createSolid(
+      primitiveMesh({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8 }),
+      'Imported', 8, [],
+    );
+    // A mesh has no history to keep, so there is nothing to carry along.
+    expect(solid.feature.kind).toBe('mesh');
+    kit.doc.addSolid(solid);
+    kit.doc.selectSolid(solid.id);
+    kit.manager.startCommand('SCALE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('2');
+    expect(kit.doc.solids[0].feature.kind).toBe('mesh');
   });
 });
 

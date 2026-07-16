@@ -130,25 +130,28 @@ model history is destroyed and cannot come back. Three of them need not:
 
 | Place | What bakes it | Could it be expressed instead? |
 |---|---|---|
-| `PropertiesController:162` | Any width/depth/height/x/y/z edit on a solid whose feature is not a bare primitive | **Yes**, mostly. See below. |
-| `CommandManager:317` | SCALE | **Yes** — `PrimitiveFeature.scale` now exists. It did not when this was written. |
-| `CommandManager:342` | ROTATE | **Yes** — a rotation is the feature's `workPlane` axes, which every primitive already carries. |
+| `PropertiesController:162` | Any width/depth/height edit on a solid whose feature is not a bare primitive | **Yes**, mostly. See below. |
+| ~~SCALE~~ | ~~`CommandManager:317`~~ | **Done** — `scaledFeature`. |
+| ~~ROTATE~~ | ~~`CommandManager:342`~~ | **Done** — `rotatedFeature`. |
 | `CommandManager:1364` | FILLET / CHAMFER | **No.** There is no fillet feature, and the mesh is cut by `modifySolidEdge`. A legitimate bake — or the beginning of a fillet feature. |
 | `CommandManager:1730` | PRESSPULL **on a picked face** | **No** — an arbitrary face push is not a parameter of anything. |
 
-The three that need not bake all did it for the same reason: **the feature had
-nowhere to put the result**, so the mesh was mutated and the history dropped.
-That reason is now largely gone. A move is the work plane's origin, a rotation
-is its axes, a scale is `scale`.
+They baked for the same reason: **the feature had nowhere to put the result**,
+so the mesh was mutated and the history dropped. A move is the work plane's
+origin, a rotation is its axes, a scale is `scale` — and none of that was true
+when the code was written, which is why the comment saying it could not be done
+was honest and stopped being true without anyone noticing.
+
+What is left of it: a **resize of a boolean** in the properties panel. There is
+no single work plane to move and "make this union 20% wider" is not a question
+its operands can answer. Options: refuse it and point at the tree; or wrap the
+root in a transform feature. Do not guess — pick one deliberately. A **sweep**
+can be rotated (it is its work plane, like the rest) but not scaled: its size is
+its profile and its path, which are shapes rather than numbers.
 
 `PRESSPULL` already shows the pattern and is worth copying: on a picked face it
 bakes, but on an extrusion it edits `feature.height` and regenerates
 (`CommandManager:1731`). Express it where you can; bake only where you cannot.
-
-The awkward case is a resize of a **boolean** solid: there is no single work
-plane to move, and "make this union 20% wider" is not a question its operands can
-answer. Options: refuse it and point at the tree; or wrap the root in a transform
-feature. Do not guess — pick one deliberately.
 
 `PropertiesController` also cannot regenerate anything but a primitive, because
 `regenerateSolidFeature` is async for booleans (Manifold) and `updateSolid` is

@@ -42,6 +42,7 @@ import {
   createWedgeMesh,
   createPyramidMesh,
 } from '../solids/ManifoldEngine';
+import { rotatedFeature, scaledFeature } from '../solids/featureTransform';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -312,9 +313,12 @@ function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
     scaled.mesh.positions[index + 2] = base.z + (scaled.mesh.positions[index + 2] - base.z) * factor;
   }
   scaled.height *= factor;
-  // A general world-space scale cannot always be represented by the current
-  // extrusion/boolean feature schema. Preserve the exact result as a mesh.
-  scaled.feature = { kind: 'mesh' };
+  // The mesh is transformed rather than regenerated, because a uniform scale of
+  // every vertex is exactly what regenerating would produce and it needs no
+  // WASM to do it. The feature is carried along so that the shape and the story
+  // of it stay the same shape — this used to end at `{ kind: 'mesh' }`, so
+  // resizing a sphere cost you the radius that made it.
+  scaled.feature = scaledFeature(scaled.feature, base, factor) ?? { kind: 'mesh' };
   scaled.revision++;
   scaled.selected = true;
   return scaled;
@@ -339,7 +343,10 @@ function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: number, 
     rotated.mesh.positions[index + 1] = world.y;
     rotated.mesh.positions[index + 2] = world.z;
   }
-  rotated.feature = { kind: 'mesh' };
+  // A rotation is the work plane turned, which every feature already carries,
+  // so this one never needed to bake at all.
+  rotated.feature = rotatedFeature(rotated.feature, localToWorld(plane, centerLocal, centerLocal.z), plane.zAxis, angle)
+    ?? { kind: 'mesh' };
   rotated.revision++;
   return rotated;
 }
