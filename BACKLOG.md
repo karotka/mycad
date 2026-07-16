@@ -21,15 +21,11 @@ TEXT, MTEXT, SPLINE and DIMENSION. What is left:
 | **3DFACE** | Genuinely 3D: a 3- or 4-corner flat face. Could become a `Solid` with `feature: { kind: 'mesh' }`, which already exists — but a face soup is *not watertight*, and our `Solid` assumes a closed body, so Manifold would reject it in a boolean. It would import for viewing and break on UNION/SUBTRACT. Also a legacy entity. | Medium |
 | **DIMENSION: angular (types 2, 5) and ordinate (type 6)** | `DimensionEntity.dimensionKind` only has `aligned \| radius \| diameter`. Angular needs an arc dimension line and an angle readout; ordinate needs a leader. Both are new kinds in the model + renderer. | Medium |
 | **Dimension refinements** | Style details from the file (DIMSTYLE: arrow size, text height, precision) are ignored; imported dimensions take the current document style. | Medium |
-| **DIMENSION: rotated/linear (type 0)** | Imports as `aligned`, which measures the wrong thing — see *Linear dimensions* below. Reported as approximated today. | — |
 
 ### Known fidelity limits in what *is* imported
 
 These are reported to the user (`approximated` / `ignoredTypes`), not silent:
 
-- **Rotated linear dimensions** (type 0) measure a projection onto their own
-  direction; our `aligned` always measures `start → end`. Detected by comparing
-  against DXF code 42 and reported.
 - **Overridden dimension text** (code 1, e.g. `25 TYP`) is lost — our dimension
   always renders its own measurement.
 - **Polyline arcs** are expanded into segments; `PolylineEntity` holds straight
@@ -304,48 +300,14 @@ Notes for whoever picks this up:
 
 ---
 
-## Linear dimensions: the default measures the wrong thing
+## Dimensions: what is left
 
-Pick two points at different heights and MEASURE dimensions the **hypotenuse**.
-It should dimension the **leg** — the horizontal or vertical distance — because
-that is what a linear dimension is, and it is what a drawing almost always wants.
-Measuring the true point-to-point distance is a *different* kind of dimension,
-and needs its own command.
+`linear` and `aligned` both exist now, and DXF types 0 and 1 map onto them
+exactly. Still missing:
 
-The model only knows one of them:
-
-```ts
-dimensionKind: 'aligned' | 'radius' | 'diameter';   // core/entities/types.ts
-const length = Math.hypot(dx, dy);                  // always the hypotenuse
-```
-
-`createDimension` defaults to `'aligned'`, and MEASURE is registered as *"create
-an aligned dimension"*. So the default is the special case and the common case is
-missing. In AutoCAD this is DIMLINEAR (the default: horizontal, vertical or
-rotated) versus DIMALIGNED (the hypotenuse) — two commands, not one.
-
-### What it needs
-
-- A `linear` kind on `DimensionEntity`, carrying the **direction** it measures
-  along (DXF stores it as code 50; 0° horizontal, 90° vertical, anything else
-  rotated). The measurement is then the projection of `end - start` onto that
-  direction, and the extension lines run perpendicular to it — not along
-  `start → end` as they do now.
-- MEASURE placing a `linear` by default, choosing horizontal or vertical from
-  where the cursor pulls the dimension line, as AutoCAD does while you place it.
-- A separate command for `aligned`, which keeps today's behaviour.
-
-### It closes the DXF gap at the same time
-
-This is the same hole from the other side. DXF DIMENSION **type 0** is exactly a
-rotated/linear dimension, and the importer has to flag it:
-
-```ts
-// A rotated dimension measures the projection onto its own direction;
-// ours always measures start→end, so say so when they disagree.
-```
-
-It is detected by comparing against DXF code 42 (the drawing's own stated
-measurement) and counted as approximated. With a `linear` kind, type 0 imports
-exactly and the approximation disappears — so the two items are one piece of work
-and should be done together.
+- **Angular (DXF types 2 and 5) and ordinate (type 6)** — new kinds, each needing
+  geometry of its own: an arc dimension line and an angle readout, or a leader.
+- **DIMSTYLE from the file** — an imported dimension takes the current document
+  style; the arrow size, text height and precision in the file are ignored.
+- **Overridden dimension text** (DXF code 1, e.g. `25 TYP`) — our dimension always
+  renders its own measurement, so an override is dropped. Reported.
