@@ -11,10 +11,20 @@ let manifoldReady: Promise<ManifoldModule> | null = null;
 
 export async function initManifold() {
   if (!manifoldReady) {
-    manifoldReady = import('manifold-3d').then(({ default: createModule }) => createModule()).then((manifold) => {
-      manifold.setup();
-      return manifold;
-    });
+    manifoldReady = import('manifold-3d')
+      .then(({ default: createModule }) => createModule())
+      .then((manifold) => {
+        manifold.setup();
+        return manifold;
+      })
+      .catch((cause: unknown) => {
+        // Caching the rejection would make one bad load permanent: every later
+        // attempt would await the same settled promise and fail without ever
+        // trying again. Clearing it means the next boolean gets a fresh go.
+        manifoldReady = null;
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`the 3D engine (manifold) could not be loaded: ${reason}`, { cause });
+      });
   }
   return manifoldReady;
 }

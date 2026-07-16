@@ -572,7 +572,31 @@ export class CommandManager {
     this.ctx.prompt(this.currentPrompt());
   }
 
+  /**
+   * Every typed answer goes through here, so this is where a command that
+   * throws is caught. It used to escape into an unhandled rejection: the height
+   * for an EXTRUDE would be swallowed, the prompt would ask for it again, and
+   * nothing anywhere said why. A command that fails has to say so.
+   */
   async submitInput(input: string): Promise<void> {
+    try {
+      await this.readInput(input);
+    } catch (error) {
+      this.reportFailure(error);
+    }
+  }
+
+  private reportFailure(error: unknown): void {
+    const reason = error instanceof Error ? error.message : String(error);
+    this.ctx.log(`${this.active?.name ?? 'Command'} failed: ${reason}`);
+    // The command stays where it was, so the same answer can be tried again
+    // once whatever went wrong is fixed.
+    if (this.active) this.showCurrentPrompt();
+    else this.ctx.prompt('Command:');
+    this.ctx.redraw();
+  }
+
+  private async readInput(input: string): Promise<void> {
     const trimmed = input.trim();
 
     if (!this.active) {
@@ -620,6 +644,14 @@ export class CommandManager {
   }
 
   async handleClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection): Promise<void> {
+    try {
+      await this.readClick(world, pickEntity, pickSolidId, pickFace, pickEdge);
+    } catch (error) {
+      this.reportFailure(error);
+    }
+  }
+
+  private async readClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection): Promise<void> {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
 
