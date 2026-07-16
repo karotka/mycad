@@ -170,6 +170,19 @@ Nothing here bites yet, but all of it is O(n) or worse per frame:
 
 ## Robustness and file format
 
+> **Decided: not now.** There are no drawings worth keeping yet, so nothing is at
+> risk and there is nothing to migrate. The whole item below — versioning, the DTO
+> boundary, load validation — waits.
+>
+> **Trigger to revisit: before the first release, or the first time a drawing is
+> worth reopening.** Whichever comes first. Doing it while `.mycad` files still
+> only live on one machine is cheap; doing it afterwards means writing migrations
+> for shapes nobody designed.
+>
+> Parametric solids stay. `Solid.feature` is the model, not an optimisation, and
+> no interchange format holds it — which is why DXF is the export path and not the
+> native one.
+
 - **`electron/main.ts` `quick-save` can write outside the allowlist.** When
   `options.filePath` is absent it builds
   `path.join(app.getPath('documents'), defaultPath)`, and `defaultPath` comes from
