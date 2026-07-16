@@ -230,7 +230,28 @@ chains with no fallback, so a new entity silently gets no grips and no snaps.
 
 ## Performance
 
-Nothing here bites yet, but all of it is O(n) or worse per frame:
+> **Open report, parked deliberately: the viewport stutters while orbiting** — and
+> the reporter's own reading is that it may be **the sphere only**; box, cylinder
+> and the rest were never tried. That is the first thing to establish, because it
+> splits the problem in two: a sphere is ~550 vertices where a box is 8, so if it
+> is sphere-only the cost is per-vertex and this list is where to look; if every
+> solid does it, the cost is per-frame and fixed, and the list is wrong.
+>
+> Already ruled out **by measurement**, against the reported model (a sphere with
+> a cylinder subtracted — 550 vertices, 1100 triangles):
+> - `measurementCandidates` rebuilds every solid vertex per pointer move: **0.12 ms**.
+> - Booleans block the frame, but only when one runs: **306 ms** for a sweep.
+>
+> Already changed, effect unconfirmed: `redraw` now coalesces into one
+> `requestAnimationFrame`, the chrome only redraws when its inputs change, and
+> `syncGrips` compares before rebuilding.
+>
+> **What would settle it:** a Performance recording of three seconds of orbit,
+> range-selected, Bottom-Up by self time. Note that **INP is the wrong
+> instrument** — it measures discrete interactions and ignores the continuous
+> pointer moves an orbit is made of, so a green INP says nothing about this.
+
+Nothing here is proven to bite yet, but all of it is O(n) or worse per frame:
 
 - **No spatial index anywhere.** Every pick, window select and zoom-extents is a
   linear scan, and `entityBounds` is recomputed inside a sort comparator.
@@ -375,10 +396,34 @@ Shape of the work:
 
 ## G-code export
 
-Export the drawing as G-code, with settings, reading the local PrusaSlicer
-configuration to pick the right printer profile.
+> **Decided: this is a plotter/router, not a printer.** One pass per visible
+> layer, in layer order, from the 2D geometry. `GcodeExport.ts` does that today:
+> `G28` first, points put back through `localToWorld` so the file agrees with the
+> screen, geometry off the world XY plane refused rather than cut flat in the
+> wrong place, and unsupported types reported rather than dropped quietly. Layer
+> order is drag-to-reorder in the panel.
 
-Notes for whoever picks this up:
+What is left, in the order it bites:
+
+- **No settings dialog.** `exportGcode` runs on `DEFAULT_GCODE_OPTIONS` — feed
+  800, travel 2400, cut depth 0, safe height 5. The options object and its
+  plumbing exist; it needs a panel, and `DraftingSettingsController` is the shape
+  to copy. Per-layer settings (a different depth or feed per pass) would be the
+  step after, and would change `GcodeOptions` from one object to one per layer.
+- **Text is skipped**, and reported as skipped. It needs single-stroke fonts,
+  above: an outline font engraves the *outline* of each letter rather than the
+  letter.
+- **No arcs.** Everything curved is broken into `G1` segments. Real machines take
+  `G2`/`G3`, which is fewer lines and a smoother path. `entityToPaths` throws the
+  arc away by flattening; emitting arcs means keeping them.
+- **No tool compensation.** The path runs along the geometry, so a cut is half a
+  tool-width off on each side. Fine for a pen or a laser; wrong for a router.
+
+### The 3D-printing track, which is a different thing
+
+Slicing solids by height, with perimeters and infill, and reading the local
+PrusaSlicer configuration to pick the printer. Not chosen; kept because it was
+asked for once and the notes are worth keeping:
 
 - **PrusaSlicer's config lives outside the app**: `~/Library/Application
   Support/PrusaSlicer/` on macOS (`PrusaSlicer.ini` plus `printer/`, `print/`,
@@ -389,10 +434,9 @@ Notes for whoever picks this up:
   process channel, scoped to that directory and no wider — the same care the
   existing handlers take, and worth getting right rather than opening a general
   "read any file" hole.
-- Depends on **single-stroke fonts** for any text in the output, for the reason
-  above.
-- Export in general is parked until the import is good enough; G-code is a
-  separate track from DXF export and does not have to wait for it.
+- Slicing is its own discipline. Perimeters, infill, supports, retraction and
+  seam placement are each a project; the plotter export above shares only the
+  `G28` and the file writing with it.
 
 ---
 
