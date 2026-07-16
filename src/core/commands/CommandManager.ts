@@ -681,6 +681,31 @@ export class CommandManager {
     }
   }
 
+  /**
+   * A picked object into the set the command is gathering. A solid arrives as
+   * its id — that is all the viewport can name it by — while an entity arrives
+   * whole, so the two go to different places. Getting that wrong puts a string
+   * where an object belongs, and it surfaces much later as something trying to
+   * write a field onto it.
+   *
+   * False means there was nothing to take: Enter at a multi-object step.
+   */
+  private gatherPicked(value: unknown): boolean {
+    if (!this.active || !value) return false;
+    const data = this.active.data;
+    if (typeof value === 'string') {
+      const solid = this.ctx.doc.getSolid(value);
+      const solids = (data.solids ??= []) as Solid[];
+      if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
+    } else {
+      const entity = value as Entity;
+      const entities = (data.entities ??= []) as Entity[];
+      if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
+    }
+    this.ctx.log('Object added. Select another or press Enter.');
+    return true;
+  }
+
   async handlePreview(cursor: Vec2): Promise<void> {
     if (this.active?.preview) this.active.preview(cursor);
   }
@@ -1622,16 +1647,7 @@ export class CommandManager {
 
       case 'SCALE':
         if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else if (value) {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          if (value) { this.ctx.log('Object added. Select another or press Enter.'); return; }
+          if (this.gatherPicked(value)) return;
         } else if (this.active.stepIndex === 1) {
           data.basePoint = value;
           data.baseWorldPoint = data.pendingMoveWorldPoint;
@@ -1712,15 +1728,8 @@ export class CommandManager {
         break;
 
       case 'ROTATE':
-        if (this.active.stepIndex === 0 && step.kind === 'entity' && value) {
-          const entity = value as Entity;
-          const entities = data.entities as Entity[];
-          if (!entities.some((item) => item.id === entity.id)) {
-            entities.push(entity);
-            this.ctx.doc.selectEntity(entity.id, true);
-          }
-          this.ctx.log('Object added. Select another or press Enter.');
-          return;
+        if (this.active.stepIndex === 0) {
+          if (this.gatherPicked(value)) return;
         } else if (this.active.stepIndex === 1) {
           data.basePoint = value;
         } else if (this.active.stepIndex === 2) {

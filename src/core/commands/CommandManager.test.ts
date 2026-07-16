@@ -1248,6 +1248,28 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
     expect(solid.feature.radius).toBe(4);
   });
 
+  // Reported: "ROTATE failed: Cannot create property 'selected' on string
+  // 'solid_6'". A solid is picked by its id, because an id is all the viewport
+  // can name it by — and ROTATE's step, newly told it accepts solids, pushed
+  // that string in among the entities and later tried to clone it.
+  it('takes a solid picked in the viewport, not only a preselected one', async () => {
+    for (const command of ['ROTATE', 'SCALE'] as const) {
+      const kit = setup();
+      const solid = ball(kit);
+      kit.doc.clearSelection();
+
+      kit.manager.startCommand(command);
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+      await kit.manager.submitInput(''); // Enter: finished selecting
+      await kit.manager.handleClick({ x: 0, y: 0 });
+      await kit.manager.submitInput(command === 'ROTATE' ? '90' : '2');
+
+      expect(kit.doc.solids, `${command} lost the solid`).toHaveLength(1);
+      expect(kit.log, `${command} failed`).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('1 object(s)'));
+    }
+  });
+
   it('rotates a solid and a drawing together, which is what selecting both asks', async () => {
     const kit = setup();
     ball(kit);
