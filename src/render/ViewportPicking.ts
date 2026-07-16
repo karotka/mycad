@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Vec2 } from '../math/geometry';
+import type { Vec2, Vec3 } from '../math/geometry';
 
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
 
@@ -78,6 +78,21 @@ export class ViewportPicking {
       };
     });
     return closestProjectedIndex({ x: sx, y: sy }, points, tolerance);
+  }
+
+  /**
+   * The ray under the pointer, in CAD coordinates rather than the scene's —
+   * the caller reasons about the model, and three's Y-up is this file's problem
+   * to keep. An orthographic camera puts the origin at the near plane and the
+   * direction is the view direction; both come out of setFromCamera already.
+   */
+  pointerRay(canvas: HTMLCanvasElement, sx: number, sy: number): { origin: Vec3; direction: Vec3 } {
+    this.setRay(canvas, sx, sy);
+    const { origin, direction } = this.raycaster.ray;
+    return {
+      origin: { x: origin.x, y: -origin.z, z: origin.y },
+      direction: { x: direction.x, y: -direction.z, z: direction.y },
+    };
   }
 
   private setRay(canvas: HTMLCanvasElement, sx: number, sy: number): void {

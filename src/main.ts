@@ -2,7 +2,7 @@ import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
-import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFeature } from './core/entities/types';
+import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidFeature, type SolidMesh } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { CompositeEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
 import type { DocumentEdit } from './core/history/CommandHistory';
@@ -26,6 +26,7 @@ import { DrawingInteractionController } from './interaction/DrawingInteractionCo
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
+import { pressPullFace } from './core/solids/ManifoldEngine';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
   arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
@@ -673,6 +674,26 @@ function showDimension(text: string | null, x: number, y: number): void {
  * and then made one of them fade away. The 3D view draws no such label, so
  * there the toast is the only one there is.
  */
+/**
+ * PRESSPULL waiting for its distance, with the cursor dragging the face it was
+ * given. Builds the solid as it would be, so the shape is what you steer by
+ * rather than a number typed at a stationary picture — and returns the distance
+ * so the click that ends it commits exactly what was on screen.
+ */
+function pressPullDrag(event: PointerEvent): { delta: number; mesh: SolidMesh } | null {
+  const active = commands.active;
+  if (cadDocument.viewMode !== '3d' || active?.name !== 'PRESSPULL' || active.stepIndex !== 1) return null;
+  const face = active.data.face as SolidFaceSelection | undefined;
+  const solid = cadDocument.getSolid(active.data.solidId as string);
+  if (!face || !solid) return null;
+  const delta = renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
+  if (delta === null || Math.abs(delta) < 1e-6) return null;
+  const mesh = pressPullFace(solid.mesh, face.vertexIndices, face.normal, delta);
+  if (!mesh) return null;
+  previewController.setPreview({ type: 'solid', data: { solidId: solid.id, mesh } });
+  return { delta, mesh };
+}
+
 function showPreviewLabel(text: string | null, x: number, y: number): void {
   if (cadDocument.viewMode === '2d') return;
   showDimension(text, x, y);
@@ -832,9 +853,12 @@ viewport.addEventListener('pointermove', (event) => {
   } else {
     renderer3d.clearEdgeHighlight();
   }
-  if (cadDocument.viewMode === '3d' && commands.active?.name === 'PRESSPULL') {
+  // Highlighting follows the cursor only while a face is still being chosen.
+  // Once one is picked the cursor is dragging it, and re-picking under the
+  // cursor would light up whatever it happens to pass over instead.
+  if (cadDocument.viewMode === '3d' && commands.active?.name === 'PRESSPULL' && commands.active.stepIndex === 0) {
     renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY);
-  } else {
+  } else if (commands.active?.name !== 'PRESSPULL') {
     renderer3d.clearFaceHighlight();
   }
   if (windowDrag.active) {
@@ -886,6 +910,11 @@ viewport.addEventListener('pointermove', (event) => {
   updateTrackingGuide();
   if (activeTracking) showDimension(`∠ ${activeTracking.angle.toFixed(0)}°`, sx, sy);
   updatePreview(p);
+  // After updatePreview, which clears the frame before deciding what to draw:
+  // this one is steered by the pointer ray rather than by the work-plane point
+  // it is handed, so it has no say in there.
+  const pressPull = pressPullDrag(event);
+  if (pressPull) showDimension(`${pressPull.delta > 0 ? 'Pull' : 'Push'} ${Math.abs(pressPull.delta).toFixed(2)} mm`, sx, sy);
   const active = commands.active;
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
@@ -1036,6 +1065,17 @@ viewport.addEventListener('pointerdown', async (event) => {
     } else {
       log('UCS: select an existing vertex.');
     }
+    event.preventDefault();
+    return;
+  }
+  // The click that ends the drag commits the distance the preview was showing,
+  // so what you let go of is what you get.
+  const pressPull = pressPullDrag(event);
+  if (pressPull) {
+    previewController.clearPreview();
+    await commands.submitInput(String(pressPull.delta));
+    renderer3d.clearFaceHighlight();
+    input.focus();
     event.preventDefault();
     return;
   }

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { Document } from '../core/Document';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
-import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection } from '../core/entities/types';
+import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection, SolidMesh } from '../core/entities/types';
+import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
@@ -478,6 +479,8 @@ export class Viewport3D {
   private entityObjects = new Map<string, THREE.Object3D>();
   private entityRenderKeys = new Map<string, string>();
   private previewObject: THREE.Object3D | null = null;
+  /** The solid a preview is standing in for, hidden until the preview clears. */
+  private previewHiddenSolid: string | null = null;
   private gripObjects: THREE.Points | null = null;
   private faceHighlight: THREE.Mesh | null = null;
   private edgeHighlight: THREE.Line | null = null;
@@ -932,7 +935,7 @@ export class Viewport3D {
     for (const solid of solids) {
       let mesh = this.solidMeshes.get(solid.id);
       if (!mesh) {
-        const geom = this.solidToGeometry(solid);
+        const geom = this.solidToGeometry(solid.mesh);
         const mat = new THREE.MeshPhongMaterial({
           color: solid.selected ? 0x65c7ff : 0xffffff,
           side: THREE.DoubleSide,
@@ -951,7 +954,7 @@ export class Viewport3D {
         if (mesh.userData.revision !== solid.revision) {
           this.disposeSolidEdges(mesh);
           mesh.geometry.dispose();
-          mesh.geometry = this.solidToGeometry(solid);
+          mesh.geometry = this.solidToGeometry(solid.mesh);
           mesh.userData.revision = solid.revision;
           geometryChanged = true;
         }
@@ -1002,7 +1005,38 @@ export class Viewport3D {
       this.disposeObject(this.previewObject);
       this.previewObject = null;
     }
+    // Whatever the last preview hid, it can have back.
+    if (this.previewHiddenSolid) {
+      const hidden = this.solidMeshes.get(this.previewHiddenSolid);
+      if (hidden) hidden.visible = true;
+      this.previewHiddenSolid = null;
+    }
     if (!preview) return;
+    if (preview.type === 'solid') {
+      const data = preview.data as { solidId: string; mesh: SolidMesh };
+      // The solid it replaces is hidden rather than drawn behind it: a face
+      // pushed inwards would leave the ghost buried in the original, so the one
+      // direction you most need to see would show nothing at all.
+      const original = this.solidMeshes.get(data.solidId);
+      if (original) {
+        original.visible = false;
+        this.previewHiddenSolid = data.solidId;
+      }
+      const geometry = this.solidToGeometry(data.mesh);
+      const group = new THREE.Group();
+      const surface = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+        color: 0x67c9ff, side: THREE.DoubleSide, transparent: true, opacity: 0.55, depthWrite: false,
+      }));
+      surface.renderOrder = 20;
+      group.add(surface);
+      group.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry, 20),
+        new THREE.LineBasicMaterial({ color: 0x9cdcfe }),
+      ));
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
     if (preview.type === 'ucs') {
       const data = preview.data as { origin?: Vec3; xPoint?: Vec3; yPoint?: Vec3; hover?: Vec3; step: number };
       const group = new THREE.Group();
@@ -1433,9 +1467,14 @@ export class Viewport3D {
     });
   }
 
-  private solidToGeometry(solid: Solid): THREE.BufferGeometry {
+  /**
+   * Takes the mesh rather than the solid, because the press-pull preview needs
+   * the same conversion for a mesh no solid holds yet — and a second copy of
+   * the axis swap is a sign error waiting to happen.
+   */
+  private solidToGeometry(mesh: SolidMesh): THREE.BufferGeometry {
     const geom = new THREE.BufferGeometry();
-    const pos = solid.mesh.positions;
+    const pos = mesh.positions;
     // Manifold uses Z-up; Three.js is Y-up — swap Y and Z
     const swapped = new Float32Array(pos.length);
     for (let i = 0; i < pos.length; i += 3) {
@@ -1444,7 +1483,7 @@ export class Viewport3D {
       swapped[i + 2] = -pos[i + 1];
     }
     geom.setAttribute('position', new THREE.BufferAttribute(swapped, 3));
-    geom.setIndex(Array.from(solid.mesh.indices));
+    geom.setIndex(Array.from(mesh.indices));
     geom.computeVertexNormals();
     return geom;
   }
@@ -1487,6 +1526,18 @@ export class Viewport3D {
       vertexIndices: Array.from(vertices),
       normal: { x: normal.x, y: -normal.z, z: normal.y },
     };
+  }
+
+  /**
+   * How far the pointer has dragged a face along its own normal. A face may
+   * only travel that one way, so the pointer's other dimension is discarded
+   * rather than guessed at.
+   */
+  faceDragDelta(canvas: HTMLCanvasElement, solid: Solid, face: SolidFaceSelection, sx: number, sy: number): number | null {
+    const centre = verticesCentre(solid.mesh.positions, face.vertexIndices);
+    if (!centre) return null;
+    const ray = this.picking.pointerRay(canvas, sx, sy);
+    return axisOffsetUnderRay(centre, face.normal, ray.origin, ray.direction);
   }
 
   projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): Vec2 | null {
