@@ -239,9 +239,14 @@ Nothing here bites yet, but all of it is O(n) or worse per frame:
   frame as a dirty key. Solids already use a `revision` integer; entities should
   too.
 - **Manifold runs on the main thread.** The API is `async`, but only the WASM
-  init is awaited — the boolean itself is synchronous. `sweepProfile` over a
-  circular path is 64 extrusions plus 63 sequential unions, which freezes the UI
-  for seconds. Wants a worker.
+  init is awaited — the boolean itself is synchronous, so it blocks the frame.
+  Measured, after this was first written as "freezes the UI for seconds" on no
+  evidence at all: a circle swept along a circle (64 extrusions, then one union
+  of 64) takes **306 ms**; a union of 64 spheres takes **378 ms**. That is a
+  visible hitch on a one-off command, not a freeze, and nowhere near worth a
+  worker yet. Revisit if a sweep along a long polyline, or a model with hundreds
+  of parts, makes it minutes — the cost is per-operand, so it scales with the
+  model.
 - **`redraw()` is a full synchronous sync** on every pointer move, with
   `getElementById` calls in the hot path and no `requestAnimationFrame`
   batching.
