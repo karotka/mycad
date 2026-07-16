@@ -36,6 +36,13 @@ export class PreviewController {
       this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor } });
       return;
     }
+    if (active.name === 'ELLIPSE' && active.data.center) {
+      if (active.stepIndex === 1) this.setPreview({ type: 'line', data: { start: active.data.center, end: cursor } });
+      else if (active.stepIndex === 2 && active.data.axisPoint) {
+        this.setPreview({ type: 'ellipse', data: { center: active.data.center, axisPoint: active.data.axisPoint, cursor } });
+      }
+      return;
+    }
     if (active.name === 'POLYGON' && active.stepIndex === 2 && active.data.center && active.data.sides) {
       this.setPreview({ type: 'polygon', data: { center: active.data.center, cursor, sides: active.data.sides } });
       return;
@@ -125,7 +132,7 @@ export class PreviewController {
     if (active.stepIndex !== 1) return;
     if (active.name === 'LINE' && active.data.start) this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor } });
     else if (active.name === 'RECTANGLE' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
-    else if (active.name === 'CIRCLE' && active.data.center) this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
+    else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) this.setPreview({ type: active.name === 'CIRCLE' ? 'circle' : 'circleDiameter', data: { center: active.data.center, cursor } });
     else if (active.name === 'OCTAGON' && active.data.center) this.setPreview({ type: 'octagon', data: { center: active.data.center, cursor } });
   }
 
@@ -184,7 +191,8 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
   result.selected = false;
   switch (result.type) {
     case 'line': result.start = rotate(result.start); result.end = rotate(result.end); break;
-    case 'circle': result.center = rotate(result.center); break;
+    case 'circle':
+    case 'ellipse': result.center = rotate(result.center); break;
     case 'octagon': result.center = rotate(result.center); result.vertices = result.vertices.map(rotate); break;
     case 'polyline': result.vertices = result.vertices.map(rotate); break;
     case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;

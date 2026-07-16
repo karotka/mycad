@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, getEntityPoints, type Entity } from '../core/entities/types';
+import { curvePoints, ellipseAxisPoints, ellipsePoints, getEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
@@ -93,6 +93,9 @@ function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
       return { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
     });
     closed = true;
+  } else if (entity.type === 'ellipse') {
+    points = ellipsePoints(entity, 48).slice(0, -1);
+    closed = true;
   } else if (entity.type === 'arc' || entity.type === 'bezier') {
     points = curvePoints(entity, 32);
   }
@@ -164,11 +167,12 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
   } else if (entity.type === 'arc' || entity.type === 'bezier') {
     const points = curvePoints(entity, 2);
     add(entity, points[0]); add(entity, points[2]);
-  } else if (entity.type === 'text') add(entity, entity.position);
+  } else if (entity.type === 'ellipse') ellipseAxisPoints(entity).forEach((point) => add(entity, point));
+  else if (entity.type === 'text') add(entity, entity.position);
 }
 
 function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
-  if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon') add(entity, entity.center);
+  if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon' || entity.type === 'ellipse') add(entity, entity.center);
   else if (entity.type === 'rectangle') add(entity, midpoint(entity.first, entity.opposite));
   else if (entity.type === 'bezier') add(entity, curvePoints(entity, 2)[1]);
   else if (entity.type === 'text') add(entity, entity.position);

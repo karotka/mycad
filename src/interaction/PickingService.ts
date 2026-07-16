@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import { entityBounds, type Entity, type Solid } from '../core/entities/types';
-import { hitTestEntity } from '../core/commands/CommandManager';
+import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2 } from '../math/geometry';
 
 export interface SolidBounds {
@@ -78,6 +78,7 @@ export function pickEntityAt(doc: Document, point: Vec2, tolerance: number): Ent
   if (edge) return edge;
   const contains = (entity: Entity): boolean => {
     if (entity.type === 'circle') return Math.hypot(point.x - entity.center.x, point.y - entity.center.y) <= entity.radius;
+    if (entity.type === 'ellipse') return pointInEllipse(point, entity);
     if (entity.type === 'rectangle') {
       const bounds = entityBounds(entity);
       return point.x >= bounds.min.x && point.x <= bounds.max.x && point.y >= bounds.min.y && point.y <= bounds.max.y;

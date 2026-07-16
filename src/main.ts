@@ -30,7 +30,12 @@ const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
 
 const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Circle', 'CIRCLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Bezier', 'BEZIER'], ['Text', 'TEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Bezier', 'BEZIER'], ['Text', 'TEXT'],
+];
+const circleTools: Array<[string, string, CommandName]> = [
+  ['Circle', 'Circle by radius', 'CIRCLE'],
+  ['Diameter', 'Circle by diameter', 'CIRCLE_DIAMETER'],
+  ['Ellipse', 'Ellipse', 'ELLIPSE'],
 ];
 const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
 const solidTools: Array<[string, CommandName]> = [
@@ -48,6 +53,8 @@ const dimensionTools: Array<[string, string, CommandName]> = [
 const zoomTools: Array<[string, 'ZOOM_ALL' | 'ZOOM_WINDOW']> = [['Zoom All', 'ZOOM_ALL'], ['Zoom Window', 'ZOOM_WINDOW']];
 const savedPrimitive = localStorage.getItem('mycad.lastPrimitive') as CommandName | null;
 let currentPrimitive: CommandName = primitiveTools.some(([, command]) => command === savedPrimitive) ? savedPrimitive! : 'BOX';
+const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | null;
+let currentCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
 const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandName | null;
 let currentDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
@@ -63,6 +70,8 @@ function toolIcon(command: ToolbarIcon): string {
     POLYLINE: '<path d="M3 19l5-7 5 4 8-11"/><circle cx="3" cy="19" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="13" cy="16" r="1.5"/><circle cx="21" cy="5" r="1.5"/>',
     RECTANGLE: '<rect x="4" y="6" width="16" height="12"/><path d="M4 4v4M2 6h4M20 16v4M18 18h4"/>',
     CIRCLE: '<circle cx="12" cy="12" r="8"/><path d="M12 2v20M2 12h20"/>',
+    CIRCLE_DIAMETER: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M6 10l-2 2 2 2M18 10l2 2-2 2"/>',
+    ELLIPSE: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/><path d="M3 12h18M12 6.5v11"/>',
     POLYGON: '<path d="M12 3l8 6-3 10H7L4 9l8-6z"/><circle cx="12" cy="12" r="1"/>',
     ARC: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/>',
     BEZIER: '<path d="M3 18C8 3 16 21 21 6"/><path d="M3 18L8 6M21 6l-5 10" stroke-dasharray="2 2"/>',
@@ -132,6 +141,12 @@ function extrudeFlyout(): string {
   </div>`;
 }
 
+function circleFlyout(): string {
+  const current = circleTools.find(([, , command]) => command === currentCircle) ?? ['Circle', 'Circle by radius', 'CIRCLE'] as const;
+  const [label, tooltip] = current;
+  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="circle-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentCircle)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="circle-flyout" hidden>${circleTools.map(([name, tooltipText, command]) => `<button data-circle-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
+}
+
 function dimensionFlyout(): string {
   const current = dimensionTools.find(([, , command]) => command === currentDimension) ?? ['Linear', 'Linear Dimension', 'MEASURE'] as const;
   const [label, tooltip] = current;
@@ -146,7 +161,7 @@ function zoomFlyout(): string {
 app.innerHTML = `
   <main class="app">
     <nav class="toolbar" aria-label="CAD tools">
-      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}</div>
+      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout()}</div>
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="2D edit">${toolButtons(editTools)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
@@ -501,6 +516,7 @@ function redraw(): void {
   get<HTMLButtonElement>('primitive-main').classList.toggle('active', primitiveTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('array-main').classList.toggle('active', commands.active?.name === 'ARRAY_RECTANGULAR' || commands.active?.name === 'ARRAY_POLAR');
   get<HTMLButtonElement>('extrude-main').classList.toggle('active', commands.active?.name === 'EXTRUDE' || commands.active?.name === 'SWEEP');
+  get<HTMLButtonElement>('circle-main').classList.toggle('active', circleTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
   updateViewCubeOrientation();
@@ -1767,6 +1783,33 @@ extrudeFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-command]').forEa
 }));
 window.addEventListener('pointerdown', (event) => {
   if (!extrudeFlyoutElement.contains(event.target as Node) && event.target !== extrudeMain) extrudeFlyoutElement.hidden = true;
+});
+
+const circleMain = get<HTMLButtonElement>('circle-main');
+const circleFlyoutElement = get<HTMLElement>('circle-flyout');
+let circleHoldTimer: ReturnType<typeof setTimeout> | null = null;
+let circleHoldOpened = false;
+circleMain.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return; event.preventDefault(); circleHoldOpened = false;
+  circleHoldTimer = setTimeout(() => { circleHoldOpened = true; circleFlyoutElement.hidden = false; }, 450);
+});
+circleMain.addEventListener('pointerup', (event) => {
+  if (event.button !== 0) return;
+  if (circleHoldTimer) clearTimeout(circleHoldTimer); circleHoldTimer = null;
+  if (!circleHoldOpened) { commands.startCommand(currentCircle); redraw(); input.focus({ preventScroll: true }); }
+});
+circleMain.addEventListener('pointerleave', () => { if (circleHoldTimer) clearTimeout(circleHoldTimer); circleHoldTimer = null; });
+circleFlyoutElement.querySelectorAll<HTMLButtonElement>('[data-circle-command]').forEach((button) => button.addEventListener('pointerdown', (event) => {
+  event.preventDefault(); event.stopPropagation();
+  currentCircle = button.dataset.circleCommand as CommandName;
+  localStorage.setItem('mycad.lastCircle', currentCircle);
+  const label = circleTools.find(([, , command]) => command === currentCircle)?.[0] ?? currentCircle;
+  circleMain.dataset.label = label; circleMain.title = `${label} · hold for more`; circleMain.setAttribute('aria-label', `${label} · hold for more`);
+  circleMain.innerHTML = `${toolIcon(currentCircle)}<span class="flyout-caret">▾</span>`;
+  circleFlyoutElement.hidden = true; commands.startCommand(currentCircle); redraw(); input.focus({ preventScroll: true });
+}));
+window.addEventListener('pointerdown', (event) => {
+  if (!circleFlyoutElement.contains(event.target as Node) && event.target !== circleMain) circleFlyoutElement.hidden = true;
 });
 
 const dimensionMain = get<HTMLButtonElement>('dimension-main');

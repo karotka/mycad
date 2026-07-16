@@ -17,7 +17,6 @@ TEXT, MTEXT, SPLINE and DIMENSION. What is left:
 |---|---|---|
 | **INSERT / blocks** | Needs a block concept in `Document`: a definition plus references with their own transform. Real AutoCAD drawings are largely blocks, so this is the biggest gap in practice — but it is a model change, not an importer change. | Large |
 | **HATCH** | No entity for it. Needs a filled/boundary-path entity and renderer support. | Large |
-| **ELLIPSE** | No ellipse entity. Cheapest route is to sample to a polyline, exactly as SPLINE already does — reuse `sampleSpline`'s pattern and count it as approximated. | Small |
 | **POINT** | No entity type for a bare point. | Small |
 | **3DFACE** | Genuinely 3D: a 3- or 4-corner flat face. Could become a `Solid` with `feature: { kind: 'mesh' }`, which already exists — but a face soup is *not watertight*, and our `Solid` assumes a closed body, so Manifold would reject it in a boolean. It would import for viewing and break on UNION/SUBTRACT. Also a legacy entity. | Medium |
 | **DIMENSION: angular (types 2, 5) and ordinate (type 6)** | `DimensionEntity.dimensionKind` only has `aligned \| radius \| diameter`. Angular needs an arc dimension line and an angle readout; ordinate needs a leader. Both are new kinds in the model + renderer. | Medium |
@@ -107,8 +106,9 @@ Candidates, in order:
 - **Toolbar data and icons** — `drawTools`…`zoomTools` arrays plus ~40 inline SVG
   paths are pure data (`ui/toolbar/`).
 - **Shell HTML** — ~145 lines of markup in one `innerHTML` template string.
-- **`FlyoutTool` class** — the flyout logic is copy-pasted five times (~190
-  lines), each with its own hold timer and its own `450` ms magic number.
+- **`FlyoutTool` class** — the flyout logic is copy-pasted **six** times (~230
+  lines), each with its own hold timer and its own `450` ms magic number. The
+  circle/diameter/ellipse flyout added the sixth; the next one should extract it.
 - **`Panel` interface `{ isOpen, render() }`** — three controllers already
   implement it informally; the subscriber has a hand-written `if` per panel.
 - **One "click outside" manager** — there are seven separate global `pointerdown`
@@ -216,3 +216,85 @@ Nothing here bites yet, but all of it is O(n) or worse per frame:
   switch never handled it, and there is no grid visibility state to toggle). A
   real grid toggle would be a small feature: a field on `Document` plus renderer
   support.
+
+---
+
+## Drafting modes and F keys
+
+We have three of AutoCAD's toggles wired to keys and to buttons in the status
+bar: F3, F8, F10. The rest of the map, with what it would cost:
+
+| Key | AutoCAD | Here |
+|---|---|---|
+| F1 | Help | HELP exists as a command; no key. Trivial. |
+| F2 | Expanded command history | The command log panel exists and resizes; no key to expand it. Small. |
+| **F3** | Object snap | **Done** — key and status button. |
+| F4 | 3D object snap | No 3D object snap at all. Large. |
+| F5 | Isoplane cycle | No isometric drafting mode. Large, low value for us. |
+| F6 | Dynamic UCS | UCS exists as a command, but not the "hover a face to align" behaviour. Medium. |
+| F7 | Grid display | **No grid visibility state** — the grid is always drawn. Needs a field on `Document` plus renderer support. This is also what the removed GRID command would have toggled. Small. |
+| **F8** | Ortho | **Done** — key and status button. |
+| F9 | Snap mode (cursor stepping) | **The state is already there**: `doc.snapEnabled` and `doc.snapSize`, and the SNAP command toggles it. Missing only the F9 key and a status-bar button next to OSNAP/ORTHO/POLAR. Small — see below. |
+| **F10** | Polar tracking | **Done** — key and status button. |
+| F11 | Object snap tracking | The feature exists (built alongside the ortho work) but is **always on** — no way to turn it off. It belongs beside F3/F8/F10. Small. |
+| F12 | Dynamic input | No dynamic input. The dimension toast is a different thing. Medium. |
+
+### Cursor stepping (F9) — the concrete ask
+
+Make the grid snap a first-class toggle:
+
+- a status-bar button beside OSNAP/ORTHO/POLAR, using the same `.drafting-status`
+  markup, so it reads `SNAP F9`;
+- the F9 key, alongside F3/F8/F10 in `InputController`;
+- a way to set the step, not just turn it on and off — `snapSize` exists but
+  nothing exposes it. Either a field in the button's context menu or a small
+  input, the way AutoCAD's Snap settings work.
+
+Worth taking **F11** in the same pass: same shape, same place, and object snap
+tracking currently cannot be switched off at all.
+
+---
+
+## Text: single-stroke fonts
+
+`TextEntity` renders through the canvas with a system outline font. CAD wants
+**single-stroke** (engraving) fonts — one path down the middle of each glyph, the
+way AutoCAD's SHX fonts (txt, simplex, romans) or Hershey fonts work.
+
+Why it matters beyond looks: an outline font engraves as the *outline* of each
+letter, not the letter. Anything that drives a tool — G-code below, DXF export to
+a machine — needs the single stroke.
+
+Shape of the work:
+
+- A stroke font is glyph → list of polylines. Hershey fonts are public domain and
+  compact; SHX is AutoCAD's own format and would also make DXF text round-trip
+  better.
+- `TextEntity` would gain a font kind, and the renderer a stroke path instead of
+  `fillText`. Grips, bounds and picking would then work off the real geometry
+  rather than a measured box.
+- The 3D renderer currently has no text geometry at all; strokes would give it
+  some for free.
+
+---
+
+## G-code export
+
+Export the drawing as G-code, with settings, reading the local PrusaSlicer
+configuration to pick the right printer profile.
+
+Notes for whoever picks this up:
+
+- **PrusaSlicer's config lives outside the app**: `~/Library/Application
+  Support/PrusaSlicer/` on macOS (`PrusaSlicer.ini` plus `printer/`, `print/`,
+  `filament/` directories of `.ini` files); `~/.config/PrusaSlicer/` on Linux;
+  `%APPDATA%\PrusaSlicer\` on Windows.
+- **The renderer cannot read it.** It is sandboxed, and the IPC surface only
+  writes to paths the user chose through a dialog. Reading these needs a new main
+  process channel, scoped to that directory and no wider — the same care the
+  existing handlers take, and worth getting right rather than opening a general
+  "read any file" hole.
+- Depends on **single-stroke fonts** for any text in the output, for the reason
+  above.
+- Export in general is parked until the import is good enough; G-code is a
+  separate track from DXF export and does not have to wait for it.

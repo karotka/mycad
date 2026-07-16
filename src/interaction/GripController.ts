@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, dimensionGeometry, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
@@ -129,6 +129,9 @@ export class GripController {
       if (entity?.type === 'dimension') {
         return `Dimension: ${Math.hypot(entity.end.x - entity.start.x, entity.end.y - entity.start.y).toFixed(entity.precision)}`;
       }
+      if (entity?.type === 'ellipse') {
+        return `RX ${entity.radiusX.toFixed(2)} mm · RY ${entity.radiusY.toFixed(2)} mm`;
+      }
       if (entity?.type === 'polyline') {
         const count = entity.closed ? entity.vertices.length - 1 : entity.vertices.length;
         const index = Math.min(this.drag.gripIndex, count - 1);
@@ -192,6 +195,12 @@ export class GripController {
           shape: 'edge' as const,
           angle: GripController.edgeAngle(point, corners[(index + 1) % 4]),
         })),
+      ];
+    }
+    if (entity?.type === 'ellipse' && !this.mode) {
+      return [
+        { point: entity.center, index: 0, shape: 'square' },
+        ...ellipseAxisPoints(entity).map((point, index) => ({ point, index: index + 1, shape: 'square' as const })),
       ];
     }
     if (entity?.type === 'circle' && !this.mode) {
@@ -388,6 +397,18 @@ export class GripController {
         entity.center = { x: original.center.x + dx, y: original.center.y + dy };
       } else {
         entity.radius = Math.max(0.0001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
+      }
+    } else if (entity.type === 'ellipse' && original.type === 'ellipse') {
+      if (this.mode === 'center' || this.drag.gripIndex === 0) {
+        entity.center = { x: original.center.x + dx, y: original.center.y + dy };
+      } else {
+        // Grips 1 and 3 sit on the X axis, 2 and 4 on the Y; measure the cursor
+        // in the ellipse's own frame so a rotated one still resizes correctly.
+        const cos = Math.cos(-original.rotation), sin = Math.sin(-original.rotation);
+        const ox = cursor.x - original.center.x, oy = cursor.y - original.center.y;
+        const local = { x: ox * cos - oy * sin, y: ox * sin + oy * cos };
+        if (this.drag.gripIndex % 2 === 1) entity.radiusX = Math.max(0.0001, Math.abs(local.x));
+        else entity.radiusY = Math.max(0.0001, Math.abs(local.y));
       }
     } else if (entity.type === 'polyline' && original.type === 'polyline') {
       entity.vertices[this.drag.gripIndex] = { ...cursor };

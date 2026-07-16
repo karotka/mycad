@@ -30,6 +30,33 @@ function preselectObjects(
   };
 }
 
+/** Like `preselectObjects`, for commands that act on entities only. */
+function preselectEntities(message: (count: number) => string): (active: ActiveCommand, ctx: CommandContext) => void {
+  return (active, ctx) => {
+    const entities = ctx.doc.getSelectedEntities();
+    if (entities.length === 0) return;
+    active.data.entities = [...entities];
+    active.stepIndex = 1;
+    ctx.log(message(entities.length));
+  };
+}
+
+/**
+ * Takes one preselected object — an entity or a solid id — for a command that
+ * acts on a single object. With several selected there is no right one to pick,
+ * so it asks rather than guessing.
+ */
+function preselectSingleObject(key: string, message: string): (active: ActiveCommand, ctx: CommandContext) => void {
+  return (active, ctx) => {
+    const entities = ctx.doc.getSelectedEntities();
+    const solids = ctx.doc.getSelectedSolids();
+    if (entities.length + solids.length !== 1) return;
+    active.data[key] = entities[0] ?? solids[0].id;
+    active.stepIndex = 1;
+    ctx.log(message);
+  };
+}
+
 /** Takes a single preselected object into `key` and skips the step asking for it. */
 function preselectOne(
   key: string,
@@ -89,6 +116,10 @@ export const COMMANDS = [
   { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
   { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', corner: true }, { kind: 'done' }] },
   { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:' }, { kind: 'done' }] },
+  { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify diameter or a point at that distance:' }, { kind: 'done' }] },
+  { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
   { name: 'BEZIER', aliases: ['B', 'BEZIER'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
@@ -104,7 +135,8 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select circle or arc for diameter dimension:' }, { kind: 'point', label: 'Specify dimension text location:' }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
-  { name: 'MOVE', aliases: ['MO', 'MOVE'], help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object to move:', accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }] },
+  { name: 'MOVE', aliases: ['MO', 'MOVE'], help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object to move:', accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
+    onStart: preselectSingleObject('object', 'Object preselected. Specify base point.') },
   { name: 'COPY', aliases: ['CO', 'CP', 'COPY'], help: 'copy objects repeatedly', suggest: true, pointInput: true, transformsObjects: true,
     steps: [{ kind: 'entity', label: 'Select object(s) to copy, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point (Escape to finish):' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
@@ -123,7 +155,9 @@ export const COMMANDS = [
       active.stepIndex = 1;
       ctx.log(`${selected.length} object(s) preselected. Specify rotation base point.`);
     } },
-  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], help: 'mirror objects', suggest: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }], data: () => ({ entities: [] }) },
+  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], help: 'mirror objects', suggest: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
+    data: () => ({ entities: [] }),
+    onStart: preselectEntities((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
   { name: 'JOIN', aliases: ['J', 'JOIN'], help: 'join connected 2D lines into one polyline', suggest: true,
     steps: [{ kind: 'entity', label: 'Select connected lines or curves, then press Enter:', multi: true }, { kind: 'done' }],
     data: () => ({ entities: [] }),
@@ -131,8 +165,8 @@ export const COMMANDS = [
       const lines = ctx.doc.getSelectedEntities().filter((entity) =>
         entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier' || entity.type === 'polyline');
       active.data.entities = lines;
+      // Too few to join is finishJoin's message to give; it would only be echoed here.
       if (lines.length >= 2) ctx.log(`${lines.length} preselected object(s). Joining selection.`);
-      else if (lines.length > 0) ctx.log('1 object preselected. Select at least one connected object or press Enter.');
     } },
   { name: 'EXPLODE', aliases: ['X', 'EXPLODE'], help: 'break compound objects into parts', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
@@ -187,7 +221,9 @@ export const COMMANDS = [
 
   // Not offered by autocomplete.
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
-  { name: 'ERASE', aliases: ['ERASE'], help: 'delete object', steps: [{ kind: 'entity', label: 'Select object to delete (or a 3D solid):', accepts: ['entity', 'solid'] }, { kind: 'done' }] },
+  { name: 'ERASE', aliases: ['ERASE'], help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
   { name: 'VIEW2D', aliases: ['V2', 'VIEW2D'], help: '2D view', run: (ctx) => { ctx.doc.viewMode = '2d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 2D'); } },
   { name: 'VIEW3D', aliases: ['V3', 'VIEW3D'], help: '3D view', run: (ctx) => { ctx.doc.viewMode = '3d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 3D'); } },
   { name: 'ZOOM', aliases: ['Z', 'ZOOM'], run: (ctx) => ctx.log('Zoom extents aktivujte tlacitkem ZOOM nebo koleckem mysi.') },

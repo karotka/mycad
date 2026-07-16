@@ -244,3 +244,33 @@ describe('reading a file leaves the document alone', () => {
     expect(doc.entities).toHaveLength(before.entities);
   });
 });
+
+describe('DXF ELLIPSE', () => {
+  // 11/21 is the major axis endpoint relative to the centre, 40 the minor/major ratio.
+  it('imports an ellipse exactly, now that we have the entity for it', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf('0\nELLIPSE\n8\nA\n10\n5\n20\n3\n11\n10\n21\n0\n40\n0.4\n'));
+    expect(result.entities[0]).toMatchObject({
+      type: 'ellipse', center: { x: 5, y: 3 }, radiusX: 10, radiusY: 4, rotation: 0,
+    });
+    // An exact mapping, so nothing was approximated.
+    expect(result.approximated).toBe(0);
+    expect(result.ignored).toBe(0);
+  });
+
+  it('takes the rotation from the major axis vector', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf('0\nELLIPSE\n8\nA\n10\n0\n20\n0\n11\n0\n21\n6\n40\n0.5\n'));
+    const ellipse = result.entities[0];
+    expect(ellipse.type === 'ellipse' && ellipse.rotation).toBeCloseTo(Math.PI / 2);
+    expect(ellipse.type === 'ellipse' && ellipse.radiusX).toBeCloseTo(6);
+    expect(ellipse.type === 'ellipse' && ellipse.radiusY).toBeCloseTo(3);
+  });
+
+  it('skips a degenerate ellipse instead of importing a zero one', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf('0\nELLIPSE\n8\nA\n10\n0\n20\n0\n11\n0\n21\n0\n40\n0.5\n'));
+    expect(result.entities).toHaveLength(0);
+    expect(result.ignoredTypes).toEqual({ ELLIPSE: 1 });
+  });
+});

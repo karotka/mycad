@@ -1,7 +1,7 @@
 import type { Vec2, Vec3 } from '../../math/geometry';
 import type { WorkPlane } from '../../math/workplane';
 
-export type EntityType = 'line' | 'circle' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
+export type EntityType = 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
 
 export interface EntityBase {
   id: string;
@@ -22,6 +22,17 @@ export interface CircleEntity extends EntityBase {
   type: 'circle';
   center: Vec2;
   radius: number;
+}
+
+/** An axis-aligned ellipse turned by `rotation` (radians) about its centre. */
+export interface EllipseEntity extends EntityBase {
+  type: 'ellipse';
+  center: Vec2;
+  /** Semi-axis along the ellipse's own X, before rotation. */
+  radiusX: number;
+  /** Semi-axis along the ellipse's own Y, before rotation. */
+  radiusY: number;
+  rotation: number;
 }
 
 export interface RectangleEntity extends EntityBase {
@@ -61,7 +72,7 @@ export interface DimensionEntity extends EntityBase {
   scale: number;
 }
 
-export type Entity = LineEntity | CircleEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
+export type Entity = LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -125,6 +136,26 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     },
     textAngle, text: length.toFixed(entity.precision),
   };
+}
+
+/** Samples a rotated ellipse; `segments` points around it, first point repeated last. */
+export function ellipsePoints(e: EllipseEntity, segments = 64): Vec2[] {
+  const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
+  const points: Vec2[] = [];
+  for (let index = 0; index <= segments; index++) {
+    const t = (Math.PI * 2 * index) / segments;
+    const x = Math.cos(t) * e.radiusX;
+    const y = Math.sin(t) * e.radiusY;
+    points.push({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos });
+  }
+  return points;
+}
+
+/** The four axis endpoints, in world space — the ellipse's own quadrant points. */
+export function ellipseAxisPoints(e: EllipseEntity): Vec2[] {
+  const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
+  const at = (x: number, y: number): Vec2 => ({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos });
+  return [at(e.radiusX, 0), at(0, e.radiusY), at(-e.radiusX, 0), at(0, -e.radiusY)];
 }
 
 export function curvePoints(e: ArcEntity | BezierEntity, segments = 64): Vec2[] {
@@ -235,6 +266,16 @@ export function cloneEntity(e: Entity): Entity {
 
 export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
   switch (e.type) {
+    case 'ellipse': {
+      // Exact extent of a rotated ellipse.
+      const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
+      const halfWidth = Math.hypot(e.radiusX * cos, e.radiusY * sin);
+      const halfHeight = Math.hypot(e.radiusX * sin, e.radiusY * cos);
+      return {
+        min: { x: e.center.x - halfWidth, y: e.center.y - halfHeight },
+        max: { x: e.center.x + halfWidth, y: e.center.y + halfHeight },
+      };
+    }
     case 'line':
       return {
         min: { x: Math.min(e.start.x, e.end.x), y: Math.min(e.start.y, e.end.y) },
@@ -298,6 +339,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
     case 'line':
       return [e.start, e.end];
     case 'circle':
+    case 'ellipse':
       return [e.center];
     case 'rectangle':
       return [
@@ -325,6 +367,7 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
       copy.end = fn(copy.end);
       break;
     case 'circle':
+    case 'ellipse':
       copy.center = fn(copy.center);
       break;
     case 'rectangle':

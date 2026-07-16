@@ -199,6 +199,16 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     } else if (type === 'MTEXT') {
       noteFlattened(fields, 30);
       addText(fields, layer, mtextPlainText(fields), { x: number(fields, 10) * scale, y: number(fields, 20) * scale }, type);
+    } else if (type === 'ELLIPSE') {
+      noteFlattened(fields, 30);
+      // 11/21 is the major axis endpoint *relative to the centre*, and 40 is the
+      // minor/major ratio — so both radii and the rotation come from that vector.
+      const centre = { x: number(fields, 10) * scale, y: number(fields, 20) * scale };
+      const major = { x: number(fields, 11) * scale, y: number(fields, 21) * scale };
+      const radiusX = Math.hypot(major.x, major.y);
+      const radiusY = radiusX * number(fields, 40, 1);
+      if (radiusX < 1e-9 || radiusY < 1e-9) skip(type);
+      else finish(doc.createEllipse(centre, radiusX, radiusY, Math.atan2(major.y, major.x)), fields, layer);
     } else if (type === 'DIMENSION') {
       noteFlattened(fields, 30);
       // The low bits of 70 hold the kind; 32/64/128 are unrelated flags.

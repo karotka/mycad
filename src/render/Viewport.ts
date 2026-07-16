@@ -3,7 +3,7 @@ import type { Document } from '../core/Document';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
 import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection } from '../core/entities/types';
-import { curvePoints, dimensionGeometry, entityBounds } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -191,6 +191,14 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
+      case 'ellipse': {
+        const c = worldToScreen(entity.center, w, h, this.pan, this.zoom);
+        this.ctx.beginPath();
+        // Screen Y grows downward, so the rotation flips with it.
+        this.ctx.ellipse(c.x, c.y, entity.radiusX * this.zoom, entity.radiusY * this.zoom, -entity.rotation, 0, Math.PI * 2);
+        this.ctx.stroke();
+        break;
+      }
       case 'rectangle': {
         const first = worldToScreen(entity.first, w, h, this.pan, this.zoom);
         const opposite = worldToScreen(entity.opposite, w, h, this.pan, this.zoom);
@@ -316,6 +324,25 @@ export class Canvas2DRenderer {
       this.ctx.stroke();
       label = `L = ${Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y).toFixed(2)} mm`;
       labelPoint = d.end;
+    } else if (preview.type === 'circleDiameter' && d.center && d.cursor) {
+      // The cursor distance is the diameter here, so the circle is half of it.
+      const diameter = Math.hypot(d.cursor.x - d.center.x, d.cursor.y - d.center.y);
+      const c = worldToScreen(d.center, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.arc(c.x, c.y, (diameter / 2) * this.zoom, 0, Math.PI * 2);
+      this.ctx.stroke();
+      label = `\u00d8 = ${diameter.toFixed(2)} mm`;
+      labelPoint = d.cursor;
+    } else if (preview.type === 'ellipse' && d.center && d.axisPoint && d.cursor) {
+      const radiusX = Math.hypot(d.axisPoint.x - d.center.x, d.axisPoint.y - d.center.y);
+      const rotation = Math.atan2(d.axisPoint.y - d.center.y, d.axisPoint.x - d.center.x);
+      const radiusY = Math.abs(-(d.cursor.x - d.center.x) * Math.sin(rotation) + (d.cursor.y - d.center.y) * Math.cos(rotation));
+      const c = worldToScreen(d.center, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.ellipse(c.x, c.y, radiusX * this.zoom, Math.max(radiusY, 1e-6) * this.zoom, -rotation, 0, Math.PI * 2);
+      this.ctx.stroke();
+      label = `RX = ${radiusX.toFixed(2)} · RY = ${radiusY.toFixed(2)} mm`;
+      labelPoint = d.cursor;
     } else if (preview.type === 'circle' && d.center && d.cursor) {
       const r = Math.sqrt((d.cursor.x - d.center.x) ** 2 + (d.cursor.y - d.center.y) ** 2);
       const c = worldToScreen(d.center, w, h, this.pan, this.zoom);
@@ -1258,6 +1285,11 @@ export class Viewport3D {
             y: entity.center.y + Math.sin(angle) * entity.radius,
           });
         }
+        loop = true;
+        break;
+      }
+      case 'ellipse': {
+        points.push(...ellipsePoints(entity, 96).slice(0, -1));
         loop = true;
         break;
       }

@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, curvePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { cloneEntity, curvePoints, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -214,6 +214,10 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document):
   switch (result.type) {
     case 'line': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); break;
     case 'circle': result.center = rotatePoint(result.center, base, angle); break;
+    case 'ellipse':
+      result.center = rotatePoint(result.center, base, angle);
+      result.rotation += angle;
+      break;
     case 'octagon': result.center = rotatePoint(result.center, base, angle); result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
     case 'polyline': result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
     case 'arc': result.center = rotatePoint(result.center, base, angle); result.startAngle += angle; break;
@@ -294,6 +298,7 @@ function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {
     y: base.y + (point.y - base.y) * factor,
   }));
   if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
+  if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
   if (scaled.type === 'text') scaled.height *= factor;
   scaled.selected = true;
   return scaled;
@@ -523,13 +528,23 @@ export class CommandManager {
     };
     def.onStart?.(this.active, this.ctx);
 
-    // JOIN is the one command that can complete on start: enough preselected
-    // objects means there is nothing left to ask, so it joins them right away.
-    if (name === 'JOIN' && (this.active.data.entities as Entity[]).length >= 2) {
-      this.finishJoin();
+    // When a preselection has already answered the last question a command had,
+    // waiting for Enter would only ask the user to confirm what is on screen.
+    // Press it for them: select objects, hit ERASE, they are gone — undo covers it.
+    if (this.preselectionAnswersEverything()) {
+      void this.advanceStep(null);
       return;
     }
     this.showCurrentPrompt();
+  }
+
+  /** True when the active step gathers objects, already has some, and nothing follows it. */
+  private preselectionAnswersEverything(): boolean {
+    if (!this.active || !this.isMultiObjectStep) return false;
+    if (this.active.steps[this.active.stepIndex + 1]?.kind !== 'done') return false;
+    const entities = (this.active.data.entities as Entity[] | undefined)?.length ?? 0;
+    const solids = (this.active.data.solids as Solid[] | undefined)?.length ?? 0;
+    return entities + solids > 0;
   }
 
   printHelp(): void {
@@ -661,11 +676,14 @@ export class CommandManager {
           const angle = Number(input); const center = this.active.data.center as Vec2; const start = this.active.data.start as Vec2;
           if (Number.isFinite(angle) && center && start) { const a = Math.atan2(start.y-center.y,start.x-center.x) + angle*Math.PI/180; const r=dist2(center,start); await this.advanceStep({x:center.x+Math.cos(a)*r,y:center.y+Math.sin(a)*r}); return; }
         }
-        if (this.active?.name === 'CIRCLE' && this.active.stepIndex === 1) {
-          const radius = Number(input);
+        if ((this.active?.name === 'CIRCLE' || this.active?.name === 'CIRCLE_DIAMETER') && this.active.stepIndex === 1) {
+          const entered = Number(input);
           const center = this.active.data.center as Vec2 | undefined;
-          if (center && Number.isFinite(radius) && radius > 0) {
-            await this.advanceStep({ x: center.x + radius, y: center.y });
+          if (center && Number.isFinite(entered) && entered > 0) {
+            // The step reads a point, so hand it one the entered distance away.
+            // What that distance means is the command's business: a radius for
+            // CIRCLE, a diameter for CIRCLE_DIAMETER.
+            await this.advanceStep({ x: center.x + entered, y: center.y });
             return;
           }
         }
@@ -774,6 +792,41 @@ export class CommandManager {
           const line = this.ctx.doc.createLine(data.start as Vec2, value as Vec2);
           this.ctx.history.execute(new AddEntityEdit('Line', line));
           this.ctx.log(`Line created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
+        }
+        break;
+
+      case 'CIRCLE_DIAMETER':
+        if (this.active.stepIndex === 0) data.center = value;
+        else if (this.active.stepIndex === 1) {
+          const center = data.center as Vec2;
+          const diameter = dist2(center, value as Vec2);
+          if (diameter < 1e-9) { this.ctx.log('Diameter must be greater than zero.'); this.showCurrentPrompt(); return; }
+          const circle = this.ctx.doc.createCircle(center, diameter / 2);
+          this.ctx.history.execute(new AddEntityEdit('Circle', circle));
+          this.ctx.log(`Circle created: center ${formatPoint(center)}, \u00d8${diameter.toFixed(4)}`);
+        }
+        break;
+
+      case 'ELLIPSE':
+        if (this.active.stepIndex === 0) data.center = value;
+        else if (this.active.stepIndex === 1) data.axisPoint = value;
+        else if (this.active.stepIndex === 2) {
+          const center = data.center as Vec2;
+          const axis = data.axisPoint as Vec2;
+          const radiusX = dist2(center, axis);
+          const rotation = Math.atan2(axis.y - center.y, axis.x - center.x);
+          // The second axis is measured perpendicular to the first, so take the
+          // cursor's distance in the ellipse's own frame.
+          const cursor = value as Vec2;
+          const radiusY = Math.abs(-(cursor.x - center.x) * Math.sin(rotation) + (cursor.y - center.y) * Math.cos(rotation));
+          if (radiusX < 1e-9 || radiusY < 1e-9) {
+            this.ctx.log('Ellipse radii must be greater than zero.');
+            this.showCurrentPrompt();
+            return;
+          }
+          const ellipse = this.ctx.doc.createEllipse(center, radiusX, radiusY, rotation);
+          this.ctx.history.execute(new AddEntityEdit('Ellipse', ellipse));
+          this.ctx.log(`Ellipse created: RX ${radiusX.toFixed(3)}, RY ${radiusY.toFixed(3)}`);
         }
         break;
 
@@ -1737,18 +1790,33 @@ export class CommandManager {
         }
         break;
 
-      case 'ERASE':
-        if (value && typeof value === 'object' && 'type' in (value as Entity)) {
-          const e = value as Entity;
-          this.ctx.history.execute(new RemoveEntityEdit('Delete object', e));
-          this.ctx.log(`Deleted: ${e.type} ${e.id}`);
+      case 'ERASE': {
+        if (this.active.stepIndex === 0 && value) {
+          if (typeof value === 'string') {
+            const solid = this.ctx.doc.getSolid(value);
+            const solids = data.solids as Solid[];
+            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
+          } else {
+            const entity = value as Entity;
+            const entities = data.entities as Entity[];
+            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
+          }
+          this.ctx.log('Object added. Select another or press Enter.');
+          return;
         }
-        else if (typeof value === 'string') {
-          const solid = this.ctx.doc.getSolid(value);
-          if (solid) this.ctx.history.execute(new RemoveSolidEdit('Delete solid', solid));
-          this.ctx.log(`Deleted solid: ${value}`);
+        // Enter: everything gathered goes in one undoable edit.
+        const entities = (data.entities as Entity[]).map(cloneEntity);
+        const solids = (data.solids as Solid[]).map(cloneSolid);
+        if (entities.length + solids.length === 0) {
+          this.cancelActive();
+          this.ctx.log('Nothing to delete.');
+          this.ctx.prompt('Command:');
+          return;
         }
+        this.ctx.history.execute(new ReplaceObjectsEdit('Delete objects', entities, solids, [], []));
+        this.ctx.log(`Deleted ${entities.length + solids.length} object(s).`);
         break;
+      }
     }
 
     this.active.stepIndex++;
@@ -1796,6 +1864,16 @@ function distanceToSegment(point: Vec2, a: Vec2, b: Vec2): number {
   return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
 }
 
+/** True when the point lies inside the ellipse — its own frame, so rotation is undone. */
+export function pointInEllipse(point: Vec2, e: Extract<Entity, { type: 'ellipse' }>): boolean {
+  const dx = point.x - e.center.x, dy = point.y - e.center.y;
+  const cos = Math.cos(-e.rotation), sin = Math.sin(-e.rotation);
+  const x = dx * cos - dy * sin;
+  const y = dx * sin + dy * cos;
+  if (e.radiusX < 1e-12 || e.radiusY < 1e-12) return false;
+  return (x / e.radiusX) ** 2 + (y / e.radiusY) ** 2 <= 1;
+}
+
 /** True when the point is within tolerance of any segment of the chain. */
 function hitsChain(point: Vec2, vertices: Vec2[], tolerance: number): boolean {
   for (let i = 1; i < vertices.length; i++) {
@@ -1815,6 +1893,11 @@ export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5):
       case 'circle': {
         const d = Math.hypot(point.x - e.center.x, point.y - e.center.y);
         if (Math.abs(d - e.radius) <= tolerance || d <= e.radius) return e;
+        break;
+      }
+      case 'ellipse': {
+        // Inside counts, as it does for a circle; otherwise test the outline.
+        if (pointInEllipse(point, e) || hitsChain(point, ellipsePoints(e, 64), tolerance)) return e;
         break;
       }
       case 'rectangle': {

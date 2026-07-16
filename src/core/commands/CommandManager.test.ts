@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
-import { CommandManager } from './CommandManager';
+import { CommandManager, hitTestEntity } from './CommandManager';
 import { COMMAND_LIST, commandDef } from './registry';
 
 function setup() {
@@ -243,6 +243,8 @@ describe('CommandManager history integration', () => {
     doc.addEntity(circle);
     manager.startCommand('ERASE');
     await manager.handleClick({ x: 2, y: 3 }, circle);
+    // ERASE gathers a selection and acts on Enter, like the other object commands.
+    await manager.submitInput('');
     expect(doc.entities).toHaveLength(0);
     history.undo();
     expect(doc.entities[0].id).toBe(circle.id);
@@ -647,7 +649,7 @@ describe('object selection steps', () => {
   });
 
   it('keeps single-object steps free of window select', () => {
-    for (const name of ['MOVE', 'ERASE', 'OFFSET', 'TRIM', 'EXTEND'] as const) {
+    for (const name of ['MOVE', 'OFFSET', 'TRIM', 'EXTEND'] as const) {
       const { manager } = setup();
       manager.startCommand(name);
       expect(manager.isMultiObjectStep).toBe(false);
@@ -920,5 +922,212 @@ describe('Enter repeats the last command', () => {
     await manager.handleClick({ x: 10, y: 0 });
     await manager.submitInput('');
     expect(doc.entities).toHaveLength(1);
+  });
+});
+
+describe('commands take the selection you already made', () => {
+  const withSelection = (count: number) => {
+    const kit = setup();
+    for (let index = 0; index < count; index++) {
+      const line = kit.doc.createLine({ x: index, y: 0 }, { x: index + 1, y: 1 });
+      kit.doc.addEntity(line);
+      kit.doc.selectEntity(line.id, true);
+    }
+    return kit;
+  };
+
+  // Selecting objects and then picking a tool must not ask for them again.
+  it.each(['COPY', 'SCALE', 'ROTATE', 'MIRROR', 'ARRAY_RECTANGULAR', 'ARRAY_POLAR'] as const)(
+    '%s skips its selection step when objects are already selected',
+    (name) => {
+      const { manager } = withSelection(2);
+      manager.startCommand(name);
+      expect(manager.active?.stepIndex, `${name} asked again`).toBe(1);
+      expect(manager.active?.data.entities).toHaveLength(2);
+    },
+  );
+
+  it.each(['COPY', 'SCALE', 'ROTATE', 'MIRROR'] as const)('%s still asks when nothing is selected', (name) => {
+    const { manager } = setup();
+    manager.startCommand(name);
+    expect(manager.active?.stepIndex).toBe(0);
+  });
+
+  it('MIRROR mirrors the objects it was handed', async () => {
+    const { doc, manager } = withSelection(1);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 0, y: -1 });
+    await manager.handleClick({ x: 5, y: -1 });
+    // One original plus one mirrored copy.
+    expect(doc.entities).toHaveLength(2);
+  });
+
+  it('MOVE takes a single preselected object', () => {
+    const { manager } = withSelection(1);
+    manager.startCommand('MOVE');
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(manager.active?.data.object).toBeTruthy();
+  });
+
+  // MOVE handles one object, so with several selected there is no right choice.
+  it('MOVE asks when the selection is ambiguous', () => {
+    const { manager } = withSelection(3);
+    manager.startCommand('MOVE');
+    expect(manager.active?.stepIndex).toBe(0);
+  });
+});
+
+describe('a preselection that answers everything runs the command', () => {
+  const withSelectedLines = (count: number) => {
+    const kit = setup();
+    for (let index = 0; index < count; index++) {
+      const line = kit.doc.createLine({ x: index * 10, y: 0 }, { x: index * 10 + 5, y: 0 });
+      kit.doc.addEntity(line);
+      kit.doc.selectEntity(line.id, true);
+    }
+    return kit;
+  };
+
+  // Select, hit ERASE, gone — waiting for an Enter would only confirm the screen.
+  it('deletes a preselection the moment ERASE starts', () => {
+    const { doc, manager } = withSelectedLines(3);
+    manager.startCommand('ERASE');
+    expect(doc.entities).toHaveLength(0);
+    expect(manager.active).toBeNull();
+  });
+
+  it('deletes everything as one undoable step', () => {
+    const { doc, history, manager } = withSelectedLines(3);
+    manager.startCommand('ERASE');
+    expect(doc.entities).toHaveLength(0);
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(3);
+    expect(history.undo()).toBe(false);
+  });
+
+  it('still asks when ERASE starts with nothing selected', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    doc.addEntity(line);
+    manager.startCommand('ERASE');
+    expect(manager.active?.stepIndex).toBe(0);
+    expect(doc.entities).toHaveLength(1);
+
+    await manager.handleClick({ x: 2, y: 0 }, line);
+    // Gathering, not deleting yet.
+    expect(doc.entities).toHaveLength(1);
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('deletes several picked objects together', async () => {
+    const { doc, history, manager } = setup();
+    const lines = [0, 1].map((index) => {
+      const line = doc.createLine({ x: index * 10, y: 0 }, { x: index * 10 + 5, y: 0 });
+      doc.addEntity(line);
+      return line;
+    });
+    manager.startCommand('ERASE');
+    for (const line of lines) await manager.handleClick({ x: line.start.x, y: 0 }, line);
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(0);
+    history.undo();
+    expect(doc.entities).toHaveLength(2);
+  });
+
+  // A command with more to ask must not be short-circuited by the same rule.
+  it.each(['COPY', 'SCALE', 'ROTATE', 'MIRROR', 'ARRAY_RECTANGULAR'] as const)(
+    '%s still asks for the rest after a preselection',
+    (name) => {
+      const { manager } = withSelectedLines(2);
+      manager.startCommand(name);
+      expect(manager.active, `${name} completed too early`).not.toBeNull();
+      expect(manager.active?.stepIndex).toBe(1);
+    },
+  );
+
+  it('joins a preselection on start, and says why when there is too little', () => {
+    const { doc, log, manager } = withSelectedLines(1);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith('JOIN requires at least two connected objects.');
+  });
+});
+
+describe('ELLIPSE and CIRCLE_DIAMETER', () => {
+  it('draws an ellipse from centre, first axis and the second axis distance', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('ELLIPSE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });  // major axis along +X, so radiusX = 10
+    await manager.handleClick({ x: 0, y: 4 });   // perpendicular distance 4
+    expect(doc.entities[0]).toMatchObject({ type: 'ellipse', center: { x: 0, y: 0 }, radiusX: 10, radiusY: 4 });
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('takes the rotation from the first axis', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('ELLIPSE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 6 });   // axis straight up
+    await manager.handleClick({ x: 2, y: 0 });
+    const ellipse = doc.entities[0];
+    expect(ellipse.type === 'ellipse' && ellipse.rotation).toBeCloseTo(Math.PI / 2);
+    expect(ellipse.type === 'ellipse' && ellipse.radiusX).toBeCloseTo(6);
+    expect(ellipse.type === 'ellipse' && ellipse.radiusY).toBeCloseTo(2);
+  });
+
+  it('refuses a degenerate ellipse', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('ELLIPSE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 5, y: 0 }); // no perpendicular distance at all
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('Ellipse radii must be greater than zero.');
+  });
+
+  // The distance to the picked point is the diameter, as in AutoCAD's D option.
+  it('treats the picked distance as the diameter', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('CIRCLE_DIAMETER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', radius: 5 });
+  });
+
+  it('treats a typed number as the diameter, where CIRCLE takes it as the radius', async () => {
+    const byDiameter = setup();
+    byDiameter.manager.startCommand('CIRCLE_DIAMETER');
+    await byDiameter.manager.handleClick({ x: 0, y: 0 });
+    await byDiameter.manager.submitInput('10');
+    expect(byDiameter.doc.entities[0]).toMatchObject({ type: 'circle', radius: 5 });
+
+    const byRadius = setup();
+    byRadius.manager.startCommand('CIRCLE');
+    await byRadius.manager.handleClick({ x: 0, y: 0 });
+    await byRadius.manager.submitInput('10');
+    expect(byRadius.doc.entities[0]).toMatchObject({ type: 'circle', radius: 10 });
+  });
+
+  it('restarts like the other drawing tools', async () => {
+    const { manager } = setup();
+    manager.startCommand('ELLIPSE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 0, y: 4 });
+    expect(manager.active).toMatchObject({ name: 'ELLIPSE', stepIndex: 0 });
+  });
+
+  it('picks an ellipse on its outline and inside it', () => {
+    const { doc } = setup();
+    const ellipse = doc.createEllipse({ x: 0, y: 0 }, 10, 4, 0);
+    doc.entities.push(ellipse);
+    expect(hitTestEntity(doc.entities, { x: 10, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
+    expect(hitTestEntity(doc.entities, { x: 0, y: 4 }, 0.2)).toMatchObject({ id: ellipse.id });
+    expect(hitTestEntity(doc.entities, { x: 0, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
+    // Outside the curve: 10 along X is on it, but 10 along Y is nowhere near.
+    expect(hitTestEntity(doc.entities, { x: 0, y: 10 }, 0.2)).toBeNull();
   });
 });

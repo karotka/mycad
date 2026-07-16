@@ -4,6 +4,7 @@ import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workpl
 import {
   genId,
   type CircleEntity,
+  type EllipseEntity,
   type ArcEntity,
   type BezierEntity,
   type TextEntity,
@@ -186,6 +187,21 @@ export class Document {
   createBezier(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2): BezierEntity {
     return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, control1, control2, end };
   }
+  createEllipse(center: Vec2, radiusX: number, radiusY: number, rotation = 0, color?: number): EllipseEntity {
+    return {
+      id: genId('ellipse'),
+      type: 'ellipse',
+      layer: this.currentLayer,
+      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane),
+      center,
+      radiusX,
+      radiusY,
+      rotation,
+    };
+  }
+
   createText(position: Vec2, text: string, height = 2.5, font = 'Arial'): TextEntity {
     return { id: genId('text'), type: 'text', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
   }
