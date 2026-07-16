@@ -114,3 +114,46 @@ describe('ViewportNavigationController', () => {
     expect(renderer3d.render).toHaveBeenCalledOnce();
   });
 });
+
+describe('how far a pan travelled', () => {
+  // A right-button press that pans nowhere is a click for the context menu, so
+  // the distance from where the press landed is what tells them apart.
+  it('is zero before anything is dragged', () => {
+    const { controller } = setup();
+    expect(controller.panDistance).toBe(0);
+    controller.beginPan({ x: 100, y: 100 }, 1);
+    expect(controller.panDistance).toBe(0);
+  });
+
+  it('measures from where the press landed, not from the last step', () => {
+    const { controller } = setup();
+    controller.beginPan({ x: 100, y: 100 }, 1);
+    controller.updatePointer({ x: 103, y: 100 });
+    controller.updatePointer({ x: 106, y: 100 });
+    // Three plus three from the start, not three from the previous step.
+    expect(controller.panDistance).toBeCloseTo(6);
+  });
+
+  it('stays small for a press that only jitters', () => {
+    const { controller } = setup();
+    controller.beginPan({ x: 100, y: 100 }, 1);
+    controller.updatePointer({ x: 101, y: 101 });
+    expect(controller.panDistance).toBeLessThan(4);
+  });
+
+  it('grows past the threshold once the press really drags', () => {
+    const { controller } = setup();
+    controller.beginPan({ x: 100, y: 100 }, 1);
+    controller.updatePointer({ x: 140, y: 130 });
+    expect(controller.panDistance).toBeCloseTo(50);
+  });
+
+  it('starts again from the next press', () => {
+    const { controller } = setup();
+    controller.beginPan({ x: 0, y: 0 }, 1);
+    controller.updatePointer({ x: 50, y: 0 });
+    controller.endPan(1);
+    controller.beginPan({ x: 200, y: 200 }, 2);
+    expect(controller.panDistance).toBe(0);
+  });
+});

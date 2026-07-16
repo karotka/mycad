@@ -12,6 +12,7 @@ export class ViewportNavigationController {
   private panning = false;
   private panPointerId: number | null = null;
   private lastPointer: Vec2 = { x: 0, y: 0 };
+  private panOrigin: Vec2 | null = null;
   private readonly wheel = (event: WheelEvent): void => {
     event.preventDefault();
     event.stopPropagation();
@@ -56,10 +57,20 @@ export class ViewportNavigationController {
   get cursor(): Vec2 { return { ...this.lastPointer }; }
   get isPanning(): boolean { return this.panning; }
 
+  /**
+   * How far the pointer has travelled since the pan began. A press that pans
+   * nowhere was a click, which is how the context menu is told apart from a drag.
+   */
+  get panDistance(): number {
+    if (!this.panOrigin) return 0;
+    return Math.hypot(this.lastPointer.x - this.panOrigin.x, this.lastPointer.y - this.panOrigin.y);
+  }
+
   beginPan(point: Vec2, pointerId: number): void {
     this.panning = true;
     this.panPointerId = pointerId;
     this.lastPointer = { ...point };
+    this.panOrigin = { ...point };
     this.viewport.classList.add('is-panning');
     this.viewport.setPointerCapture(pointerId);
   }

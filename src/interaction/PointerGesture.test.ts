@@ -9,7 +9,6 @@ const press = (overrides: Partial<PointerGestureInput> = {}): PointerGestureInpu
   zoomWindowArmed: false,
   gripLatched: false,
   awaitingPoint: false,
-  overSelectedObject: false,
   ...overrides,
 });
 
@@ -30,11 +29,6 @@ describe('what a press in the viewport means', () => {
     expect(resolvePointerGesture(press({ metaKey: true }))).toEqual({ kind: 'orbit' });
   });
 
-  it('pans on the middle button and on Alt+left', () => {
-    expect(resolvePointerGesture(press({ button: 1 }))).toEqual({ kind: 'pan', suppressContextMenu: false });
-    expect(resolvePointerGesture(press({ altKey: true }))).toEqual({ kind: 'pan', suppressContextMenu: false });
-  });
-
   it('is an ordinary interaction otherwise', () => {
     expect(resolvePointerGesture(press())).toEqual({ kind: 'interact' });
   });
@@ -44,16 +38,33 @@ describe('what a press in the viewport means', () => {
     expect(resolvePointerGesture(press({ button: 4 }))).toEqual({ kind: 'ignore' });
   });
 
-  describe('the right button', () => {
-    // The subtle one: it decides about the menu and then falls through to a pan.
-    it('pans, and swallows the menu it would have opened', () => {
-      expect(resolvePointerGesture(press({ button: 2 }))).toEqual({ kind: 'pan', suppressContextMenu: true });
+  describe('panning', () => {
+    // Two fingers and a press is the right button on a trackpad, and that is the
+    // pan gesture — so it must pan from anywhere, including over a selection.
+    it('pans on the right button, the middle button and Alt+left', () => {
+      expect(resolvePointerGesture(press({ button: 2 })).kind).toBe('pan');
+      expect(resolvePointerGesture(press({ button: 1 })).kind).toBe('pan');
+      expect(resolvePointerGesture(press({ altKey: true })).kind).toBe('pan');
     });
 
-    it('opens the object menu instead when the press is on something selected', () => {
-      expect(resolvePointerGesture(press({ button: 2, overSelectedObject: true }))).toEqual({ kind: 'objectMenu' });
+    // Only the release can tell a pan from a click, so nothing under the cursor
+    // is consulted here — that is what used to make a selected object unpannable.
+    it('starts the same pan wherever the press lands', () => {
+      const gestures = [press({ button: 2 }), press({ button: 2, zoomWindowArmed: false })]
+        .map(resolvePointerGesture);
+      expect(gestures.every((gesture) => gesture.kind === 'pan')).toBe(true);
     });
 
+    it('marks only the right button as able to become a menu', () => {
+      const right = resolvePointerGesture(press({ button: 2 }));
+      expect(right).toEqual({ kind: 'pan', opensMenuIfStill: true });
+      for (const other of [press({ button: 1 }), press({ altKey: true })]) {
+        expect(resolvePointerGesture(other)).toEqual({ kind: 'pan', opensMenuIfStill: false });
+      }
+    });
+  });
+
+  describe('the right button yields to whoever asked first', () => {
     it('keeps out of the way of a latched grip', () => {
       expect(resolvePointerGesture(press({ button: 2, gripLatched: true }))).toEqual({ kind: 'ignore' });
     });
@@ -61,19 +72,5 @@ describe('what a press in the viewport means', () => {
     it('keeps out of the way of a command waiting for a point', () => {
       expect(resolvePointerGesture(press({ button: 2, awaitingPoint: true }))).toEqual({ kind: 'ignore' });
     });
-
-    // A latched grip wins over the object menu: it asked first.
-    it('lets the latched grip win over a selected object underneath', () => {
-      expect(resolvePointerGesture(press({ button: 2, gripLatched: true, overSelectedObject: true })))
-        .toEqual({ kind: 'ignore' });
-    });
-  });
-
-  // Only a pan that displaced a context menu should swallow one.
-  it('never swallows a menu it did not displace', () => {
-    for (const input of [press({ button: 1 }), press({ altKey: true })]) {
-      const gesture = resolvePointerGesture(input);
-      expect(gesture.kind === 'pan' && gesture.suppressContextMenu).toBe(false);
-    }
   });
 });

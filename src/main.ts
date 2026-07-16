@@ -392,7 +392,8 @@ const dimensionStyleController = new DimensionStyleController(
 let width = 1;
 let height = 1;
 let ucsHoverPoint: { x: number; y: number; z: number } | null = null;
-let suppressNextContextMenu = false;
+/** Set by a right-button press: a release that never moved opens the menu. */
+let menuOnStillRelease = false;
 let zoomWindowMode = false;
 let currentSuggestions: CommandName[] = [];
 let activeTracking: { base: Vec2; point: Vec2; angle: number } | null = null;
@@ -1142,20 +1143,6 @@ viewport.addEventListener('pointermove', (event) => {
   redraw();
 });
 
-/** True when the press landed on an object that is already selected. */
-function pressedOnSelectedObject(event: PointerEvent): boolean {
-  const point = cadDocument.viewMode === '2d' ? rawWorldPoint(event) : rawWorldPoint3d(event);
-  const tolerance = cadDocument.viewMode === '2d' ? 8 / renderer2d.zoom : Math.max(0.2, renderer3d.orbitRadius * 0.025);
-  const entity = point ? hitTestEntity(cadDocument.entities, point, tolerance) : null;
-  const solid = cadDocument.viewMode === '3d'
-    ? renderer3d.pickSolid(renderer3d.renderer.domElement, event.clientX, event.clientY)
-    : point ? hitTestSolid2d(cadDocument, point)?.id : null;
-  return Boolean(
-    (entity && cadDocument.selectedEntityIds.has(entity.id))
-    || (solid && cadDocument.selectedSolidIds.has(solid))
-  );
-}
-
 viewport.addEventListener('pointerdown', async (event) => {
   const gesture = resolvePointerGesture({
     button: event.button,
@@ -1165,11 +1152,9 @@ viewport.addEventListener('pointerdown', async (event) => {
     zoomWindowArmed: zoomWindowMode,
     gripLatched: gripController.isDragging && gripInteraction.isLatched,
     awaitingPoint: drawingInteraction.isPointStep,
-    // Only the right button can open an object menu, and only that asks for a pick.
-    overSelectedObject: event.button === 2 && pressedOnSelectedObject(event),
   });
 
-  if (gesture.kind === 'ignore' || gesture.kind === 'objectMenu') return;
+  if (gesture.kind === 'ignore') return;
   if (gesture.kind === 'zoomWindow') {
     selectionController.beginWindow(event, 'zoom');
     event.preventDefault();
@@ -1181,10 +1166,7 @@ viewport.addEventListener('pointerdown', async (event) => {
     return;
   }
   if (gesture.kind === 'pan') {
-    if (gesture.suppressContextMenu) {
-      suppressNextContextMenu = true;
-      window.setTimeout(() => { suppressNextContextMenu = false; }, 800);
-    }
+    menuOnStillRelease = gesture.opensMenuIfStill;
     const rect = viewport.getBoundingClientRect();
     navigation.beginPan({ x: event.clientX - rect.left, y: event.clientY - rect.top }, event.pointerId);
     event.preventDefault();
@@ -1391,7 +1373,12 @@ viewport.addEventListener('pointerdown', async (event) => {
 
 window.addEventListener('pointerup', (event) => {
   if (selectionController.finishWindow(event.pointerId)) return;
+  // A right-button press that never moved was a click, not a pan, so it opens
+  // the menu. Deciding on the movement is what lets a pan start anywhere.
+  const wasStillPress = menuOnStillRelease && navigation.isPanning && navigation.panDistance < 4;
+  menuOnStillRelease = false;
   navigation.endPan(event.pointerId);
+  if (wasStillPress) openContextMenu(event);
   gripInteraction.commitIfNotLatched();
   if (!gripController.isDragging) activeEndpointAnchor = null;
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
@@ -1538,13 +1525,11 @@ input.addEventListener('input', () => {
   }
 });
 
-viewport.addEventListener('contextmenu', (event) => {
-  event.preventDefault();
-  if (suppressNextContextMenu) {
-    suppressNextContextMenu = false;
-    gripMenu.hidden = true;
-    return;
-  }
+/**
+ * Opens the object menu at the press. Called from the release of a right button
+ * that never moved — a press that panned was a pan, and gets no menu.
+ */
+function openContextMenu(event: PointerEvent): void {
   const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
   const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
   const showPersistentSnaps = (): void => {
@@ -1625,7 +1610,10 @@ viewport.addEventListener('contextmenu', (event) => {
   });
   if (allowed.size === 0) return;
   showMenu();
-});
+}
+
+// The browser's own menu never appears; ours is opened from the release above.
+viewport.addEventListener('contextmenu', (event) => event.preventDefault());
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
   button.addEventListener('click', () => {

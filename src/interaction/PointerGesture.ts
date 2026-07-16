@@ -1,10 +1,10 @@
 /**
  * What a press in the viewport means, before anything is done about it.
  *
- * The order these rules are tried in is load-bearing and not obvious — the right
- * button, for instance, runs the context-menu decision and then *falls through*
- * to panning. Keeping the decision here, apart from the doing, makes that order
- * something tests can pin down.
+ * A press says what gesture it starts, never what it will turn out to be: the
+ * right button always pans, and only its release can say whether it moved far
+ * enough to have been a pan rather than a click for the menu. Keeping the
+ * decision here, apart from the doing, makes that order testable.
  */
 
 export interface PointerGestureInput {
@@ -20,8 +20,6 @@ export interface PointerGestureInput {
   gripLatched: boolean;
   /** A command is waiting for a point, so the right button must not steal it. */
   awaitingPoint: boolean;
-  /** The right button came down over an object that is already selected. */
-  overSelectedObject: boolean;
 }
 
 export type PointerGesture =
@@ -31,9 +29,13 @@ export type PointerGesture =
   | { kind: 'zoomWindow' }
   /** Might become an orbit — Viewport3D decides once the pointer really moves. */
   | { kind: 'orbit' }
-  | { kind: 'pan'; suppressContextMenu: boolean }
-  /** Right-click on something selected: its menu opens instead of a pan. */
-  | { kind: 'objectMenu' }
+  /**
+   * `opensMenuIfStill` marks the right button: it pans, and a press that pans
+   * nowhere turns out to have been a click for the context menu. Which it was is
+   * known on release, not now — deciding it from what lies under the cursor is
+   * what used to make panning impossible over a selected object.
+   */
+  | { kind: 'pan'; opensMenuIfStill: boolean }
   /** The ordinary left-click path: pick, draw, drag a grip. */
   | { kind: 'interact' };
 
@@ -45,14 +47,11 @@ export function resolvePointerGesture(input: PointerGestureInput): PointerGestur
   if (input.button === 2) {
     // A latched grip or a pending point has already claimed the right button.
     if (input.gripLatched || input.awaitingPoint) return { kind: 'ignore' };
-    if (input.overSelectedObject) return { kind: 'objectMenu' };
-    // Otherwise the right button pans, and the menu it would have opened is
-    // swallowed — the drag was the intent.
-    return { kind: 'pan', suppressContextMenu: true };
+    return { kind: 'pan', opensMenuIfStill: true };
   }
 
   if (input.button === 1 || (input.button === 0 && input.altKey)) {
-    return { kind: 'pan', suppressContextMenu: false };
+    return { kind: 'pan', opensMenuIfStill: false };
   }
   if (input.button !== 0) return { kind: 'ignore' };
   return { kind: 'interact' };
