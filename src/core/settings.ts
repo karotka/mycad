@@ -5,6 +5,8 @@ export interface DraftingSettings {
   polarEnabled: boolean;
   polarAngles: number[];
   objectSnapEnabled: boolean;
+  /** Object snap tracking (F11): whether an acquired point lays an alignment path. */
+  objectSnapTrackingEnabled: boolean;
   objectSnapModes: ObjectSnapMode[];
 }
 
@@ -26,6 +28,7 @@ export function defaultDraftingSettings(): DraftingSettings {
     polarEnabled: false,
     polarAngles: [30, 45, 90],
     objectSnapEnabled: true,
+    objectSnapTrackingEnabled: true,
     objectSnapModes: ['end', 'center', 'intersection'],
   };
 }

@@ -122,6 +122,7 @@ function loadDraftingSettings(value: unknown): DraftingSettings {
     polarEnabled: typeof raw.polarEnabled === 'boolean' ? raw.polarEnabled : defaults.polarEnabled,
     polarAngles: angles.length > 0 ? Array.from(new Set(angles)) : defaults.polarAngles,
     objectSnapEnabled: typeof raw.objectSnapEnabled === 'boolean' ? raw.objectSnapEnabled : defaults.objectSnapEnabled,
+    objectSnapTrackingEnabled: typeof raw.objectSnapTrackingEnabled === 'boolean' ? raw.objectSnapTrackingEnabled : defaults.objectSnapTrackingEnabled,
     objectSnapModes: Array.from(new Set(modes)),
   };
 }

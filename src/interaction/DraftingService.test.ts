@@ -95,3 +95,52 @@ describe('resolveDraftingPoint', () => {
     });
   });
 });
+
+describe('object snap tracking can be switched off (F11)', () => {
+  const base = { x: 0, y: 0 };
+  const anchor = { x: 5, y: 40 };
+  const withTracking = (on: boolean) => {
+    const settings = defaultDraftingSettings();
+    settings.objectSnapTrackingEnabled = on;
+    return settings;
+  };
+
+  it('is on by default, so an acquired point still lays its path', () => {
+    expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(true);
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 40.3 }, base, anchor, snap: null, settings: withTracking(true), captureDistance: 1,
+    });
+    expect(resolved.point.y).toBeCloseTo(anchor.y);
+    expect(resolved.guide).not.toBeNull();
+  });
+
+  it('leaves the cursor alone once it is off, even right on the path', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 40 }, base, anchor, snap: null, settings: withTracking(false), captureDistance: 1,
+    });
+    expect(resolved.point).toMatchObject({ x: 20, y: 40 });
+    expect(resolved.guide).toBeNull();
+  });
+
+  // With Ortho on the path is what the ray extends to, so switching tracking off
+  // has to stop that crossing too, not just the free case.
+  it('stops the ortho ray catching the crossing as well', () => {
+    const settings = withTracking(false);
+    settings.orthoEnabled = true;
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 3, y: 40.4 }, base, anchor, snap: null, settings, captureDistance: 1,
+    });
+    // Ortho still holds the axis; it just runs on past the anchor's path.
+    expect(resolved.point.x).toBeCloseTo(0);
+    expect(resolved.point.y).toBeCloseTo(40.4);
+  });
+
+  it('keeps Ortho itself working with tracking off', () => {
+    const settings = withTracking(false);
+    settings.orthoEnabled = true;
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 3 }, base, anchor, snap: null, settings, captureDistance: 1,
+    });
+    expect(resolved.point).toMatchObject({ x: 20, y: 0 });
+  });
+});

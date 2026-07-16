@@ -12,6 +12,8 @@ export interface InputControllerCallbacks {
   toggleObjectSnap(): void;
   toggleOrtho(): void;
   togglePolar(): void;
+  toggleGridSnap(): void;
+  toggleObjectSnapTracking(): void;
   toggleProperties(): void;
   commandActive(): boolean;
   commandInputChanged(): void;
@@ -26,12 +28,19 @@ export class InputController {
       return;
     }
 
-    if (event.key === 'F3' || event.key === 'F8' || event.key === 'F10') {
+    // The drafting toggles, on the keys AutoCAD puts them on.
+    const draftingKey: Record<string, () => void> = {
+      F3: this.callbacks.toggleObjectSnap,
+      F8: this.callbacks.toggleOrtho,
+      F9: this.callbacks.toggleGridSnap,
+      F10: this.callbacks.togglePolar,
+      F11: this.callbacks.toggleObjectSnapTracking,
+    };
+    const toggle = draftingKey[event.key];
+    if (toggle) {
       event.preventDefault();
       event.stopPropagation();
-      if (event.key === 'F3') this.callbacks.toggleObjectSnap();
-      else if (event.key === 'F8') this.callbacks.toggleOrtho();
-      else this.callbacks.togglePolar();
+      toggle();
       return;
     }
 

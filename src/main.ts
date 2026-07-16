@@ -203,7 +203,9 @@ app.innerHTML = `
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
+        <button id="snap-toggle" title="Snap Mode — cursor stepping (F9)" aria-label="Snap Mode (F9)">SNAP <kbd>F9</kbd></button>
         <button id="polar-toggle" title="Polar Tracking (F10)" aria-label="Polar Tracking (F10)">POLAR <kbd>F10</kbd></button>
+        <button id="otrack-toggle" title="Object Snap Tracking (F11)" aria-label="Object Snap Tracking (F11)">OTRACK <kbd>F11</kbd></button>
       </div>
       <div class="visual-style" role="group" aria-label="Visual style">
         <button class="active" data-visual-style="wireframe" title="Wireframe" aria-label="Wireframe">
@@ -513,6 +515,8 @@ function redraw(): void {
   get<HTMLButtonElement>('osnap-toggle').classList.toggle('active', cadDocument.drafting.objectSnapEnabled);
   get<HTMLButtonElement>('ortho-toggle').classList.toggle('active', cadDocument.drafting.orthoEnabled);
   get<HTMLButtonElement>('polar-toggle').classList.toggle('active', cadDocument.drafting.polarEnabled);
+  get<HTMLButtonElement>('snap-toggle').classList.toggle('active', cadDocument.snapEnabled);
+  get<HTMLButtonElement>('otrack-toggle').classList.toggle('active', cadDocument.drafting.objectSnapTrackingEnabled);
   document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
     button.classList.toggle('active', button.dataset.command === commands.active?.name);
   });
@@ -1462,6 +1466,8 @@ new InputController(input, commandForm, {
   },
   toggleObjectSnap: () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'),
   toggleOrtho: () => toggleDraftingMode('orthoEnabled', 'Ortho'),
+  toggleGridSnap,
+  toggleObjectSnapTracking: () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'),
   togglePolar: () => toggleDraftingMode('polarEnabled', 'Polar Tracking'),
   toggleProperties: () => propertiesController.toggle(),
   commandActive: () => Boolean(commands.active),
@@ -1471,7 +1477,7 @@ new InputController(input, commandForm, {
   },
 });
 
-function toggleDraftingMode(mode: 'objectSnapEnabled' | 'orthoEnabled' | 'polarEnabled', label: string): void {
+function toggleDraftingMode(mode: 'objectSnapEnabled' | 'orthoEnabled' | 'polarEnabled' | 'objectSnapTrackingEnabled', label: string): void {
   const enabled = !cadDocument.drafting[mode];
   cadDocument.drafting[mode] = enabled;
   if (enabled && mode === 'orthoEnabled') cadDocument.drafting.polarEnabled = false;
@@ -1481,7 +1487,17 @@ function toggleDraftingMode(mode: 'objectSnapEnabled' | 'orthoEnabled' | 'polarE
   cadDocument.notify();
 }
 
+/** Cursor stepping. It lives on the document rather than in drafting settings,
+ *  so it cannot go through toggleDraftingMode with the other three. */
+function toggleGridSnap(): void {
+  cadDocument.snapEnabled = !cadDocument.snapEnabled;
+  log(`Snap: ${cadDocument.snapEnabled ? `ON, step ${cadDocument.snapSize} mm` : 'OFF'}`);
+  cadDocument.notify();
+}
+
 get('osnap-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'));
+get('snap-toggle').addEventListener('click', () => toggleGridSnap());
+get('otrack-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'));
 get('ortho-toggle').addEventListener('click', () => toggleDraftingMode('orthoEnabled', 'Ortho'));
 get('polar-toggle').addEventListener('click', () => toggleDraftingMode('polarEnabled', 'Polar Tracking'));
 

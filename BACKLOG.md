@@ -242,24 +242,18 @@ bar: F3, F8, F10. The rest of the map, with what it would cost:
 | F6 | Dynamic UCS | UCS exists as a command, but not the "hover a face to align" behaviour. Medium. |
 | F7 | Grid display | **No grid visibility state** — the grid is always drawn. Needs a field on `Document` plus renderer support. This is also what the removed GRID command would have toggled. Small. |
 | **F8** | Ortho | **Done** — key and status button. |
-| F9 | Snap mode (cursor stepping) | **The state is already there**: `doc.snapEnabled` and `doc.snapSize`, and the SNAP command toggles it. Missing only the F9 key and a status-bar button next to OSNAP/ORTHO/POLAR. Small — see below. |
+| **F9** | Snap mode (cursor stepping) | **Done** — key and status button. The step itself is still only settable in code (`doc.snapSize`); see below. |
 | **F10** | Polar tracking | **Done** — key and status button. |
-| F11 | Object snap tracking | The feature exists (built alongside the ortho work) but is **always on** — no way to turn it off. It belongs beside F3/F8/F10. Small. |
+| **F11** | Object snap tracking | **Done** — key and status button. |
 | F12 | Dynamic input | No dynamic input. The dimension toast is a different thing. Medium. |
 
-### Cursor stepping (F9) — the concrete ask
+### Still missing: setting the step
 
-Make the grid snap a first-class toggle:
-
-- a status-bar button beside OSNAP/ORTHO/POLAR, using the same `.drafting-status`
-  markup, so it reads `SNAP F9`;
-- the F9 key, alongside F3/F8/F10 in `InputController`;
-- a way to set the step, not just turn it on and off — `snapSize` exists but
-  nothing exposes it. Either a field in the button's context menu or a small
-  input, the way AutoCAD's Snap settings work.
-
-Worth taking **F11** in the same pass: same shape, same place, and object snap
-tracking currently cannot be switched off at all.
+`doc.snapSize` decides how far the cursor steps, and nothing exposes it — F9 only
+turns stepping on and off. AutoCAD puts the value behind the same button. Note
+also that `snapEnabled`, `snapSize` and `gridSize` sit on `Document` while the
+other three toggles live in `drafting`, which is why F9 needs its own toggle
+function rather than going through `toggleDraftingMode`.
 
 ---
 

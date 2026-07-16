@@ -47,8 +47,10 @@ export interface PointRequest {
  *    itself becomes the constraint and the point slides along it (F11).
  */
 export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
-  const { cursor, base, anchor, snap, settings, captureDistance } = request;
+  const { cursor, base, snap, settings, captureDistance } = request;
   if (snap) return { point: snap, guide: null };
+  // F11 off means an acquired point lays no path, so it has nothing to say here.
+  const anchor = settings.objectSnapTrackingEnabled ? request.anchor : null;
 
   if (settings.orthoEnabled || settings.polarEnabled) {
     const constrained = constrainDraftingPoint(cursor, base, settings);
