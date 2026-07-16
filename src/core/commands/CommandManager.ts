@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { cloneEntity, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -1046,45 +1046,36 @@ export class CommandManager {
           this.showCurrentPrompt();
           return;
         } else if (step.kind === 'number') {
-          // EXTRUDE is directional along the active UCS positive Z axis. The
-          // entered/picked value represents a distance, not a signed offset.
-          const height = Math.abs(value as number);
+          const entered = value as number;
           const entities = data.entities as Entity[];
           if (entities.length === 0) {
             this.ctx.log('No profile selected.');
             break;
           }
-          if (height < 1e-9) {
-            this.ctx.log('Extrusion height must be greater than zero.');
+          if (Math.abs(entered) < 1e-9) {
+            this.ctx.log('Extrusion height cannot be zero.');
             this.showCurrentPrompt();
             return;
           }
           this.ctx.log('Extruding…');
-          const localMesh = await extrudeProfile(entities, height);
-          const plane = entities[0].workPlane ?? WORLD_WORK_PLANE;
-          const mesh = localMesh ? {
-            ...localMesh,
-            positions: transformMeshByWorkPlane(localMesh.positions, plane),
-            indices: transformMeshIndicesByWorkPlane(localMesh.indices, plane),
-          } : null;
+          const feature = extrusionFeature(entities[0], entered);
+          // Built from the feature, not beside it. The mesh used to come from
+          // extrudeProfile while the feature described the same solid a second
+          // time, so the shape you got and the shape it regenerated into were
+          // two answers that only happened to agree.
+          const mesh = await regenerateSolidFeature(feature);
           if (mesh) {
             const solid = this.ctx.doc.createSolid(
               mesh,
               `Extrusion_${entities.map((e) => e.id).join('_')}`,
-              height,
+              feature.height,
               entities.map((e) => e.id),
               undefined,
-              {
-                kind: 'extrusion',
-                profile: cloneEntity(entities[0]),
-                height,
-                workPlane: plane,
-                transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
-              }
+              feature,
             );
             this.ctx.history.execute(new ReplaceObjectsEdit('Extrude', entities, [], [], [solid]));
             this.ctx.doc.viewMode = '3d';
-            this.ctx.log(`Extrusion complete, height=${height}`);
+            this.ctx.log(`Extrusion complete, height=${entered}`);
           } else {
             this.ctx.log('Extrusion failed — select a closed profile.');
           }
@@ -1923,6 +1914,31 @@ export class CommandManager {
  * up or down and it reads the horizontal distance, drag it aside and it reads the
  * vertical one. This is what AutoCAD does while you place it.
  */
+/**
+ * A profile pushed through a height, signed.
+ *
+ * A negative height used to be thrown away by `Math.abs`, on the reasoning that
+ * an extrusion is a distance along the work plane's positive Z and a direction
+ * is the UCS's business. But asking for -10 and being handed +10 is not a
+ * convention, it is the app disagreeing with you in silence — and every CAD
+ * program in the world extrudes downwards for a negative height.
+ *
+ * Manifold only extrudes along +Z, so downwards is the same prism built upwards
+ * and dropped by its own height. `transform.translateZ` already existed for
+ * exactly this kind of thing, and regeneration already honours it.
+ */
+export function extrusionFeature(profile: Entity, height: number): ExtrusionFeature {
+  return {
+    kind: 'extrusion',
+    profile: cloneEntity(profile),
+    height: Math.abs(height),
+    // Cloned: the fallback is a shared constant, and a feature holding it would
+    // hand every extrusion in the document the same work plane object.
+    workPlane: cloneWorkPlane(profile.workPlane ?? WORLD_WORK_PLANE),
+    transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, translateZ: height < 0 ? height : 0 },
+  };
+}
+
 export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
   // A leg of zero has nothing to dimension, so the other one is the only answer
   // there is: an axis-aligned line always reads its own length.

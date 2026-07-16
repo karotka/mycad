@@ -1,6 +1,6 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
+import { CommandManager, extrusionFeature, hitTestEntity, type CommandName } from './core/commands/CommandManager';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
 import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidFeature, type SolidMesh } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
@@ -26,7 +26,8 @@ import { DrawingInteractionController } from './interaction/DrawingInteractionCo
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
-import { pressPullFace } from './core/solids/ManifoldEngine';
+import { pressPullFace, regenerateSolidFeature } from './core/solids/ManifoldEngine';
+import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
   arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
@@ -694,6 +695,50 @@ function pressPullDrag(event: PointerEvent): { delta: number; mesh: SolidMesh } 
   return { delta, mesh };
 }
 
+/** Which way the profile is being pulled, and how far. Null when it is neither. */
+function extrudeHeightUnderCursor(event: PointerEvent): { height: number; profile: Entity } | null {
+  const active = commands.active;
+  if (cadDocument.viewMode !== '3d' || active?.name !== 'EXTRUDE' || active.stepIndex !== 1) return null;
+  const profile = (active.data.entities as Entity[] | undefined)?.[0];
+  if (!profile) return null;
+  const plane = profile.workPlane ?? WORLD_WORK_PLANE;
+
+  // A vertex under the cursor wins, so an extrusion can be pulled to exactly
+  // the height of something already drawn rather than to a number that is
+  // nearly it.
+  const snap = nearestMeasurementPoint(event);
+  if (snap) {
+    const height = worldToLocal(plane, snap).z;
+    return Math.abs(height) > 1e-6 ? { height, profile } : null;
+  }
+  // Otherwise the profile only travels along its plane's normal, so the height
+  // is the point on that axis the pointer ray passes closest to — the same
+  // question press-pull asks of a face.
+  const bounds = entityBounds(profile);
+  const centre = localToWorld(plane, { x: (bounds.min.x + bounds.max.x) / 2, y: (bounds.min.y + bounds.max.y) / 2 }, 0);
+  const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
+  const height = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
+  return height !== null && Math.abs(height) > 1e-6 ? { height, profile } : null;
+}
+
+/** Guards against a slow frame's preview landing on top of a newer one. */
+let extrudePreviewToken = 0;
+
+function updateExtrudePreview(event: PointerEvent, sx: number, sy: number): void {
+  const drag = extrudeHeightUnderCursor(event);
+  if (!drag) return;
+  showDimension(`Extrude ${drag.height.toFixed(2)} mm`, sx, sy);
+  const token = ++extrudePreviewToken;
+  // Built by the engine that will build the real one, so the preview cannot
+  // promise a shape the command then declines to make. The await settles in a
+  // microtask, before anything is painted, so this does not flicker.
+  void regenerateSolidFeature(extrusionFeature(drag.profile, drag.height)).then((mesh) => {
+    if (!mesh || token !== extrudePreviewToken) return;
+    previewController.setPreview({ type: 'solid', data: { solidId: '', mesh } });
+    redraw();
+  });
+}
+
 function showPreviewLabel(text: string | null, x: number, y: number): void {
   if (cadDocument.viewMode === '2d') return;
   showDimension(text, x, y);
@@ -915,6 +960,7 @@ viewport.addEventListener('pointermove', (event) => {
   // it is handed, so it has no say in there.
   const pressPull = pressPullDrag(event);
   if (pressPull) showDimension(`${pressPull.delta > 0 ? 'Pull' : 'Push'} ${Math.abs(pressPull.delta).toFixed(2)} mm`, sx, sy);
+  updateExtrudePreview(event, sx, sy);
   const active = commands.active;
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
@@ -1079,16 +1125,18 @@ viewport.addEventListener('pointerdown', async (event) => {
     event.preventDefault();
     return;
   }
-  if (commands.active?.name === 'EXTRUDE' && commands.active.stepIndex === 1) {
-    const snap = nearestMeasurementPoint(event);
-    const height = snap ? worldToLocal(cadDocument.activeWorkPlane, snap).z : 0;
-    if (snap && Math.abs(height) > 1e-9) {
-      await commands.submitInput(String(height));
-      snapMarker.hidden = true;
-      input.focus();
-      event.preventDefault();
-      return;
-    }
+  // The click ends the drag at the height the preview was showing. It used to
+  // fire only when a vertex was under the cursor, and measured that against the
+  // *active* work plane rather than the profile's — so moving the UCS after
+  // drawing put the height on the wrong ruler.
+  const extrudeDrag = extrudeHeightUnderCursor(event);
+  if (extrudeDrag) {
+    previewController.clearPreview();
+    await commands.submitInput(String(extrudeDrag.height));
+    snapMarker.hidden = true;
+    input.focus();
+    event.preventDefault();
+    return;
   }
   if (commands.active?.name === 'MEASURE') {
     // The first two steps measure, so they must land on real geometry. Where the

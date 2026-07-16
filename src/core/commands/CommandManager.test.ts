@@ -4,6 +4,7 @@ import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity, linearDimensionRotation } from './CommandManager';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
+import { WORLD_WORK_PLANE } from '../../math/workplane';
 
 function setup() {
   const doc = new Document();
@@ -1179,6 +1180,67 @@ describe('MOVE takes as many objects as you give it', () => {
     await manager.handleClick({ x: 5, y: 5 });
     expect(moveObjects).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith('Nothing to move.');
+  });
+});
+
+describe('EXTRUDE', () => {
+  const extrude = async (height: string, plane?: Document['activeWorkPlane']) => {
+    const kit = setup();
+    if (plane) kit.doc.activeWorkPlane = plane;
+    const profile = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    kit.doc.addEntity(profile);
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 2 }, profile);
+    await kit.manager.submitInput(height);
+    const solid = kit.doc.solids[0];
+    let minZ = Infinity, maxZ = -Infinity;
+    for (let i = 2; i < (solid?.mesh.positions.length ?? 0); i += 3) {
+      minZ = Math.min(minZ, solid.mesh.positions[i]);
+      maxZ = Math.max(maxZ, solid.mesh.positions[i + 0]);
+      maxZ = Math.max(maxZ, solid.mesh.positions[i]);
+    }
+    return { ...kit, solid, minZ, maxZ };
+  };
+
+  it('goes up for a positive height', async () => {
+    const { solid, minZ, maxZ } = await extrude('10');
+    expect(solid).toBeDefined();
+    expect(minZ).toBeCloseTo(0, 4);
+    expect(maxZ).toBeCloseTo(10, 4);
+  });
+
+  // Math.abs used to throw the sign away: -10 built the same solid as +10, on
+  // the reasoning that direction is the UCS's business. Being handed the
+  // opposite of what you asked for is not a convention.
+  it('goes down for a negative height', async () => {
+    const { minZ, maxZ } = await extrude('-10');
+    expect(minZ).toBeCloseTo(-10, 4);
+    expect(maxZ).toBeCloseTo(0, 4);
+  });
+
+  it('keeps a downward extrusion regenerable', async () => {
+    const { solid } = await extrude('-10');
+    expect(solid.feature.kind).toBe('extrusion');
+    if (solid.feature.kind !== 'extrusion') throw new Error('expected an extrusion');
+    // Manifold only extrudes along +Z, so downwards is the same prism dropped
+    // by its own height — which regeneration already knew how to honour.
+    expect(solid.feature.height).toBe(10);
+    expect(solid.feature.transform.translateZ).toBe(-10);
+  });
+
+  it('refuses a height of zero rather than building nothing', async () => {
+    const { doc, log } = await extrude('0');
+    expect(doc.solids).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cannot be zero'));
+  });
+
+  it('does not hand its work plane out to the next extrusion', async () => {
+    const { solid } = await extrude('10');
+    if (solid.feature.kind !== 'extrusion') throw new Error('expected an extrusion');
+    // The fallback is a shared constant; storing it would give every extrusion
+    // in the document the same work plane object to scribble on.
+    expect(solid.feature.workPlane).not.toBe(WORLD_WORK_PLANE);
+    expect(solid.feature.workPlane).toEqual(WORLD_WORK_PLANE);
   });
 });
 

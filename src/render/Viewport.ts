@@ -1533,6 +1533,11 @@ export class Viewport3D {
    * only travel that one way, so the pointer's other dimension is discarded
    * rather than guessed at.
    */
+  /** The ray under the pointer, in CAD coordinates. */
+  pointerRay(canvas: HTMLCanvasElement, sx: number, sy: number): { origin: Vec3; direction: Vec3 } {
+    return this.picking.pointerRay(canvas, sx, sy);
+  }
+
   faceDragDelta(canvas: HTMLCanvasElement, solid: Solid, face: SolidFaceSelection, sx: number, sy: number): number | null {
     const centre = verticesCentre(solid.mesh.positions, face.vertexIndices);
     if (!centre) return null;
