@@ -108,14 +108,27 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
   // What it reads: how far the points are apart *along the dimension line*. For
   // an aligned one that is the full distance; for a linear one it is the leg.
   const length = Math.abs(dx * ux + dy * uy);
-  const signedOffset = (entity.offset.x - entity.start.x) * nx + (entity.offset.y - entity.start.y) * ny;
-  const side = signedOffset < 0 ? -1 : 1;
-  const a = { x: entity.start.x + nx * signedOffset, y: entity.start.y + ny * signedOffset };
-  const b = { x: entity.end.x + nx * signedOffset, y: entity.end.y + ny * signedOffset };
-  const extensionA: Vec2 = { x: a.x + nx * side * entity.extensionBeyond * entity.scale, y: a.y + ny * side * entity.extensionBeyond * entity.scale };
-  const extensionB: Vec2 = { x: b.x + nx * side * entity.extensionBeyond * entity.scale, y: b.y + ny * side * entity.extensionBeyond * entity.scale };
-  const gapA: Vec2 = { x: entity.start.x + nx * side * entity.extensionOffset * entity.scale, y: entity.start.y + ny * side * entity.extensionOffset * entity.scale };
-  const gapB: Vec2 = { x: entity.end.x + nx * side * entity.extensionOffset * entity.scale, y: entity.end.y + ny * side * entity.extensionOffset * entity.scale };
+  // Each end reaches the dimension line by its own distance, because the line
+  // runs through `offset` in direction u — it is not the pair of points shifted
+  // sideways. The two agree only when u is the direction from start to end, so
+  // an aligned dimension cannot tell the difference and a linear one across a
+  // slope comes out running parallel to the slope: no longer level, and no
+  // longer reading the leg it drew.
+  const offsetA = (entity.offset.x - entity.start.x) * nx + (entity.offset.y - entity.start.y) * ny;
+  const offsetB = (entity.offset.x - entity.end.x) * nx + (entity.offset.y - entity.end.y) * ny;
+  const a = { x: entity.start.x + nx * offsetA, y: entity.start.y + ny * offsetA };
+  const b = { x: entity.end.x + nx * offsetB, y: entity.end.y + ny * offsetB };
+  // Which way each extension line grows, and each is asked separately: a
+  // dimension line drawn between its points has one reaching up and one down.
+  const sideA = offsetA < 0 ? -1 : 1;
+  const sideB = offsetB < 0 ? -1 : 1;
+  // The text sits clear of the dimension line, away from the points. With the
+  // line drawn between them there is no such side, so it takes the start's.
+  const textSide = sideA;
+  const extensionA: Vec2 = { x: a.x + nx * sideA * entity.extensionBeyond * entity.scale, y: a.y + ny * sideA * entity.extensionBeyond * entity.scale };
+  const extensionB: Vec2 = { x: b.x + nx * sideB * entity.extensionBeyond * entity.scale, y: b.y + ny * sideB * entity.extensionBeyond * entity.scale };
+  const gapA: Vec2 = { x: entity.start.x + nx * sideA * entity.extensionOffset * entity.scale, y: entity.start.y + ny * sideA * entity.extensionOffset * entity.scale };
+  const gapB: Vec2 = { x: entity.end.x + nx * sideB * entity.extensionOffset * entity.scale, y: entity.end.y + ny * sideB * entity.extensionOffset * entity.scale };
   const arrow = entity.arrowSize * entity.scale;
   const wing = arrow * 0.36;
   const textClearance = (entity.textOffset + entity.textHeight / 2) * entity.scale;
@@ -150,8 +163,8 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     extensionStart: [gapA, extensionA], extensionEnd: [gapB, extensionB], dimensionLine: [a, b],
     arrows: [triangle(a, 1), triangle(b, -1)],
     textPoint: {
-      x: (a.x + b.x) / 2 + nx * side * textClearance,
-      y: (a.y + b.y) / 2 + ny * side * textClearance,
+      x: (a.x + b.x) / 2 + nx * textSide * textClearance,
+      y: (a.y + b.y) / 2 + ny * textSide * textClearance,
     },
     textAngle, text: length.toFixed(entity.precision),
   };
