@@ -259,7 +259,51 @@ function log(message: string): void {
   logElement.scrollTop = logElement.scrollHeight;
 }
 
+let framePending = false;
+
+/**
+ * Asks for a frame rather than drawing one.
+ *
+ * This is called from every pointer move, and a trackpad delivers those faster
+ * than anything can be drawn — so the work piled up behind the pointer instead
+ * of keeping up with it. Now the calls coalesce: however many arrive, one frame
+ * is drawn, when the browser is ready to show it.
+ */
 function redraw(): void {
+  if (framePending) return;
+  framePending = true;
+  requestAnimationFrame(() => {
+    framePending = false;
+    drawFrame();
+  });
+}
+
+/**
+ * The parts of the chrome that only change when the command or the document
+ * does — which is to say, never while the camera is moving. Writing them anyway
+ * meant a document-wide querySelectorAll, thirteen getElementById lookups and a
+ * textContent assignment per pointer move, each one inviting the browser to
+ * recompute style and layout for an answer identical to the last.
+ */
+let chromeState = '';
+
+function syncChrome(): void {
+  const state = [
+    commands.active?.name ?? '',
+    commands.currentPrompt(),
+    cadDocument.viewMode,
+    renderer3d.activeStandardView ?? '',
+    cadDocument.snapEnabled, cadDocument.snapSize, cadDocument.gridSize,
+    cadDocument.drafting.objectSnapEnabled, cadDocument.drafting.orthoEnabled,
+    cadDocument.drafting.polarEnabled, cadDocument.drafting.objectSnapTrackingEnabled,
+    zoomWindowMode,
+  ].join('|');
+  if (state === chromeState) return;
+  chromeState = state;
+  drawChrome();
+}
+
+function drawFrame(): void {
   const is2d = cadDocument.viewMode === '2d';
   const activeStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
   const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'edge';
@@ -292,6 +336,13 @@ function redraw(): void {
     renderer3d.syncSolids(visibleSolids);
     renderer3d.render();
   }
+  // The view cube turns with the camera, so it is the one piece of chrome that
+  // genuinely belongs in every frame.
+  updateViewCubeOrientation();
+  syncChrome();
+}
+
+function drawChrome(): void {
   get('view-status').textContent = renderer3d.activeStandardView?.toUpperCase()
     ?? cadDocument.viewMode.toUpperCase();
   get('snap-status').textContent = cadDocument.snapEnabled
@@ -311,7 +362,6 @@ function redraw(): void {
   get<HTMLButtonElement>('circle-main').classList.toggle('active', circleTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
-  updateViewCubeOrientation();
   prompt.textContent = commands.currentPrompt();
 }
 

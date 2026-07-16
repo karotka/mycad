@@ -482,6 +482,8 @@ export class Viewport3D {
   /** The solid a preview is standing in for, hidden until the preview clears. */
   private previewHiddenSolid: string | null = null;
   private gripObjects: THREE.Points | null = null;
+  /** What the grips looked like last frame; unchanged means nothing to rebuild. */
+  private gripKey = '';
   private faceHighlight: THREE.Mesh | null = null;
   private edgeHighlight: THREE.Line | null = null;
   private grid: THREE.GridHelper;
@@ -1200,6 +1202,14 @@ export class Viewport3D {
   }
 
   syncGrips(grips: Array<{ point: Vec2 & { z?: number }; hot: boolean; shape?: 'square' | 'edge' }>): void {
+    // Grips move only when the selection or a drag does, and this runs on every
+    // frame — so it used to throw away a geometry and a material sixty times a
+    // second to rebuild the same handful of dots. A new material each time also
+    // makes Three look its shader program up again for no change at all.
+    const key = grips.map((grip) => `${grip.point.x},${grip.point.y},${grip.point.z ?? 0},${grip.hot ? 1 : 0}`).join(';');
+    if (key === this.gripKey) return;
+    this.gripKey = key;
+
     if (this.gripObjects) {
       this.scene.remove(this.gripObjects);
       this.gripObjects.geometry.dispose();
