@@ -57,11 +57,11 @@ export function shellHtml(tools: ShellTools): string {
       </div>
     </section>
     <footer class="statusbar">
-      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
       <button class="model-tree-toggle" id="model-tree-toggle" title="Model Tree — how each solid was built" aria-label="Model Tree">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v13a2 2 0 002 2h3M5 10h5M15 3h5v4h-5zM15 10h5v4h-5zM15 17h5v4h-5z"/><path d="M10 5h5M10 12h5M10 19h5"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v13a2 2 0 002 2h3M4 12h5"/><rect x="13" y="2" width="7" height="6" rx="1"/><rect x="13" y="9" width="7" height="6" rx="1"/><rect x="13" y="16" width="7" height="6" rx="1"/><path d="M9 5h4M9 12h4M9 19h4"/></svg>
+        <span>TREE</span>
       </button>
-      <span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
+      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span><span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>

@@ -1,14 +1,14 @@
 /**
- * What a primitive is made of: the numbers that define it, and how to set them.
+ * What a feature is made of: the numbers that define it, and how to set them.
  *
- * One place, because there are now two panels that ask — the properties panel
- * and the model tree — and the properties panel's own list had already fallen
+ * One place, because there are two panels that ask — the properties panel and
+ * the model tree — and the properties panel's own list had already fallen
  * behind the engine: it never offered a torus its tube radius, so half of that
  * primitive was unreachable from the UI it was built for.
  */
-import type { PrimitiveFeature } from '../entities/types';
+import type { ExtrusionFeature, PrimitiveFeature, SolidFeature } from '../entities/types';
 
-export interface PrimitiveParam {
+export interface FeatureParam {
   key: string;
   label: string;
   value: number;
@@ -16,8 +16,62 @@ export interface PrimitiveParam {
   min: number;
 }
 
-export function primitiveParams(feature: PrimitiveFeature): PrimitiveParam[] {
-  const params: PrimitiveParam[] = [];
+/**
+ * Empty for a feature with nothing to type at. A boolean is its children, and a
+ * sweep is its profile and its path — both are shapes, not numbers, and picking
+ * a different one is a different question than this answers.
+ */
+export function featureParams(feature: SolidFeature): FeatureParam[] {
+  if (feature.kind === 'primitive') return primitiveParams(feature);
+  if (feature.kind === 'extrusion') return extrusionParams(feature);
+  return [];
+}
+
+export function setFeatureParam(feature: SolidFeature, key: string, value: number): boolean {
+  if (feature.kind === 'primitive') return setPrimitiveParam(feature, key, value);
+  if (feature.kind === 'extrusion') return setExtrusionParam(feature, key, value);
+  return false;
+}
+
+/**
+ * An extrusion is its profile pushed through a height, having been moved and
+ * stretched first — so those are its numbers. The tree showed it as a row with
+ * nothing behind it, which made a perfectly parametric feature look like a
+ * dead end.
+ */
+export function extrusionParams(feature: ExtrusionFeature): FeatureParam[] {
+  return [
+    { key: 'height', label: 'Height', value: feature.height, min: 1e-6 },
+    { key: 'scaleX', label: 'Scale X', value: feature.transform.scaleX, min: -Infinity },
+    { key: 'scaleY', label: 'Scale Y', value: feature.transform.scaleY, min: -Infinity },
+    { key: 'translateX', label: 'Move X', value: feature.transform.translateX, min: -Infinity },
+    { key: 'translateY', label: 'Move Y', value: feature.transform.translateY, min: -Infinity },
+    { key: 'translateZ', label: 'Move Z', value: feature.transform.translateZ ?? 0, min: -Infinity },
+  ];
+}
+
+export function setExtrusionParam(feature: ExtrusionFeature, key: string, value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  if (key === 'height') {
+    if (value < 1e-6) return false;
+    feature.height = value;
+    return true;
+  }
+  if (key === 'scaleX' || key === 'scaleY') {
+    // A profile scaled to nothing has no area, so there is nothing to extrude.
+    if (value === 0) return false;
+    feature.transform[key] = value;
+    return true;
+  }
+  if (key === 'translateX' || key === 'translateY' || key === 'translateZ') {
+    feature.transform[key] = value;
+    return true;
+  }
+  return false;
+}
+
+export function primitiveParams(feature: PrimitiveFeature): FeatureParam[] {
+  const params: FeatureParam[] = [];
   const radius = { key: 'radius', label: 'Radius', value: feature.radius ?? 1, min: 1e-6 };
   const height = { key: 'height', label: 'Height', value: feature.height, min: 1e-6 };
 

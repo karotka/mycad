@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PrimitiveFeature } from '../entities/types';
-import { primitiveParams, setPrimitiveParam } from './primitiveParams';
+import type { ExtrusionFeature, PrimitiveFeature } from '../entities/types';
+import { featureParams, primitiveParams, setFeatureParam, setPrimitiveParam } from './featureParams';
 
 const feature = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 5, height: 10, ...over });
@@ -65,5 +65,48 @@ describe('setPrimitiveParam', () => {
     expect(setPrimitiveParam(sphere, 'scaleY', 0)).toBe(false);
     // But a negative one only mirrors it, and that is a real shape.
     expect(setPrimitiveParam(sphere, 'scaleY', -1)).toBe(true);
+  });
+});
+
+describe('extrusions', () => {
+  const extrusion = (): ExtrusionFeature => ({
+    kind: 'extrusion',
+    profile: { id: 'p', type: 'circle', layer: '0', color: 0xffffff, selected: false, center: { x: 0, y: 0 }, radius: 5 },
+    height: 10,
+    transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
+  });
+
+  it('has values, which the tree showed it as having none of', () => {
+    // Asking only about primitives made an extrusion — as parametric as
+    // anything in the file — look like a dead end with a name.
+    expect(featureParams(extrusion()).map((param) => param.key))
+      .toEqual(['height', 'scaleX', 'scaleY', 'translateX', 'translateY', 'translateZ']);
+  });
+
+  it('reads a missing Z offset as no offset', () => {
+    expect(featureParams(extrusion()).find((param) => param.key === 'translateZ')?.value).toBe(0);
+  });
+
+  it('sets what it is asked for and refuses the rest', () => {
+    const feature = extrusion();
+    expect(setFeatureParam(feature, 'height', 25)).toBe(true);
+    expect(setFeatureParam(feature, 'translateZ', -4)).toBe(true);
+    expect(setFeatureParam(feature, 'radius', 3)).toBe(false);
+    expect(feature).toMatchObject({ height: 25, transform: { translateZ: -4 } });
+  });
+
+  it('refuses what leaves nothing to extrude', () => {
+    const feature = extrusion();
+    expect(setFeatureParam(feature, 'height', 0)).toBe(false);
+    expect(setFeatureParam(feature, 'scaleX', 0)).toBe(false);
+    // Moving to a negative coordinate is fine; a negative size is not.
+    expect(setFeatureParam(feature, 'translateX', -12)).toBe(true);
+  });
+});
+
+describe('featureParams', () => {
+  it('gives a boolean nothing to type at, because it is its children', () => {
+    expect(featureParams({ kind: 'boolean', operation: 'union', operands: [] })).toEqual([]);
+    expect(featureParams({ kind: 'mesh' })).toEqual([]);
   });
 });

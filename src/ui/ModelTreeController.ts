@@ -8,9 +8,9 @@
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
-import type { PrimitiveFeature, Solid } from '../core/entities/types';
+import type { Solid } from '../core/entities/types';
 import { regenerateSolidFeature } from '../core/solids/ManifoldEngine';
-import { primitiveParams, setPrimitiveParam } from '../core/solids/primitiveParams';
+import { featureParams, setFeatureParam, type FeatureParam } from '../core/solids/featureParams';
 import { featureAt, featureRows, pathKey, type TreeRow } from './modelTree';
 
 export class ModelTreeController {
@@ -24,19 +24,25 @@ export class ModelTreeController {
     private readonly history: CommandHistory,
     private readonly panel: HTMLElement,
     private readonly list: HTMLElement,
-    toggle: HTMLElement,
+    private readonly toggleButton: HTMLElement,
     close: HTMLElement,
     private readonly redraw: () => void,
   ) {
-    toggle.addEventListener('click', () => this.toggle());
-    close.addEventListener('click', () => { this.panel.hidden = true; });
+    toggleButton.addEventListener('click', () => this.toggle());
+    close.addEventListener('click', () => { this.panel.hidden = true; this.syncToggle(); });
   }
 
   get isOpen(): boolean { return !this.panel.hidden; }
 
   toggle(): void {
     this.panel.hidden = !this.panel.hidden;
+    this.syncToggle();
     if (!this.panel.hidden) this.render();
+  }
+
+  /** The button lights up while its panel is open, like the drafting toggles. */
+  private syncToggle(): void {
+    this.toggleButton.classList.toggle('active', !this.panel.hidden);
   }
 
   /** Same guard as the other panels: rebuilding the rows mid-edit steals focus. */
@@ -86,22 +92,25 @@ export class ModelTreeController {
         this.render();
       });
     }
-    // Only a primitive has numbers to show. A boolean is its children.
-    if (row.feature.kind !== 'primitive') return [element];
+    // Whether there is anything to type at is the params' answer, not a list of
+    // kinds kept here — asking for 'primitive' left an extrusion, which is as
+    // parametric as anything in the file, looking like a dead end.
+    const params = featureParams(row.feature);
+    if (params.length === 0) return [element];
 
     element.addEventListener('click', () => {
       this.opened = this.opened === key ? null : key;
       this.render();
     });
     if (this.opened !== key) return [element];
-    return [element, this.params(solid, row, row.feature)];
+    return [element, this.params(solid, row, params)];
   }
 
-  private params(solid: Solid, row: TreeRow, feature: PrimitiveFeature): HTMLElement {
+  private params(solid: Solid, row: TreeRow, params: FeatureParam[]): HTMLElement {
     const form = document.createElement('div');
     form.className = 'tree-params';
     form.style.paddingLeft = `${8 + (row.depth + 1) * 13}px`;
-    for (const param of primitiveParams(feature)) {
+    for (const param of params) {
       const field = document.createElement('label');
       field.className = 'property-row';
       field.innerHTML = `<span>${param.label}</span><input type="number" step="0.1" value="${param.value}">`;
@@ -121,7 +130,7 @@ export class ModelTreeController {
   private async apply(solid: Solid, path: number[], key: string, value: number, input: HTMLInputElement, previous: number): Promise<void> {
     const before = cloneSolid(solid);
     const target = featureAt(solid.feature, path);
-    if (!target || target.kind !== 'primitive' || !setPrimitiveParam(target, key, value)) {
+    if (!target || !setFeatureParam(target, key, value)) {
       input.value = String(previous);
       return;
     }
@@ -129,7 +138,7 @@ export class ModelTreeController {
     if (!mesh) {
       // Put it back rather than leave the tree saying one thing and the model
       // showing another: a scale of zero, or a subtraction with nothing left.
-      setPrimitiveParam(target, key, previous);
+      setFeatureParam(target, key, previous);
       input.value = String(previous);
       return;
     }

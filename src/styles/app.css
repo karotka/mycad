@@ -447,19 +447,26 @@ html, body, #app {
 /* Opens on the left, under the button that opens it — the other panels hang off
    their own buttons on the right the same way. */
 .model-tree-panel { right: auto; left: 8px; width: 290px; }
+/* First thing on the bar and the way into the model, so it carries the accent
+   rather than sitting in the grey with the read-outs. */
 .model-tree-toggle {
   display: flex;
   align-items: center;
-  height: 18px;
-  padding: 0 5px;
-  border: 1px solid #3c3c3c;
+  gap: 4px;
+  height: 20px;
+  margin-right: 9px;
+  padding: 0 7px;
+  border: 1px solid #4a5560;
   border-radius: 2px;
-  background: #1e1e1e;
-  color: #dce4eb;
+  background: #20272e;
+  color: #67c9ff;
+  font: 600 9px 'SF Mono', monospace;
+  letter-spacing: .4px;
   cursor: pointer;
 }
-.model-tree-toggle:hover { background: rgba(255,255,255,.14); }
-.model-tree-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.model-tree-toggle:hover { border-color: #67c9ff; background: #26313a; }
+.model-tree-toggle.active { border-color: #67c9ff; background: #094771; color: #fff; }
+.model-tree-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .tree-row {
   display: grid;
   grid-template-columns: 14px 1fr auto;

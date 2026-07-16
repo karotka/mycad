@@ -4,7 +4,7 @@ import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
-import { primitiveParams, setPrimitiveParam } from '../core/solids/primitiveParams';
+import { primitiveParams, setPrimitiveParam } from '../core/solids/featureParams';
 
 type ObjectValue = Entity | Solid;
 
