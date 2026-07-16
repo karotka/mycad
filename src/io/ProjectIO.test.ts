@@ -79,6 +79,38 @@ describe('ProjectIO', () => {
     expect(target.dimensionStyle.precision).toBe(2);
   });
 
+  it('round-trips what a dimension measures and where its text was dragged', () => {
+    const source = new Document();
+    const dimension = source.createDimension({ x: 0, y: 0 }, { x: 3, y: 4 }, { x: 1.5, y: 9 }, 'linear', 0);
+    dimension.textPosition = { x: 8, y: 12 };
+    source.addEntity(dimension);
+    source.addEntity(source.createDimension({ x: 0, y: 0 }, { x: 3, y: 4 }, { x: 6, y: 2 }, 'aligned'));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    // Read back as 'aligned', a linear dimension would silently start measuring
+    // the diagonal instead of the leg it was drawn to measure.
+    const [linear, aligned] = target.entities as Array<Extract<Document['entities'][number], { type: 'dimension' }>>;
+    expect(linear.dimensionKind).toBe('linear');
+    expect(linear.rotation).toBe(0);
+    expect(linear.textPosition).toEqual({ x: 8, y: 12 });
+    expect(aligned.dimensionKind).toBe('aligned');
+    expect(aligned.textPosition).toBeUndefined();
+  });
+
+  it('reads a dimension saved before the kinds were told apart as point-to-point', () => {
+    const source = new Document();
+    source.addEntity(source.createDimension({ x: 0, y: 0 }, { x: 3, y: 4 }, { x: 6, y: 2 }, 'aligned'));
+    const saved = JSON.parse(serializeProject(source));
+    delete saved.entities[0].dimensionKind;
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect((target.entities[0] as { dimensionKind: string }).dimensionKind).toBe('aligned');
+  });
+
   it('round-trips the saved 2D and 3D camera state', () => {
     const source = new Document();
     const view = {

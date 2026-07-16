@@ -57,9 +57,13 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
       const raw = entity as Record<string, unknown>;
       if (raw.type === 'dimension') {
         const defaults = defaultDimensionStyle();
+        // Every kind it may have been saved as is honoured. A file with none at
+        // all predates the distinction, and back then every dimension measured
+        // point to point, which is what `aligned` is now called.
+        const kind = raw.dimensionKind;
         return {
           ...raw, selected: false,
-          dimensionKind: raw.dimensionKind === 'radius' || raw.dimensionKind === 'diameter' ? raw.dimensionKind : 'aligned',
+          dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' ? kind : 'aligned',
           arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
           extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
           extensionOffset: typeof raw.extensionOffset === 'number' ? raw.extensionOffset : defaults.extensionOffset,

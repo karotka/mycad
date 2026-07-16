@@ -561,6 +561,7 @@ describe('CommandManager history integration', () => {
     await manager.handleClick({ x: 0, y: 0 });
     await manager.handleClick({ x: 3, y: 4 });
     await manager.handleClick({ x: 0, y: 8 }); // pulled upwards, so it reads across
+    await manager.submitInput(''); // Enter: leave the text centred
     expect(doc.entities[0]).toMatchObject({
       type: 'dimension', dimensionKind: 'linear', rotation: 0,
       start: { x: 0, y: 0 }, end: { x: 3, y: 4 }, offset: { x: 0, y: 8 },
@@ -1183,12 +1184,14 @@ describe('MOVE takes as many objects as you give it', () => {
 
 describe('linear and aligned dimensions', () => {
   // The points form a 3-4-5 triangle, so the answer says which one it measured.
+  // Enter at the end declines to move the text, which is the ordinary way through.
   const measure = async (name: 'MEASURE' | 'DIMALIGNED', offset: { x: number; y: number }) => {
     const kit = setup();
     kit.manager.startCommand(name);
     await kit.manager.handleClick({ x: 0, y: 0 });
     await kit.manager.handleClick({ x: 3, y: 4 });
     await kit.manager.handleClick(offset);
+    await kit.manager.submitInput('');
     const dimension = kit.doc.entities[0];
     return { dimension, text: dimension.type === 'dimension' ? dimensionGeometry(dimension).text : '' };
   };
@@ -1215,6 +1218,53 @@ describe('linear and aligned dimensions', () => {
     const { manager } = setup();
     expect(manager.resolveAlias('dal')).toBe('DIMALIGNED');
     expect(manager.commandSuggestions('DIM')).toContain('DIMALIGNED');
+  });
+
+  it('leaves the text centred when the last step is skipped', async () => {
+    const { dimension } = await measure('MEASURE', { x: 1.5, y: 9 });
+    expect(dimension).toMatchObject({ type: 'dimension' });
+    expect((dimension as { textPosition?: unknown }).textPosition).toBeUndefined();
+    // Centred on the dimension line, which for this one runs along y = 9.
+    if (dimension.type === 'dimension') expect(dimensionGeometry(dimension).textPoint.x).toBeCloseTo(1.5);
+  });
+
+  it('puts the text where a fourth click asks for it', async () => {
+    const kit = setup();
+    kit.manager.startCommand('MEASURE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 3, y: 4 });
+    await kit.manager.handleClick({ x: 1.5, y: 9 });
+    // Nothing is drawn yet: the dimension is one entity, made once, so that
+    // undo takes back the whole dimension rather than just its text.
+    expect(kit.doc.entities).toHaveLength(0);
+
+    await kit.manager.handleClick({ x: 8, y: 12 });
+
+    expect(kit.doc.entities).toHaveLength(1);
+    const dimension = kit.doc.entities[0];
+    if (dimension.type !== 'dimension') throw new Error('expected a dimension');
+    expect(dimension.textPosition).toEqual({ x: 8, y: 12 });
+    expect(dimensionGeometry(dimension).textPoint).toEqual({ x: 8, y: 12 });
+    // Dragging the text does not change what the dimension measures.
+    expect(dimensionGeometry(dimension).text).toBe('3.00');
+
+    kit.history.undo();
+    expect(kit.doc.entities).toHaveLength(0);
+  });
+
+  it('restarts sticky with the style it was started with', async () => {
+    const kit = setup();
+    kit.doc.dimensionStyle.precision = 3;
+    kit.manager.startCommand('DIMALIGNED');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 3, y: 4 });
+    await kit.manager.handleClick({ x: -4, y: 5 });
+    await kit.manager.submitInput('');
+
+    // Sticky, so it is on its first step again — and the preview reads the style
+    // from the command's own data, which the restart used to throw away.
+    expect(kit.manager.active?.stepIndex).toBe(0);
+    expect(kit.manager.active?.data.dimensionStyle).toMatchObject({ precision: 3 });
   });
 });
 

@@ -77,6 +77,12 @@ export interface DimensionEntity extends EntityBase {
   scale: number;
   /** The direction a `linear` dimension measures along, in radians. Ignored by the rest. */
   rotation?: number;
+  /**
+   * Where the text was dragged to. Left out, it sits centred and clear of the
+   * dimension line, which is what a dimension with room for it wants. A short
+   * one has no such room, hence the override.
+   */
+  textPosition?: Vec2;
 }
 
 export type Entity = LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
@@ -162,7 +168,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
   return {
     extensionStart: [gapA, extensionA], extensionEnd: [gapB, extensionB], dimensionLine: [a, b],
     arrows: [triangle(a, 1), triangle(b, -1)],
-    textPoint: {
+    textPoint: entity.textPosition ?? {
       x: (a.x + b.x) / 2 + nx * textSide * textClearance,
       y: (a.y + b.y) / 2 + ny * textSide * textClearance,
     },
@@ -416,7 +422,9 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
     case 'arc': copy.center = fn(copy.center); break;
     case 'bezier': copy.start = fn(copy.start); copy.control1 = fn(copy.control1); copy.control2 = fn(copy.control2); copy.end = fn(copy.end); break;
     case 'text': copy.position = fn(copy.position); break;
-    case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); break;
+    // A dragged text is an absolute point like the rest, so it has to travel
+    // with them — left behind, it would drift off its own dimension on a move.
+    case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); if (copy.textPosition) copy.textPosition = fn(copy.textPosition); break;
   }
   return copy;
 }

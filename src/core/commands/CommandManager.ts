@@ -1754,18 +1754,25 @@ export class CommandManager {
       case 'MEASURE':
         if (this.active.stepIndex === 0) data.start = value;
         else if (this.active.stepIndex === 1) data.end = value;
+        else if (this.active.stepIndex === 2) data.offset = value;
         else {
+          // The last step, so the dimension is built once and lands in the
+          // history as a single entry — placing the text is part of drawing it,
+          // not an edit of something already drawn.
           const start = data.start as Vec2 | Vec3;
           const end = data.end as Vec2 | Vec3;
           const a: Vec3 = { x: start.x, y: start.y, z: 'z' in start ? start.z : 0 };
           const b: Vec3 = { x: end.x, y: end.y, z: 'z' in end ? end.z : 0 };
-          const offset = value as Vec2;
+          const offset = data.offset as Vec2;
           const aligned = this.active.name === 'DIMALIGNED';
           const dimension = this.ctx.doc.createDimension(
             { x: start.x, y: start.y }, { x: end.x, y: end.y }, offset,
             aligned ? 'aligned' : 'linear',
             aligned ? undefined : linearDimensionRotation({ x: start.x, y: start.y }, { x: end.x, y: end.y }, offset),
           );
+          // Enter arrives as null, which is the step declining to move the text.
+          const textPosition = value as Vec2 | null;
+          if (textPosition) dimension.textPosition = { x: textPosition.x, y: textPosition.y };
           this.ctx.history.execute(new AddEntityEdit('Dimension', dimension));
           const measured = aligned ? dist3(a, b) : Number(dimensionGeometry(dimension).text);
           this.ctx.log(`Dimension created: ${measured.toFixed(dimension.precision)} mm (${formatPoint(a)} -> ${formatPoint(b)})`);
@@ -1846,10 +1853,11 @@ export class CommandManager {
     while (this.active && this.active.steps[this.active.stepIndex]?.kind === 'done') {
       if (isStickyCommand(this.active.name)) {
         // Drawing tools stay active until Escape or another command is chosen.
+        // A restart is a fresh run, so its data comes from where a fresh run's
+        // data comes from — naming one command here left DIMALIGNED and the
+        // radial dimensions restarting without the style they were started with.
         this.active.stepIndex = 0;
-        this.active.data = this.active.name === 'MEASURE'
-          ? { dimensionStyle: { ...this.ctx.doc.dimensionStyle } }
-          : {};
+        this.active.data = commandDef(this.active.name).data?.(this.ctx) ?? {};
       } else {
         this.active = null;
       }

@@ -171,13 +171,18 @@ describe('steps that Ortho must leave alone', () => {
   // measurement point — an axis through that point means nothing. Ortho held the
   // cursor to those axes, so a horizontal line read 0 until the line was dragged
   // clear of it, and an aligned one could only be placed along two rays.
+  // Counting them would only pin down how many things a dimension happens to
+  // place today — the rule is that whatever it places, Ortho keeps out of.
   it('marks where a dimension is placed, which is not a direction either', () => {
     for (const name of ['MEASURE', 'DIMALIGNED', 'DIMRADIUS', 'DIMDIAMETER'] as const) {
       const placements = (commandDef(name).steps ?? [])
-        .filter((step) => step.kind === 'point' && step.ignoresDirection);
-      expect(placements, `${name} lets Ortho move its dimension line`).toHaveLength(1);
-      const label = placements[0].kind === 'point' ? placements[0].label : '';
-      expect(label.toLowerCase()).toContain('location');
+        .filter((step) => step.kind === 'point' && step.label.toLowerCase().includes('location'));
+      expect(placements.length, `${name} places nothing`).toBeGreaterThan(0);
+      for (const step of placements) {
+        const ignores = step.kind === 'point' && step.ignoresDirection;
+        const label = step.kind === 'point' ? step.label : '';
+        expect(ignores, `${name} lets Ortho move: ${label}`).toBe(true);
+      }
     }
   });
 

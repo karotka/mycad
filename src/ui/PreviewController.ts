@@ -32,8 +32,12 @@ export class PreviewController {
       });
       return;
     }
-    if (active.name === 'POLYLINE' && active.data.start) {
-      this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor } });
+    if (active.name === 'POLYLINE') {
+      // The whole chain so far, not just the segment being dragged: the vertices
+      // are only a polyline once the command ends, so until then this preview is
+      // the only thing that shows what has been drawn.
+      const vertices = (active.data.vertices as Vec2[]) ?? [];
+      if (vertices.length > 0) this.setPreview({ type: 'polyline', data: { vertices, cursor } });
       return;
     }
     if (active.name === 'ELLIPSE' && active.data.center) {
@@ -57,7 +61,9 @@ export class PreviewController {
       return;
     }
     if (active.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
-      this.setPreview({ type: 'line', data: { start: active.data.basePoint, end: cursor } });
+      // Its own kind rather than a plain line, because what a move wants read
+      // off it is how far it went in x and in y, not the length of the hop.
+      this.setPreview({ type: 'move', data: { start: active.data.basePoint, end: cursor } });
       return;
     }
     if (active.name === 'COPY' && active.stepIndex === 2 && active.data.basePoint) {
@@ -107,16 +113,29 @@ export class PreviewController {
       this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
       return;
     }
-    if ((active.name === 'MEASURE' || active.name === 'DIMALIGNED') && active.stepIndex === 2 && active.data.start && active.data.end) {
+    if ((active.name === 'MEASURE' || active.name === 'DIMALIGNED') && active.data.start && active.stepIndex >= 1) {
       const start = active.data.start as Vec2;
-      const end = active.data.end as Vec2;
+      // Picking the second point, the cursor is that point and the dimension has
+      // nowhere to sit yet, so it lies on the two points and simply reads them.
+      // Placing the line, the points are settled and the cursor is the location.
+      const placing = active.stepIndex >= 2 && Boolean(active.data.end);
+      const end = placing ? active.data.end as Vec2 : cursor;
+      // Once the line is placed the cursor moves on to the text, so the offset
+      // stops following it and the text starts.
+      const settled = active.stepIndex >= 3 && Boolean(active.data.offset);
+      const offset = settled ? active.data.offset as Vec2 : cursor;
+      const textPosition = settled ? cursor : undefined;
       const aligned = active.name === 'DIMALIGNED';
       this.setPreview({
         type: 'dimension',
         data: {
-          start, end, offset: cursor,
+          start, end, offset, textPosition,
           kind: aligned ? 'aligned' : 'linear',
-          rotation: aligned ? undefined : linearDimensionRotation(start, end, cursor),
+          // The same rule the command will apply, asked early. With the line not
+          // yet pulled anywhere it can only answer from the points themselves,
+          // which is the honest answer: an axis-aligned pair reads its length,
+          // and a slope reads across until the location says otherwise.
+          rotation: aligned ? undefined : linearDimensionRotation(start, end, offset),
           style: active.data.dimensionStyle,
         },
       });
@@ -209,7 +228,7 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
     case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
     case 'bezier': result.start = rotate(result.start); result.control1 = rotate(result.control1); result.control2 = rotate(result.control2); result.end = rotate(result.end); break;
     case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
-    case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); break;
+    case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); if (result.textPosition) result.textPosition = rotate(result.textPosition); break;
     case 'rectangle': break;
   }
   return result;

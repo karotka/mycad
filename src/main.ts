@@ -654,6 +654,18 @@ function showDimension(text: string | null, x: number, y: number): void {
   previewController.showDimension(text, x, y);
 }
 
+/**
+ * A measurement of the preview that is being drawn — its length, its radius,
+ * its angle. In 2D the canvas already writes one beside the geometry, so saying
+ * it again in the toast only printed every number twice, one above the other,
+ * and then made one of them fade away. The 3D view draws no such label, so
+ * there the toast is the only one there is.
+ */
+function showPreviewLabel(text: string | null, x: number, y: number): void {
+  if (cadDocument.viewMode === '2d') return;
+  showDimension(text, x, y);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -865,7 +877,7 @@ viewport.addEventListener('pointermove', (event) => {
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
     const angle = Math.atan2(p.y - base.y, p.x - base.x) * 180 / Math.PI;
-    showDimension(`Angle ${angle.toFixed(2)}°`, sx, sy);
+    showPreviewLabel(`Angle ${angle.toFixed(2)}°`, sx, sy);
   }
   const targetedDrawingSnap = drawingInteraction.isPointStep && drawingInteraction.targetSnapMode
     ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
@@ -914,19 +926,19 @@ viewport.addEventListener('pointermove', (event) => {
   if (active?.stepIndex === 1) {
     if (active.name === 'LINE' && active.data.start) {
       const start = active.data.start as Vec2;
-      showDimension(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
+      showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
     } else if (active.name === 'RECTANGLE' && active.data.start) {
       const start = active.data.start as Vec2;
-      showDimension(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
+      showPreviewLabel(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
     } else if (active.name === 'CIRCLE' && active.data.center) {
       const center = active.data.center as Vec2;
       const radius = Math.hypot(p.x - center.x, p.y - center.y);
-      showDimension(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
+      showPreviewLabel(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
     }
   }
   if (active?.name === 'POLYGON' && active.stepIndex === 2 && active.data.center) {
     const center = active.data.center as Vec2;
-    showDimension(`Apothem ${Math.hypot(p.x - center.x, p.y - center.y).toFixed(2)} mm`, sx, sy);
+    showPreviewLabel(`Apothem ${Math.hypot(p.x - center.x, p.y - center.y).toFixed(2)} mm`, sx, sy);
   }
   if (active?.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
@@ -935,7 +947,7 @@ viewport.addEventListener('pointermove', (event) => {
     const label = cadDocument.viewMode === '3d'
       ? renderer3d.formatMoveDelta(delta)
       : `ΔX ${delta.x.toFixed(2)} · ΔY ${delta.y.toFixed(2)} · ${distance.toFixed(2)} mm`;
-    showDimension(label, sx, sy);
+    showPreviewLabel(label, sx, sy);
   }
   void commands.handlePreview(p);
   redraw();
@@ -1026,7 +1038,10 @@ viewport.addEventListener('pointerdown', async (event) => {
     }
   }
   if (commands.active?.name === 'MEASURE') {
-    const placingDimension = commands.active.stepIndex === 2;
+    // The first two steps measure, so they must land on real geometry. Where the
+    // dimension line and its text then go is free: those steps take the cursor
+    // wherever it is rather than refusing a click that snapped to nothing.
+    const placingDimension = commands.active.stepIndex >= 2;
     const point = interactionPoint(event) ?? (placingDimension ? worldPoint(event) : null);
     if (point) {
       const rect = viewport.getBoundingClientRect();

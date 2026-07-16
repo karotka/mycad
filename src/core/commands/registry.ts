@@ -11,6 +11,19 @@ import { isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, type Entity } f
 import type { ActiveCommand, CommandContext, CommandStep } from './types';
 
 /**
+ * Dragging the text off the middle of the dimension line, for when the line is
+ * too short to hold it. Optional because that is the unusual case: Enter leaves
+ * the text centred and is the quick way through.
+ */
+const DIMENSION_TEXT_STEP: CommandStep = {
+  kind: 'point',
+  label: 'Specify text location (Enter to keep it centred):',
+  optional: true,
+  // Where the text sits is a placement, not a direction from the points.
+  ignoresDirection: true,
+};
+
+/**
  * Takes the objects already selected into the command's first step and skips it,
  * so picking a tool after selecting does not ask for the selection again.
  */
@@ -125,10 +138,10 @@ export const COMMANDS = [
   { name: 'BEZIER', aliases: ['B', 'BEZIER'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
   { name: 'TEXT', aliases: ['T', 'TEXT'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
-    steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, { kind: 'done' }],
+    steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
   { name: 'DIMALIGNED', aliases: ['DAL', 'DIMALIGNED'], help: 'dimension the true distance between two points', suggest: true, sticky: true, pointInput: true,
-    steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, { kind: 'done' }],
+    steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
   { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select circle or arc for radius dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],

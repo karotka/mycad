@@ -310,11 +310,11 @@ export class Canvas2DRenderer {
       label = `A = ${(Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x) * 180 / Math.PI).toFixed(2)}°`;
       labelPoint = rotation.end;
     } else if (preview.type === 'dimension') {
-      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; kind?: 'linear' | 'aligned' | 'radius' | 'diameter'; rotation?: number; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
+      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; textPosition?: Vec2; kind?: 'linear' | 'aligned' | 'radius' | 'diameter'; rotation?: number; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
       const style = value.style ?? { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed' as const, extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
-      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
-      label = Math.hypot(value.end.x - value.start.x, value.end.y - value.start.y).toFixed(style.precision);
-      labelPoint = value.offset;
+      // No label beside it: a dimension is the one preview that already writes
+      // its own measurement, so one here would print the number twice.
+      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, textPosition: value.textPosition, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
     } else if (preview.type === 'line' && d.start && d.end) {
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
@@ -324,6 +324,40 @@ export class Canvas2DRenderer {
       this.ctx.stroke();
       label = `L = ${Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y).toFixed(2)} mm`;
       labelPoint = d.end;
+    } else if (preview.type === 'move' && d.start && d.end) {
+      const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
+      const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.moveTo(a.x, a.y);
+      this.ctx.lineTo(b.x, b.y);
+      this.ctx.stroke();
+      const delta = { x: d.end.x - d.start.x, y: d.end.y - d.start.y };
+      label = `ΔX ${delta.x.toFixed(2)} · ΔY ${delta.y.toFixed(2)} · ${Math.hypot(delta.x, delta.y).toFixed(2)} mm`;
+      labelPoint = d.end;
+    } else if (preview.type === 'polyline') {
+      const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
+      const screen = chain.vertices.map((vertex) => worldToScreen(vertex, w, h, this.pan, this.zoom));
+      const last = chain.vertices[chain.vertices.length - 1];
+      // Settled segments are drawn solid and the one on the cursor dashed, so
+      // the chain shows at a glance how much of it is already decided.
+      if (screen.length > 1) {
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.strokeStyle = '#67c9ff';
+        this.ctx.beginPath();
+        this.ctx.moveTo(screen[0].x, screen[0].y);
+        for (const point of screen.slice(1)) this.ctx.lineTo(point.x, point.y);
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+      const a = screen[screen.length - 1];
+      const b = worldToScreen(chain.cursor, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.moveTo(a.x, a.y);
+      this.ctx.lineTo(b.x, b.y);
+      this.ctx.stroke();
+      label = `L = ${Math.hypot(chain.cursor.x - last.x, chain.cursor.y - last.y).toFixed(2)} mm`;
+      labelPoint = chain.cursor;
     } else if (preview.type === 'circleDiameter' && d.center && d.cursor) {
       // The cursor distance is the diameter here, so the circle is half of it.
       const diameter = Math.hypot(d.cursor.x - d.center.x, d.cursor.y - d.center.y);
@@ -1080,8 +1114,11 @@ export class Viewport3D {
     const data = preview.data as Record<string, Vec2> & { sides?: number };
     const points: Vec2[] = [];
     let loop = false;
-    if (preview.type === 'line' && data.start && data.end) {
+    if ((preview.type === 'line' || preview.type === 'move') && data.start && data.end) {
       points.push(data.start, data.end);
+    } else if (preview.type === 'polyline') {
+      const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
+      points.push(...chain.vertices, chain.cursor);
     } else if (preview.type === 'rectangle' && data.start && data.end) {
       points.push(
         data.start,
