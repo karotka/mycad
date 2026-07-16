@@ -25,6 +25,7 @@ import { GripInteractionController } from './interaction/GripInteractionControll
 import { DrawingInteractionController } from './interaction/DrawingInteractionController';
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
+import { ModelTreeController } from './ui/ModelTreeController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
   arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
@@ -161,6 +162,15 @@ const dimensionStyleController = new DimensionStyleController(
   get<HTMLFormElement>('dimension-style-form'),
   get('dimension-style-toggle'),
   get('dimension-style-close'),
+  redraw,
+);
+const modelTreeController = new ModelTreeController(
+  cadDocument,
+  history,
+  get('model-tree-panel'),
+  get('model-tree-list'),
+  get('model-tree-toggle'),
+  get('model-tree-close'),
   redraw,
 );
 
@@ -803,6 +813,7 @@ cadDocument.subscribe(() => {
   if (propertiesController.isOpen) propertiesController.render();
   if (dimensionStyleController.isOpen) dimensionStyleController.render();
   if (draftingSettingsController.isOpen) draftingSettingsController.render();
+  modelTreeController.render();
 });
 new ResizeObserver(resize).observe(viewport);
 

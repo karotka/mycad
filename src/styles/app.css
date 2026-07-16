@@ -444,6 +444,40 @@ html, body, #app {
 }
 .properties-panel[hidden] { display: none; }
 .dimension-style-panel { right: 316px; width: 270px; }
+/* Opens on the left, under the button that opens it — the other panels hang off
+   their own buttons on the right the same way. */
+.model-tree-panel { right: auto; left: 8px; width: 290px; }
+.model-tree-toggle {
+  display: flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid #3c3c3c;
+  border-radius: 2px;
+  background: #1e1e1e;
+  color: #dce4eb;
+  cursor: pointer;
+}
+.model-tree-toggle:hover { background: rgba(255,255,255,.14); }
+.model-tree-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.tree-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding-right: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.tree-row:hover { background: #242d35; }
+.tree-row.active { background: #094771; }
+.tree-solid { border-top: 1px solid #2d353d; font-weight: 600; }
+.tree-twist { color: #7f8b96; text-align: center; }
+.tree-label { color: #dce4eb; }
+.tree-detail { color: #7f8b96; font-size: 9px; }
+.tree-params { padding-right: 6px; background: #12171c; }
+.tree-params .property-row { grid-template-columns: 80px 1fr; min-height: 24px; }
 .properties-panel header { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #343d46; }
 .properties-panel header strong { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
 .properties-panel header button { border: 0; background: transparent; color: #aeb8c2; font-size: 18px; cursor: pointer; }

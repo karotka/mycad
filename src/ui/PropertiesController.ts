@@ -4,6 +4,7 @@ import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
+import { primitiveParams, setPrimitiveParam } from '../core/solids/primitiveParams';
 
 type ObjectValue = Entity | Solid;
 
@@ -52,9 +53,9 @@ export class PropertiesController {
       const b = solidBounds(object);
       if (object.feature.kind === 'primitive') {
         const position = [{ key: 'x', label: 'X', value: b.minX }, { key: 'y', label: 'Y', value: b.minY }, { key: 'z', label: 'Z', value: b.minZ }];
-        if (object.feature.primitive === 'box' || object.feature.primitive === 'wedge') return [...common, ...position, { key: 'width', label: 'Width', value: object.feature.width ?? 1 }, { key: 'depth', label: 'Depth', value: object.feature.depth ?? 1 }, { key: 'height', label: 'Height', value: object.feature.height }];
-        if (object.feature.primitive === 'sphere') return [...common, ...position, { key: 'radius', label: 'Radius', value: object.feature.radius ?? 1 }];
-        return [...common, ...position, { key: 'radius', label: 'Radius', value: object.feature.radius ?? 1 }, { key: 'height', label: 'Height', value: object.feature.height }];
+        // What a primitive is made of is the engine's business, not this panel's.
+        // Its own list here had already gone stale: no tube radius for a torus.
+        return [...common, ...position, ...primitiveParams(object.feature).map(({ key, label, value }) => ({ key, label, value }))];
       }
       return [...common,
         { key: 'x', label: 'X', value: b.minX }, { key: 'y', label: 'Y', value: b.minY }, { key: 'z', label: 'Z', value: b.minZ },
@@ -137,20 +138,19 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
 
 function updateSolid(solid: Solid, key: string, value: number): void {
   if (!Number.isFinite(value)) return;
-  if (solid.feature.kind === 'primitive' && ['width', 'depth', 'radius', 'height'].includes(key)) {
-    if (value <= 0) return;
+  if (solid.feature.kind === 'primitive') {
     const feature = solid.feature;
-    if (key === 'width' && (feature.primitive === 'box' || feature.primitive === 'wedge')) feature.width = value;
-    else if (key === 'depth' && (feature.primitive === 'box' || feature.primitive === 'wedge')) feature.depth = value;
-    else if (key === 'radius' && ['cylinder', 'sphere', 'cone', 'pyramid'].includes(feature.primitive)) { feature.radius = value; if (feature.primitive === 'sphere') feature.height = value * 2; }
-    else if (key === 'height' && feature.primitive !== 'sphere') feature.height = value;
-    else return;
-    // The engine builds primitives; this panel only says what changed. The copy
-    // that used to live here had already fallen behind it — it never applied a
-    // scale, and it had never heard of a torus.
-    solid.mesh = primitiveMesh(feature);
-    solid.height = feature.height; solid.revision++;
-    return;
+    // Whether the key belongs to this primitive is the same question the fields
+    // answered, so it is asked in the same place rather than listed again here.
+    if (setPrimitiveParam(feature, key, value)) {
+      // The engine builds primitives; this panel only says what changed. The
+      // copy that used to live here had fallen behind it — it never applied a
+      // scale, and it had never heard of a torus.
+      solid.mesh = primitiveMesh(feature);
+      solid.height = feature.height; solid.revision++;
+      return;
+    }
+    // x, y and z are not the primitive's; they move it, which the bounds do.
   }
   const b = solidBounds(solid);
   const axis = key === 'x' || key === 'width' ? 0 : key === 'y' || key === 'depth' ? 1 : 2;

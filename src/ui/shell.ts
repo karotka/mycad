@@ -57,7 +57,11 @@ export function shellHtml(tools: ShellTools): string {
       </div>
     </section>
     <footer class="statusbar">
-      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span><span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
+      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
+      <button class="model-tree-toggle" id="model-tree-toggle" title="Model Tree — how each solid was built" aria-label="Model Tree">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v13a2 2 0 002 2h3M5 10h5M15 3h5v4h-5zM15 10h5v4h-5zM15 17h5v4h-5z"/><path d="M10 5h5M10 12h5M10 19h5"/></svg>
+      </button>
+      <span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
@@ -83,6 +87,10 @@ export function shellHtml(tools: ShellTools): string {
       <button class="properties-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
       <button class="properties-toggle" id="drafting-settings-toggle" title="Drafting Settings — snap step, grid, polar angles" aria-label="Drafting Settings">DRAFTING</button>
       <button class="properties-toggle" id="dimension-style-toggle" title="Dimension Style" aria-label="Dimension Style">DIM STYLE</button>
+      <section class="properties-panel model-tree-panel" id="model-tree-panel" hidden>
+        <header><strong>Model Tree</strong><button id="model-tree-close" title="Close">×</button></header>
+        <div class="properties-content" id="model-tree-list"></div>
+      </section>
       <section class="layer-panel" id="layer-panel" hidden>
         <header><strong>Layers</strong><button id="layer-add" title="New layer">+</button></header>
         <div class="layer-list" id="layer-list"></div>
