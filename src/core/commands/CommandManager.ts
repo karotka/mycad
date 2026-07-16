@@ -1884,9 +1884,20 @@ export class CommandManager {
  * vertical one. This is what AutoCAD does while you place it.
  */
 export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
-  const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-  const pulled = { x: offset.x - midpoint.x, y: offset.y - midpoint.y };
-  return Math.abs(pulled.y) >= Math.abs(pulled.x) ? 0 : Math.PI / 2;
+  // A leg of zero has nothing to dimension, so the other one is the only answer
+  // there is: an axis-aligned line always reads its own length.
+  if (Math.abs(end.y - start.y) <= 1e-9) return 0;
+  if (Math.abs(end.x - start.x) <= 1e-9) return Math.PI / 2;
+
+  // Otherwise it is where the dimension line was pulled *past the points*: above
+  // or below them reads across, beside them reads up. Measuring from their
+  // midpoint instead would make a point that is merely far along the line look
+  // like it was pulled sideways.
+  const beyond = (value: number, low: number, high: number): number =>
+    Math.max(low - value, value - high, 0);
+  const outsideX = beyond(offset.x, Math.min(start.x, end.x), Math.max(start.x, end.x));
+  const outsideY = beyond(offset.y, Math.min(start.y, end.y), Math.max(start.y, end.y));
+  return outsideX > outsideY ? Math.PI / 2 : 0;
 }
 
 /** Distance from a point to a segment — the basis of every stroke hit test. */

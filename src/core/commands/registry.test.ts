@@ -153,24 +153,46 @@ describe('a command is either a wizard or an immediate action', () => {
   });
 });
 
-describe('corner steps', () => {
+describe('steps that Ortho must leave alone', () => {
   // Ortho snaps a point onto an axis through the base. For an opposite corner
   // that means zero width or depth, so BOX/WEDGE/RECTANGLE could not be drawn
   // at all once Ortho started working properly.
   it('marks every opposite-corner step so Ortho leaves it alone', () => {
     for (const name of ['RECTANGLE', 'BOX', 'WEDGE'] as const) {
       const steps = commandDef(name).steps ?? [];
-      const corners = steps.filter((step) => step.kind === 'point' && step.corner);
+      const corners = steps.filter((step) => step.kind === 'point' && step.ignoresDirection);
       expect(corners, `${name} has no corner step`).toHaveLength(1);
       const label = corners[0].kind === 'point' ? corners[0].label : '';
       expect(label.toLowerCase()).toContain('corner');
     }
   });
 
+  // Where a dimension line goes is a placement, not a direction from the first
+  // measurement point — an axis through that point means nothing. Ortho held the
+  // cursor to those axes, so a horizontal line read 0 until the line was dragged
+  // clear of it, and an aligned one could only be placed along two rays.
+  it('marks where a dimension is placed, which is not a direction either', () => {
+    for (const name of ['MEASURE', 'DIMALIGNED', 'DIMRADIUS', 'DIMDIAMETER'] as const) {
+      const placements = (commandDef(name).steps ?? [])
+        .filter((step) => step.kind === 'point' && step.ignoresDirection);
+      expect(placements, `${name} lets Ortho move its dimension line`).toHaveLength(1);
+      const label = placements[0].kind === 'point' ? placements[0].label : '';
+      expect(label.toLowerCase()).toContain('location');
+    }
+  });
+
+  it('still lets Ortho constrain the points a dimension measures between', () => {
+    for (const step of commandDef('MEASURE').steps ?? []) {
+      if (step.kind === 'point' && step.label.includes('measurement point')) {
+        expect(step.ignoresDirection, step.label).toBeFalsy();
+      }
+    }
+  });
+
   it('leaves radius and direction steps constrainable', () => {
     for (const name of ['LINE', 'CIRCLE', 'SPHERE', 'CYLINDER', 'TORUS'] as const) {
       for (const step of commandDef(name).steps ?? []) {
-        if (step.kind === 'point') expect(step.corner, `${name}: ${step.label}`).toBeFalsy();
+        if (step.kind === 'point') expect(step.ignoresDirection, `${name}: ${step.label}`).toBeFalsy();
       }
     }
   });
@@ -179,7 +201,7 @@ describe('corner steps', () => {
   it('never marks the first step as a corner', () => {
     for (const command of COMMAND_LIST) {
       const first = command.steps?.[0];
-      if (first?.kind === 'point') expect(first.corner, `${command.name}`).toBeFalsy();
+      if (first?.kind === 'point') expect(first.ignoresDirection, `${command.name}`).toBeFalsy();
     }
   });
 });

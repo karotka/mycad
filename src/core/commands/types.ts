@@ -45,12 +45,13 @@ export type PickTarget = 'entity' | 'solid';
  */
 export type CommandStep =
   /**
-   * `corner` marks a point that is the opposite corner of a box or rectangle
-   * rather than a direction from the base. Ortho and Polar must not touch it:
-   * snapping a corner onto an axis through the first corner collapses the shape
-   * to zero width or depth.
+   * `ignoresDirection` marks a point that is a placement rather than a direction
+   * from the base, so Ortho and Polar have nothing to say about it and must not
+   * touch it. A box's opposite corner is one: snapping it onto an axis through
+   * the first corner collapses the shape to nothing. So is a dimension line's
+   * location — an axis through the first measurement point means nothing there.
    */
-  | { kind: 'point'; label: string; optional?: boolean; corner?: boolean }
+  | { kind: 'point'; label: string; optional?: boolean; ignoresDirection?: boolean }
   | { kind: 'number'; label: string; optional?: boolean }
   | { kind: 'entity'; label: string; optional?: boolean; multi?: boolean; additive?: boolean; accepts?: PickTarget[] }
   | { kind: 'solid'; label: string; optional?: boolean; multi?: boolean; additive?: boolean }

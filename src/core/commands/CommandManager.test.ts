@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
-import { CommandManager, hitTestEntity } from './CommandManager';
+import { CommandManager, hitTestEntity, linearDimensionRotation } from './CommandManager';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 
@@ -1215,5 +1215,51 @@ describe('linear and aligned dimensions', () => {
     const { manager } = setup();
     expect(manager.resolveAlias('dal')).toBe('DIMALIGNED');
     expect(manager.commandSuggestions('DIM')).toContain('DIMALIGNED');
+  });
+});
+
+describe('which leg a linear dimension reads', () => {
+  const reads = (start: { x: number; y: number }, end: { x: number; y: number }, offset: { x: number; y: number }) => {
+    const rotation = linearDimensionRotation(start, end, offset);
+    return Math.abs((end.x - start.x) * Math.cos(rotation) + (end.y - start.y) * Math.sin(rotation));
+  };
+
+  // Dimensioning a horizontal line read 0 unless the line was dragged far above
+  // it: the choice was made from the offset to the midpoint, so drifting along
+  // the line looked like being pulled sideways.
+  it('always reads the length of a horizontal line, wherever it is placed', () => {
+    const start = { x: 0, y: 0 }, end = { x: 10, y: 0 };
+    for (const offset of [{ x: 5, y: 0.5 }, { x: 7, y: 1 }, { x: 9, y: 1 }, { x: 9, y: 3 }, { x: 12, y: 1 }, { x: 5, y: -2 }]) {
+      expect(reads(start, end, offset), `placed at ${JSON.stringify(offset)}`).toBeCloseTo(10);
+    }
+  });
+
+  it('always reads the length of a vertical line, wherever it is placed', () => {
+    const start = { x: 0, y: 0 }, end = { x: 0, y: 7 };
+    for (const offset of [{ x: 1, y: 3.5 }, { x: 1, y: 6 }, { x: 3, y: 9 }, { x: -2, y: 1 }]) {
+      expect(reads(start, end, offset), `placed at ${JSON.stringify(offset)}`).toBeCloseTo(7);
+    }
+  });
+
+  it('never reads zero, whatever is thrown at it', () => {
+    const cases: Array<[{ x: number; y: number }, { x: number; y: number }]> = [
+      [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+      [{ x: 0, y: 0 }, { x: 0, y: 10 }],
+      [{ x: 2, y: 3 }, { x: 9, y: 3 }],
+    ];
+    for (const [start, end] of cases) {
+      for (let x = -5; x <= 15; x += 2.5) {
+        for (let y = -5; y <= 15; y += 2.5) {
+          expect(reads(start, end, { x, y }), `${JSON.stringify(start)}→${JSON.stringify(end)} at ${x},${y}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  // A diagonal has two real legs, so where the line is pulled genuinely chooses.
+  it('lets a diagonal be dimensioned either way', () => {
+    const start = { x: 0, y: 0 }, end = { x: 3, y: 4 };
+    expect(reads(start, end, { x: 1.5, y: 9 })).toBeCloseTo(3);   // pulled above
+    expect(reads(start, end, { x: -6, y: 2 })).toBeCloseTo(4);    // pulled aside
   });
 });

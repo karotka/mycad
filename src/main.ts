@@ -504,8 +504,8 @@ function draftingBasePoint(): Vec2 | null {
   const active = commands.active;
   const step = active?.steps[active.stepIndex];
   if (!active || step?.kind !== 'point') return null;
-  // A corner has no direction to constrain: Ortho would collapse the shape.
-  if (step.corner) return null;
+  // A placement has no direction to constrain; see `ignoresDirection`.
+  if (step.ignoresDirection) return null;
   const value = active.name === 'BEZIER'
     ? active.data.control2 ?? active.data.control1 ?? active.data.start
     : active.data.basePoint ?? active.data.start ?? active.data.center;
