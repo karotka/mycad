@@ -23,6 +23,41 @@ export interface CommandContext {
   workPlaneChanged?: () => void;
 }
 
+/**
+ * What a step did with the answer it was given.
+ *
+ * `advance` moves to the next step, and to the end if there is none — which is
+ * what a command that finished says. `stay` leaves the command where it is, for
+ * a step that gathers more than one answer, or one that refused this one.
+ */
+export type StepOutcome = 'advance' | 'stay';
+
+/**
+ * One answer, and everything a command needs to act on it.
+ *
+ * The manager runs the wizard — prompts, step index, sticky restarts — and a
+ * command's `execute` only decides what the answer *means*. Everything that
+ * used to be `this.` in a 1000-line switch is here, so a command's behaviour
+ * can live beside its declaration instead of in a case label.
+ */
+export interface CommandRun {
+  readonly ctx: CommandContext;
+  readonly active: ActiveCommand;
+  readonly step: CommandStep;
+  /** The point, number, text, entity or solid id the step was answered with. */
+  readonly value: unknown;
+  /** Shorthand for `active.data` — the per-run bag every command reads. */
+  readonly data: Record<string, unknown>;
+  /**
+   * Puts a picked object into the gathered set: an entity whole, a solid by the
+   * id the viewport names it with. False when there was nothing to take, which
+   * is Enter at a multi-object step.
+   */
+  gather(value: unknown): boolean;
+  /** Ends the run without finishing it, for a command with nothing to do. */
+  cancel(): void;
+}
+
 /** One run of a command: its steps, where it is in them, and what it gathered. */
 export interface ActiveCommand {
   name: CommandName;

@@ -8,7 +8,9 @@
  * exist; forgetting to register one is a type error rather than a silent gap.
  */
 import { isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
-import type { ActiveCommand, CommandContext, CommandStep } from './types';
+import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
+import { drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawRectangle } from './steps/draw';
+import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -103,6 +105,16 @@ interface CommandDefShape {
    */
   readonly onStart?: (active: ActiveCommand, ctx: CommandContext) => void;
   /**
+   * What each answer means. The manager runs the wizard — prompts, step index,
+   * sticky restarts — and this decides only what to do with what it was given.
+   *
+   * Left out, the command's behaviour is still a case in `CommandManager`'s
+   * `advanceStep` switch, which is being emptied a batch at a time. There is no
+   * difference in what they can do; a case is just further from its own
+   * declaration.
+   */
+  readonly execute?: (run: CommandRun) => StepOutcome | Promise<StepOutcome>;
+  /**
    * A command that acts at once and has no wizard — toggling a mode, undo, help.
    * Mutually exclusive with `steps`.
    */
@@ -125,13 +137,13 @@ interface CommandDefShape {
 
 // Declaration order is the autocomplete order.
 export const COMMANDS = [
-  { name: 'LINE', aliases: ['L', 'LINE'], help: 'draw line', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }] },
+  { name: 'LINE', aliases: ['L', 'LINE'], help: 'draw line', suggest: true, sticky: true, pointInput: true, execute: drawLine, steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }] },
   { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
-  { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
-  { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:' }, { kind: 'done' }] },
-  { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true,
+  { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, execute: drawRectangle, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
+  { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, execute: drawCircle, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:' }, { kind: 'done' }] },
+  { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true, execute: drawCircleByDiameter,
     steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify diameter or a point at that distance:' }, { kind: 'done' }] },
-  { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true,
+  { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true, execute: drawEllipse,
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
@@ -200,13 +212,13 @@ export const COMMANDS = [
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
   { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:' }, { kind: 'done' }] },
   { name: 'FILLET', aliases: ['F', 'FILLET'], help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:' }, { kind: 'done' }] },
-  { name: 'BOX', aliases: ['BX', 'BOX'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
-  { name: 'WEDGE', aliases: ['WE', 'WEDGE'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
-  { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
-  { name: 'CONE', aliases: ['CONE'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cone base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify cone height:' }, { kind: 'done' }] },
-  { name: 'CYLINDER', aliases: ['CYL', 'CYLINDER'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cylinder center:' }, { kind: 'point', label: 'Specify radius:' }, { kind: 'number', label: 'Specify cylinder height:' }, { kind: 'done' }] },
-  { name: 'PYRAMID', aliases: ['PYR', 'PYRAMID'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify pyramid base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify pyramid height:' }, { kind: 'done' }] },
-  { name: 'TORUS', aliases: ['TOR', 'TORUS'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify torus center:' }, { kind: 'point', label: 'Specify torus radius:' }, { kind: 'number', label: 'Specify tube radius:' }, { kind: 'done' }] },
+  { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
+  { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
+  { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
+  { name: 'CONE', aliases: ['CONE'], execute: createCone, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cone base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify cone height:' }, { kind: 'done' }] },
+  { name: 'CYLINDER', aliases: ['CYL', 'CYLINDER'], execute: createCylinder, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cylinder center:' }, { kind: 'point', label: 'Specify radius:' }, { kind: 'number', label: 'Specify cylinder height:' }, { kind: 'done' }] },
+  { name: 'PYRAMID', aliases: ['PYR', 'PYRAMID'], execute: createPyramid, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify pyramid base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify pyramid height:' }, { kind: 'done' }] },
+  { name: 'TORUS', aliases: ['TOR', 'TORUS'], execute: createTorus, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify torus center:' }, { kind: 'point', label: 'Specify torus radius:' }, { kind: 'number', label: 'Specify tube radius:' }, { kind: 'done' }] },
   { name: 'ARRAY_RECTANGULAR', aliases: ['ARR', 'ARRAY', 'RECTARRAY', 'ARRAYRECTANGULAR', 'RECTANGULAR'], help: 'create a rectangular array', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'number', label: 'Enter number of rows:' }, { kind: 'number', label: 'Enter number of columns:' }, { kind: 'number', label: 'Enter row spacing:' }, { kind: 'number', label: 'Enter column spacing:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
@@ -234,7 +246,7 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
-  { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
+  { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },

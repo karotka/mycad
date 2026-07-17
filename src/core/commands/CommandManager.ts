@@ -813,6 +813,31 @@ export class CommandManager {
       data.lastPoint = { x: point.x, y: point.y };
     }
 
+    // A command that says what its answers mean is asked; the rest are still in
+    // the switch below, and move out of it a batch at a time. The two halves
+    // agree on one thing: what happens after is the manager's, either way.
+    const migrated = commandDef(this.active.name).execute;
+    if (migrated) {
+      const outcome = await migrated({
+        ctx: this.ctx,
+        active: this.active,
+        step,
+        value,
+        data,
+        gather: (picked) => this.gatherPicked(picked),
+        cancel: () => this.cancelActive(),
+      });
+      // A command that ended itself has no step to advance and no prompt to show.
+      if (!this.active) return;
+      if (outcome === 'stay') {
+        this.showCurrentPrompt();
+        this.ctx.redraw();
+        return;
+      }
+      this.finishStep();
+      return;
+    }
+
     switch (this.active.name) {
       case 'POLYLINE': {
         const vertices = data.vertices as Vec2[];
@@ -834,78 +859,11 @@ export class CommandManager {
         return;
       }
 
-      case 'LINE':
-        if (this.active.stepIndex === 0) data.start = value;
-        else if (this.active.stepIndex === 1) {
-          const line = this.ctx.doc.createLine(data.start as Vec2, value as Vec2);
-          this.ctx.history.execute(new AddEntityEdit('Line', line));
-          this.ctx.log(`Line created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
-        }
-        break;
 
-      case 'CIRCLE_DIAMETER':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) {
-          const center = data.center as Vec2;
-          const diameter = dist2(center, value as Vec2);
-          if (diameter < 1e-9) { this.ctx.log('Diameter must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const circle = this.ctx.doc.createCircle(center, diameter / 2);
-          this.ctx.history.execute(new AddEntityEdit('Circle', circle));
-          this.ctx.log(`Circle created: center ${formatPoint(center)}, \u00d8${diameter.toFixed(4)}`);
-        }
-        break;
 
-      case 'ELLIPSE':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) data.axisPoint = value;
-        else if (this.active.stepIndex === 2) {
-          const center = data.center as Vec2;
-          const axis = data.axisPoint as Vec2;
-          const radiusX = dist2(center, axis);
-          const rotation = Math.atan2(axis.y - center.y, axis.x - center.x);
-          // The second axis is measured perpendicular to the first, so take the
-          // cursor's distance in the ellipse's own frame.
-          const cursor = value as Vec2;
-          const radiusY = Math.abs(-(cursor.x - center.x) * Math.sin(rotation) + (cursor.y - center.y) * Math.cos(rotation));
-          if (radiusX < 1e-9 || radiusY < 1e-9) {
-            this.ctx.log('Ellipse radii must be greater than zero.');
-            this.showCurrentPrompt();
-            return;
-          }
-          const ellipse = this.ctx.doc.createEllipse(center, radiusX, radiusY, rotation);
-          this.ctx.history.execute(new AddEntityEdit('Ellipse', ellipse));
-          this.ctx.log(`Ellipse created: RX ${radiusX.toFixed(3)}, RY ${radiusY.toFixed(3)}`);
-        }
-        break;
 
-      case 'CIRCLE':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) {
-          const r = dist2(data.center as Vec2, value as Vec2);
-          const circle = this.ctx.doc.createCircle(data.center as Vec2, r);
-          this.ctx.history.execute(new AddEntityEdit('Circle', circle));
-          this.ctx.log(`Circle created: center ${formatPoint(data.center as Vec2)}, r=${r.toFixed(4)}`);
-        }
-        break;
 
-      case 'RECTANGLE':
-        if (this.active.stepIndex === 0) data.start = value;
-        else if (this.active.stepIndex === 1) {
-          const rectangle = this.ctx.doc.createRectangle(data.start as Vec2, value as Vec2);
-          this.ctx.history.execute(new AddEntityEdit('Rectangle', rectangle));
-          this.ctx.log(`Rectangle created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
-        }
-        break;
 
-      case 'OCTAGON':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) {
-          const r = dist2(data.center as Vec2, value as Vec2);
-          const oct = this.ctx.doc.createOctagon(data.center as Vec2, r);
-          this.ctx.history.execute(new AddEntityEdit('Osmiuhelnik', oct));
-          this.ctx.log(`Octagon created: center ${formatPoint(data.center as Vec2)}, r=${r.toFixed(4)}`);
-        }
-        break;
 
       case 'POLYGON':
         if (this.active.stepIndex === 0) data.center = value;
@@ -959,99 +917,11 @@ export class CommandManager {
         }
         break;
 
-      case 'BOX':
-        if (this.active.stepIndex === 0) data.start = value;
-        else if (this.active.stepIndex === 1) data.end = value;
-        else {
-          const start = data.start as Vec2, end = data.end as Vec2;
-          const width = Math.abs(end.x - start.x), depth = Math.abs(end.y - start.y), height = Math.abs(value as number);
-          if (width < 1e-9 || depth < 1e-9 || height < 1e-9) { this.ctx.log('Box dimensions must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-          const plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane);
-          const local = createBoxMesh(width, depth, height, center.x, center.y);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const solid = this.ctx.doc.createSolid(mesh, 'Box', height, [], undefined, { kind: 'primitive', primitive: 'box', center, width, depth, height, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit('Box', [], [], [], [solid]));
-          this.ctx.doc.viewMode = '3d'; this.ctx.log(`Box created: ${width.toFixed(3)} × ${depth.toFixed(3)} × ${height.toFixed(3)}`);
-        }
-        break;
 
-      case 'CYLINDER':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) data.radiusPoint = value;
-        else {
-          const center = data.center as Vec2, radius = dist2(center, data.radiusPoint as Vec2), height = Math.abs(value as number);
-          if (radius < 1e-9 || height < 1e-9) { this.ctx.log('Cylinder radius and height must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane);
-          const local = createCylinderMesh(radius, height, center.x, center.y, 64);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const solid = this.ctx.doc.createSolid(mesh, 'Cylinder', height, [], undefined, { kind: 'primitive', primitive: 'cylinder', center, radius, height, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit('Cylinder', [], [], [], [solid]));
-          this.ctx.doc.viewMode = '3d'; this.ctx.log(`Cylinder created: R${radius.toFixed(3)}, H${height.toFixed(3)}`);
-        }
-        break;
 
-      case 'TORUS':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) data.radiusPoint = value;
-        else {
-          const center = data.center as Vec2;
-          const radius = dist2(center, data.radiusPoint as Vec2);
-          const tubeRadius = Math.abs(value as number);
-          if (radius < 1e-9 || tubeRadius < 1e-9) { this.ctx.log('Torus radius and tube radius must be greater than zero.'); this.showCurrentPrompt(); return; }
-          if (tubeRadius >= radius) { this.ctx.log('Tube radius must be smaller than the torus radius.'); this.showCurrentPrompt(); return; }
-          const plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane);
-          const local = createTorusMesh(radius, tubeRadius, center.x, center.y);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const solid = this.ctx.doc.createSolid(mesh, 'Torus', tubeRadius * 2, [], undefined, { kind: 'primitive', primitive: 'torus', center, radius, tubeRadius, height: tubeRadius * 2, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit('Torus', [], [], [], [solid]));
-          this.ctx.doc.viewMode = '3d';
-          this.ctx.log(`Torus created: R${radius.toFixed(3)}, tube R${tubeRadius.toFixed(3)}`);
-        }
-        break;
 
-      case 'WEDGE':
-        if (this.active.stepIndex === 0) data.start = value;
-        else if (this.active.stepIndex === 1) data.end = value;
-        else {
-          const start = data.start as Vec2, end = data.end as Vec2;
-          const width = Math.abs(end.x - start.x), depth = Math.abs(end.y - start.y), height = Math.abs(value as number);
-          if (width < 1e-9 || depth < 1e-9 || height < 1e-9) { this.ctx.log('Wedge dimensions must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }, plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane);
-          const local = createWedgeMesh(width, depth, height, center.x, center.y);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const solid = this.ctx.doc.createSolid(mesh, 'Wedge', height, [], undefined, { kind: 'primitive', primitive: 'wedge', center, width, depth, height, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit('Wedge', [], [], [], [solid])); this.ctx.doc.viewMode = '3d';
-        }
-        break;
 
-      case 'SPHERE':
-        if (this.active.stepIndex === 0) data.center = value;
-        else {
-          const center = data.center as Vec2, radius = dist2(center, value as Vec2);
-          if (radius < 1e-9) { this.ctx.log('Sphere radius must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane), local = createSphereMesh(radius, center.x, center.y);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const solid = this.ctx.doc.createSolid(mesh, 'Sphere', radius * 2, [], undefined, { kind: 'primitive', primitive: 'sphere', center, radius, height: radius * 2, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit('Sphere', [], [], [], [solid])); this.ctx.doc.viewMode = '3d';
-        }
-        break;
 
-      case 'CONE':
-      case 'PYRAMID':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) data.radiusPoint = value;
-        else {
-          const center = data.center as Vec2, radius = dist2(center, data.radiusPoint as Vec2), height = Math.abs(value as number);
-          if (radius < 1e-9 || height < 1e-9) { this.ctx.log('Radius and height must be greater than zero.'); this.showCurrentPrompt(); return; }
-          const plane = cloneWorkPlane(this.ctx.doc.activeWorkPlane);
-          const local = this.active.name === 'CONE' ? createConeMesh(radius, height, center.x, center.y) : createPyramidMesh(radius, height, center.x, center.y);
-          const mesh = { positions: transformMeshByWorkPlane(local.positions, plane), indices: transformMeshIndicesByWorkPlane(local.indices, plane) };
-          const primitive = this.active.name === 'CONE' ? 'cone' : 'pyramid';
-          const solid = this.ctx.doc.createSolid(mesh, this.active.name === 'CONE' ? 'Cone' : 'Pyramid', height, [], undefined, { kind: 'primitive', primitive, center, radius, height, workPlane: plane });
-          this.ctx.history.execute(new ReplaceObjectsEdit(this.active.name === 'CONE' ? 'Cone' : 'Pyramid', [], [], [], [solid])); this.ctx.doc.viewMode = '3d';
-        }
-        break;
 
       case 'EXTRUDE':
         if (step.kind === 'entity' && value) {
@@ -1880,6 +1750,16 @@ export class CommandManager {
       }
     }
 
+    this.finishStep();
+  }
+
+  /**
+   * On to the next question, or out. The same for every command, which is why
+   * it is here and not in any of them — the switch used to reach `break` to get
+   * at it, and a migrated command returns 'advance' to say the same thing.
+   */
+  private finishStep(): void {
+    if (!this.active) return;
     this.active.stepIndex++;
     while (this.active && this.active.steps[this.active.stepIndex]?.kind === 'done') {
       if (isStickyCommand(this.active.name)) {
