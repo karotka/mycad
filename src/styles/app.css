@@ -809,40 +809,59 @@ html, body, #app {
   dominant-baseline: middle;
 }
 
-/* Small, centred on the wheel, so the wheel and its N/E/S/W show all around. */
+/* Small, centred on the wheel, so the wheel and its N/E/S/W show all around.
+   A real cube now: six faces in 3D that turn with the camera and show whichever
+   sides face it, the way a navigation cube does. */
 .view-toggle .view-cube {
   position: absolute;
   left: 30px;
   top: 8px;
   width: 72px;
   height: 74px;
-  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.42));
-  transform-origin: 50% 50%;
-  transition: transform 180ms ease;
+  perspective: 340px;
 }
-.view-toggle .view-cube svg { width: 100%; height: 100%; overflow: visible; }
 
-.view-toggle .cube-face {
-  stroke: #9aa2aa;
-  stroke-width: 1;
-  stroke-linejoin: round;
-  cursor: pointer;
-  transition: fill 100ms;
+/* No filter here: a filter forces a flat rendering context and cancels
+   preserve-3d, which collapses the six faces onto one plane. The shadow goes on
+   the stage's compass instead. */
+.view-toggle .cube3d {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50px;
+  height: 50px;
+  margin: -25px;
+  transform-style: preserve-3d;
+  transition: transform 140ms ease;
 }
-.view-toggle .cube-face:hover,
-.view-toggle .cube-face.active { fill: #a9d8f4; }
 
-.view-toggle .cube-label {
-  fill: #565d65;
-  font: 700 8px/1 Arial, Helvetica, sans-serif;
-  text-anchor: middle;
-  dominant-baseline: middle;
+.view-toggle .cube3d-face {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border: 1px solid #7f878f;
+  background: rgba(176, 183, 190, 0.92);
+  color: #495059;
+  font: 700 10px/1 Arial, Helvetica, sans-serif;
   letter-spacing: -0.3px;
-  pointer-events: none;
+  cursor: pointer;
+  /* The three faces turned away from the camera are hidden, so only the front
+     three are seen and clickable — exactly what a view cube shows. */
+  backface-visibility: hidden;
+  transition: background 100ms;
 }
-/* The side labels lie along their faces so the text follows the box. */
-.view-toggle .cube-label-front { transform: rotate(27deg); transform-origin: 19px 53px; }
-.view-toggle .cube-label-right { transform: rotate(-27deg); transform-origin: 53px 53px; }
+.view-toggle .cube3d-face:hover,
+.view-toggle .cube3d-face.active { background: #a9d8f4; color: #245b7a; }
+
+.view-toggle .cube3d-front  { transform: translateZ(25px); }
+.view-toggle .cube3d-back   { transform: rotateY(180deg) translateZ(25px); }
+.view-toggle .cube3d-right  { transform: rotateY(90deg) translateZ(25px); }
+.view-toggle .cube3d-left   { transform: rotateY(-90deg) translateZ(25px); }
+.view-toggle .cube3d-top    { transform: rotateX(90deg) translateZ(25px); }
+.view-toggle .cube3d-bottom { transform: rotateX(-90deg) translateZ(25px); }
 
 .context-menu {
   position: fixed;

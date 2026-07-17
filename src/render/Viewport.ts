@@ -811,6 +811,23 @@ export class Viewport3D {
     this.updateProjection();
   }
 
+  /**
+   * Where the camera sits, as a view cube reads it: how far round the vertical
+   * axis (azimuth) and how far above the ground plane (elevation), in radians.
+   * Taken from the camera's actual position rather than orbitTheta/orbitPhi,
+   * which orbitByScreenDelta does not keep in step — it moves the camera
+   * directly. Three.js is Y-up, so its Y and Z are the world's Z and −Y.
+   */
+  viewCubeAngles(): { azimuth: number; elevation: number } {
+    const offset = this.camera.position.clone().sub(this.orbitTarget);
+    const worldX = offset.x, worldY = -offset.z, worldZ = offset.y;
+    const radius = Math.hypot(worldX, worldY, worldZ) || 1;
+    return {
+      azimuth: Math.atan2(worldY, worldX),
+      elevation: Math.asin(Math.max(-1, Math.min(1, worldZ / radius))),
+    };
+  }
+
   zoomByWheelDelta(deltaY: number): void {
     const factor = Math.exp(deltaY * 0.0025);
     const nextRadius = Math.max(2, Math.min(10000, this.orbitRadius * factor));
