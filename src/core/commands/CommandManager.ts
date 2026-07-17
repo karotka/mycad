@@ -11,18 +11,16 @@ import {
 import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './types';
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
-import { localToWorld, worldToLocal } from '../../math/workplane';
+import { worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { curvePoints, ellipsePoints, entityBounds, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
-  AddEntityEdit,
-  ReplaceObjectsEdit,
 } from '../history/edits';
 import {
 } from '../solids/ManifoldEngine';
 import { translatedFeature } from '../solids/featureTransform';
-import { copyEntity, copySolid, rotateEntity, rotateSolidAroundPlane } from './steps/transform';
+import { rotateSolidAroundPlane } from './steps/transform';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -108,29 +106,6 @@ export class CommandManager {
    * Ends a POLYLINE. Fewer than two vertices means nothing was drawn, so the
    * command is dropped rather than leaving a degenerate entity behind.
    */
-  private finishPolyline(closed: boolean): void {
-    if (!this.active || this.active.name !== 'POLYLINE') return;
-    const vertices = (this.active.data.vertices as Vec2[]) ?? [];
-    if (vertices.length < 2) {
-      this.cancelActive();
-      this.ctx.log('A polyline needs at least two points.');
-      this.ctx.prompt('Command:');
-      this.ctx.redraw();
-      return;
-    }
-    if (closed && vertices.length < 3) {
-      this.ctx.log('A closed polyline needs at least three points.');
-      this.showCurrentPrompt();
-      return;
-    }
-    const polyline = this.ctx.doc.createPolyline(vertices.map((vertex) => ({ ...vertex })), closed);
-    this.ctx.history.execute(new AddEntityEdit('Polyline', polyline));
-    this.ctx.log(`Polyline created: ${vertices.length} vertices${closed ? ', closed' : ''}.`);
-    this.active = null;
-    this.startCommand('POLYLINE'); // sticky, like the other drawing tools
-    this.ctx.redraw();
-  }
-
   resolveAlias(input: string): CommandName | null {
     const key = input.trim().toUpperCase();
     return COMMAND_ALIASES[key] ?? null;
@@ -342,8 +317,11 @@ export class CommandManager {
   private async processStepInput(input: string, step: CommandStep): Promise<void> {
     switch (step.kind) {
       case 'point': {
+        // C closes the polyline: the same answer as Enter, with the ends
+        // joined. Routed through the one path rather than a second way in.
         if (this.active?.name === 'POLYLINE' && this.active.stepIndex > 0 && input.trim().toUpperCase() === 'C') {
-          this.finishPolyline(true);
+          this.active.data.closing = true;
+          await this.advanceStep(null);
           return;
         }
         if (this.active?.name === 'SCALE' && this.active.stepIndex === 2) {
@@ -478,17 +456,14 @@ export class CommandManager {
       data.lastPoint = { x: point.x, y: point.y };
     }
 
-    // A command that says what its answers mean is asked; the rest are still in
-    // the switch below, and move out of it a batch at a time. The two halves
-    // agree on one thing: what happens after is the manager's, either way.
-    const migrated = commandDef(this.active.name).execute;
-    if (migrated) {
+    const execute = commandDef(this.active.name).execute;
+    if (execute) {
       // Awaited only when there is something to await. `await` on a plain value
       // still suspends until the next microtask, which would make every command
       // asynchronous whether it needed to be or not — and `startCommand` fires
       // this off with `void` for a preselection that answers everything, so an
       // ERASE would return with the objects still there and delete them later.
-      const answered = migrated({
+      const answered = execute({
         ctx: this.ctx,
         active: this.active,
         step,
@@ -507,194 +482,6 @@ export class CommandManager {
       }
       this.finishStep();
       return;
-    }
-
-    switch (this.active.name) {
-      case 'POLYLINE': {
-        const vertices = data.vertices as Vec2[];
-        const point = value as Vec2 | null;
-        if (point) {
-          // `start` is what ortho, polar and the preview track from, so keeping
-          // it on the last vertex makes the rubber band follow each segment.
-          vertices.push({ x: point.x, y: point.y });
-          data.start = { x: point.x, y: point.y };
-          if (this.active.stepIndex > 0) {
-            this.ctx.log(`Vertex ${vertices.length} added. Enter to finish, C to close.`);
-            this.showCurrentPrompt();
-            this.ctx.redraw();
-            return; // stay on the repeating step
-          }
-          break; // first point: move on to the repeating step
-        }
-        this.finishPolyline(false);
-        return;
-      }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        break;
-
-        break;
-
-        break;
-
-      case 'ARRAY_RECTANGULAR':
-        if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else if (value) {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          if (value) {
-            this.ctx.log('Object added. Select another or press Enter.');
-            return;
-          }
-        } else if (this.active.stepIndex >= 1 && this.active.stepIndex <= 4) {
-          const n = Number(value);
-          if (!Number.isFinite(n)) {
-            this.ctx.log('Invalid number.');
-            return;
-          }
-          if (this.active.stepIndex === 1) {
-            if (!Number.isInteger(n) || n < 1) {
-              this.ctx.log('Rows must be an integer greater than zero.');
-              return;
-            }
-            data.rows = n;
-          } else if (this.active.stepIndex === 2) {
-            if (!Number.isInteger(n) || n < 1) {
-              this.ctx.log('Columns must be an integer greater than zero.');
-              return;
-            }
-            data.columns = n;
-          } else if (this.active.stepIndex === 3) {
-            if (n <= 0) {
-              this.ctx.log('Row spacing must be greater than zero.');
-              return;
-            }
-            data.rowSpacing = n;
-          } else if (this.active.stepIndex === 4) {
-            if (n <= 0) {
-              this.ctx.log('Column spacing must be greater than zero.');
-              return;
-            }
-            data.columnSpacing = n;
-          }
-          if (this.active.stepIndex === 4) {
-            const rows = data.rows as number;
-            const columns = data.columns as number;
-            const rowSpacing = data.rowSpacing as number;
-            const columnSpacing = data.columnSpacing as number;
-            const originals = data.entities as Entity[];
-            const originalSolids = data.solids as Solid[];
-            const createdEntities: Entity[] = [];
-            const createdSolids: Solid[] = [];
-            const plane = this.ctx.doc.activeWorkPlane;
-            for (let row = 0; row < rows; row++) {
-              for (let column = 0; column < columns; column++) {
-                if (row === 0 && column === 0) continue;
-                const localDelta = { x: column * columnSpacing, y: row * rowSpacing };
-                const worldDelta = workPlaneDelta(plane, localDelta);
-                createdEntities.push(...originals.map((entity) => copyEntity(entity, localDelta)));
-                createdSolids.push(...originalSolids.map((solid) => copySolid(solid, worldDelta)));
-              }
-            }
-            this.ctx.history.execute(new ReplaceObjectsEdit('Rectangular array', [], [], createdEntities, createdSolids));
-            this.ctx.doc.clearSelection();
-            createdEntities.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-            createdSolids.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-            this.ctx.log(`Created rectangular array: ${rows} x ${columns}.`);
-            this.active = null;
-            this.ctx.prompt('Command:');
-            return;
-          }
-        }
-        break;
-
-      case 'ARRAY_POLAR':
-        if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else if (value) {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          if (value) {
-            this.ctx.log('Object added. Select another or press Enter.');
-            return;
-          }
-        } else if (this.active.stepIndex === 1) {
-          data.center = value;
-        } else if (this.active.stepIndex === 2) {
-          const count = Number(value);
-          if (!Number.isInteger(count) || count < 2) {
-            this.ctx.log('Number of items must be an integer greater than one.');
-            return;
-          }
-          data.count = count;
-        } else if (this.active.stepIndex === 3) {
-          const totalAngle = Number(value);
-          if (!Number.isFinite(totalAngle) || Math.abs(totalAngle) <= 1e-9) {
-            this.ctx.log('Total angle must be non-zero.');
-            return;
-          }
-          data.totalAngle = totalAngle;
-          const center = data.center as Vec2;
-          const count = data.count as number;
-          const originals = data.entities as Entity[];
-          const originalSolids = data.solids as Solid[];
-          const createdEntities: Entity[] = [];
-          const createdSolids: Solid[] = [];
-          const plane = this.ctx.doc.activeWorkPlane;
-          const centerLocal = worldToLocal(plane, localToWorld(plane, center));
-          for (let index = 1; index < count; index++) {
-            const angle = (totalAngle * Math.PI / 180) * (index / (count - 1));
-            createdEntities.push(...originals.map((entity) => rotateEntity(copyEntity(entity, { x: 0, y: 0 }), center, angle, this.ctx.doc)));
-            createdSolids.push(...originalSolids.map((solid) => rotateSolidAroundPlane(copySolid(solid, { x: 0, y: 0, z: 0 }), centerLocal, angle, plane)));
-          }
-          this.ctx.history.execute(new ReplaceObjectsEdit('Polar array', [], [], createdEntities, createdSolids));
-          this.ctx.doc.clearSelection();
-          createdEntities.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          createdSolids.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-          this.ctx.log(`Created polar array: ${count} items over ${totalAngle.toFixed(3)}°.`);
-          this.active = null;
-          this.ctx.prompt('Command:');
-          return;
-        }
-        break;
-
-        break;
-
-        break;
-
-        break;
-
-        break;
-
-        break;
-
-        break;
-
     }
 
     this.finishStep();

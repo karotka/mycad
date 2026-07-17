@@ -9,7 +9,7 @@
  */
 import { isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawRectangle, drawText } from './steps/draw';
+import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
@@ -17,6 +17,7 @@ import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions
 import { explodeObjects } from './steps/explode';
 import { extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
+import { arrayPolar, arrayRectangular } from './steps/array';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -144,7 +145,7 @@ interface CommandDefShape {
 // Declaration order is the autocomplete order.
 export const COMMANDS = [
   { name: 'LINE', aliases: ['L', 'LINE'], help: 'draw line', suggest: true, sticky: true, pointInput: true, execute: drawLine, steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }] },
-  { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
+  { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], execute: drawPolyline, help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
   { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, execute: drawRectangle, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, execute: drawCircle, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:' }, { kind: 'done' }] },
   { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true, execute: drawCircleByDiameter,
@@ -225,11 +226,11 @@ export const COMMANDS = [
   { name: 'CYLINDER', aliases: ['CYL', 'CYLINDER'], execute: createCylinder, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cylinder center:' }, { kind: 'point', label: 'Specify radius:' }, { kind: 'number', label: 'Specify cylinder height:' }, { kind: 'done' }] },
   { name: 'PYRAMID', aliases: ['PYR', 'PYRAMID'], execute: createPyramid, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify pyramid base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify pyramid height:' }, { kind: 'done' }] },
   { name: 'TORUS', aliases: ['TOR', 'TORUS'], execute: createTorus, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify torus center:' }, { kind: 'point', label: 'Specify torus radius:' }, { kind: 'number', label: 'Specify tube radius:' }, { kind: 'done' }] },
-  { name: 'ARRAY_RECTANGULAR', aliases: ['ARR', 'ARRAY', 'RECTARRAY', 'ARRAYRECTANGULAR', 'RECTANGULAR'], help: 'create a rectangular array', suggest: true,
+  { name: 'ARRAY_RECTANGULAR', aliases: ['ARR', 'ARRAY', 'RECTARRAY', 'ARRAYRECTANGULAR', 'RECTANGULAR'], execute: arrayRectangular, help: 'create a rectangular array', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'number', label: 'Enter number of rows:' }, { kind: 'number', label: 'Enter number of columns:' }, { kind: 'number', label: 'Enter row spacing:' }, { kind: 'number', label: 'Enter column spacing:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter array size.`) },
-  { name: 'ARRAY_POLAR', aliases: ['POLARARRAY', 'ARRAYPOLAR'], help: 'create a polar array', suggest: true,
+  { name: 'ARRAY_POLAR', aliases: ['POLARARRAY', 'ARRAYPOLAR'], execute: arrayPolar, help: 'create a polar array', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'point', label: 'Specify array center:' }, { kind: 'number', label: 'Enter number of items:' }, { kind: 'number', label: 'Enter total angle:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], totalAngle: 360 }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter polar array settings.`) },

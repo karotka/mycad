@@ -185,3 +185,44 @@ export function drawText({ ctx, active, data, value }: CommandRun): StepOutcome 
   ctx.log(`Text created: "${text.text}" in ${text.font}`);
   return 'advance';
 }
+
+/**
+ * A chain of points, ended by Enter or closed with C.
+ *
+ * The one command whose step repeats, which the step model still has no way to
+ * say — so the vertex step is `optional` and this returns 'stay' to hold the
+ * wizard there. Its finish used to restart the command by hand; returning
+ * 'advance' walks off the end of the steps, and sticky does the rest.
+ */
+export function drawPolyline(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  const vertices = data.vertices as Vec2[];
+  const point = value as Vec2 | null;
+
+  if (point) {
+    vertices.push({ x: point.x, y: point.y });
+    // `start` is what ortho, polar and the preview track from, so keeping it on
+    // the last vertex makes the rubber band follow each segment.
+    data.start = { x: point.x, y: point.y };
+    if (active.stepIndex === 0) return 'advance';
+    ctx.log(`Vertex ${vertices.length} added. Enter to finish, C to close.`);
+    return 'stay';
+  }
+
+  // Enter finishes; C asks for the same thing and joins the ends.
+  const closing = data.closing === true;
+  if (vertices.length < 2) {
+    ctx.log('A polyline needs at least two points.');
+    run.cancel();
+    return 'advance';
+  }
+  if (closing && vertices.length < 3) {
+    ctx.log('A closed polyline needs at least three points.');
+    delete data.closing;
+    return 'stay';
+  }
+  const polyline = ctx.doc.createPolyline(vertices.map((vertex) => ({ ...vertex })), closing);
+  ctx.history.execute(new AddEntityEdit('Polyline', polyline));
+  ctx.log(`Polyline created: ${vertices.length} vertices${closing ? ', closed' : ''}.`);
+  return 'advance';
+}
