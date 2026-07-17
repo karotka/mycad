@@ -36,7 +36,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-gcode' | 'undo' | 'redo';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-gcode' | 'settings' | 'undo' | 'redo';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -47,6 +47,8 @@ function buildMenu(win: BrowserWindow): void {
       label: app.name,
       submenu: [
         { role: 'about' as const },
+        { type: 'separator' as const },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') },
         { type: 'separator' as const },
         { role: 'services' as const },
         { type: 'separator' as const },
@@ -88,6 +90,8 @@ function buildMenu(win: BrowserWindow): void {
         { role: 'copy' },
         { role: 'paste' },
         { role: 'selectAll' },
+        // On macOS Settings lives in the app menu; elsewhere it belongs here.
+        ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }]),
       ],
     },
     {

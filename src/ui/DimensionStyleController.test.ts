@@ -15,10 +15,8 @@ describe('DimensionStyleController', () => {
       'dimension-extension-offset': { value: '0.75' }, 'dimension-text-offset': { value: '1.25' }, 'dimension-precision': { value: '3' },
       'dimension-scale': { value: '2' }, 'dimension-layer': { value: 'dims' },
     };
-    const panel = { hidden: true } as HTMLElement;
     const form = { addEventListener: vi.fn(), querySelector: vi.fn((selector: string) => values[selector.slice(1)]) } as unknown as HTMLFormElement;
-    const element = { addEventListener: vi.fn() } as unknown as HTMLElement;
-    const controller = new DimensionStyleController(doc, panel, form, element, element, vi.fn());
+    const controller = new DimensionStyleController(doc, form, vi.fn());
 
     (controller as unknown as { apply(): void }).apply();
     expect(doc.dimensionStyle).toEqual({ textHeight: 4, arrowSize: 3, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.75, textOffset: 1.25, precision: 3, scale: 2, layer: 'dims' });
@@ -42,13 +40,11 @@ describe('typing into an open dimension style panel', () => {
       querySelector: (selector: string) => fields.get(selector.slice(1)) ?? null,
       addEventListener: (_type: string, listener: () => void) => { onInput = listener; },
     } as unknown as HTMLFormElement;
-    const panel = { hidden: true } as HTMLElement;
-    const element = { addEventListener: vi.fn() } as unknown as HTMLElement;
     // render() rebuilds the layer select, which is the only DOM it needs.
     vi.stubGlobal('document', { createElement: () => ({ value: '', textContent: '' }) });
-    const controller = new DimensionStyleController(doc, panel, form, element, element, vi.fn());
-    doc.subscribe(() => { if (controller.isOpen) controller.render(); });
-    controller.toggle();
+    const controller = new DimensionStyleController(doc, form, vi.fn());
+    doc.subscribe(() => controller.render());
+    controller.render();
     return { doc, fields, type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); } };
   }
 

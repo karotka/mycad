@@ -18,11 +18,9 @@ function setup() {
     <button id="close"></button>`;
   const doc = new Document();
   const element = (id: string) => document.getElementById(id)!;
-  const controller = new GcodeSettingsController(
-    doc, element('panel'), element('form') as HTMLFormElement, element('toggle'), element('close'), vi.fn(),
-  );
+  const controller = new GcodeSettingsController(doc, element('form') as HTMLFormElement, vi.fn());
   // Wired the way main.ts wires it: the document tells the panel to redraw.
-  doc.subscribe(() => { if (controller.isOpen) controller.render(); });
+  doc.subscribe(() => controller.render());
   return { doc, controller };
 }
 
@@ -35,7 +33,7 @@ const type = (id: string, value: string) => {
 describe('GcodeSettingsController', () => {
   it('shows what the document will be exported with', () => {
     const { controller } = setup();
-    controller.toggle();
+    controller.render();
     expect(field('gcode-feed-rate').value).toBe('800');
     expect(field('gcode-cut-depth').value).toBe('0');
     expect(field('gcode-safe-height').value).toBe('5');
@@ -43,7 +41,7 @@ describe('GcodeSettingsController', () => {
 
   it('changes what comes out of the export', () => {
     const { doc, controller } = setup();
-    controller.toggle();
+    controller.render();
 
     type('gcode-feed-rate', '1200');
     type('gcode-cut-depth', '-2');
@@ -54,7 +52,7 @@ describe('GcodeSettingsController', () => {
 
   it('lets a field be cleared and retyped', () => {
     const { controller } = setup();
-    controller.toggle();
+    controller.render();
 
     // Emptying a number field to type a new one sends '' — apply() must not
     // answer by writing the old value back, or the box can never be cleared.
@@ -67,7 +65,7 @@ describe('GcodeSettingsController', () => {
 
   it('keeps the last good value rather than an unusable one', () => {
     const { doc, controller } = setup();
-    controller.toggle();
+    controller.render();
 
     type('gcode-feed-rate', '0');   // a plotter that never moves
     type('gcode-safe-height', '-1'); // a pen that lifts into the paper
@@ -80,7 +78,7 @@ describe('GcodeSettingsController', () => {
 
   it('takes a pen-down Z of zero or below, which the others could not', () => {
     const { doc, controller } = setup();
-    controller.toggle();
+    controller.render();
     // A pen touches the paper at 0 and a knife goes under it, so the guard the
     // other fields use would refuse the ordinary case.
     type('gcode-cut-depth', '-3.5');

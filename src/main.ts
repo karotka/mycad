@@ -28,6 +28,7 @@ import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
 import { GcodeSettingsController } from './ui/GcodeSettingsController';
+import { SettingsController } from './ui/SettingsController';
 import { pressPullFace, regenerateSolidFeature } from './core/solids/ManifoldEngine';
 import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
@@ -154,27 +155,27 @@ const propertiesController = new PropertiesController(
 );
 const draftingSettingsController = new DraftingSettingsController(
   cadDocument,
-  get('drafting-settings-panel'),
   get<HTMLFormElement>('drafting-settings-form'),
-  get('drafting-settings-toggle'),
-  get('drafting-settings-close'),
   redraw,
 );
 const dimensionStyleController = new DimensionStyleController(
   cadDocument,
-  get('dimension-style-panel'),
   get<HTMLFormElement>('dimension-style-form'),
-  get('dimension-style-toggle'),
-  get('dimension-style-close'),
   redraw,
 );
 const gcodeSettingsController = new GcodeSettingsController(
   cadDocument,
-  get('gcode-settings-panel'),
   get<HTMLFormElement>('gcode-settings-form'),
-  get('gcode-settings-toggle'),
-  get('gcode-settings-close'),
   redraw,
+);
+const settingsController = new SettingsController(
+  get('settings-window'),
+  get('settings-close'),
+  [
+    { button: get('settings-tab-drafting'), panel: get('drafting-settings-form'), render: () => draftingSettingsController.render() },
+    { button: get('settings-tab-dimension'), panel: get('dimension-style-form'), render: () => dimensionStyleController.render() },
+    { button: get('settings-tab-gcode'), panel: get('gcode-settings-form'), render: () => gcodeSettingsController.render() },
+  ],
 );
 const modelTreeController = new ModelTreeController(
   cadDocument,
@@ -353,11 +354,6 @@ function drawFrame(): void {
 }
 
 function drawChrome(): void {
-  get('view-status').textContent = renderer3d.activeStandardView?.toUpperCase()
-    ?? cadDocument.viewMode.toUpperCase();
-  get('snap-status').textContent = cadDocument.snapEnabled
-    ? `SNAP: ${cadDocument.snapSize} mm · GRID: ${cadDocument.gridSize} mm`
-    : `SNAP: OFF · GRID: ${cadDocument.gridSize} mm`;
   get<HTMLButtonElement>('osnap-toggle').classList.toggle('active', cadDocument.drafting.objectSnapEnabled);
   get<HTMLButtonElement>('ortho-toggle').classList.toggle('active', cadDocument.drafting.orthoEnabled);
   get<HTMLButtonElement>('polar-toggle').classList.toggle('active', cadDocument.drafting.polarEnabled);
@@ -486,6 +482,7 @@ const menuActions: Record<string, () => void> = {
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': () => { void projectController.exportStl(); },
   'export-gcode': () => { void projectController.exportGcode(); },
+  settings: () => settingsController.toggle(),
   undo: () => { log(history.undo() ? 'Undo complete.' : 'Nothing to undo.'); redraw(); },
   redo: () => { log(history.redo() ? 'Redo complete.' : 'Nothing to redo.'); redraw(); },
 };
@@ -938,9 +935,7 @@ cadDocument.subscribe(() => {
   redraw();
   if (layerController.isOpen) layerController.render();
   if (propertiesController.isOpen) propertiesController.render();
-  if (dimensionStyleController.isOpen) dimensionStyleController.render();
-  if (draftingSettingsController.isOpen) draftingSettingsController.render();
-  if (gcodeSettingsController.isOpen) gcodeSettingsController.render();
+  settingsController.renderActive();
   modelTreeController.render();
 });
 new ResizeObserver(resize).observe(viewport);

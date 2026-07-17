@@ -18,16 +18,13 @@ function setup() {
     querySelector: (selector: string) => fields.get(selector.slice(1)) ?? null,
     addEventListener: (_type: string, listener: () => void) => { onInput = listener; },
   } as unknown as HTMLFormElement;
-  const panel = { hidden: true } as HTMLElement;
-  const toggle = { addEventListener: vi.fn() } as unknown as HTMLElement;
-  const close = { addEventListener: vi.fn() } as unknown as HTMLElement;
   const changed = vi.fn();
-  const controller = new DraftingSettingsController(doc, panel, form, toggle, close, changed);
-  // Wired the way main.ts wires it: an open panel follows the document. Without
-  // this the tests miss anything the round trip does.
-  doc.subscribe(() => { if (controller.isOpen) controller.render(); });
+  const controller = new DraftingSettingsController(doc, form, changed);
+  // Wired the way main.ts wires it: the open window follows the document. The
+  // Settings window decides when to render; here the tab is always showing.
+  doc.subscribe(() => controller.render());
   return {
-    doc, controller, fields, changed, panel,
+    doc, controller, fields, changed,
     type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); },
   };
 }
@@ -94,23 +91,18 @@ describe('DraftingSettingsController', () => {
     expect(doc.drafting.polarAngles).toEqual([15, 75]);
   });
 
-  it('opens and closes, and reads the document each time it opens', () => {
+  it('reads the document each time it is shown', () => {
     const { doc, controller, fields } = setup();
-    expect(controller.isOpen).toBe(false);
     doc.snapSize = 3;
-    controller.toggle();
-    expect(controller.isOpen).toBe(true);
+    controller.render();
     expect(fields.get('drafting-snap-size')!.value).toBe('3');
-    controller.toggle();
-    expect(controller.isOpen).toBe(false);
   });
 });
 
 describe('typing into an open panel', () => {
   const open = () => {
     const kit = setup();
-    kit.controller.toggle();
-    expect(kit.controller.isOpen).toBe(true);
+    kit.controller.render();
     return kit;
   };
 

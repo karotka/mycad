@@ -5,25 +5,13 @@ import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 export class DimensionStyleController {
   constructor(
     private readonly doc: Document,
-    private readonly panel: HTMLElement,
     private readonly form: HTMLFormElement,
-    toggle: HTMLElement,
-    close: HTMLElement,
     private readonly changed: () => void,
   ) {
-    toggle.addEventListener('click', () => this.toggle());
-    close.addEventListener('click', () => { this.panel.hidden = true; });
     form.addEventListener('input', () => this.apply());
   }
 
   private applying = false;
-
-  get isOpen(): boolean { return !this.panel.hidden; }
-
-  toggle(): void {
-    this.panel.hidden = !this.panel.hidden;
-    if (!this.panel.hidden) this.render();
-  }
 
   /**
    * The panel must not rewrite its own fields while they are being typed into.

@@ -8,6 +8,55 @@ code at the time of writing unless marked otherwise.
 
 ---
 
+## UI: the bottom bar and a Settings window
+
+The status bar has grown into a row of unrelated things — panel toggles, live
+read-outs, mode buttons, visual-style cubes — with no order to it. The intent:
+
+**Left, in this order:** `TREE`, `PROPERTIES`, `LAYERS`, then the coordinate
+read-out. All three panel toggles are plain text buttons of the same weight — the
+tree loses its icon and its accent, the layers toggle loses its icon, so the row
+reads as one family rather than three different-looking controls.
+
+**Gone from the bar:** the `2D`/`3D` indicator and the `SNAP · GRID` read-out.
+The view is obvious from what is on screen, and the snap/grid values live in
+Settings now, so a static label for them is noise.
+
+**Right, aligned to the edge:** the three visual-style cubes (wireframe, shaded,
+X-ray). They belong together, away from the panel toggles, at the far end.
+*(Open: the reporter said "first wire, second shades, third the middle one" —
+clarify the third icon's look when building; the order wire/shaded/x-ray stands.)*
+
+**Moved into a Settings window:** Drafting, Dimension Style and G-code are three
+panels doing the same job — a form of document settings — and each has its own
+toggle cluttering the bar. A single **Settings** entry in the application menu
+opens one window with three tabs. The controllers already exist
+(`DraftingSettingsController`, `DimensionStyleController`, `GcodeSettingsController`)
+and each already carries the `applying` guard; this is a container with tabs
+around them, not a rewrite. The F-key mode buttons (OSNAP/ORTHO/…) stay on the
+bar — they are toggles you reach mid-draw, not settings.
+
+Effort: medium, and all presentation — no model change. Best done as its own
+pass because it touches `shell.ts`, `app.css`, the menu wiring in
+`electron/main.ts`, and how `main.ts` binds the three controllers.
+
+---
+
+## BOX and the other two-corner solids: drag the height live
+
+BOX, WEDGE and the rest ask for two corners and then a *typed* height, against a
+still picture — the same gap PRESSPULL and EXTRUDE had before they were given a
+live drag. The fix is the same shape: once the base rectangle is placed, the
+cursor drags the height and the solid is rebuilt as it moves, by the engine that
+will build the real one, so what is on screen is what gets made. A vertex under
+the cursor snaps, so a box can be pulled to exactly the height of something
+already drawn.
+
+`extrudeHeightUnderCursor` / `pressPullDrag` in `main.ts` are the pattern, and
+`axisOffsetUnderRay` already answers "how far along the up axis is the pointer".
+The primitives build synchronously (no WASM), so the preview costs a mesh rebuild
+per frame and nothing else.
+
 ## DXF import
 
 The importer now covers LINE, CIRCLE, ARC, LWPOLYLINE/POLYLINE (arcs via bulge),

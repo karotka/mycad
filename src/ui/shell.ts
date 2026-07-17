@@ -57,11 +57,10 @@ export function shellHtml(tools: ShellTools): string {
       </div>
     </section>
     <footer class="statusbar">
-      <button class="model-tree-toggle" id="model-tree-toggle" title="Model Tree — how each solid was built" aria-label="Model Tree">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v13a2 2 0 002 2h3M4 12h5"/><rect x="13" y="2" width="7" height="6" rx="1"/><rect x="13" y="9" width="7" height="6" rx="1"/><rect x="13" y="16" width="7" height="6" rx="1"/><path d="M9 5h4M9 12h4M9 19h4"/></svg>
-        <span>TREE</span>
-      </button>
-      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span><span id="view-status">2D</span><span id="snap-status">SNAP: 0.5 mm · GRID: 1 mm</span>
+      <button class="bar-toggle" id="model-tree-toggle" title="Model Tree — how each solid was built" aria-label="Model Tree">TREE</button>
+      <button class="bar-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
+      <button class="bar-toggle" id="layer-toggle" title="Layers" aria-label="Layers">LAYERS <span id="layer-current">0</span></button>
+      <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
@@ -80,14 +79,6 @@ export function shellHtml(tools: ShellTools): string {
           <svg viewBox="0 0 24 24" aria-hidden="true"><path class="xray-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="xray-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="xray-right" d="M20 7.5L12 12v9l8-4.5v-9z"/><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"/></svg>
         </button>
       </div>
-      <button class="layer-toggle" id="layer-toggle" title="Layers" aria-label="Layers">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L3 8l9 5 9-5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg>
-        <span id="layer-current">0</span>
-      </button>
-      <button class="properties-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
-      <button class="properties-toggle" id="drafting-settings-toggle" title="Drafting Settings — snap step, grid, polar angles" aria-label="Drafting Settings">DRAFTING</button>
-      <button class="properties-toggle" id="dimension-style-toggle" title="Dimension Style" aria-label="Dimension Style">DIM STYLE</button>
-      <button class="properties-toggle" id="gcode-settings-toggle" title="G-code — feed rates and pen heights for the plotter" aria-label="G-code Settings">G-CODE</button>
       <section class="properties-panel model-tree-panel" id="model-tree-panel" hidden>
         <header><strong>Model Tree</strong><button id="model-tree-close" title="Close">×</button></header>
         <div class="properties-content" id="model-tree-list"></div>
@@ -100,27 +91,22 @@ export function shellHtml(tools: ShellTools): string {
         <header><strong>Object Properties</strong><button id="properties-close" title="Close">×</button></header>
         <div class="properties-content" id="properties-content"></div>
       </section>
-      <section class="properties-panel dimension-style-panel" id="drafting-settings-panel" hidden>
-        <header><strong>Drafting Settings</strong><button id="drafting-settings-close" title="Close">×</button></header>
-        <form class="properties-content" id="drafting-settings-form">
+      <section class="settings-window" id="settings-window" hidden>
+        <header class="settings-header">
+          <strong>Settings</strong>
+          <div class="settings-tabs" role="tablist">
+            <button class="settings-tab" id="settings-tab-drafting" role="tab">Drafting</button>
+            <button class="settings-tab" id="settings-tab-dimension" role="tab">Dimensions</button>
+            <button class="settings-tab" id="settings-tab-gcode" role="tab">G-code</button>
+          </div>
+          <button id="settings-close" title="Close">×</button>
+        </header>
+        <form class="properties-content settings-tab-panel" id="drafting-settings-form" hidden>
           <label class="property-row"><span>Snap step (F9)</span><input id="drafting-snap-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Grid spacing</span><input id="drafting-grid-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Polar angles (F10)</span><input id="drafting-polar-angles" type="text" inputmode="numeric" placeholder="30, 45, 90"></label>
         </form>
-      </section>
-      <section class="properties-panel dimension-style-panel" id="gcode-settings-panel" hidden>
-        <header><strong>G-code</strong><button id="gcode-settings-close" title="Close">×</button></header>
-        <form class="properties-content" id="gcode-settings-form">
-          <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
-          <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
-          <label class="property-row"><span>Pen down Z</span><input id="gcode-cut-depth" type="number" step="0.1" title="Z where the pen touches; negative cuts"></label>
-          <label class="property-row"><span>Pen up Z</span><input id="gcode-safe-height" type="number" min="0.1" step="0.5" title="Z to lift to before travelling"></label>
-          <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
-        </form>
-      </section>
-      <section class="properties-panel dimension-style-panel" id="dimension-style-panel" hidden>
-        <header><strong>Dimension Style</strong><button id="dimension-style-close" title="Close">×</button></header>
-        <form class="properties-content" id="dimension-style-form">
+        <form class="properties-content settings-tab-panel" id="dimension-style-form" hidden>
           <label class="property-row"><span>Text height</span><input id="dimension-text-height" type="number" min="0.1" step="0.1"></label>
           <label class="property-row"><span>Arrow size</span><input id="dimension-arrow-size" type="number" min="0.1" step="0.1"></label>
           <label class="property-row"><span>Arrow type</span><select id="dimension-arrow-type"><option value="closed">Closed filled</option><option value="open">Open</option><option value="tick">Architectural tick</option></select></label>
@@ -130,6 +116,13 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Precision</span><input id="dimension-precision" type="number" min="0" max="8" step="1"></label>
           <label class="property-row"><span>Scale</span><input id="dimension-scale" type="number" min="0.01" step="0.1"></label>
           <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
+        </form>
+        <form class="properties-content settings-tab-panel" id="gcode-settings-form" hidden>
+          <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
+          <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
+          <label class="property-row"><span>Pen down Z</span><input id="gcode-cut-depth" type="number" step="0.1" title="Z where the pen touches; negative cuts"></label>
+          <label class="property-row"><span>Pen up Z</span><input id="gcode-safe-height" type="number" min="0.1" step="0.5" title="Z to lift to before travelling"></label>
+          <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
         </form>
       </section>
     </footer>
