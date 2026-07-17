@@ -842,10 +842,10 @@ html, body, #app {
   display: grid;
   place-items: center;
   margin: 0;
-  border: 1px solid #949ca4;
-  background: rgba(233, 237, 240, 0.96);
-  color: #565d65;
-  font: 700 8px/1 Arial, Helvetica, sans-serif;
+  border: 1px solid #7f878f;
+  background: rgba(176, 183, 190, 0.92);
+  color: #495059;
+  font: 700 10px/1 Arial, Helvetica, sans-serif;
   letter-spacing: -0.3px;
   cursor: pointer;
   /* The three faces turned away from the camera are hidden, so only the front
