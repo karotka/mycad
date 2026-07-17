@@ -63,25 +63,14 @@ export function shellHtml(tools: ShellTools): string {
             <text class="compass-mark" x="128" y="74">E</text>
           </svg>
           <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
-            <svg viewBox="0 0 72 74" aria-hidden="false">
-              <defs>
-                <linearGradient id="cf-top" x1="0" y1="0" x2="0.3" y2="1">
-                  <stop offset="0" stop-color="#f8fafb"/><stop offset="1" stop-color="#e2e6ea"/>
-                </linearGradient>
-                <linearGradient id="cf-front" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#dee2e6"/><stop offset="1" stop-color="#c2c8ce"/>
-                </linearGradient>
-                <linearGradient id="cf-right" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#c5cbd1"/><stop offset="1" stop-color="#a4acb4"/>
-                </linearGradient>
-              </defs>
-              <polygon class="cube-face" data-standard-view="top" points="36,2 69,19 36,36 3,19" fill="url(#cf-top)"/>
-              <polygon class="cube-face" data-standard-view="front" points="3,19 36,36 36,72 3,55" fill="url(#cf-front)"/>
-              <polygon class="cube-face" data-standard-view="right" points="36,36 69,19 69,55 36,72" fill="url(#cf-right)"/>
-              <text class="cube-label" x="36" y="21">TOP</text>
-              <text class="cube-label cube-label-front" x="19" y="53">FRONT</text>
-              <text class="cube-label cube-label-right" x="53" y="53">RIGHT</text>
-            </svg>
+            <div class="cube3d" id="cube3d">
+              <button class="cube3d-face cube3d-top" data-standard-view="top" title="Top view">TOP</button>
+              <button class="cube3d-face cube3d-bottom" data-standard-view="bottom" title="Bottom view">BOTTOM</button>
+              <button class="cube3d-face cube3d-front" data-standard-view="front" title="Front view">FRONT</button>
+              <button class="cube3d-face cube3d-back" data-standard-view="back" title="Back view">BACK</button>
+              <button class="cube3d-face cube3d-left" data-standard-view="left" title="Left view">LEFT</button>
+              <button class="cube3d-face cube3d-right" data-standard-view="right" title="Right view">RIGHT</button>
+            </div>
           </div>
         </div>
         <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">

@@ -414,13 +414,17 @@ function gripEditingPoint(
 }
 
 function updateViewCubeOrientation(): void {
-  const plane = cadDocument.activeWorkPlane;
-  const yaw = Math.atan2(plane.xAxis.y, plane.xAxis.x) * 180 / Math.PI;
-  const pitch = Math.asin(Math.max(-1, Math.min(1, plane.xAxis.z))) * 180 / Math.PI;
-  const roll = Math.asin(Math.max(-1, Math.min(1, plane.yAxis.z))) * 180 / Math.PI;
-  const cube = get<HTMLElement>('view-cube');
-  cube.style.transform = `perspective(180px) rotateZ(${-yaw}deg) rotateX(${pitch * 0.55}deg) rotateY(${-roll * 0.55}deg)`;
-  cube.classList.toggle('ucs-oriented', Math.abs(yaw) + Math.abs(pitch) + Math.abs(roll) > 0.01);
+  // The cube turns to face the camera the way the scene does: tilted down by the
+  // camera's elevation, spun round by its azimuth. The exact signs and offset
+  // were worked out against the viewport, not derived.
+  const { azimuth, elevation } = renderer3d.viewCubeAngles();
+  // Tilt down from straight-on by how far the camera is above the ground, and
+  // spin round by its azimuth. rotateY, not rotateZ: the spin is about the
+  // upright axis, which turns the side faces past the camera; rotateZ would only
+  // twist the picture in its own plane.
+  const tilt = -elevation * 180 / Math.PI;
+  const spin = -(azimuth * 180 / Math.PI) - 90;
+  get<HTMLElement>('cube3d').style.transform = `rotateX(${tilt}deg) rotateY(${spin}deg)`;
 }
 
 const commands = new CommandManager({

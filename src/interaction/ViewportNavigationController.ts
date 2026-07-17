@@ -24,6 +24,7 @@ export class ViewportNavigationController {
         this.callbacks.enter3dForOrbit();
         this.renderer3d.orbitByScreenDelta(event.deltaX * 0.6, event.deltaY * 0.6);
         this.renderer3d.render();
+        this.callbacks.redraw(); // the view cube follows the camera
         return;
       }
       const before = this.renderer2d.screenToWorld(cursor.x, cursor.y, rect.width, rect.height);
@@ -42,6 +43,7 @@ export class ViewportNavigationController {
       this.renderer3d.zoomByWheelDelta(event.deltaY);
     }
     this.renderer3d.render();
+    this.callbacks.redraw(); // the view cube follows the camera
   };
 
   constructor(
