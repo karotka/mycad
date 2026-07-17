@@ -1,6 +1,7 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, extrusionFeature, hitTestEntity, type CommandName } from './core/commands/CommandManager';
+import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
+import { extrusionFeature } from './core/solids/extrusion';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
 import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidFeature, type SolidMesh } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';

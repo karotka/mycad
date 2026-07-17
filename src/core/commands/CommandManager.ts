@@ -10,37 +10,17 @@ import {
 } from './registry';
 import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './types';
 import type { Vec2, Vec3 } from '../../math/geometry';
-import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2, rotatePoint } from '../../math/geometry';
-import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
-import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, closedVertices, curvePoints, dimensionGeometry, linearDimensionRotation, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { closePolyline, dist2, formatPoint, midpoint2, rotatePoint } from '../../math/geometry';
+import { localToWorld, worldToLocal } from '../../math/workplane';
+import { WORLD_WORK_PLANE } from '../../math/workplane';
+import { cloneEntity, closedVertices, curvePoints, ellipsePoints, entityBounds, getEntityPoints, isLineLikeEntity, isOffsetEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
-  AddEntitiesEdit,
   AddEntityEdit,
-  RemoveEntityEdit,
-  RemoveSolidEdit,
   ReplaceObjectsEdit,
   UpdateEntityEdit,
-  UpdateSolidEdit,
-  cloneSolid,
 } from '../history/edits';
 import {
-  booleanSubtract,
-  booleanUnion,
-  extrudeProfile,
-  sweepProfile,
-  pressPullSolid,
-  pressPullFace,
-  modifySolidEdge,
-  regenerateSolidFeature,
-  createBoxMesh,
-  createCylinderMesh,
-  createConeMesh,
-  createSphereMesh,
-  createTorusMesh,
-  createWedgeMesh,
-  createPyramidMesh,
 } from '../solids/ManifoldEngine';
 import { translatedFeature } from '../solids/featureTransform';
 import { copyEntity, copySolid, rotateEntity, rotateSolidAroundPlane } from './steps/transform';
@@ -734,104 +714,6 @@ export class CommandManager {
 
 
 
-      case 'EXTRUDE':
-        if (step.kind === 'entity' && value) {
-          (data.entities as Entity[]).push(value as Entity);
-          this.ctx.log(`Profile added: ${(value as Entity).type} (${(value as Entity).id})`);
-          // Allow selecting one profile then height
-          this.active.stepIndex = 1;
-          this.showCurrentPrompt();
-          return;
-        } else if (step.kind === 'number') {
-          const entered = value as number;
-          const entities = data.entities as Entity[];
-          if (entities.length === 0) {
-            this.ctx.log('No profile selected.');
-            break;
-          }
-          if (Math.abs(entered) < 1e-9) {
-            this.ctx.log('Extrusion height cannot be zero.');
-            this.showCurrentPrompt();
-            return;
-          }
-          this.ctx.log('Extruding…');
-          const feature = extrusionFeature(entities[0], entered);
-          // Built from the feature, not beside it. The mesh used to come from
-          // extrudeProfile while the feature described the same solid a second
-          // time, so the shape you got and the shape it regenerated into were
-          // two answers that only happened to agree.
-          const mesh = await regenerateSolidFeature(feature);
-          if (mesh) {
-            const solid = this.ctx.doc.createSolid(
-              mesh,
-              `Extrusion_${entities.map((e) => e.id).join('_')}`,
-              feature.height,
-              entities.map((e) => e.id),
-              undefined,
-              feature,
-            );
-            this.ctx.history.execute(new ReplaceObjectsEdit('Extrude', entities, [], [], [solid]));
-            this.ctx.doc.viewMode = '3d';
-            this.ctx.log(`Extrusion complete, height=${entered}`);
-          } else {
-            this.ctx.log('Extrusion failed — select a closed profile.');
-          }
-        }
-        break;
-
-      case 'SWEEP':
-        if (this.active.stepIndex === 0 && step.kind === 'entity' && value) {
-          const entity = value as Entity;
-          if (!isSweepProfileEntity(entity)) {
-            this.ctx.log('Sweep profile must be a closed 2D object.');
-            this.showCurrentPrompt();
-            return;
-          }
-          data.profile = entity;
-          this.ctx.log(`Profile selected: ${entity.type} (${entity.id})`);
-          this.active.stepIndex = 1;
-          this.showCurrentPrompt();
-          return;
-        } else if (this.active.stepIndex === 1 && step.kind === 'entity' && value) {
-          const profile = data.profile as Entity | undefined;
-          const path = value as Entity;
-          if (!profile) {
-            this.ctx.log('No profile selected.');
-            break;
-          }
-          if (!isSweepPathEntity(path)) {
-            this.ctx.log('Sweep path must be a line, arc, bezier, polyline or circle.');
-            this.showCurrentPrompt();
-            return;
-          }
-          this.ctx.log('Sweeping…');
-          const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
-          const mesh = await sweepProfile(profile, path, plane);
-          if (mesh) {
-            const solid = this.ctx.doc.createSolid(
-              mesh,
-              `Sweep_${profile.id}_${path.id}`,
-              0,
-              [profile.id, path.id],
-              undefined,
-              {
-                kind: 'sweep',
-                profile: cloneEntity(profile),
-                path: cloneEntity(path),
-                workPlane: cloneWorkPlane(plane),
-              },
-            );
-            this.ctx.history.execute(new ReplaceObjectsEdit('Sweep', [profile], [], [], [solid]));
-            this.ctx.doc.clearSelection();
-            this.ctx.doc.selectSolid(solid.id);
-            this.ctx.doc.viewMode = '3d';
-            this.ctx.log(`Sweep complete (${profile.id} along ${path.id}).`);
-          } else {
-            this.ctx.log('Sweep failed — select a valid path and closed profile.');
-          }
-        }
-        break;
-
 
 
         break;
@@ -985,34 +867,6 @@ export class CommandManager {
         }
         break;
 
-      case 'CHAMFER':
-      case 'FILLET':
-        if (this.active.stepIndex === 0) {
-          const edge = value as SolidEdgeSelection;
-          data.edge = edge;
-          this.ctx.doc.selectSolid(edge.solidId);
-          this.ctx.log('Edge selected.');
-        } else {
-          const amount = Math.abs(value as number);
-          if (amount < 1e-6) { this.ctx.log('Edge modification size must be greater than zero.'); return; }
-          const edge = data.edge as SolidEdgeSelection;
-          const solid = this.ctx.doc.getSolid(edge.solidId);
-          if (!solid) { this.ctx.log('Solid not found.'); return; }
-          const before = cloneSolid(solid);
-          const mesh = await modifySolidEdge(solid.mesh, edge, amount, this.active.name === 'FILLET');
-          if (!mesh) {
-            this.ctx.log(`${this.active.name} failed. Use a smaller value or select a convex edge.`);
-            return;
-          }
-          solid.mesh = mesh;
-          solid.feature = { kind: 'mesh' };
-          solid.revision++;
-          this.ctx.history.recordApplied(new UpdateSolidEdit(this.active.name === 'FILLET' ? 'Fillet edge' : 'Chamfer edge', before, cloneSolid(solid)));
-          this.ctx.doc.notify();
-          this.ctx.log(`${this.active.name === 'FILLET' ? 'Fillet' : 'Chamfer'} complete: ${amount.toFixed(3)} mm.`);
-        }
-        break;
-
         break;
 
         break;
@@ -1155,51 +1009,6 @@ export class CommandManager {
 
         break;
 
-      case 'PRESSPULL':
-        if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') data.solidId = value;
-          else {
-            const face = value as SolidFaceSelection;
-            data.solidId = face.solidId;
-            data.face = face;
-          }
-        }
-        else if (this.active.stepIndex === 1) {
-          const solid = this.ctx.doc.getSolid(data.solidId as string);
-          if (!solid) {
-            this.ctx.log('Solid not found.');
-            break;
-          }
-          const delta = value as number;
-          const before = cloneSolid(solid);
-          this.ctx.log('Applying PressPull…');
-          let mesh;
-          const face = data.face as SolidFaceSelection | undefined;
-          if (face) {
-            mesh = pressPullFace(solid.mesh, face.vertexIndices, face.normal, delta);
-            if (mesh) solid.feature = { kind: 'mesh' };
-          } else if (solid.feature.kind === 'extrusion') {
-            const nextFeature = JSON.parse(JSON.stringify(solid.feature)) as typeof solid.feature;
-            nextFeature.height = Math.max(0.01, nextFeature.height + delta);
-            mesh = await regenerateSolidFeature(nextFeature);
-            if (mesh) solid.feature = nextFeature;
-          } else {
-            mesh = await pressPullSolid(solid.mesh, delta);
-          }
-          if (mesh) {
-            solid.mesh = mesh;
-            solid.height = solid.feature.kind === 'extrusion'
-              ? solid.feature.height
-              : Math.max(0.01, solid.height + delta);
-            solid.revision++;
-            const after = cloneSolid(solid);
-            this.ctx.history.recordApplied(new UpdateSolidEdit('Press/Pull', before, after));
-            this.ctx.doc.notify();
-            this.ctx.log(`PressPull complete, delta=${delta}`);
-          }
-        }
-        break;
-
         break;
 
         break;
@@ -1253,36 +1062,6 @@ export class CommandManager {
     if (this.historyIndex >= this.history.length) return '';
     return this.history[this.historyIndex];
   }
-}
-
-/**
- * Which way a linear dimension measures, from where its line was pulled: drag it
- * up or down and it reads the horizontal distance, drag it aside and it reads the
- * vertical one. This is what AutoCAD does while you place it.
- */
-/**
- * A profile pushed through a height, signed.
- *
- * A negative height used to be thrown away by `Math.abs`, on the reasoning that
- * an extrusion is a distance along the work plane's positive Z and a direction
- * is the UCS's business. But asking for -10 and being handed +10 is not a
- * convention, it is the app disagreeing with you in silence — and every CAD
- * program in the world extrudes downwards for a negative height.
- *
- * Manifold only extrudes along +Z, so downwards is the same prism built upwards
- * and dropped by its own height. `transform.translateZ` already existed for
- * exactly this kind of thing, and regeneration already honours it.
- */
-export function extrusionFeature(profile: Entity, height: number): ExtrusionFeature {
-  return {
-    kind: 'extrusion',
-    profile: cloneEntity(profile),
-    height: Math.abs(height),
-    // Cloned: the fallback is a shared constant, and a feature holding it would
-    // hand every extrusion in the document the same work plane object.
-    workPlane: cloneWorkPlane(profile.workPlane ?? WORLD_WORK_PLANE),
-    transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, translateZ: height < 0 ? height : 0 },
-  };
 }
 
 /** Distance from a point to a segment — the basis of every stroke hit test. */

@@ -15,6 +15,7 @@ import { subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
+import { extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -214,8 +215,8 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
-  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:' }, { kind: 'done' }] },
-  { name: 'FILLET', aliases: ['F', 'FILLET'], help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:' }, { kind: 'done' }] },
+  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:' }, { kind: 'done' }] },
+  { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:' }, { kind: 'done' }] },
   { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
   { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
   { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
@@ -231,7 +232,7 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'point', label: 'Specify array center:' }, { kind: 'number', label: 'Enter number of items:' }, { kind: 'number', label: 'Enter total angle:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], totalAngle: 360 }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter polar array settings.`) },
-  { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], help: 'extrude closed profile', suggest: true,
+  { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], execute: extrudeProfileStep, help: 'extrude closed profile', suggest: true,
     steps: [{ kind: 'entity', label: 'Select a closed 2D profile:' }, { kind: 'number', label: 'Enter extrusion height:' }, { kind: 'done' }],
     data: () => ({ entities: [] }),
     onStart: (active, ctx) => {
@@ -240,11 +241,11 @@ export const COMMANDS = [
       active.data.entities = [profile];
       active.stepIndex = 1;
     } },
-  { name: 'SWEEP', aliases: ['SW', 'SWEEP'], help: 'sweep profile along path', suggest: true,
+  { name: 'SWEEP', aliases: ['SW', 'SWEEP'], execute: sweepProfileStep, help: 'sweep profile along path', suggest: true,
     steps: [{ kind: 'entity', label: 'Select closed 2D profile:' }, { kind: 'entity', label: 'Select path:' }, { kind: 'done' }],
     data: () => ({ profile: undefined }),
     onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Select sweep path.') },
-  { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
+  { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
   { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true, steps: [{ kind: 'solid', label: 'Select base solid:', additive: true }, { kind: 'solid', label: 'Select solid to subtract:', additive: true }, { kind: 'done' }] },
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
