@@ -10,15 +10,14 @@ import {
 } from './registry';
 import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './types';
 import type { Vec2, Vec3 } from '../../math/geometry';
-import { closePolyline, dist2, formatPoint, midpoint2, rotatePoint } from '../../math/geometry';
+import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { localToWorld, worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, closedVertices, curvePoints, ellipsePoints, entityBounds, getEntityPoints, isLineLikeEntity, isOffsetEntity, transformEntityPoints, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { curvePoints, ellipsePoints, entityBounds, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntityEdit,
   ReplaceObjectsEdit,
-  UpdateEntityEdit,
 } from '../history/edits';
 import {
 } from '../solids/ManifoldEngine';
@@ -42,125 +41,8 @@ function helpLine(command: CommandDef): string {
 
 
 
-function lineIntersectionParameters(a: Vec2, b: Vec2, c: Vec2, d: Vec2): { point: Vec2; t: number; u: number } | null {
-  const rx = b.x - a.x;
-  const ry = b.y - a.y;
-  const sx = d.x - c.x;
-  const sy = d.y - c.y;
-  const denominator = rx * sy - ry * sx;
-  if (Math.abs(denominator) < 1e-10) return null;
-  const qx = c.x - a.x;
-  const qy = c.y - a.y;
-  const t = (qx * sy - qy * sx) / denominator;
-  const u = (qx * ry - qy * rx) / denominator;
-  return { point: { x: a.x + t * rx, y: a.y + t * ry }, t, u };
-}
-
-type LineLikeSegment = { start: Vec2; end: Vec2; startIndex: number; endIndex: number };
 
 
-function lineLikeSegments(entity: Extract<Entity, { type: 'line' | 'polyline' }>): LineLikeSegment[] {
-  if (entity.type === 'line') return [{ start: entity.start, end: entity.end, startIndex: 0, endIndex: 1 }];
-  const segments: LineLikeSegment[] = [];
-  const count = entity.closed ? entity.vertices.length : entity.vertices.length - 1;
-  for (let index = 0; index < count; index++) {
-    const startIndex = index;
-    const endIndex = entity.closed ? (index + 1) % entity.vertices.length : index + 1;
-    const start = entity.vertices[startIndex];
-    const end = entity.vertices[endIndex];
-    if (start && end) segments.push({ start, end, startIndex, endIndex });
-  }
-  return segments;
-}
-
-function segmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const len2 = dx * dx + dy * dy;
-  if (len2 < 1e-12) return dist2(point, start);
-  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / len2));
-  const projection = { x: start.x + t * dx, y: start.y + t * dy };
-  return dist2(point, projection);
-}
-
-function nearestLineLikeSegment(entity: Extract<Entity, { type: 'line' | 'polyline' }>, point: Vec2): LineLikeSegment {
-  const segments = lineLikeSegments(entity);
-  if (segments.length === 0) {
-    if (entity.type === 'line') return { start: entity.start, end: entity.end, startIndex: 0, endIndex: 1 };
-    const fallback = entity.vertices[0] ?? { x: 0, y: 0 };
-    return { start: fallback, end: fallback, startIndex: 0, endIndex: 0 };
-  }
-  let best = segments[0];
-  let bestDistance = segmentDistance(point, best.start, best.end);
-  for (const segment of segments.slice(1)) {
-    const distance = segmentDistance(point, segment.start, segment.end);
-    if (distance < bestDistance) { best = segment; bestDistance = distance; }
-  }
-  return best;
-}
-
-function collectLineLikeIntersections(target: LineLikeSegment, boundary: Extract<Entity, { type: 'line' | 'polyline' }>): Array<{ point: Vec2; t: number; u: number }> {
-  const intersections: Array<{ point: Vec2; t: number; u: number }> = [];
-  for (const segment of lineLikeSegments(boundary)) {
-    const hit = lineIntersectionParameters(target.start, target.end, segment.start, segment.end);
-    if (hit) intersections.push(hit);
-  }
-  return intersections;
-}
-
-function sameWorkPlane(a: Entity, b: Entity): boolean {
-  return JSON.stringify(a.workPlane ?? WORLD_WORK_PLANE) === JSON.stringify(b.workPlane ?? WORLD_WORK_PLANE);
-}
-
-
-
-function isSweepPathEntity(entity: Entity): boolean {
-  return entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier'
-    || entity.type === 'circle' || entity.type === 'polyline';
-}
-
-function pointInClosedPolygon(point: Vec2, vertices: Vec2[]): boolean {
-  let inside = false;
-  for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
-    const a = vertices[index], b = vertices[previous];
-    if ((a.y > point.y) !== (b.y > point.y)
-      && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
-}
-
-function offsetPolygon(vertices: Vec2[], distance: number): Vec2[] | null {
-  if (vertices.length < 3) return null;
-  let twiceArea = 0;
-  for (let index = 0; index < vertices.length; index++) {
-    const a = vertices[index], b = vertices[(index + 1) % vertices.length];
-    twiceArea += a.x * b.y - b.x * a.y;
-  }
-  if (Math.abs(twiceArea) < 1e-9) return null;
-  const orientation = twiceArea > 0 ? 1 : -1;
-  const shiftedEdges = vertices.map((start, index) => {
-    const end = vertices[(index + 1) % vertices.length];
-    const dx = end.x - start.x, dy = end.y - start.y;
-    const length = Math.hypot(dx, dy);
-    if (length < 1e-9) return null;
-    const normal = orientation > 0 ? { x: dy / length, y: -dx / length } : { x: -dy / length, y: dx / length };
-    const offset = { x: normal.x * distance, y: normal.y * distance };
-    return {
-      start: { x: start.x + offset.x, y: start.y + offset.y },
-      end: { x: end.x + offset.x, y: end.y + offset.y },
-    };
-  });
-  if (shiftedEdges.some((edge) => !edge)) return null;
-  const result: Vec2[] = [];
-  for (let index = 0; index < vertices.length; index++) {
-    const previous = shiftedEdges[(index - 1 + vertices.length) % vertices.length]!;
-    const current = shiftedEdges[index]!;
-    const intersection = lineIntersectionParameters(previous.start, previous.end, current.start, current.end);
-    if (!intersection) return null;
-    result.push(intersection.point);
-  }
-  return result;
-}
 
 function workPlaneDelta(plane: typeof WORLD_WORK_PLANE, localDelta: Vec2): Vec3 {
   return {
@@ -246,59 +128,6 @@ export class CommandManager {
     this.ctx.log(`Polyline created: ${vertices.length} vertices${closed ? ', closed' : ''}.`);
     this.active = null;
     this.startCommand('POLYLINE'); // sticky, like the other drawing tools
-    this.ctx.redraw();
-  }
-
-  private finishJoin(): void {
-    if (!this.active || this.active.name !== 'JOIN') return;
-    const lines = (this.active.data.entities as Entity[]).filter((entity) => entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier' || entity.type === 'polyline');
-    if (lines.length < 2) {
-      this.ctx.log('JOIN requires at least two connected objects.');
-      this.showCurrentPrompt();
-      return;
-    }
-    const planeKey = (entity: Entity): string => JSON.stringify(entity.workPlane ?? WORLD_WORK_PLANE);
-    if (lines.some((line) => planeKey(line) !== planeKey(lines[0]))) {
-      this.ctx.log('JOIN requires all lines to be on the same work plane.');
-      this.showCurrentPrompt();
-      return;
-    }
-    const tolerance = 0.5;
-    const near = (a: Vec2, b: Vec2): boolean => dist2(a, b) <= tolerance;
-    const pointsFor = (entity: Entity): Vec2[] => entity.type === 'line'
-      ? [{ ...entity.start }, { ...entity.end }]
-      : entity.type === 'arc' || entity.type === 'bezier' ? curvePoints(entity, 48)
-        : entity.type === 'polyline' ? (entity.closed ? closePolyline(entity.vertices).slice(0, -1) : [...entity.vertices]) : [];
-    const vertices: Vec2[] = pointsFor(lines[0]);
-    const remaining = lines.slice(1);
-    while (remaining.length > 0) {
-      const start = vertices[0];
-      const end = vertices[vertices.length - 1];
-      const index = remaining.findIndex((candidate) => {
-        const points = pointsFor(candidate); const a = points[0], b = points.at(-1)!;
-        return near(a, end) || near(b, end) || near(a, start) || near(b, start);
-      });
-      if (index < 0) {
-        this.ctx.log('JOIN failed: the selected objects do not form one connected chain.');
-        this.showCurrentPrompt();
-        return;
-      }
-      const candidate = remaining.splice(index, 1)[0];
-      const points = pointsFor(candidate); const a = points[0], b = points.at(-1)!;
-      if (near(a, end)) vertices.push(...points.slice(1));
-      else if (near(b, end)) vertices.push(...points.slice(0, -1).reverse());
-      else if (near(b, start)) vertices.unshift(...points.slice(0, -1));
-      else vertices.unshift(...points.slice(1).reverse());
-    }
-    const closed = vertices.length > 2 && near(vertices[0], vertices[vertices.length - 1]);
-    if (closed) vertices.pop();
-    const joined = this.ctx.doc.createPolyline(vertices, closed);
-    joined.workPlane = cloneEntity(lines[0]).workPlane;
-    this.ctx.history.execute(new ReplaceObjectsEdit('Join', lines, [], [joined], []));
-    this.ctx.doc.selectEntity(joined.id);
-    this.ctx.log(`Joined ${lines.length} objects into one ${closed ? 'closed ' : ''}polyline.`);
-    this.active = null;
-    this.ctx.prompt('Command:');
     this.ctx.redraw();
   }
 
@@ -716,155 +545,6 @@ export class CommandManager {
 
 
 
-        break;
-
-      case 'JOIN':
-        if (step.kind === 'entity' && value) {
-          const entity = value as Entity;
-          if (entity.type !== 'line' && entity.type !== 'arc' && entity.type !== 'bezier' && entity.type !== 'polyline') {
-            this.ctx.log('JOIN accepts line, polyline, arc, and Bezier objects.');
-            return;
-          }
-          const entities = data.entities as Entity[];
-          if (!entities.some((item) => item.id === entity.id)) {
-            entities.push(entity);
-            this.ctx.doc.selectEntity(entity.id, true);
-          }
-          this.ctx.log('Object added. Select another or press Enter.');
-          return;
-        } else {
-          this.finishJoin();
-          return;
-        }
-        break;
-
-      case 'EXTEND':
-        if (this.active.stepIndex === 0) {
-          const boundary = value as Entity;
-          if (!isLineLikeEntity(boundary)) { this.ctx.log('EXTEND boundary must be a line or polyline.'); return; }
-          data.boundary = boundary;
-          this.ctx.doc.selectEntity(boundary.id);
-        } else {
-          const boundary = data.boundary as Entity;
-          const target = value as Entity;
-          if (!isLineLikeEntity(boundary) || !isLineLikeEntity(target) || boundary.id === target.id) {
-            this.ctx.log('Select a different line or polyline to extend.'); return;
-          }
-          if (!sameWorkPlane(boundary, target)) { this.ctx.log('Both lines must be on the same work plane.'); return; }
-          const click = data.targetPickPoint as Vec2 | undefined;
-          const targetSegment = click ? nearestLineLikeSegment(target, click) : nearestLineLikeSegment(target, target.type === 'line' ? target.start : target.vertices[0] ?? { x: 0, y: 0 });
-          const hits = collectLineLikeIntersections(targetSegment, boundary)
-            .filter((hit) => (hit.t < -1e-8 || hit.t > 1 + 1e-8) && hit.u >= -1e-8 && hit.u <= 1 + 1e-8);
-          if (hits.length === 0) {
-            this.ctx.log('EXTEND failed: the boundary does not intersect an extension of this line or polyline.'); return;
-          }
-          const hit = click ? hits.reduce((best, candidate) => dist2(candidate.point, click) < dist2(best.point, click) ? candidate : best) : hits[0];
-          const updated = cloneEntity(target);
-          const clickT = click
-            ? ((click.x - targetSegment.start.x) * (targetSegment.end.x - targetSegment.start.x) + (click.y - targetSegment.start.y) * (targetSegment.end.y - targetSegment.start.y))
-              / (((targetSegment.end.x - targetSegment.start.x) ** 2 + (targetSegment.end.y - targetSegment.start.y) ** 2) || 1)
-            : 1;
-          const useStart = clickT < 0.5;
-          if (updated.type === 'line') {
-            if (useStart) updated.start = hit.point;
-            else updated.end = hit.point;
-          } else if (updated.type === 'polyline') {
-            updated.vertices[useStart ? targetSegment.startIndex : targetSegment.endIndex] = hit.point;
-          }
-          this.ctx.history.execute(new UpdateEntityEdit('Extend', target, updated));
-          this.ctx.doc.selectEntity(updated.id);
-          this.ctx.log(`${target.type === 'line' ? 'Line' : 'Polyline'} extended by ${Math.min(dist2(hit.point, targetSegment.start), dist2(hit.point, targetSegment.end)).toFixed(3)} mm.`);
-        }
-        break;
-
-      case 'TRIM':
-        if (this.active.stepIndex === 0) {
-          const boundary = value as Entity;
-          if (!isLineLikeEntity(boundary)) { this.ctx.log('TRIM cutting edge must be a line or polyline.'); return; }
-          data.boundary = boundary;
-          this.ctx.doc.selectEntity(boundary.id);
-        } else {
-          const boundary = data.boundary as Entity;
-          const target = value as Entity;
-          if (!isLineLikeEntity(boundary) || !isLineLikeEntity(target) || boundary.id === target.id) {
-            this.ctx.log('Select a different line or polyline to trim.'); return;
-          }
-          if (!sameWorkPlane(boundary, target)) { this.ctx.log('Both lines must be on the same work plane.'); return; }
-          const click = data.targetPickPoint as Vec2 | undefined;
-          const targetSegment = click ? nearestLineLikeSegment(target, click) : nearestLineLikeSegment(target, target.type === 'line' ? target.start : target.vertices[0] ?? { x: 0, y: 0 });
-          const hits = collectLineLikeIntersections(targetSegment, boundary)
-            .filter((hit) => hit.t >= -1e-8 && hit.t <= 1 + 1e-8 && hit.u >= -1e-8 && hit.u <= 1 + 1e-8);
-          if (hits.length === 0) {
-            this.ctx.log('TRIM failed: the line or polyline does not cross the cutting edge.'); return;
-          }
-          const hit = click ? hits.reduce((best, candidate) => dist2(candidate.point, click) < dist2(best.point, click) ? candidate : best) : hits[0];
-          const dx = targetSegment.end.x - targetSegment.start.x;
-          const dy = targetSegment.end.y - targetSegment.start.y;
-          const lengthSquared = dx * dx + dy * dy;
-          const clickT = click && lengthSquared > 1e-12
-            ? ((click.x - targetSegment.start.x) * dx + (click.y - targetSegment.start.y) * dy) / lengthSquared
-            : 1;
-          const updated = cloneEntity(target);
-          if (updated.type === 'line') {
-            if (clickT < hit.t) updated.start = hit.point;
-            else updated.end = hit.point;
-          } else if (updated.type === 'polyline') {
-            if (clickT < hit.t) updated.vertices[targetSegment.startIndex] = hit.point;
-            else updated.vertices[targetSegment.endIndex] = hit.point;
-          }
-          this.ctx.history.execute(new UpdateEntityEdit('Trim', target, updated));
-          this.ctx.doc.selectEntity(updated.id);
-          this.ctx.log(`${target.type === 'line' ? 'Line' : 'Polyline'} trimmed at cutting edge.`);
-        }
-        break;
-
-      case 'OFFSET':
-        if (this.active.stepIndex === 0) {
-          const entity = value as Entity;
-          if (!isOffsetEntity(entity)) { this.ctx.log('OFFSET accepts lines, circles, rectangles, and closed polylines.'); return; }
-          data.entity = entity;
-          this.ctx.doc.selectEntity(entity.id);
-        } else if (this.active.stepIndex === 1) {
-          const distance = Math.abs(value as number);
-          if (distance < 1e-9) { this.ctx.log('Offset distance must be greater than zero.'); return; }
-          data.distance = distance;
-        } else {
-          const entity = data.entity as Entity;
-          const sidePoint = value as Vec2;
-          const distance = data.distance as number;
-          let parallel: Entity | null = null;
-          if (entity.type === 'line') {
-            const dx = entity.end.x - entity.start.x, dy = entity.end.y - entity.start.y;
-            const length = Math.hypot(dx, dy);
-            if (length < 1e-9) { this.ctx.log('Cannot offset a zero-length line.'); return; }
-            const center = midpoint2(entity.start, entity.end);
-            const sign = dx * (sidePoint.y - center.y) - dy * (sidePoint.x - center.x) >= 0 ? 1 : -1;
-            const offset = { x: -dy / length * distance * sign, y: dx / length * distance * sign };
-            parallel = this.ctx.doc.createLine(
-              { x: entity.start.x + offset.x, y: entity.start.y + offset.y },
-              { x: entity.end.x + offset.x, y: entity.end.y + offset.y },
-            );
-          } else if (entity.type === 'circle') {
-            const outward = dist2(sidePoint, entity.center) >= entity.radius;
-            const radius = entity.radius + (outward ? distance : -distance);
-            if (radius <= 1e-6) { this.ctx.log('The inward offset is larger than the circle radius.'); return; }
-            parallel = this.ctx.doc.createCircle(entity.center, radius);
-          } else {
-            const vertices = closedVertices(entity);
-            if (!vertices) return;
-            const outward = !pointInClosedPolygon(sidePoint, vertices);
-            const offsetVertices = offsetPolygon(vertices, outward ? distance : -distance);
-            if (!offsetVertices) { this.ctx.log('OFFSET failed for this shape and distance.'); return; }
-            parallel = entity.type === 'rectangle'
-              ? this.ctx.doc.createRectangle(offsetVertices[0], offsetVertices[2])
-              : this.ctx.doc.createPolyline(offsetVertices, true);
-          }
-          if (!parallel) return;
-          parallel.workPlane = cloneEntity(entity).workPlane;
-          this.ctx.history.execute(new AddEntityEdit('Offset', parallel));
-          this.ctx.doc.selectEntity(parallel.id);
-          this.ctx.log(`Offset object created at ${distance.toFixed(3)} mm.`);
-        }
         break;
 
         break;

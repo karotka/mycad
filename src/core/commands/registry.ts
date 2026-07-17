@@ -16,6 +16,7 @@ import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, s
 import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
 import { extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
+import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -189,7 +190,7 @@ export const COMMANDS = [
   { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
     data: () => ({ entities: [] }),
     onStart: preselectEntities((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
-  { name: 'JOIN', aliases: ['J', 'JOIN'], help: 'join connected 2D lines into one polyline', suggest: true,
+  { name: 'JOIN', aliases: ['J', 'JOIN'], execute: joinObjects, help: 'join connected 2D lines into one polyline', suggest: true,
     steps: [{ kind: 'entity', label: 'Select connected lines or curves, then press Enter:', multi: true }, { kind: 'done' }],
     data: () => ({ entities: [] }),
     onStart: (active, ctx) => {
@@ -203,15 +204,15 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },
-  { name: 'EXTEND', aliases: ['EX', 'EXTEND'], help: 'extend a line to a boundary', suggest: true,
+  { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend a line to a boundary', suggest: true,
     steps: [{ kind: 'entity', label: 'Select boundary line or polyline:' }, { kind: 'entity', label: 'Select line or polyline to extend:' }, { kind: 'done' }],
     data: () => ({ boundary: undefined }),
     onStart: preselectOne('boundary', isLineLikeEntity, 'Boundary line or polyline preselected.') },
-  { name: 'TRIM', aliases: ['TR', 'TRIM'], help: 'trim a line at a cutting edge', suggest: true,
+  { name: 'TRIM', aliases: ['TR', 'TRIM'], execute: trimEntity, help: 'trim a line at a cutting edge', suggest: true,
     steps: [{ kind: 'entity', label: 'Select cutting line or polyline:' }, { kind: 'entity', label: 'Select line or polyline to trim:' }, { kind: 'done' }],
     data: () => ({ boundary: undefined }),
     onStart: preselectOne('boundary', isLineLikeEntity, 'Cutting line or polyline preselected.') },
-  { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], help: 'create an equidistant parallel line', suggest: true,
+  { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], execute: offsetEntity, help: 'create an equidistant parallel line', suggest: true,
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
