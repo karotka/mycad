@@ -45,10 +45,25 @@ export function shellHtml(tools: ShellTools): string {
       <div class="tracking-line" id="tracking-line" hidden></div>
       <div class="dimension-toast" id="dimension-toast" hidden></div>
       <div class="view-toggle">
-        <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
-          <button class="cube-face cube-top" data-standard-view="top" title="Top view"><span class="cube-label">TOP</span></button>
-          <button class="cube-face cube-right" data-standard-view="right" title="Right view"><span class="cube-label">RIGHT</span></button>
-          <button class="cube-face cube-front" data-standard-view="front" title="Front view"><span class="cube-label">FRONT</span></button>
+        <div class="view-cube-stage">
+          <svg class="view-compass" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <linearGradient id="compass-ring" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#c9d0d7"/>
+                <stop offset="1" stop-color="#8b95a0"/>
+              </linearGradient>
+            </defs>
+            <ellipse class="compass-track" cx="60" cy="74" rx="57" ry="23"/>
+            <text class="compass-mark" x="60" y="52">N</text>
+            <text class="compass-mark" x="60" y="101">S</text>
+            <text class="compass-mark" x="7" y="76">W</text>
+            <text class="compass-mark" x="113" y="76">E</text>
+          </svg>
+          <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
+            <button class="cube-face cube-top" data-standard-view="top" title="Top view"><span class="cube-label">TOP</span></button>
+            <button class="cube-face cube-right" data-standard-view="right" title="Right view"><span class="cube-label">RIGHT</span></button>
+            <button class="cube-face cube-front" data-standard-view="front" title="Front view"><span class="cube-label">FRONT</span></button>
+          </div>
         </div>
         <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M21 12l-3-3M21 12l-3 3"/><circle cx="12" cy="12" r="2"/></svg>

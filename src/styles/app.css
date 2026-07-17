@@ -776,11 +776,43 @@ html, body, #app {
   color: #fff;
 }
 
-.view-toggle .view-cube {
+/* The cube sits on a compass ring, the way a real navigation cube does. The
+   ring is the world's orientation and stays put; the cube turns above it. */
+.view-toggle .view-cube-stage {
   position: relative;
+  width: 118px;
+  height: 116px;
+}
+
+.view-toggle .view-compass {
+  position: absolute;
+  inset: 0;
+  width: 118px;
+  height: 116px;
+  overflow: visible;
+  pointer-events: none;
+}
+.view-toggle .compass-track {
+  fill: none;
+  stroke: url(#compass-ring);
+  stroke-width: 6;
+  opacity: 0.6;
+}
+.view-toggle .compass-mark {
+  fill: #7f8993;
+  font: 700 11px/1 Arial, sans-serif;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  opacity: 0.75;
+}
+
+.view-toggle .view-cube {
+  position: absolute;
+  left: 11px;
+  top: 6px;
   width: 96px;
   height: 90px;
-  filter: drop-shadow(0 5px 5px rgba(0, 0, 0, 0.42));
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.4));
   transform-origin: 50% 50%;
   transform-style: preserve-3d;
   transition: transform 180ms ease;
@@ -794,13 +826,13 @@ html, body, #app {
   position: absolute;
   margin: 0;
   padding: 0;
-  border: 1px solid #818991;
+  border: 1px solid #9099a1;
   border-radius: 0;
-  color: #697078;
+  color: #5c636b;
   font: 700 11px/1 Arial, Helvetica, sans-serif;
   line-height: 1;
   text-align: center;
-  text-shadow: 0 1px rgba(255, 255, 255, 0.75);
+  text-shadow: 0 1px rgba(255, 255, 255, 0.8);
   transition: filter 100ms, background 100ms, color 100ms;
 }
 
@@ -818,7 +850,7 @@ html, body, #app {
   width: 80px;
   height: 44px;
   padding: 0;
-  background: #eef0f2;
+  background: linear-gradient(150deg, #f6f8fa 0%, #e4e8ec 100%);
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
   z-index: 3;
 }
@@ -834,7 +866,7 @@ html, body, #app {
   width: 41px;
   height: 66px;
   padding: 0;
-  background: #e2e5e8;
+  background: linear-gradient(180deg, #dee2e6 0%, #c5cbd1 100%);
   clip-path: polygon(0 0, 100% 33.333%, 100% 100%, 0 69.697%);
   z-index: 2;
 }
@@ -850,7 +882,7 @@ html, body, #app {
   width: 41px;
   height: 66px;
   padding: 0;
-  background: #d4d8dc;
+  background: linear-gradient(180deg, #c8ced4 0%, #a9b1b9 100%);
   clip-path: polygon(0 33.333%, 100% 0, 100% 69.697%, 0 100%);
   z-index: 2;
 }

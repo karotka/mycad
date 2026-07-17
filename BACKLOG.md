@@ -42,6 +42,33 @@ pass because it touches `shell.ts`, `app.css`, the menu wiring in
 
 ---
 
+## The WCS button: predefined UCS, and saving your own
+
+The view cube resets orientation; the little WCS button beside it returns the
+coordinate system to the world. The next step is to make that button a menu:
+
+- **Predefined UCS.** Front, Top, Right, Left and so on as named coordinate
+  systems, not just camera views — so "draw on the front" sets the work plane
+  there, and everything drawn after it lives on that plane. The engine already
+  places geometry on `activeWorkPlane`; this is a menu that sets it to one of a
+  handful of standard planes rather than only through the three-point UCS
+  command.
+- **User-defined UCS, saved.** Set a work plane with the UCS command, name it,
+  and have it in the list next time. This needs a decision the model does not
+  make yet: **where a named UCS lives.** Options —
+  - on the `Document`, saved in the `.mycad` file, so it travels with the
+    drawing (a named plane is part of how *this* drawing is set up, like its
+    layers). This is the likely answer, and it mirrors `layerAci`/`gcode`.
+  - as an application preference, shared across drawings — wrong, because a plane
+    is defined by geometry that only means something in one drawing.
+
+  So: a `namedWorkPlanes: Record<string, WorkPlane>` on the Document, round-tripped
+  through `ProjectIO` the way the other settings are, and a menu on the WCS button
+  that lists them plus the standard ones. Deciding this is the real work; the UI
+  is small once it is decided.
+
+---
+
 ## BOX and the other two-corner solids: drag the height live
 
 BOX, WEDGE and the rest ask for two corners and then a *typed* height, against a
