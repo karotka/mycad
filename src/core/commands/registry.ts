@@ -9,8 +9,9 @@
  */
 import { isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawRectangle } from './steps/draw';
+import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
+import { subtractSolids, unionSolids } from './steps/booleans';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -145,10 +146,10 @@ export const COMMANDS = [
     steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify diameter or a point at that distance:' }, { kind: 'done' }] },
   { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true, execute: drawEllipse,
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
-  { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
-  { name: 'ARC', aliases: ['A', 'ARC'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
-  { name: 'BEZIER', aliases: ['B', 'BEZIER'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
-  { name: 'TEXT', aliases: ['T', 'TEXT'], suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
+  { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
+  { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
+  { name: 'BEZIER', aliases: ['B', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
+  { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
@@ -241,8 +242,8 @@ export const COMMANDS = [
     data: () => ({ profile: undefined }),
     onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Select sweep path.') },
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
-  { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
-  { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], help: 'subtract solids', suggest: true, steps: [{ kind: 'solid', label: 'Select base solid:', additive: true }, { kind: 'solid', label: 'Select solid to subtract:', additive: true }, { kind: 'done' }] },
+  { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
+  { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true, steps: [{ kind: 'solid', label: 'Select base solid:', additive: true }, { kind: 'solid', label: 'Select solid to subtract:', additive: true }, { kind: 'done' }] },
   { name: 'UCS', aliases: ['UCS'], suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.

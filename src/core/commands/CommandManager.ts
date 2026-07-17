@@ -865,57 +865,6 @@ export class CommandManager {
 
 
 
-      case 'POLYGON':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) {
-          const sides = Math.round(value as number);
-          if (sides < 3 || sides > 128) {
-            this.ctx.log('The number of sides must be an integer from 3 to 128.');
-            this.showCurrentPrompt();
-            return;
-          }
-          data.sides = sides;
-        } else {
-          const center = data.center as Vec2;
-          const cursor = value as Vec2;
-          const sides = data.sides as number;
-          const apothem = dist2(center, cursor);
-          if (apothem <= 0) return;
-          const radius = apothem / Math.cos(Math.PI / sides);
-          const normalAngle = Math.atan2(cursor.y - center.y, cursor.x - center.x);
-          const vertices: Vec2[] = [];
-          for (let i = 0; i < sides; i++) {
-            const angle = normalAngle + Math.PI / sides + i * Math.PI * 2 / sides;
-            vertices.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
-          }
-          const polygon = this.ctx.doc.createPolyline(vertices, true);
-          this.ctx.history.execute(new AddEntityEdit('Polygon', polygon));
-          this.ctx.log(`Polygon created: ${sides} sides, apothem=${apothem.toFixed(3)} mm`);
-        }
-        break;
-      case 'ARC':
-        if (this.active.stepIndex === 0) data.center = value;
-        else if (this.active.stepIndex === 1) data.start = value;
-        else { const c=data.center as Vec2,s=data.start as Vec2,e=value as Vec2; const r=dist2(c,s); let sweep=Math.atan2(e.y-c.y,e.x-c.x)-Math.atan2(s.y-c.y,s.x-c.x); if(sweep<=0)sweep+=Math.PI*2; const arc=this.ctx.doc.createArc(c,r,Math.atan2(s.y-c.y,s.x-c.x),sweep); this.ctx.history.execute(new AddEntityEdit('Arc',arc)); }
-        break;
-      case 'BEZIER':
-        if(this.active.stepIndex===0)data.start=value; else if(this.active.stepIndex===1)data.control1=value; else if(this.active.stepIndex===2)data.control2=value; else { const bez=this.ctx.doc.createBezier(data.start as Vec2,data.control1 as Vec2,data.control2 as Vec2,value as Vec2); this.ctx.history.execute(new AddEntityEdit('Bezier',bez)); } break;
-      case 'TEXT':
-        if (this.active.stepIndex === 0) data.font = String(value);
-        else if (this.active.stepIndex === 1) {
-          const height = value as number;
-          if (height <= 0) {
-            this.ctx.log('Text height must be greater than zero.');
-            this.showCurrentPrompt();
-            return;
-          }
-          data.height = height;
-        } else if (this.active.stepIndex === 2) data.position = value;
-        else {
-          const text = this.ctx.doc.createText(data.position as Vec2, String(value), data.height as number, data.font as string);
-          this.ctx.history.execute(new AddEntityEdit('Text', text));
-        }
-        break;
 
 
 
@@ -1021,63 +970,7 @@ export class CommandManager {
         }
         break;
 
-      case 'SUBTRACT':
-        if (this.active.stepIndex === 0) {
-          data.baseId = value;
-          this.ctx.doc.selectSolid(value as string);
-          this.ctx.log(`Base solid selected: ${value as string}`);
-        }
-        else if (this.active.stepIndex === 1) {
-          const base = this.ctx.doc.getSolid(value as string)?.mesh;
-          const baseSolid = this.ctx.doc.getSolid(data.baseId as string);
-          const toolSolid = this.ctx.doc.getSolid(value as string);
-          if (!baseSolid || !toolSolid) {
-            this.ctx.log('Solid not found.');
-            break;
-          }
-          this.ctx.log('Subtracting…');
-          const mesh = await booleanSubtract(baseSolid.mesh, toolSolid.mesh);
-          if (mesh) {
-            const solid = this.ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], undefined, {
-              kind: 'boolean',
-              operation: 'subtract',
-              operands: [JSON.parse(JSON.stringify(baseSolid.feature)), JSON.parse(JSON.stringify(toolSolid.feature))],
-            });
-            this.ctx.history.execute(new ReplaceObjectsEdit('Subtract', [], [baseSolid, toolSolid], [], [solid]));
-            this.ctx.log('Subtract complete.');
-          } else {
-            this.ctx.log('Subtract failed.');
-          }
-        }
-        break;
 
-      case 'UNION':
-        if (this.active.stepIndex === 0) (data.solids as string[]).push(value as string);
-        else if (this.active.stepIndex === 1) {
-          (data.solids as string[]).push(value as string);
-          const ids = data.solids as string[];
-          const meshes = ids.map((id) => this.ctx.doc.getSolid(id)?.mesh).filter(Boolean);
-          if (meshes.length < 2) {
-            this.ctx.log('Two solids are required.');
-            break;
-          }
-          this.ctx.log('Joining solids…');
-          const mesh = await booleanUnion(meshes as import('../entities/types').SolidMesh[]);
-          if (mesh) {
-            const sourceSolids = ids.map((id) => this.ctx.doc.getSolid(id)).filter((value): value is NonNullable<typeof value> => Boolean(value));
-            const solid = this.ctx.doc.createSolid(mesh, 'Union', 0, [], undefined, {
-              kind: 'boolean',
-              operation: 'union',
-              operands: sourceSolids.map((source) => JSON.parse(JSON.stringify(source.feature))),
-            });
-            const oldSolids = sourceSolids;
-            this.ctx.history.execute(new ReplaceObjectsEdit('Union', [], oldSolids, [], [solid]));
-            this.ctx.log('Union complete.');
-          } else {
-            this.ctx.log('Union failed.');
-          }
-        }
-        break;
 
       case 'MIRROR':
         if (step.kind === 'entity' && value) {
