@@ -528,6 +528,24 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0].type).toBe('rectangle');
   });
 
+  // A command that waits on the solid engine leaves the wizard open for a few
+  // milliseconds. Anything arriving in that window used to be answered a second
+  // time: EXPLODE runs itself when a preselection answers everything, so an
+  // Enter landing while it was still working exploded the rectangle twice and
+  // left eight lines where four belonged.
+  it('ignores input that lands while a step is still being carried out', async () => {
+    const { doc, manager } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 8, y: 3 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    manager.startCommand('EXPLODE'); // starts exploding, and does not wait
+    await manager.submitInput('');   // Enter, mid-flight
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(4);
+  });
+
   it('rotates a preselected line around a base point by entered degrees', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 2, y: 1 }, { x: 6, y: 1 });

@@ -11,7 +11,7 @@ import { AddEntitiesEdit, ReplaceObjectsEdit, cloneSolid } from '../../history/e
 import { cloneEntity, closedVertices, genId, transformEntityPoints, type Entity, type Solid } from '../../entities/types';
 import { rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
-import { dist2, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
+import { dist2, formatPoint, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { Document } from '../../Document';
 import type { CommandRun, StepOutcome } from '../types';
 
@@ -248,4 +248,78 @@ export function scaleObjects(run: CommandRun): StepOutcome {
       solids: solids.map((solid) => scaleSolid(solid, baseWorld, factor)),
     },
     (count) => `Scaled ${count} object(s) by factor ${factor.toFixed(4)}.`);
+}
+
+/**
+ * Both MOVE and COPY ask the same first two questions, and both need the world
+ * point behind the second: a drag across the screen is a distance in the work
+ * plane, but the objects may live in three dimensions, so the exact world delta
+ * is kept when the viewport could supply one.
+ */
+function takeBasePoint(run: CommandRun): StepOutcome {
+  const { data, value } = run;
+  data.basePoint = value;
+  data.baseWorldPoint = data.pendingMoveWorldPoint;
+  delete data.pendingMoveWorldPoint;
+  return 'advance';
+}
+
+/** The exact world delta of the drag, when the viewport gave one for both ends. */
+function worldDeltaOf(data: Record<string, unknown>): Vec3 | undefined {
+  const from = data.baseWorldPoint as Vec3 | undefined;
+  const to = data.pendingMoveWorldPoint as Vec3 | undefined;
+  return from && to ? { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z } : undefined;
+}
+
+export function moveObjects(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) return run.gather(value) ? 'stay' : 'advance';
+  if (active.stepIndex === 1) return takeBasePoint(run);
+
+  const base = data.basePoint as Vec2;
+  const target = value as Vec2;
+  const delta = { x: target.x - base.x, y: target.y - base.y };
+  const objects: Array<Entity | string> = [
+    ...(data.entities as Entity[]),
+    ...(data.solids as Solid[]).map((solid) => solid.id),
+  ];
+  if (objects.length === 0) {
+    ctx.log('Nothing to move.');
+    return 'stay';
+  }
+  // One drag is one thing the user did, so it is one step in the history.
+  ctx.moveObjects(objects, delta, worldDeltaOf(data));
+  delete data.pendingMoveWorldPoint;
+  ctx.log(`${objects.length} object(s) moved by ${formatPoint(delta)}`);
+  return 'advance';
+}
+
+export function copyObjects(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) return run.gather(value) ? 'stay' : 'advance';
+  if (active.stepIndex === 1) return takeBasePoint(run);
+
+  const base = data.basePoint as Vec2;
+  const target = value as Vec2;
+  const localDelta = { x: target.x - base.x, y: target.y - base.y };
+  // Exact if the viewport gave both ends in world space; otherwise what the view
+  // makes of the drag; otherwise the work plane's own axes, which is the answer
+  // when the drawing and the plane are the same thing.
+  const plane = ctx.doc.activeWorkPlane;
+  const viewWorldDelta = worldDeltaOf(data) ?? ctx.copyWorldDelta(localDelta);
+  const solidDelta = viewWorldDelta ?? {
+    x: plane.xAxis.x * localDelta.x + plane.yAxis.x * localDelta.y,
+    y: plane.xAxis.y * localDelta.x + plane.yAxis.y * localDelta.y,
+    z: plane.xAxis.z * localDelta.x + plane.yAxis.z * localDelta.y,
+  };
+  const copies = (data.entities as Entity[]).map((entity) => copyEntity(entity, localDelta, viewWorldDelta));
+  const solidCopies = (data.solids as Solid[]).map((solid) => copySolid(solid, solidDelta));
+  delete data.pendingMoveWorldPoint;
+  applyTo(run, 'Copy', { entities: [], solids: [] }, { entities: copies, solids: solidCopies },
+    (count) => `Copied ${count} object(s) by ${formatPoint(localDelta)}.`);
+  // Back to asking for a target, so one selection can be copied again and again.
+  // The step model has no way to say "repeat", so this walks the index back and
+  // lets the manager step it forward again — the same trick POLYLINE uses.
+  active.stepIndex = 1;
+  return 'advance';
 }

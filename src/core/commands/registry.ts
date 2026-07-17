@@ -12,8 +12,9 @@ import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcom
 import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { subtractSolids, unionSolids } from './steps/booleans';
-import { eraseObjects, mirrorObjects, rotateObjects, scaleObjects } from './steps/transform';
+import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
+import { explodeObjects } from './steps/explode';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -166,10 +167,10 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select circle or arc for diameter dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
-  { name: 'MOVE', aliases: ['MO', 'MOVE'], help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
+  { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
-  { name: 'COPY', aliases: ['CO', 'CP', 'COPY'], help: 'copy objects repeatedly', suggest: true, pointInput: true, transformsObjects: true,
+  { name: 'COPY', aliases: ['CO', 'CP', 'COPY'], execute: copyObjects, help: 'copy objects repeatedly', suggest: true, pointInput: true, transformsObjects: true,
     steps: [{ kind: 'entity', label: 'Select object(s) to copy, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point (Escape to finish):' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
@@ -197,7 +198,7 @@ export const COMMANDS = [
       // Too few to join is finishJoin's message to give; it would only be echoed here.
       if (lines.length >= 2) ctx.log(`${lines.length} preselected object(s). Joining selection.`);
     } },
-  { name: 'EXPLODE', aliases: ['X', 'EXPLODE'], help: 'break compound objects into parts', suggest: true,
+  { name: 'EXPLODE', aliases: ['X', 'EXPLODE'], execute: explodeObjects, help: 'break compound objects into parts', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },

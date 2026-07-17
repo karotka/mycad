@@ -190,25 +190,6 @@ function workPlaneDelta(plane: typeof WORLD_WORK_PLANE, localDelta: Vec2): Vec3 
   };
 }
 
-function explodeEntity(entity: Entity, doc: Document): Entity[] {
-  let points: Vec2[] = [];
-  let closed = false;
-  if (entity.type === 'rectangle') { points = closedVertices(entity)!; closed = true; }
-  else if (entity.type === 'polyline' || entity.type === 'octagon') { points = [...entity.vertices]; closed = entity.type === 'octagon' || entity.closed; }
-  else if (entity.type === 'arc' || entity.type === 'bezier') points = curvePoints(entity, 48);
-  else return [];
-  if (closed && points.length > 1 && dist2(points[0], points.at(-1)!) < 1e-9) points.pop();
-  const count = closed ? points.length : points.length - 1;
-  const result: Entity[] = [];
-  for (let index = 0; index < count; index++) {
-    const line = doc.createLine(points[index], points[(index + 1) % points.length], entity.color);
-    line.layer = entity.layer;
-    line.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
-    result.push(line);
-  }
-  return result;
-}
-
 export class CommandManager {
   active: ActiveCommand | null = null;
   history: string[] = [];
@@ -659,7 +640,27 @@ export class CommandManager {
     }
   }
 
+  /**
+   * True while a step is being carried out. A command that waits on the solid
+   * engine leaves the wizard open for milliseconds, and anything arriving in
+   * that window used to be answered a second time — press Enter while an
+   * EXPLODE is still regenerating and it explodes twice. The step in flight owns
+   * the command until it is done; a keystroke that lands mid-step is dropped,
+   * which is what a busy tool does.
+   */
+  private advancing = false;
+
   private async advanceStep(value: unknown): Promise<void> {
+    if (this.advancing) return;
+    this.advancing = true;
+    try {
+      await this.runStep(value);
+    } finally {
+      this.advancing = false;
+    }
+  }
+
+  private async runStep(value: unknown): Promise<void> {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
     const data = this.active.data;
@@ -1012,93 +1013,8 @@ export class CommandManager {
         }
         break;
 
-      case 'MOVE':
-        if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else if (value) {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          if (value) {
-            this.ctx.log('Object added. Select another or press Enter.');
-            return;
-          }
-        } else if (this.active.stepIndex === 1) {
-          data.basePoint = value;
-          data.baseWorldPoint = data.pendingMoveWorldPoint;
-          delete data.pendingMoveWorldPoint;
-        } else if (this.active.stepIndex === 2) {
-          const base = data.basePoint as Vec2;
-          const target = value as Vec2;
-          const delta = { x: target.x - base.x, y: target.y - base.y };
-          const baseWorld = data.baseWorldPoint as Vec3 | undefined;
-          const targetWorld = data.pendingMoveWorldPoint as Vec3 | undefined;
-          const worldDelta = baseWorld && targetWorld ? {
-            x: targetWorld.x - baseWorld.x,
-            y: targetWorld.y - baseWorld.y,
-            z: targetWorld.z - baseWorld.z,
-          } : undefined;
-          const objects: Array<Entity | string> = [
-            ...(data.entities as Entity[]),
-            ...(data.solids as Solid[]).map((solid) => solid.id),
-          ];
-          if (objects.length === 0) { this.ctx.log('Nothing to move.'); this.showCurrentPrompt(); return; }
-          // One drag is one thing the user did, so it is one step in the history.
-          this.ctx.moveObjects(objects, delta, worldDelta);
-          delete data.pendingMoveWorldPoint;
-          this.ctx.log(`${objects.length} object(s) moved by ${formatPoint(delta)}`);
-        }
         break;
 
-      case 'COPY':
-        if (this.active.stepIndex === 0) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else if (value) {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          if (value) {
-            this.ctx.log('Object added. Select another or press Enter.');
-            return;
-          }
-        } else if (this.active.stepIndex === 1) {
-          data.basePoint = value;
-          data.baseWorldPoint = data.pendingMoveWorldPoint;
-          delete data.pendingMoveWorldPoint;
-        } else if (this.active.stepIndex === 2) {
-          const base = data.basePoint as Vec2;
-          const target = value as Vec2;
-          const localDelta = { x: target.x - base.x, y: target.y - base.y };
-          const baseWorld = data.baseWorldPoint as Vec3 | undefined;
-          const targetWorld = data.pendingMoveWorldPoint as Vec3 | undefined;
-          const exactWorldDelta = baseWorld && targetWorld
-            ? { x: targetWorld.x - baseWorld.x, y: targetWorld.y - baseWorld.y, z: targetWorld.z - baseWorld.z }
-            : undefined;
-          const viewWorldDelta = exactWorldDelta ?? this.ctx.copyWorldDelta(localDelta);
-          const plane = this.ctx.doc.activeWorkPlane;
-          const solidDelta = viewWorldDelta ?? {
-            x: plane.xAxis.x * localDelta.x + plane.yAxis.x * localDelta.y,
-            y: plane.xAxis.y * localDelta.x + plane.yAxis.y * localDelta.y,
-            z: plane.xAxis.z * localDelta.x + plane.yAxis.z * localDelta.y,
-          };
-          const copies = (data.entities as Entity[]).map((entity) => copyEntity(entity, localDelta, viewWorldDelta));
-          const solidCopies = (data.solids as Solid[]).map((solid) => copySolid(solid, solidDelta));
-          this.ctx.history.execute(new ReplaceObjectsEdit('Copy', [], [], copies, solidCopies));
-          this.ctx.doc.clearSelection();
-          copies.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          solidCopies.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-          delete data.pendingMoveWorldPoint;
-          this.ctx.log(`Copied ${copies.length + solidCopies.length} object(s) by ${formatPoint(localDelta)}.`);
-          this.active.stepIndex = 1;
-        }
         break;
 
       case 'ARRAY_RECTANGULAR':
@@ -1235,56 +1151,6 @@ export class CommandManager {
 
         break;
 
-      case 'EXPLODE':
-        if (value) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          this.ctx.log('Object added. Select another or press Enter.');
-          return;
-        } else {
-          const selectedEntities = data.entities as Entity[];
-          const selectedSolids = data.solids as Solid[];
-          const removedEntities: Entity[] = [];
-          const removedSolids: Solid[] = [];
-          const parts: Entity[] = [];
-          const solidParts: Solid[] = [];
-          for (const entity of selectedEntities) {
-            const exploded = explodeEntity(entity, this.ctx.doc);
-            if (exploded.length > 0) { removedEntities.push(entity); parts.push(...exploded); }
-            else this.ctx.log(`EXPLODE: ${entity.type} is already a primitive object.`);
-          }
-          for (const solid of selectedSolids) {
-            if (solid.feature.kind !== 'boolean') {
-              this.ctx.log(`EXPLODE: ${solid.name} is not a boolean compound solid.`);
-              continue;
-            }
-            const partCountBefore = solidParts.length;
-            for (const [index, feature] of solid.feature.operands.entries()) {
-              const mesh = await regenerateSolidFeature(feature);
-              if (!mesh) continue;
-              const part = this.ctx.doc.createSolid(mesh, `${solid.name}_part_${index + 1}`, solid.height, solid.sourceEntityIds, solid.color, JSON.parse(JSON.stringify(feature)) as SolidFeature);
-              part.layer = solid.layer;
-              solidParts.push(part);
-            }
-            if (solidParts.length > partCountBefore) removedSolids.push(solid);
-          }
-          if (parts.length + solidParts.length === 0) {
-            this.ctx.log('EXPLODE: no selected object can be exploded.');
-            break;
-          }
-          this.ctx.history.execute(new ReplaceObjectsEdit('Explode', removedEntities, removedSolids, parts, solidParts));
-          this.ctx.doc.clearSelection();
-          parts.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          solidParts.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-          this.ctx.log(`Exploded into ${parts.length + solidParts.length} part(s).`);
-        }
         break;
 
         break;
