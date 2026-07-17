@@ -42,6 +42,13 @@ export function midpoint2(a: Vec2, b: Vec2): Vec2 {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+/** A point turned about another, anticlockwise, by `angle` radians. */
+export function rotatePoint(point: Vec2, base: Vec2, angle: number): Vec2 {
+  const dx = point.x - base.x, dy = point.y - base.y;
+  const cosine = Math.cos(angle), sine = Math.sin(angle);
+  return { x: base.x + dx * cosine - dy * sine, y: base.y + dx * sine + dy * cosine };
+}
+
 export function mirrorPoint2(p: Vec2, axisStart: Vec2, axisEnd: Vec2): Vec2 {
   const dx = axisEnd.x - axisStart.x;
   const dy = axisEnd.y - axisStart.y;

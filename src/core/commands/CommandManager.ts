@@ -10,10 +10,10 @@ import {
 } from './registry';
 import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './types';
 import type { Vec2, Vec3 } from '../../math/geometry';
-import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2 } from '../../math/geometry';
+import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2, rotatePoint } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { cloneEntity, closedVertices, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -138,22 +138,6 @@ function isSweepPathEntity(entity: Entity): boolean {
     || entity.type === 'circle' || entity.type === 'polyline';
 }
 
-function closedVertices(entity: Entity): Vec2[] | null {
-  if (entity.type === 'rectangle') return [
-    entity.first,
-    { x: entity.opposite.x, y: entity.first.y },
-    entity.opposite,
-    { x: entity.first.x, y: entity.opposite.y },
-  ];
-  if (entity.type === 'octagon') return entity.vertices.map((point) => ({ ...point }));
-  if (entity.type === 'polyline' && entity.closed) {
-    const vertices = entity.vertices.map((point) => ({ ...point }));
-    if (vertices.length > 1 && dist2(vertices[0], vertices.at(-1)!) < 1e-9) vertices.pop();
-    return vertices;
-  }
-  return null;
-}
-
 function pointInClosedPolygon(point: Vec2, vertices: Vec2[]): boolean {
   let inside = false;
   for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
@@ -195,12 +179,6 @@ function offsetPolygon(vertices: Vec2[], distance: number): Vec2[] | null {
     result.push(intersection.point);
   }
   return result;
-}
-
-function rotatePoint(point: Vec2, base: Vec2, angle: number): Vec2 {
-  const dx = point.x - base.x, dy = point.y - base.y;
-  const cosine = Math.cos(angle), sine = Math.sin(angle);
-  return { x: base.x + dx * cosine - dy * sine, y: base.y + dx * sine + dy * cosine };
 }
 
 function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document): Entity {
@@ -818,7 +796,12 @@ export class CommandManager {
     // agree on one thing: what happens after is the manager's, either way.
     const migrated = commandDef(this.active.name).execute;
     if (migrated) {
-      const outcome = await migrated({
+      // Awaited only when there is something to await. `await` on a plain value
+      // still suspends until the next microtask, which would make every command
+      // asynchronous whether it needed to be or not — and `startCommand` fires
+      // this off with `void` for a preselection that answers everything, so an
+      // ERASE would return with the objects still there and delete them later.
+      const answered = migrated({
         ctx: this.ctx,
         active: this.active,
         step,
@@ -827,6 +810,7 @@ export class CommandManager {
         gather: (picked) => this.gatherPicked(picked),
         cancel: () => this.cancelActive(),
       });
+      const outcome = answered instanceof Promise ? await answered : answered;
       // A command that ended itself has no step to advance and no prompt to show.
       if (!this.active) return;
       if (outcome === 'stay') {
@@ -972,26 +956,6 @@ export class CommandManager {
 
 
 
-      case 'MIRROR':
-        if (step.kind === 'entity' && value) {
-          (data.entities as Entity[]).push(value as Entity);
-          this.ctx.log('Object added. Click another or press Enter.');
-          return;
-        } else if (this.active.stepIndex === 1) {
-          data.axisStart = value;
-        } else if (this.active.stepIndex === 2) {
-          const axisStart = data.axisStart as Vec2;
-          const axisEnd = value as Vec2;
-          const entities = data.entities as Entity[];
-          const mirroredEntities: Entity[] = [];
-          for (const e of entities) {
-            const mirrored = transformEntityPoints(e, (p) => mirrorPoint2(p, axisStart, axisEnd));
-            mirrored.id = genId(e.type);
-            mirroredEntities.push(mirrored);
-          }
-          this.ctx.history.execute(new AddEntitiesEdit('Mirror', mirroredEntities));
-          this.ctx.log(`Mirrored ${entities.length} object(s).`);
-        }
         break;
 
       case 'JOIN':
@@ -1392,34 +1356,6 @@ export class CommandManager {
         }
         break;
 
-      case 'SCALE':
-        if (this.active.stepIndex === 0) {
-          if (this.gatherPicked(value)) return;
-        } else if (this.active.stepIndex === 1) {
-          data.basePoint = value;
-          data.baseWorldPoint = data.pendingMoveWorldPoint;
-          delete data.pendingMoveWorldPoint;
-        } else if (this.active.stepIndex === 2) {
-          const base = data.basePoint as Vec2;
-          const target = value as Vec2;
-          const factor = (data.enteredScaleFactor as number | undefined) ?? dist2(base, target);
-          delete data.enteredScaleFactor;
-          if (!Number.isFinite(factor) || factor <= 1e-9) {
-            this.ctx.log('Scale factor must be greater than zero.');
-            this.showCurrentPrompt();
-            return;
-          }
-          const originals = data.entities as Entity[];
-          const originalSolids = data.solids as Solid[];
-          const baseWorld = (data.baseWorldPoint as Vec3 | undefined) ?? localToWorld(this.ctx.doc.activeWorkPlane, base);
-          const scaledEntities = originals.map((entity) => scaleEntity(entity, base, factor));
-          const scaledSolids = originalSolids.map((solid) => scaleSolid(solid, baseWorld, factor));
-          this.ctx.history.execute(new ReplaceObjectsEdit('Scale', originals, originalSolids, scaledEntities, scaledSolids));
-          this.ctx.doc.clearSelection();
-          scaledEntities.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          scaledSolids.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-          this.ctx.log(`Scaled ${scaledEntities.length + scaledSolids.length} object(s) by factor ${factor.toFixed(4)}.`);
-        }
         break;
 
       case 'EXPLODE':
@@ -1474,29 +1410,6 @@ export class CommandManager {
         }
         break;
 
-      case 'ROTATE':
-        if (this.active.stepIndex === 0) {
-          if (this.gatherPicked(value)) return;
-        } else if (this.active.stepIndex === 1) {
-          data.basePoint = value;
-        } else if (this.active.stepIndex === 2) {
-          const base = data.basePoint as Vec2;
-          const target = value as Vec2;
-          const angle = Math.atan2(target.y - base.y, target.x - base.x);
-          const originals = data.entities as Entity[];
-          const originalSolids = (data.solids as Solid[] | undefined) ?? [];
-          const rotated = originals.map((entity) => rotateEntity(entity, base, angle, this.ctx.doc));
-          // Solids turn about the same axis the drawing does: the work plane's
-          // normal, through the base point. ARRAY has always rotated them this
-          // way; ROTATE simply never asked for them.
-          const plane = this.ctx.doc.activeWorkPlane;
-          const rotatedSolids = originalSolids.map((solid) => rotateSolidAroundPlane(cloneSolid(solid), { x: base.x, y: base.y, z: 0 }, angle, plane));
-          this.ctx.history.execute(new ReplaceObjectsEdit('Rotate', originals, originalSolids, rotated, rotatedSolids));
-          this.ctx.doc.clearSelection();
-          rotated.forEach((entity, index) => this.ctx.doc.selectEntity(entity.id, index > 0));
-          rotatedSolids.forEach((solid) => this.ctx.doc.selectSolid(solid.id, true));
-          this.ctx.log(`Rotated ${rotated.length + rotatedSolids.length} object(s) by ${(angle * 180 / Math.PI).toFixed(3)}°.`);
-        }
         break;
 
       case 'PRESSPULL':
@@ -1614,33 +1527,6 @@ export class CommandManager {
         }
         break;
 
-      case 'ERASE': {
-        if (this.active.stepIndex === 0 && value) {
-          if (typeof value === 'string') {
-            const solid = this.ctx.doc.getSolid(value);
-            const solids = data.solids as Solid[];
-            if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
-          } else {
-            const entity = value as Entity;
-            const entities = data.entities as Entity[];
-            if (!entities.some((item) => item.id === entity.id)) entities.push(entity);
-          }
-          this.ctx.log('Object added. Select another or press Enter.');
-          return;
-        }
-        // Enter: everything gathered goes in one undoable edit.
-        const entities = (data.entities as Entity[]).map(cloneEntity);
-        const solids = (data.solids as Solid[]).map(cloneSolid);
-        if (entities.length + solids.length === 0) {
-          this.cancelActive();
-          this.ctx.log('Nothing to delete.');
-          this.ctx.prompt('Command:');
-          return;
-        }
-        this.ctx.history.execute(new ReplaceObjectsEdit('Delete objects', entities, solids, [], []));
-        this.ctx.log(`Deleted ${entities.length + solids.length} object(s).`);
-        break;
-      }
     }
 
     this.finishStep();

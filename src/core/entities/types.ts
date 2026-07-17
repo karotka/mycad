@@ -1,4 +1,4 @@
-import type { Vec2, Vec3 } from '../../math/geometry';
+import { dist2, type Vec2, type Vec3 } from '../../math/geometry';
 import type { WorkPlane } from '../../math/workplane';
 import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
 
@@ -391,6 +391,28 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       return { min: { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) }, max: { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) } };
     }
   }
+}
+
+/**
+ * The corners of an entity that encloses an area, without the repeated closing
+ * point — or null for one that does not enclose anything. A rectangle keeps its
+ * corners implicit and an octagon keeps them explicit, so asking each in its own
+ * words is what this saves the caller.
+ */
+export function closedVertices(entity: Entity): Vec2[] | null {
+  if (entity.type === 'rectangle') return [
+    entity.first,
+    { x: entity.opposite.x, y: entity.first.y },
+    entity.opposite,
+    { x: entity.first.x, y: entity.opposite.y },
+  ];
+  if (entity.type === 'octagon') return entity.vertices.map((point) => ({ ...point }));
+  if (entity.type === 'polyline' && entity.closed) {
+    const vertices = entity.vertices.map((point) => ({ ...point }));
+    if (vertices.length > 1 && dist2(vertices[0], vertices.at(-1)!) < 1e-9) vertices.pop();
+    return vertices;
+  }
+  return null;
 }
 
 export function getEntityPoints(e: Entity): Vec2[] {
