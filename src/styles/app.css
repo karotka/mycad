@@ -856,6 +856,12 @@ html, body, #app {
 .view-toggle .cube3d-face:hover,
 .view-toggle .cube3d-face.active { background: #a9d8f4; color: #245b7a; }
 
+/* The top and bottom faces are laid so their text reads upright when looked at
+   straight on — the view you land in when you click them. Without this the
+   label runs sideways in the top view. */
+.view-toggle .cube3d-top span { display: block; transform: rotate(-90deg); }
+.view-toggle .cube3d-bottom span { display: block; transform: rotate(90deg); }
+
 .view-toggle .cube3d-front  { transform: translateZ(25px); }
 .view-toggle .cube3d-back   { transform: rotateY(180deg) translateZ(25px); }
 .view-toggle .cube3d-right  { transform: rotateY(90deg) translateZ(25px); }

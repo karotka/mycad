@@ -64,12 +64,12 @@ export function shellHtml(tools: ShellTools): string {
           </svg>
           <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
             <div class="cube3d" id="cube3d">
-              <button class="cube3d-face cube3d-top" data-standard-view="top" title="Top view">TOP</button>
-              <button class="cube3d-face cube3d-bottom" data-standard-view="bottom" title="Bottom view">BOTTOM</button>
-              <button class="cube3d-face cube3d-front" data-standard-view="front" title="Front view">FRONT</button>
-              <button class="cube3d-face cube3d-back" data-standard-view="back" title="Back view">BACK</button>
-              <button class="cube3d-face cube3d-left" data-standard-view="left" title="Left view">LEFT</button>
-              <button class="cube3d-face cube3d-right" data-standard-view="right" title="Right view">RIGHT</button>
+              <button class="cube3d-face cube3d-top" data-standard-view="top" title="Top view"><span>TOP</span></button>
+              <button class="cube3d-face cube3d-bottom" data-standard-view="bottom" title="Bottom view"><span>BOTTOM</span></button>
+              <button class="cube3d-face cube3d-front" data-standard-view="front" title="Front view"><span>FRONT</span></button>
+              <button class="cube3d-face cube3d-back" data-standard-view="back" title="Back view"><span>BACK</span></button>
+              <button class="cube3d-face cube3d-left" data-standard-view="left" title="Left view"><span>LEFT</span></button>
+              <button class="cube3d-face cube3d-right" data-standard-view="right" title="Right view"><span>RIGHT</span></button>
             </div>
           </div>
         </div>
