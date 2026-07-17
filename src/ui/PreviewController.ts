@@ -233,7 +233,8 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
   }
   return result;
 }
-import { linearDimensionRotation, type ActiveCommand } from '../core/commands/CommandManager';
+import type { ActiveCommand } from '../core/commands/CommandManager';
+import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';

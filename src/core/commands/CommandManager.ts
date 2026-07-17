@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, dist3, formatPoint, midpoint2, mirrorPoint2, rotatePoint } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal } from '../../math/workplane';
 import { transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
-import { cloneEntity, closedVertices, curvePoints, dimensionGeometry, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { cloneEntity, closedVertices, curvePoints, dimensionGeometry, linearDimensionRotation, ellipsePoints, entityBounds, genId, getEntityPoints, isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, transformEntityPoints, type Entity, type ExtrusionFeature, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
   AddEntitiesEdit,
@@ -42,7 +42,8 @@ import {
   createWedgeMesh,
   createPyramidMesh,
 } from '../solids/ManifoldEngine';
-import { rotatedFeature, scaledFeature, translatedFeature } from '../solids/featureTransform';
+import { translatedFeature } from '../solids/featureTransform';
+import { copyEntity, copySolid, rotateEntity, rotateSolidAroundPlane } from './steps/transform';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -181,136 +182,12 @@ function offsetPolygon(vertices: Vec2[], distance: number): Vec2[] | null {
   return result;
 }
 
-function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document): Entity {
-  if (entity.type === 'rectangle') {
-    const corners = closedVertices(entity)!;
-    const polyline = doc.createPolyline(corners.map((point) => rotatePoint(point, base, angle)), true, entity.color);
-    polyline.layer = entity.layer;
-    polyline.workPlane = cloneEntity(entity).workPlane;
-    return polyline;
-  }
-  const result = cloneEntity(entity);
-  switch (result.type) {
-    case 'line': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); break;
-    case 'circle': result.center = rotatePoint(result.center, base, angle); break;
-    case 'ellipse':
-      result.center = rotatePoint(result.center, base, angle);
-      result.rotation += angle;
-      break;
-    case 'octagon': result.center = rotatePoint(result.center, base, angle); result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
-    case 'polyline': result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
-    case 'arc': result.center = rotatePoint(result.center, base, angle); result.startAngle += angle; break;
-    case 'bezier':
-      result.start = rotatePoint(result.start, base, angle);
-      result.control1 = rotatePoint(result.control1, base, angle);
-      result.control2 = rotatePoint(result.control2, base, angle);
-      result.end = rotatePoint(result.end, base, angle);
-      break;
-    case 'text': result.position = rotatePoint(result.position, base, angle); result.rotation = (result.rotation ?? 0) + angle; break;
-    case 'dimension': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); result.offset = rotatePoint(result.offset, base, angle); break;
-    case 'rectangle': break;
-  }
-  return result;
-}
-
-function copyEntity(entity: Entity, localDelta: Vec2, worldDelta?: Vec3): Entity {
-  let copy: Entity;
-  if (worldDelta) {
-    copy = cloneEntity(entity);
-    const plane = cloneWorkPlane(copy.workPlane ?? WORLD_WORK_PLANE);
-    plane.origin.x += worldDelta.x;
-    plane.origin.y += worldDelta.y;
-    plane.origin.z += worldDelta.z;
-    copy.workPlane = plane;
-  } else {
-    copy = transformEntityPoints(entity, (point) => ({ x: point.x + localDelta.x, y: point.y + localDelta.y }));
-  }
-  copy.id = genId(copy.type);
-  copy.selected = false;
-  return copy;
-}
-
-function copySolid(solid: Solid, delta: Vec3): Solid {
-  const copy = cloneSolid(solid);
-  copy.id = genId('solid');
-  copy.name = `${solid.name}_copy`;
-  copy.selected = false;
-  for (let index = 0; index < copy.mesh.positions.length; index += 3) {
-    copy.mesh.positions[index] += delta.x;
-    copy.mesh.positions[index + 1] += delta.y;
-    copy.mesh.positions[index + 2] += delta.z;
-  }
-  // Its own history moves with it: a copy that forgot how it was made would
-  // be a mesh sitting beside the parametric solid it came from.
-  copy.feature = translatedFeature(copy.feature, delta) ?? { kind: 'mesh' };
-  copy.revision++;
-  return copy;
-}
-
 function workPlaneDelta(plane: typeof WORLD_WORK_PLANE, localDelta: Vec2): Vec3 {
   return {
     x: plane.xAxis.x * localDelta.x + plane.yAxis.x * localDelta.y,
     y: plane.xAxis.y * localDelta.x + plane.yAxis.y * localDelta.y,
     z: plane.xAxis.z * localDelta.x + plane.yAxis.z * localDelta.y,
   };
-}
-
-function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {
-  const scaled = transformEntityPoints(entity, (point) => ({
-    x: base.x + (point.x - base.x) * factor,
-    y: base.y + (point.y - base.y) * factor,
-  }));
-  if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
-  if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
-  if (scaled.type === 'text') scaled.height *= factor;
-  scaled.selected = true;
-  return scaled;
-}
-
-function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
-  const scaled = cloneSolid(solid);
-  for (let index = 0; index < scaled.mesh.positions.length; index += 3) {
-    scaled.mesh.positions[index] = base.x + (scaled.mesh.positions[index] - base.x) * factor;
-    scaled.mesh.positions[index + 1] = base.y + (scaled.mesh.positions[index + 1] - base.y) * factor;
-    scaled.mesh.positions[index + 2] = base.z + (scaled.mesh.positions[index + 2] - base.z) * factor;
-  }
-  scaled.height *= factor;
-  // The mesh is transformed rather than regenerated, because a uniform scale of
-  // every vertex is exactly what regenerating would produce and it needs no
-  // WASM to do it. The feature is carried along so that the shape and the story
-  // of it stay the same shape — this used to end at `{ kind: 'mesh' }`, so
-  // resizing a sphere cost you the radius that made it.
-  scaled.feature = scaledFeature(scaled.feature, base, factor) ?? { kind: 'mesh' };
-  scaled.revision++;
-  scaled.selected = true;
-  return scaled;
-}
-
-function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: number, plane: typeof WORLD_WORK_PLANE): Solid {
-  const rotated = cloneSolid(solid);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  for (let index = 0; index < rotated.mesh.positions.length; index += 3) {
-    const local = worldToLocal(plane, {
-      x: rotated.mesh.positions[index],
-      y: rotated.mesh.positions[index + 1],
-      z: rotated.mesh.positions[index + 2],
-    });
-    const dx = local.x - centerLocal.x;
-    const dy = local.y - centerLocal.y;
-    const x = centerLocal.x + dx * cos - dy * sin;
-    const y = centerLocal.y + dx * sin + dy * cos;
-    const world = localToWorld(plane, { x, y }, local.z);
-    rotated.mesh.positions[index] = world.x;
-    rotated.mesh.positions[index + 1] = world.y;
-    rotated.mesh.positions[index + 2] = world.z;
-  }
-  // A rotation is the work plane turned, which every feature already carries,
-  // so this one never needed to bake at all.
-  rotated.feature = rotatedFeature(rotated.feature, localToWorld(plane, centerLocal, centerLocal.z), plane.zAxis, angle)
-    ?? { kind: 'mesh' };
-  rotated.revision++;
-  return rotated;
 }
 
 function explodeEntity(entity: Entity, doc: Document): Entity[] {
@@ -1457,74 +1334,10 @@ export class CommandManager {
         }
         break;
 
-      case 'DIMALIGNED':
-      case 'MEASURE':
-        if (this.active.stepIndex === 0) data.start = value;
-        else if (this.active.stepIndex === 1) data.end = value;
-        else if (this.active.stepIndex === 2) data.offset = value;
-        else {
-          // The last step, so the dimension is built once and lands in the
-          // history as a single entry — placing the text is part of drawing it,
-          // not an edit of something already drawn.
-          const start = data.start as Vec2 | Vec3;
-          const end = data.end as Vec2 | Vec3;
-          const a: Vec3 = { x: start.x, y: start.y, z: 'z' in start ? start.z : 0 };
-          const b: Vec3 = { x: end.x, y: end.y, z: 'z' in end ? end.z : 0 };
-          const offset = data.offset as Vec2;
-          const aligned = this.active.name === 'DIMALIGNED';
-          const dimension = this.ctx.doc.createDimension(
-            { x: start.x, y: start.y }, { x: end.x, y: end.y }, offset,
-            aligned ? 'aligned' : 'linear',
-            aligned ? undefined : linearDimensionRotation({ x: start.x, y: start.y }, { x: end.x, y: end.y }, offset),
-          );
-          // Enter arrives as null, which is the step declining to move the text.
-          const textPosition = value as Vec2 | null;
-          if (textPosition) dimension.textPosition = { x: textPosition.x, y: textPosition.y };
-          this.ctx.history.execute(new AddEntityEdit('Dimension', dimension));
-          const measured = aligned ? dist3(a, b) : Number(dimensionGeometry(dimension).text);
-          this.ctx.log(`Dimension created: ${measured.toFixed(dimension.precision)} mm (${formatPoint(a)} -> ${formatPoint(b)})`);
-        }
         break;
 
-      case 'DIMRADIUS':
-      case 'DIMDIAMETER':
-        if (this.active.stepIndex === 0) {
-          const entity = value as Entity;
-          if (entity.type !== 'circle' && entity.type !== 'arc') {
-            this.ctx.log('Dimension requires a circle or arc.');
-            this.showCurrentPrompt();
-            return;
-          }
-          data.entity = entity;
-        } else {
-          const entity = data.entity as Entity;
-          if (entity.type !== 'circle' && entity.type !== 'arc') return;
-          const cursor = value as Vec2;
-          let dx = cursor.x - entity.center.x, dy = cursor.y - entity.center.y;
-          const distance = Math.hypot(dx, dy);
-          if (distance < 1e-9) { dx = 1; dy = 0; }
-          else { dx /= distance; dy /= distance; }
-          const point = { x: entity.center.x + dx * entity.radius, y: entity.center.y + dy * entity.radius };
-          const dimension = this.ctx.doc.createDimension(entity.center, point, cursor, this.active.name === 'DIMRADIUS' ? 'radius' : 'diameter');
-          dimension.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
-          this.ctx.history.execute(new AddEntityEdit(this.active.name === 'DIMRADIUS' ? 'Radius dimension' : 'Diameter dimension', dimension));
-          this.ctx.log(`${this.active.name === 'DIMRADIUS' ? 'Radius' : 'Diameter'} dimension created.`);
-        }
         break;
 
-      case 'UCS':
-        if (this.active.stepIndex === 0) data.origin = value;
-        else if (this.active.stepIndex === 1) data.xPoint = value;
-        else {
-          const origin = data.origin as Vec3;
-          const xPoint = data.xPoint as Vec3;
-          const yPoint = value as Vec3;
-          this.ctx.doc.activeWorkPlane = workPlaneFromXYAxes(origin, xPoint, yPoint);
-          this.ctx.doc.viewMode = '3d';
-          this.ctx.workPlaneChanged?.();
-          this.ctx.doc.notify();
-          this.ctx.log(`UCS set: origin ${formatPoint(origin)}, X through ${formatPoint(xPoint)}, Y through ${formatPoint(yPoint)}`);
-        }
         break;
 
     }
@@ -1604,23 +1417,6 @@ export function extrusionFeature(profile: Entity, height: number): ExtrusionFeat
     workPlane: cloneWorkPlane(profile.workPlane ?? WORLD_WORK_PLANE),
     transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, translateZ: height < 0 ? height : 0 },
   };
-}
-
-export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
-  // A leg of zero has nothing to dimension, so the other one is the only answer
-  // there is: an axis-aligned line always reads its own length.
-  if (Math.abs(end.y - start.y) <= 1e-9) return 0;
-  if (Math.abs(end.x - start.x) <= 1e-9) return Math.PI / 2;
-
-  // Otherwise it is where the dimension line was pulled *past the points*: above
-  // or below them reads across, beside them reads up. Measuring from their
-  // midpoint instead would make a point that is merely far along the line look
-  // like it was pulled sideways.
-  const beyond = (value: number, low: number, high: number): number =>
-    Math.max(low - value, value - high, 0);
-  const outsideX = beyond(offset.x, Math.min(start.x, end.x), Math.max(start.x, end.x));
-  const outsideY = beyond(offset.y, Math.min(start.y, end.y), Math.max(start.y, end.y));
-  return outsideX > outsideY ? Math.PI / 2 : 0;
 }
 
 /** Distance from a point to a segment — the basis of every stroke hit test. */

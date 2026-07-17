@@ -13,6 +13,7 @@ import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, dra
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { subtractSolids, unionSolids } from './steps/booleans';
 import { eraseObjects, mirrorObjects, rotateObjects, scaleObjects } from './steps/transform';
+import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -151,17 +152,17 @@ export const COMMANDS = [
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
   { name: 'BEZIER', aliases: ['B', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
   { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
-  { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
+  { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], execute: measureDistance, help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
-  { name: 'DIMALIGNED', aliases: ['DAL', 'DIMALIGNED'], help: 'dimension the true distance between two points', suggest: true, sticky: true, pointInput: true,
+  { name: 'DIMALIGNED', aliases: ['DAL', 'DIMALIGNED'], execute: measureDistance, help: 'dimension the true distance between two points', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
-  { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], suggest: true, sticky: true, pointInput: true,
+  { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select circle or arc for radius dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
-  { name: 'DIMDIAMETER', aliases: ['DD', 'DDI', 'DIMDIAMETER'], suggest: true, sticky: true, pointInput: true,
+  { name: 'DIMDIAMETER', aliases: ['DD', 'DDI', 'DIMDIAMETER'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select circle or arc for diameter dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
@@ -245,7 +246,7 @@ export const COMMANDS = [
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
   { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true, steps: [{ kind: 'solid', label: 'Select base solid:', additive: true }, { kind: 'solid', label: 'Select solid to subtract:', additive: true }, { kind: 'done' }] },
-  { name: 'UCS', aliases: ['UCS'], suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
+  { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },

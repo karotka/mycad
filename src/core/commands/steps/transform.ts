@@ -9,8 +9,8 @@
  */
 import { AddEntitiesEdit, ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, closedVertices, genId, transformEntityPoints, type Entity, type Solid } from '../../entities/types';
-import { rotatedFeature, scaledFeature } from '../../solids/featureTransform';
-import { localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
+import { rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
+import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
 import { dist2, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { Document } from '../../Document';
 import type { CommandRun, StepOutcome } from '../types';
@@ -103,6 +103,40 @@ export function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: n
     ?? { kind: 'mesh' };
   rotated.revision++;
   return rotated;
+}
+
+export function copyEntity(entity: Entity, localDelta: Vec2, worldDelta?: Vec3): Entity {
+  let copy: Entity;
+  if (worldDelta) {
+    copy = cloneEntity(entity);
+    const plane = cloneWorkPlane(copy.workPlane ?? WORLD_WORK_PLANE);
+    plane.origin.x += worldDelta.x;
+    plane.origin.y += worldDelta.y;
+    plane.origin.z += worldDelta.z;
+    copy.workPlane = plane;
+  } else {
+    copy = transformEntityPoints(entity, (point) => ({ x: point.x + localDelta.x, y: point.y + localDelta.y }));
+  }
+  copy.id = genId(copy.type);
+  copy.selected = false;
+  return copy;
+}
+
+export function copySolid(solid: Solid, delta: Vec3): Solid {
+  const copy = cloneSolid(solid);
+  copy.id = genId('solid');
+  copy.name = `${solid.name}_copy`;
+  copy.selected = false;
+  for (let index = 0; index < copy.mesh.positions.length; index += 3) {
+    copy.mesh.positions[index] += delta.x;
+    copy.mesh.positions[index + 1] += delta.y;
+    copy.mesh.positions[index + 2] += delta.z;
+  }
+  // Its own history moves with it: a copy that forgot how it was made would
+  // be a mesh sitting beside the parametric solid it came from.
+  copy.feature = translatedFeature(copy.feature, delta) ?? { kind: 'mesh' };
+  copy.revision++;
+  return copy;
 }
 
 /**

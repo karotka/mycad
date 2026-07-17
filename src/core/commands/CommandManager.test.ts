@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
-import { CommandManager, hitTestEntity, linearDimensionRotation } from './CommandManager';
+import { CommandManager, hitTestEntity } from './CommandManager';
+import { linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { WORLD_WORK_PLANE } from '../../math/workplane';

@@ -177,6 +177,23 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
   };
 }
 
+export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
+  // A leg of zero has nothing to dimension, so the other one is the only answer
+  // there is: an axis-aligned line always reads its own length.
+  if (Math.abs(end.y - start.y) <= 1e-9) return 0;
+  if (Math.abs(end.x - start.x) <= 1e-9) return Math.PI / 2;
+
+  // Otherwise it is where the dimension line was pulled *past the points*: above
+  // or below them reads across, beside them reads up. Measuring from their
+  // midpoint instead would make a point that is merely far along the line look
+  // like it was pulled sideways.
+  const beyond = (value: number, low: number, high: number): number =>
+    Math.max(low - value, value - high, 0);
+  const outsideX = beyond(offset.x, Math.min(start.x, end.x), Math.max(start.x, end.x));
+  const outsideY = beyond(offset.y, Math.min(start.y, end.y), Math.max(start.y, end.y));
+  return outsideX > outsideY ? Math.PI / 2 : 0;
+}
+
 /** Samples a rotated ellipse; `segments` points around it, first point repeated last. */
 export function ellipsePoints(e: EllipseEntity, segments = 64): Vec2[] {
   const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
