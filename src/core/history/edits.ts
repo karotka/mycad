@@ -1,6 +1,7 @@
 import type { Document } from '../Document';
 import { cloneEntity, type Entity, type Solid } from '../entities/types';
 import type { DocumentEdit } from './CommandHistory';
+import { ACI_WHITE, aciToRgb } from '../../io/DxfAci';
 
 export function cloneSolid(solid: Solid): Solid {
   return {
@@ -74,7 +75,7 @@ export class DeleteLayerEdit implements DocumentEdit {
   private readonly entities: Entity[];
   private readonly solids: Solid[];
   private readonly index: number;
-  private readonly color: number;
+  private readonly aci: number;
   private readonly hidden: boolean;
   private readonly wasCurrent: boolean;
 
@@ -83,7 +84,7 @@ export class DeleteLayerEdit implements DocumentEdit {
     this.entities = docAtCreation.entities.filter((entity) => entity.layer === layer).map(cloneEntity);
     this.solids = docAtCreation.solids.filter((solid) => solid.layer === layer).map(cloneSolid);
     this.index = docAtCreation.layers.indexOf(layer);
-    this.color = docAtCreation.layerColors[layer] ?? 0xffffff;
+    this.aci = docAtCreation.layerAci[layer] ?? ACI_WHITE;
     this.hidden = docAtCreation.hiddenLayers.has(layer);
     this.wasCurrent = docAtCreation.currentLayer === layer;
   }
@@ -93,6 +94,7 @@ export class DeleteLayerEdit implements DocumentEdit {
     doc.solids = doc.solids.filter((solid) => solid.layer !== this.layer);
     doc.layers = doc.layers.filter((layer) => layer !== this.layer);
     delete doc.layerColors[this.layer];
+    delete doc.layerAci[this.layer];
     doc.hiddenLayers.delete(this.layer);
     if (doc.currentLayer === this.layer) doc.currentLayer = doc.layers[0] ?? '0';
     doc.pruneSelection();
@@ -101,7 +103,8 @@ export class DeleteLayerEdit implements DocumentEdit {
 
   revert(doc: Document): void {
     if (!doc.layers.includes(this.layer)) doc.layers.splice(Math.max(0, this.index), 0, this.layer);
-    doc.layerColors[this.layer] = this.color;
+    doc.layerAci[this.layer] = this.aci;
+    doc.layerColors[this.layer] = aciToRgb(this.aci) ?? aciToRgb(ACI_WHITE)!;
     if (this.hidden) doc.hiddenLayers.add(this.layer);
     doc.entities.push(...this.entities.map(cloneEntity));
     doc.solids.push(...this.solids.map(cloneSolid));

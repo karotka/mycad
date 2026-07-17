@@ -4,6 +4,7 @@ import { AddEntitiesEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
+import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
 
@@ -66,7 +67,8 @@ export class ProjectController {
       this.doc.selectedSolidIds.clear();
       this.doc.currentLayer = '0';
       this.doc.layers = ['0'];
-      this.doc.layerColors = { '0': 0xffffff };
+      this.doc.layerAci = { '0': ACI_WHITE };
+      this.doc.layerColors = { '0': aciToRgb(ACI_WHITE)! };
       this.doc.hiddenLayers.clear();
       this.doc.gridSize = 1;
       this.doc.snapSize = 0.5;
@@ -115,11 +117,12 @@ export class ProjectController {
       if (result.entities.length === 0) throw new Error('No supported 2D entities were found.');
       result.layers.forEach((layer) => {
         if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
-        this.doc.layerColors[layer] ??= result.layerColors[layer] ?? 0xffffff;
+        this.doc.layerAci[layer] ??= result.layerAci[layer] ?? ACI_WHITE;
       });
       this.doc.viewMode = '2d';
       this.doc.transaction(() => {
         this.doc.clearSelection();
+        this.doc.recolour();
         this.history.execute(new AddEntitiesEdit('Import DXF', result.entities));
       });
       this.callbacks.zoomExtents();

@@ -8,6 +8,17 @@ export interface EntityBase {
   id: string;
   type: EntityType;
   layer: string;
+  /**
+   * The AutoCAD colour index the object is drawn in: 1–255 for a colour of its
+   * own, or 256 (BYLAYER) to take its layer's — which is what almost everything
+   * is. This is the truth; `color` is derived from it.
+   */
+  aci: number;
+  /**
+   * The resolved RGB the renderer draws, kept in step with `aci` and the layer.
+   * A cache, never set by hand: recolouring a layer recomputes it, so an object
+   * that is BYLAYER follows its layer instead of carrying a stale copy of it.
+   */
   color: number;
   selected: boolean;
   workPlane?: WorkPlane;
@@ -315,6 +326,9 @@ export interface Solid {
   name: string;
   layer: string;
   mesh: SolidMesh;
+  /** AutoCAD colour index, 1–255 or 256 (BYLAYER). The truth; `color` is derived. */
+  aci: number;
+  /** Resolved RGB the renderer draws — a cache of `aci` against the layer. */
   color: number;
   selected: boolean;
   height: number;

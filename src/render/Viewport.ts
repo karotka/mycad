@@ -330,7 +330,7 @@ export class Canvas2DRenderer {
       const style = value.style ?? { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed' as const, extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
       // No label beside it: a dimension is the one preview that already writes
       // its own measurement, so one here would print the number twice.
-      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, textPosition: value.textPosition, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
+      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, textPosition: value.textPosition, aci: 256, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
     } else if (preview.type === 'line' && d.start && d.end) {
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);

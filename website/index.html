@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="MyCAD je rychlý 2D a 3D CAD pro macOS. Kreslete přesně, modelujte tělesa a exportujte STL nebo G-code v jediné přehledné aplikaci." />
+    <meta name="theme-color" content="#f4f7f8" />
+    <meta property="og:title" content="MyCAD — od náčrtu k hotovému dílu" />
+    <meta property="og:description" content="Přesný 2D a 3D CAD navržený pro macOS." />
+    <meta property="og:type" content="website" />
+    <title>MyCAD — přesný 2D a 3D CAD pro macOS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#obsah">Přejít na obsah</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="MyCAD, úvodní stránka">
+        <svg viewBox="0 0 42 42" aria-hidden="true"><path d="M6 31V11l15-7 15 7v20l-15 7-15-7Z"/><path d="m6 11 15 8 15-8M21 19v19"/></svg>
+        <span>my<span>CAD</span></span>
+      </a>
+      <nav aria-label="Hlavní navigace">
+        <a href="#moznosti">Možnosti</a>
+        <a href="#workflow">Jak funguje</a>
+        <a href="#pro-koho">Pro koho</a>
+      </nav>
+      <a class="header-cta" href="#ke-stazeni">Získat MyCAD <span aria-hidden="true">↘</span></a>
+      <button class="menu-button" type="button" aria-label="Otevřít menu" aria-expanded="false"><span></span><span></span></button>
+    </header>
+
+    <main id="obsah">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> CAD navržený pro macOS</p>
+          <h1>Od přesné čáry<br />k <em>hotovému dílu.</em></h1>
+          <p class="hero-lead">MyCAD spojuje technické kreslení a 3D modelování v jednom soustředěném pracovním prostoru. Bez zbytečné složitosti. S přesností, na kterou se můžete spolehnout.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#ke-stazeni">Stáhnout pro macOS <span>↓</span></a>
+            <a class="text-link" href="#moznosti">Prozkoumat možnosti <span>→</span></a>
+          </div>
+          <p class="hero-note">Nativní aplikace · Projekt ve vývoji</p>
+        </div>
+
+        <div class="blueprint" aria-label="Ukázka prostředí MyCAD">
+          <div class="measure measure-top">120.00</div>
+          <div class="measure measure-side">84.00</div>
+          <div class="cad-window">
+            <div class="cad-titlebar"><i></i><i></i><i></i><span>MyCAD — bracket.mycad</span><b>TOP</b></div>
+            <div class="cad-tools">
+              <span>╱</span><span>○</span><span>⌁</span><i></i><span>↔</span><span>⌗</span><span>◈</span><i></i><span>▱</span><span>⬡</span>
+            </div>
+            <div class="cad-viewport">
+              <svg viewBox="0 0 720 430" role="img" aria-label="Technický 3D model držáku">
+                <defs><linearGradient id="face" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#52788e"/><stop offset="1" stop-color="#173b51"/></linearGradient></defs>
+                <g class="grid-lines"><path d="M0 60h720M0 120h720M0 180h720M0 240h720M0 300h720M0 360h720M60 0v430M120 0v430M180 0v430M240 0v430M300 0v430M360 0v430M420 0v430M480 0v430M540 0v430M600 0v430M660 0v430"/></g>
+                <g class="part">
+                  <path class="part-face" d="m180 295 202 70 180-91-205-68Z"/>
+                  <path class="part-side" d="m180 295 202 70v35l-202-70Z"/>
+                  <path class="part-side dark" d="m382 365 180-91v35l-180 91Z"/>
+                  <path class="part-upright" d="m290 260 73 25V119l-73-25Z"/>
+                  <path class="part-upright side" d="m363 285 72-38V82l-72 37Z"/>
+                  <path class="part-top" d="m290 94 73 25 72-37-72-24Z"/>
+                  <ellipse cx="362" cy="172" rx="34" ry="19" transform="rotate(71 362 172)"/>
+                  <ellipse class="hole" cx="354" cy="170" rx="19" ry="10" transform="rotate(71 354 170)"/>
+                  <ellipse class="base-hole" cx="267" cy="306" rx="25" ry="11" transform="rotate(18 267 306)"/>
+                  <ellipse class="base-hole" cx="469" cy="309" rx="25" ry="11" transform="rotate(-27 469 309)"/>
+                </g>
+                <g class="axis"><path d="M86 361h56M86 361v-55M86 361l-31 23"/><text x="146" y="366">X</text><text x="80" y="299">Z</text><text x="40" y="397">Y</text></g>
+                <g class="dimension"><path d="M200 278 174 265M553 251l26-14M184 258l375-26"/><path d="m184 258 14-2-9 11M559 232l-14 2 9-11"/><text x="352" y="235">120.00</text></g>
+              </svg>
+              <div class="view-cube"><b>TOP</b><span>FRONT</span><i>R</i></div>
+              <div class="cad-command">Command: <b>_EXTRUDE</b><span>Specify height &lt;24.00&gt;:</span><i></i></div>
+            </div>
+            <div class="cad-status"><span>X: 38.1200&nbsp;&nbsp;Y: 62.4000 mm</span><b>OSNAP</b><b>ORTHO</b><b>POLAR</b></div>
+          </div>
+          <p class="blueprint-caption"><span>01</span> Jedno prostředí pro přesný návrh</p>
+        </div>
+      </section>
+
+      <section class="proof" aria-label="Hlavní vlastnosti">
+        <p>2D kreslení</p><i></i><p>3D modelování</p><i></i><p>DXF import</p><i></i><p>STL &amp; G-code export</p>
+      </section>
+
+      <section class="features section" id="moznosti">
+        <div class="section-heading">
+          <p class="eyebrow"><span></span> Vše podstatné, pohromadě</p>
+          <h2>Nástroje pro práci.<br /><em>Ne pro efekt.</em></h2>
+          <p>Od prvního náčrtu po data pro výrobu. Každý nástroj má jasné místo a smysl.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature feature-wide">
+            <span class="feature-index">A / 01</span>
+            <div class="feature-icon crosshair-icon"><i></i></div>
+            <h3>Přesné 2D kreslení</h3>
+            <p>Úsečky, oblouky, křivky, šrafy i kóty. S uchopováním bodů, polárním trasováním a vrstvami máte geometrii vždy pod kontrolou.</p>
+            <ul><li>Object snap</li><li>Kóty a vrstvy</li><li>DXF import</li></ul>
+          </article>
+          <article class="feature dark-card">
+            <span class="feature-index">B / 02</span>
+            <div class="mini-solid" aria-hidden="true"><i></i><b></b><span></span></div>
+            <h3>Skutečné 3D modelování</h3>
+            <p>Vytahujte profily, kombinujte tělesa a upravujte jejich historii v přehledném stromu modelu.</p>
+          </article>
+          <article class="feature orange-card">
+            <span class="feature-index">C / 03</span>
+            <div class="toolpath" aria-hidden="true"><svg viewBox="0 0 300 140"><path d="M12 112h56V34h70v78h58V57h92"/><circle cx="12" cy="112" r="5"/><circle cx="288" cy="57" r="5"/></svg></div>
+            <h3>Z návrhu rovnou k výrobě</h3>
+            <p>Exportujte 3D model jako STL nebo připravte G-code pro plotr a jednoduché výrobní workflow.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow section" id="workflow">
+        <div class="workflow-intro">
+          <p class="eyebrow light"><span></span> Přirozený pracovní postup</p>
+          <h2>Tři kroky.<br />Jeden <em>plynulý tok.</em></h2>
+        </div>
+        <ol>
+          <li><span>01</span><div><h3>Nakreslete</h3><p>Začněte přesným 2D profilem nebo otevřete existující výkres DXF.</p></div></li>
+          <li><span>02</span><div><h3>Vymodelujte</h3><p>Přidejte rozměr, vytáhněte profil a sestavte výsledné těleso.</p></div></li>
+          <li><span>03</span><div><h3>Vyrobte</h3><p>Uložte projekt nebo exportujte data ve formátu připraveném pro další práci.</p></div></li>
+        </ol>
+      </section>
+
+      <section class="audience section" id="pro-koho">
+        <div class="section-heading">
+          <p class="eyebrow"><span></span> Pro lidi, kteří tvoří</p>
+          <h2>Profesionální přesnost.<br /><em>Lidské ovládání.</em></h2>
+        </div>
+        <div class="audience-list">
+          <article><span>01</span><h3>Konstruktéři</h3><p>Rychlé návrhy, technické výkresy a přesné modely bez těžkopádného prostředí.</p><i>↗</i></article>
+          <article><span>02</span><h3>Makeři a dílny</h3><p>Od nápadu přes 3D díl až po podklady pro tisk nebo vlastní stroj.</p><i>↗</i></article>
+          <article><span>03</span><h3>Studenti a školy</h3><p>Srozumitelný vstup do světa technického kreslení a prostorového modelování.</p><i>↗</i></article>
+        </div>
+      </section>
+
+      <section class="download" id="ke-stazeni">
+        <div>
+          <p class="eyebrow light"><span></span> MyCAD pro macOS</p>
+          <h2>Dejte svým nápadům<br /><em>přesný tvar.</em></h2>
+          <p>MyCAD je právě ve vývoji. Zanechte nám e-mail a dáme vám vědět, až bude první verze připravena.</p>
+          <form class="notify-form" novalidate>
+            <label class="sr-only" for="email">E-mailová adresa</label>
+            <input id="email" type="email" placeholder="vas@email.cz" required autocomplete="email" />
+            <button type="submit">Chci vědět jako první <span>→</span></button>
+          </form>
+          <p class="form-message" role="status"></p>
+        </div>
+        <div class="download-mark" aria-hidden="true"><svg viewBox="0 0 250 250"><path d="M24 183V67l101-47 101 47v116l-101 47-101-47Z"/><path d="m24 67 101 56 101-56M125 123v107"/></svg><span>MY<br />CAD</span></div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="#top"><span>my<span>CAD</span></span></a>
+      <p>Navrhujeme nástroje pro přesnou práci.</p>
+      <div><a href="mailto:info@mycad.cz">info@mycad.cz</a><a href="#top">Nahoru ↑</a></div>
+      <small>© <span id="year"></span> MyCAD. Všechna práva vyhrazena.</small>
+    </footer>
+    <script src="script.js"></script>
+  </body>
+</html>

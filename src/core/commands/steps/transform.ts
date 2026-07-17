@@ -49,7 +49,8 @@ export function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
 export function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document): Entity {
   if (entity.type === 'rectangle') {
     const corners = closedVertices(entity)!;
-    const polyline = doc.createPolyline(corners.map((point) => rotatePoint(point, base, angle)), true, entity.color);
+    const polyline = doc.createPolyline(corners.map((point) => rotatePoint(point, base, angle)), true);
+    polyline.aci = entity.aci; polyline.color = entity.color;
     polyline.layer = entity.layer;
     polyline.workPlane = cloneEntity(entity).workPlane;
     return polyline;

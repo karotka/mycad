@@ -48,7 +48,7 @@ describe('parametric solid regeneration', () => {
     const feature: ExtrusionFeature = {
       kind: 'extrusion',
       profile: {
-        id: 'circle_profile', type: 'circle', layer: '0', color: 0xffffff, selected: false,
+        id: 'circle_profile', type: 'circle', layer: '0', aci: 256, color: 0xffffff, selected: false,
         center: { x: 0, y: 0 }, radius: 2,
       },
       height: 5,

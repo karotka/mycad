@@ -1,5 +1,6 @@
 import type { Document } from '../core/Document';
 import type { DimensionStyle } from '../core/settings';
+import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 
 export class DimensionStyleController {
   constructor(
@@ -71,7 +72,7 @@ export class DimensionStyleController {
     const arrowType = this.get('dimension-arrow-type').value;
     const layer = this.get('dimension-layer').value || 'dims';
     if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
-    if (!(layer in this.doc.layerColors)) this.doc.layerColors[layer] = 0xffffff;
+    if (!(layer in this.doc.layerAci)) { this.doc.layerAci[layer] = ACI_WHITE; this.doc.layerColors[layer] = aciToRgb(ACI_WHITE)!; }
     const style: DimensionStyle = {
       textHeight: positive('dimension-text-height', this.doc.dimensionStyle.textHeight),
       arrowSize: positive('dimension-arrow-size', this.doc.dimensionStyle.arrowSize),

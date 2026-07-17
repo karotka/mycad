@@ -25,8 +25,9 @@ function explodeEntity(entity: Entity, doc: Document): Entity[] {
   const count = closed ? points.length : points.length - 1;
   const result: Entity[] = [];
   for (let index = 0; index < count; index++) {
-    const line = doc.createLine(points[index], points[(index + 1) % points.length], entity.color);
+    const line = doc.createLine(points[index], points[(index + 1) % points.length]);
     line.layer = entity.layer;
+    line.aci = entity.aci; line.color = entity.color;
     line.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
     result.push(line);
   }

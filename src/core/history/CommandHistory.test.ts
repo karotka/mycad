@@ -95,7 +95,7 @@ describe('CommandHistory', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);
     doc.layers.push('Parts');
-    doc.layerColors.Parts = 0x123456;
+    doc.layerAci.Parts = 5; // blue
     doc.currentLayer = 'Parts';
     const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
     doc.addEntity(line);
@@ -115,7 +115,7 @@ describe('CommandHistory', () => {
     expect(doc.layers).toEqual(['0', 'Parts']);
     expect(doc.entities[0].id).toBe(line.id);
     expect(doc.solids[0].id).toBe(solid.id);
-    expect(doc.layerColors.Parts).toBe(0x123456);
+    expect(doc.layerAci.Parts).toBe(5);
     expect(doc.currentLayer).toBe('Parts');
   });
 });

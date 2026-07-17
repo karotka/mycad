@@ -19,6 +19,7 @@ import {
   type SolidMesh,
 } from './entities/types';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions } from './settings';
+import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci, rgbToAci } from '../io/DxfAci';
 
 export type ViewMode = '2d' | '3d';
 
@@ -44,7 +45,16 @@ export class Document {
   selectedSolidIds = new Set<string>();
   currentLayer = '0';
   layers: string[] = ['0'];
-  layerColors: Record<string, number> = { '0': 0xffffff };
+  /**
+   * Each layer's AutoCAD colour index — the truth for a layer's colour. Layer 0
+   * is white (7), the AutoCAD default.
+   */
+  layerAci: Record<string, number> = { '0': ACI_WHITE };
+  /**
+   * Resolved RGB per layer, for the renderer and everything that reads a colour.
+   * A cache of `layerAci`, recomputed by `recolour`; never assigned by hand.
+   */
+  layerColors: Record<string, number> = { '0': aciToRgb(ACI_WHITE)! };
   hiddenLayers = new Set<string>();
   gridSize = 1;
   snapSize = 0.5;
@@ -64,6 +74,41 @@ export class Document {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== fn);
     };
+  }
+
+  /** The RGB a layer resolves to, for anything that needs a colour to draw with. */
+  layerColorFor(layer: string): number {
+    return this.layerColors[layer] ?? aciToRgb(ACI_WHITE)!;
+  }
+
+  /**
+   * Recomputes every RGB cache from the colour indices that are the truth: each
+   * layer's, then each object's against its layer. Called after anything that
+   * moves an index — a layer recoloured, an object's colour changed, a file
+   * loaded — so a BYLAYER object always shows its layer's current colour rather
+   * than a copy of whatever it was when it was drawn.
+   */
+  recolour(): void {
+    for (const layer of this.layers) {
+      this.layerColors[layer] = aciToRgb(this.layerAci[layer] ?? ACI_WHITE) ?? aciToRgb(ACI_WHITE)!;
+    }
+    for (const entity of this.entities) entity.color = resolveAci(entity.aci, this.layerAci[entity.layer] ?? ACI_WHITE);
+    for (const solid of this.solids) solid.color = resolveAci(solid.aci, this.layerAci[solid.layer] ?? ACI_WHITE);
+  }
+
+  /** Sets a layer's colour index and repaints everything that follows it. */
+  setLayerAci(layer: string, aci: number): void {
+    this.layerAci[layer] = aci;
+    this.recolour();
+    this.notify();
+  }
+
+  /** Sets the colour index of objects — 256 for BYLAYER — and repaints them. */
+  setObjectsAci(entities: Entity[], solids: Solid[], aci: number): void {
+    for (const entity of entities) entity.aci = aci;
+    for (const solid of solids) solid.aci = aci;
+    this.recolour();
+    this.notify();
   }
 
   notify(): void {
@@ -158,12 +203,12 @@ export class Document {
     return this.solids.filter((s) => this.selectedSolidIds.has(s.id));
   }
 
-  createLine(start: Vec2, end: Vec2, color?: number): LineEntity {
+  createLine(start: Vec2, end: Vec2): LineEntity {
     return {
       id: genId('line'),
       type: 'line',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       start,
@@ -171,12 +216,12 @@ export class Document {
     };
   }
 
-  createCircle(center: Vec2, radius: number, color?: number): CircleEntity {
+  createCircle(center: Vec2, radius: number): CircleEntity {
     return {
       id: genId('circle'),
       type: 'circle',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       center,
@@ -184,17 +229,17 @@ export class Document {
     };
   }
   createArc(center: Vec2, radius: number, startAngle: number, sweepAngle: number): ArcEntity {
-    return { id: genId('arc'), type: 'arc', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), center, radius, startAngle, sweepAngle };
+    return { id: genId('arc'), type: 'arc', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), center, radius, startAngle, sweepAngle };
   }
   createBezier(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2): BezierEntity {
-    return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, control1, control2, end };
+    return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, control1, control2, end };
   }
-  createEllipse(center: Vec2, radiusX: number, radiusY: number, rotation = 0, color?: number): EllipseEntity {
+  createEllipse(center: Vec2, radiusX: number, radiusY: number, rotation = 0): EllipseEntity {
     return {
       id: genId('ellipse'),
       type: 'ellipse',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       center,
@@ -205,16 +250,16 @@ export class Document {
   }
 
   createText(position: Vec2, text: string, height = 2.5, font = 'Arial'): TextEntity {
-    return { id: genId('text'), type: 'text', layer: this.currentLayer, color: this.layerColors[this.currentLayer] ?? 0xffffff, selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
+    return { id: genId('text'), type: 'text', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), position, text, height, font };
   }
 
   createDimension(start: Vec2, end: Vec2, offset: Vec2, dimensionKind: DimensionEntity['dimensionKind'] = 'linear', rotation?: number): DimensionEntity {
     const layer = this.dimensionStyle.layer || 'dims';
     if (!this.layers.includes(layer)) this.layers.push(layer);
-    if (!(layer in this.layerColors)) this.layerColors[layer] = 0xffffff;
+    if (!(layer in this.layerAci)) { this.layerAci[layer] = ACI_WHITE; this.layerColors[layer] = aciToRgb(ACI_WHITE)!; }
     return {
       id: genId('dim'), type: 'dimension', layer,
-      color: this.layerColors[layer] ?? 0xffffff, selected: false,
+      aci: ACI_BYLAYER, color: this.layerColorFor(layer), selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane), start, end, offset, dimensionKind, rotation,
       textHeight: this.dimensionStyle.textHeight, arrowSize: this.dimensionStyle.arrowSize,
       arrowType: this.dimensionStyle.arrowType, extensionBeyond: this.dimensionStyle.extensionBeyond,
@@ -224,12 +269,12 @@ export class Document {
     };
   }
 
-  createRectangle(first: Vec2, opposite: Vec2, color?: number): RectangleEntity {
+  createRectangle(first: Vec2, opposite: Vec2): RectangleEntity {
     return {
       id: genId('rect'),
       type: 'rectangle',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       first,
@@ -237,12 +282,12 @@ export class Document {
     };
   }
 
-  createOctagon(center: Vec2, radius: number, color?: number): OctagonEntity {
+  createOctagon(center: Vec2, radius: number): OctagonEntity {
     return {
       id: genId('octagon'),
       type: 'octagon',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       center,
@@ -251,12 +296,12 @@ export class Document {
     };
   }
 
-  createPolyline(vertices: Vec2[], closed = false, color?: number): PolylineEntity {
+  createPolyline(vertices: Vec2[], closed = false): PolylineEntity {
     return {
       id: genId('poly'),
       type: 'polyline',
       layer: this.currentLayer,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       vertices: closed ? closePolyline(vertices) : [...vertices],
@@ -277,7 +322,11 @@ export class Document {
       name,
       layer: this.currentLayer,
       mesh,
-      color: color ?? this.layerColors[this.currentLayer] ?? 0xffffff,
+      // A given RGB becomes its nearest palette index, so a solid asked for a
+      // colour keeps one; without one it is BYLAYER like everything else.
+      ...(color === undefined
+        ? { aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer) }
+        : { aci: rgbToAci(color), color }),
       selected: false,
       height,
       sourceEntityIds,

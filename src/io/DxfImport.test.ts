@@ -39,7 +39,8 @@ describe('DXF import keeps what the drawing says', () => {
       '0\nLAYER\n2\nOutline\n62\n1\n0\nLAYER\n2\nHoles\n62\n5\n',
       '0\nLINE\n8\nOutline\n10\n0\n20\n0\n11\n10\n21\n0\n0\nCIRCLE\n8\nHoles\n10\n0\n20\n0\n40\n2\n',
     ));
-    expect(result.layerColors).toMatchObject({ Outline: 0xff0000, Holes: 0x0000ff });
+    expect(result.layerAci).toMatchObject({ Outline: 1, Holes: 5 });
+    expect(result.entities[0].aci).toBe(256); // BYLAYER — it takes the layer's
     expect(result.entities[0].color).toBe(0xff0000);
     expect(result.entities[1].color).toBe(0x0000ff);
   });
@@ -50,13 +51,14 @@ describe('DXF import keeps what the drawing says', () => {
       '0\nLAYER\n2\nOutline\n62\n1\n',
       '0\nLINE\n8\nOutline\n62\n3\n10\n0\n20\n0\n11\n10\n21\n0\n',
     ));
+    expect(result.entities[0].aci).toBe(3);
     expect(result.entities[0].color).toBe(0x00ff00);
   });
 
   it('reads a layer that is switched off by its negative colour', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxfWithTables('0\nLAYER\n2\nHidden\n62\n-1\n', '0\nLINE\n8\nHidden\n10\n0\n20\n0\n11\n1\n21\n0\n'));
-    expect(result.layerColors.Hidden).toBe(0xff0000);
+    expect(result.layerAci.Hidden).toBe(1); // off is a negative index; the colour is its absolute value
   });
 
   // The old import dropped the bulge, turning arcs into chords with no warning.

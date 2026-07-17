@@ -7,7 +7,7 @@ import type { WindowDragController } from './WindowDragController';
 import { SelectionController } from './SelectionController';
 
 function line(id: string): LineEntity {
-  return { id, type: 'line', layer: '0', color: 0xffffff, selected: false, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } };
+  return { id, type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } };
 }
 
 describe('SelectionController', () => {

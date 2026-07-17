@@ -94,7 +94,7 @@ describe('translatedFeature', () => {
 
   const extrusion = (workPlane?: ReturnType<typeof plane>): SolidFeature => ({
     kind: 'extrusion',
-    profile: { id: 'p', type: 'rectangle', layer: '0', color: 0xffffff, selected: false, first: { x: 0, y: 0 }, opposite: { x: 10, y: 5 } },
+    profile: { id: 'p', type: 'rectangle', layer: '0', aci: 256, color: 0xffffff, selected: false, first: { x: 0, y: 0 }, opposite: { x: 10, y: 5 } },
     height: 4,
     workPlane,
     transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },

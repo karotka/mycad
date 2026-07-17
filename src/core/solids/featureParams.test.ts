@@ -71,7 +71,7 @@ describe('setPrimitiveParam', () => {
 describe('extrusions', () => {
   const extrusion = (): ExtrusionFeature => ({
     kind: 'extrusion',
-    profile: { id: 'p', type: 'circle', layer: '0', color: 0xffffff, selected: false, center: { x: 0, y: 0 }, radius: 5 },
+    profile: { id: 'p', type: 'circle', layer: '0', aci: 256, color: 0xffffff, selected: false, center: { x: 0, y: 0 }, radius: 5 },
     height: 10,
     transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
   });

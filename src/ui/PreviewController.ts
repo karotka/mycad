@@ -214,7 +214,7 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
   };
   if (entity.type === 'rectangle') {
     const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
-    return { id: entity.id, type: 'polyline', layer: entity.layer, color: 0xe6f4ff, selected: false, workPlane: entity.workPlane, vertices: corners.map(rotate), closed: true };
+    return { id: entity.id, type: 'polyline', layer: entity.layer, aci: entity.aci, color: 0xe6f4ff, selected: false, workPlane: entity.workPlane, vertices: corners.map(rotate), closed: true };
   }
   const result = cloneEntity(entity);
   result.color = 0xe6f4ff;

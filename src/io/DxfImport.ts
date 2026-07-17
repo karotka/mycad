@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
-import { ACI_BYLAYER, aciToRgb } from './DxfAci';
+import { ACI_BYLAYER, ACI_WHITE, aciToRgb } from './DxfAci';
 import { expandBulges, type BulgeVertex } from './DxfBulge';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
 
@@ -10,7 +10,7 @@ export interface DxfImportResult {
   entities: Entity[];
   layers: string[];
   /** Layer colours read from the TABLES section, so a drawing keeps its look. */
-  layerColors: Record<string, number>;
+  layerAci: Record<string, number>;
   ignored: number;
   /** What was skipped, by DXF type — so the report can name it instead of only counting. */
   ignoredTypes: Record<string, number>;
@@ -63,9 +63,9 @@ function readLayerTable(pairs: Pair[]): Record<string, number> {
     while (end < pairs.length && pairs[end].code !== 0) end++;
     const fields = pairs.slice(index + 1, end);
     const name = fields.find((pair) => pair.code === 2)?.value;
-    // A negative colour means the layer is off; the colour is its absolute value.
-    const rgb = aciToRgb(Math.abs(number(fields, 62, ACI_BYLAYER)));
-    if (name && rgb !== null) colors[name] = rgb;
+    // A negative colour means the layer is off; the index is its absolute value.
+    const aci = Math.abs(number(fields, 62, ACI_BYLAYER));
+    if (name) colors[name] = aci;
     index = end - 1;
   }
   return colors;
@@ -86,7 +86,7 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   const pairs = pairsFromText(text);
   if (pairs.length === 0) throw new Error('The DXF file is empty or not an ASCII DXF file.');
   const scale = millimetreScale(pairs);
-  const layerColors = readLayerTable(pairs);
+  const layerAci = readLayerTable(pairs);
   const section = sectionStart(pairs, 'ENTITIES');
   if (section < 0) throw new Error('DXF ENTITIES section was not found. Binary DXF is not supported.');
 
@@ -100,6 +100,7 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   // change the document. createDimension registers its style layer as a side
   // effect, which would invent a "dims" layer the file never had.
   const layersBefore = [...doc.layers];
+  const layerAciBefore = { ...doc.layerAci };
   const layerColorsBefore = { ...doc.layerColors };
 
   const layerOf = (fields: Pair[]): string => fields.find((pair) => pair.code === 8)?.value || '0';
@@ -108,11 +109,15 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   /** An entity's own colour wins; otherwise it takes its layer's. */
   const colorOf = (fields: Pair[], layer: string): number => {
     const own = aciToRgb(number(fields, 62, ACI_BYLAYER));
-    return own ?? layerColors[layer] ?? doc.layerColors[layer] ?? 0xffffff;
+    return own ?? aciToRgb(layerAci[layer] ?? ACI_WHITE) ?? doc.layerColorFor(layer);
   };
 
   const finish = (entity: Entity, fields: Pair[], layer: string): void => {
     entity.layer = layer;
+    // The DXF colour is already an index; keep it as one. The RGB is resolved
+    // here too, since the importer hands back entities without touching the
+    // document, so nothing else will recompute it.
+    entity.aci = number(fields, 62, ACI_BYLAYER);
     entity.color = colorOf(fields, layer);
     entities.push(entity);
     layers.add(layer);
@@ -285,6 +290,7 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   }
 
   doc.layers = layersBefore;
+  doc.layerAci = layerAciBefore;
   doc.layerColors = layerColorsBefore;
-  return { entities, layers: [...layers], layerColors, ignored, ignoredTypes, approximated, unitScale: scale };
+  return { entities, layers: [...layers], layerAci, ignored, ignoredTypes, approximated, unitScale: scale };
 }

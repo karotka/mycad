@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
 
 export interface ProjectViewState {
@@ -22,7 +23,7 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
     settings: {
       currentLayer: doc.currentLayer,
       layers: doc.layers,
-      layerColors: doc.layerColors,
+      layerAci: doc.layerAci,
       hiddenLayers: Array.from(doc.hiddenLayers),
       gridSize: doc.gridSize,
       snapSize: doc.snapSize,
@@ -63,7 +64,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
         // point to point, which is what `aligned` is now called.
         const kind = raw.dimensionKind;
         return {
-          ...raw, selected: false,
+          ...raw, selected: false, aci: legacyAci(raw),
           dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' ? kind : 'aligned',
           arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
           extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
@@ -71,7 +72,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
           textOffset: typeof raw.textOffset === 'number' ? raw.textOffset : defaults.textOffset,
         };
       }
-      return { ...raw, selected: false };
+      return { ...raw, selected: false, aci: legacyAci(raw) };
     }) as Document['entities'];
     doc.solids = solids.map((raw: unknown) => {
       const solid = raw as Record<string, unknown>;
@@ -80,6 +81,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
       return {
         ...solid,
         selected: false,
+        aci: legacyAci(solid),
         layer: typeof solid.layer === 'string' ? solid.layer : '0',
         mesh: { positions: new Float32Array(mesh.positions as number[]), indices: new Uint32Array(mesh.indices as number[]) },
       };
@@ -88,9 +90,12 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.layers = Array.isArray(settings.layers)
       ? Array.from(new Set(['0', ...(settings.layers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer.length > 0)]))
       : Array.from(new Set(['0', ...doc.entities.map((entity) => entity.layer), ...doc.solids.map((solid) => solid.layer)]));
-    doc.layerColors = settings.layerColors && typeof settings.layerColors === 'object'
-      ? { '0': 0xffffff, ...(settings.layerColors as Record<string, number>) }
-      : Object.fromEntries(doc.layers.map((layer) => [layer, 0xffffff]));
+    // Layer colours are indices now. An older file stored RGB under
+    // `layerColors`; its nearest palette index is close enough, and the drawing
+    // would have been snapped to the palette on its next save anyway.
+    doc.layerAci = settings.layerAci && typeof settings.layerAci === 'object'
+      ? { '0': ACI_WHITE, ...(settings.layerAci as Record<string, number>) }
+      : legacyLayerAci(settings.layerColors, doc.layers);
     doc.hiddenLayers = new Set(Array.isArray(settings.hiddenLayers)
       ? (settings.hiddenLayers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer !== '0')
       : []);
@@ -106,6 +111,9 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.viewMode = view?.mode ?? '2d';
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
+    // The RGB every object and layer draws in is a cache of the indices just
+    // loaded, so it is rebuilt rather than trusted from the file.
+    doc.recolour();
     doc.notify();
   });
   return view;
@@ -156,6 +164,26 @@ function loadDimensionStyle(value: unknown): DimensionStyle {
  * up for it. Cut depth is the one that may be negative or zero — a pen touches
  * the paper at Z 0 and a knife goes below it — so it cannot use `positive`.
  */
+/**
+ * An object's colour index: its own if the file has one, otherwise inferred
+ * from the RGB an older file stored — so a drawing from before the palette
+ * keeps roughly the colours it had rather than all going white.
+ */
+function legacyAci(raw: Record<string, unknown>): number {
+  if (typeof raw.aci === 'number') return raw.aci;
+  return typeof raw.color === 'number' ? rgbToAci(raw.color) : ACI_BYLAYER;
+}
+
+/** The same, per layer, from an older file's `layerColors` map of RGB. */
+function legacyLayerAci(stored: unknown, layers: string[]): Record<string, number> {
+  const colors = stored && typeof stored === 'object' ? stored as Record<string, number> : {};
+  const result: Record<string, number> = { '0': ACI_WHITE };
+  for (const layer of layers) {
+    result[layer] = typeof colors[layer] === 'number' ? rgbToAci(colors[layer]) : ACI_WHITE;
+  }
+  return result;
+}
+
 function loadGcodeOptions(value: unknown): GcodeOptions {
   const defaults = defaultGcodeOptions();
   if (!value || typeof value !== 'object') return defaults;
