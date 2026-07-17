@@ -51,6 +51,76 @@ describe('PropertiesController', () => {
     expect(maxZ).toBeCloseTo(5, 4);
   });
 
+  const subtracted = (doc: Document) => {
+    const feature = {
+      kind: 'boolean' as const, operation: 'subtract' as const,
+      operands: [
+        { kind: 'primitive' as const, primitive: 'sphere' as const, center: { x: 0, y: 0 }, radius: 10, height: 20 },
+        { kind: 'primitive' as const, primitive: 'cylinder' as const, center: { x: 0, y: 0 }, radius: 3, height: 30 },
+      ],
+    };
+    // The mesh does not matter here; the recipe does.
+    const solid = doc.createSolid(primitiveMesh(feature.operands[0]), 'Ball with a hole', 20, [], 0xffffff, feature);
+    doc.addSolid(solid);
+    return solid;
+  };
+
+  it('shows a composed solid its size but does not offer to change it', () => {
+    const doc = new Document();
+    const solid = subtracted(doc);
+    doc.selectSolid(solid.id);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    const fields = (controller as unknown as { fields(object: typeof solid): Array<{ key: string; kind?: string }> }).fields(solid);
+
+    // A subtraction has no width of its own — it is "this, less that", and its
+    // size is its parts'. Typing here used to drag the vertices and throw the
+    // recipe away, so the sphere stopped being a sphere.
+    for (const key of ['width', 'depth', 'height']) {
+      expect(fields.find((field) => field.key === key)?.kind, `${key} is editable`).toBe('readonly');
+    }
+    // Where it is remains a fair question, and one every feature can answer.
+    for (const key of ['x', 'y', 'z']) {
+      expect(fields.find((field) => field.key === key)?.kind).toBeUndefined();
+    }
+  });
+
+  it('still lets a bare mesh be resized, having no recipe to lose', () => {
+    const doc = new Document();
+    const solid = doc.createSolid(
+      primitiveMesh({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8 }),
+      'Imported', 8, [],
+    );
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    const fields = (controller as unknown as { fields(object: typeof solid): Array<{ key: string; kind?: string }> }).fields(solid);
+    expect(fields.find((field) => field.key === 'width')?.kind).toBeUndefined();
+  });
+
+  it('moves a composed solid without flattening it', () => {
+    const doc = new Document();
+    const solid = subtracted(doc);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateOne(object: typeof solid, key: string, value: number): void })
+      .updateOne(solid, 'x', 50);
+
+    const moved = doc.solids[0];
+    // Moving is the one thing every feature can say, so a move must never cost
+    // the recipe — and both parts have to travel, or the hole stays behind.
+    expect(moved.feature.kind).toBe('boolean');
+    if (moved.feature.kind !== 'boolean') throw new Error('expected a boolean');
+    for (const operand of moved.feature.operands) {
+      if (operand.kind !== 'primitive') throw new Error('expected primitives');
+      expect(operand.workPlane?.origin.x).toBeCloseTo(60, 4);
+    }
+    let minX = Infinity;
+    for (let i = 0; i < moved.mesh.positions.length; i += 3) minX = Math.min(minX, moved.mesh.positions[i]);
+    expect(minX).toBeCloseTo(50, 4);
+  });
+
   it('moves a primitive without turning it into a mesh', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

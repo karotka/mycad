@@ -42,7 +42,7 @@ import {
   createWedgeMesh,
   createPyramidMesh,
 } from '../solids/ManifoldEngine';
-import { rotatedFeature, scaledFeature } from '../solids/featureTransform';
+import { rotatedFeature, scaledFeature, translatedFeature } from '../solids/featureTransform';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -262,7 +262,9 @@ function copySolid(solid: Solid, delta: Vec3): Solid {
     copy.mesh.positions[index + 1] += delta.y;
     copy.mesh.positions[index + 2] += delta.z;
   }
-  translateCopiedFeature(copy.feature, delta);
+  // Its own history moves with it: a copy that forgot how it was made would
+  // be a mesh sitting beside the parametric solid it came from.
+  copy.feature = translatedFeature(copy.feature, delta) ?? { kind: 'mesh' };
   copy.revision++;
   return copy;
 }
@@ -273,24 +275,6 @@ function workPlaneDelta(plane: typeof WORLD_WORK_PLANE, localDelta: Vec2): Vec3 
     y: plane.xAxis.y * localDelta.x + plane.yAxis.y * localDelta.y,
     z: plane.xAxis.z * localDelta.x + plane.yAxis.z * localDelta.y,
   };
-}
-
-function translateCopiedFeature(feature: SolidFeature, delta: Vec3): void {
-  if (feature.kind === 'extrusion') {
-    feature.transform.translateX += delta.x;
-    feature.transform.translateY += delta.y;
-    feature.transform.translateZ = (feature.transform.translateZ ?? 0) + delta.z;
-  } else if (feature.kind === 'boolean') {
-    feature.operands.forEach((operand) => translateCopiedFeature(operand, delta));
-  } else if (feature.kind === 'primitive') {
-    const plane = cloneWorkPlane(feature.workPlane ?? WORLD_WORK_PLANE);
-    plane.origin.x += delta.x; plane.origin.y += delta.y; plane.origin.z += delta.z;
-    feature.workPlane = plane;
-  } else if (feature.kind === 'sweep') {
-    const plane = cloneWorkPlane(feature.workPlane ?? WORLD_WORK_PLANE);
-    plane.origin.x += delta.x; plane.origin.y += delta.y; plane.origin.z += delta.z;
-    feature.workPlane = plane;
-  }
 }
 
 function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {

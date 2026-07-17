@@ -5,7 +5,7 @@ import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { primitiveParams, setPrimitiveParam } from '../core/solids/featureParams';
-import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
+import { translatedFeature } from '../core/solids/featureTransform';
 
 type ObjectValue = Entity | Solid;
 
@@ -58,9 +58,18 @@ export class PropertiesController {
         // Its own list here had already gone stale: no tube radius for a torus.
         return [...common, ...position, ...primitiveParams(object.feature).map(({ key, label, value }) => ({ key, label, value }))];
       }
+      // A solid that knows how it was made has no width of its own — a union is
+      // "these things, joined", and its size is its parts'. Every CAD shows the
+      // bounding box of one as a fact and not a field; typing in this one used
+      // to drag the vertices and throw the recipe away, so a subtracted sphere
+      // stopped being a sphere. Size is edited in the model tree, where the
+      // numbers that made it live, and SCALE resizes the whole thing.
+      const sizeKind = object.feature.kind === 'mesh' ? undefined : ('readonly' as const);
       return [...common,
         { key: 'x', label: 'X', value: b.minX }, { key: 'y', label: 'Y', value: b.minY }, { key: 'z', label: 'Z', value: b.minZ },
-        { key: 'width', label: 'Width', value: b.maxX - b.minX }, { key: 'depth', label: 'Depth', value: b.maxY - b.minY }, { key: 'height', label: 'Height', value: b.maxZ - b.minZ },
+        { key: 'width', label: 'Width', value: b.maxX - b.minX, kind: sizeKind },
+        { key: 'depth', label: 'Depth', value: b.maxY - b.minY, kind: sizeKind },
+        { key: 'height', label: 'Height', value: b.maxZ - b.minZ, kind: sizeKind },
       ];
     }
     switch (object.type) {
@@ -151,16 +160,26 @@ function updateSolid(solid: Solid, key: string, value: number): void {
       solid.height = feature.height; solid.revision++;
       return;
     }
-    // Moving it is the work plane's origin, so it moves there and the primitive
-    // is rebuilt. Dragging the vertices instead was what baked the feature away:
-    // nudging a sphere's X used to cost you the sphere.
-    if (key === 'x' || key === 'y' || key === 'z') {
-      const bounds = solidBounds(solid);
-      const from = key === 'x' ? bounds.minX : key === 'y' ? bounds.minY : bounds.minZ;
-      const plane = feature.workPlane ?? cloneWorkPlane(WORLD_WORK_PLANE);
-      plane.origin[key] += value - from;
-      feature.workPlane = plane;
-      solid.mesh = primitiveMesh(feature);
+  }
+  // Moving is the one thing every feature can say: a plane's origin, or each
+  // part of a boolean. Dragging the vertices instead was what baked the recipe
+  // away — nudging a sphere's X used to cost you the sphere.
+  if (key === 'x' || key === 'y' || key === 'z') {
+    const bounds = solidBounds(solid);
+    const from = key === 'x' ? bounds.minX : key === 'y' ? bounds.minY : bounds.minZ;
+    const delta = { x: 0, y: 0, z: 0 };
+    delta[key] = value - from;
+    const moved = translatedFeature(solid.feature, delta);
+    if (moved) {
+      solid.feature = moved;
+      // The mesh is shifted rather than regenerated: moving every vertex by the
+      // same amount is exactly what regenerating would do, and a boolean's
+      // regeneration needs WASM this cannot wait for.
+      for (let index = 0; index < solid.mesh.positions.length; index += 3) {
+        solid.mesh.positions[index] += delta.x;
+        solid.mesh.positions[index + 1] += delta.y;
+        solid.mesh.positions[index + 2] += delta.z;
+      }
       solid.revision++;
       return;
     }

@@ -122,41 +122,27 @@ Modelling the reference elephant was a probe of the solid engine, and it turned
 up one missing capability, one primitive that cannot be expressed, and a
 systemic hole. `scale` and the model tree are done; the rest is here.
 
-### The feature tree is thrown away by half the app
+### ~~The feature tree is thrown away by half the app~~ — done
 
-**This is the biggest one, and the least visible.** A `Solid` keeps how it was
-built in `feature`. Five places overwrite it with `{ kind: 'mesh' }`, and the
-model history is destroyed and cannot come back. Three of them need not:
+A `Solid` keeps how it was built in `feature`, and five places used to overwrite
+it with `{ kind: 'mesh' }`, destroying the model history for good. Three of them
+had no reason to, and all three baked for the same reason: **the feature had
+nowhere to put the result**. It does now — a move is the work plane's origin, a
+rotation is its axes, a scale is `scale` — so `featureTransform.ts` writes them
+down instead: `translatedFeature`, `rotatedFeature`, `scaledFeature`.
 
-| Place | What bakes it | Could it be expressed instead? |
-|---|---|---|
-| `PropertiesController:162` | Any width/depth/height edit on a solid whose feature is not a bare primitive | **Yes**, mostly. See below. |
-| ~~SCALE~~ | ~~`CommandManager:317`~~ | **Done** — `scaledFeature`. |
-| ~~ROTATE~~ | ~~`CommandManager:342`~~ | **Done** — `rotatedFeature`. |
-| `CommandManager:1364` | FILLET / CHAMFER | **No.** There is no fillet feature, and the mesh is cut by `modifySolidEdge`. A legitimate bake — or the beginning of a fillet feature. |
-| `CommandManager:1730` | PRESSPULL **on a picked face** | **No** — an arbitrary face push is not a parameter of anything. |
+Two still bake, and honestly: **FILLET/CHAMFER** (`CommandManager:1364`) cuts the
+mesh with `modifySolidEdge` and there is no fillet feature to write to, and
+**PRESSPULL on a picked face** (`CommandManager:1730`) — an arbitrary face push
+is not a parameter of anything. Both are candidates for features of their own,
+not bugs.
 
-They baked for the same reason: **the feature had nowhere to put the result**,
-so the mesh was mutated and the history dropped. A move is the work plane's
-origin, a rotation is its axes, a scale is `scale` — and none of that was true
-when the code was written, which is why the comment saying it could not be done
-was honest and stopped being true without anyone noticing.
-
-What is left of it: a **resize of a boolean** in the properties panel. There is
-no single work plane to move and "make this union 20% wider" is not a question
-its operands can answer. Options: refuse it and point at the tree; or wrap the
-root in a transform feature. Do not guess — pick one deliberately. A **sweep**
-can be rotated (it is its work plane, like the rest) but not scaled: its size is
-its profile and its path, which are shapes rather than numbers.
-
-`PRESSPULL` already shows the pattern and is worth copying: on a picked face it
-bakes, but on an extrusion it edits `feature.height` and regenerates
-(`CommandManager:1731`). Express it where you can; bake only where you cannot.
-
-`PropertiesController` also cannot regenerate anything but a primitive, because
-`regenerateSolidFeature` is async for booleans (Manifold) and `updateSolid` is
-sync. The model tree does it properly and is async throughout. So the properties
-panel probably should not offer size fields for feature-backed solids at all.
+The properties panel no longer offers to resize a solid that has a recipe. Real
+CAD does not either: a union is "these things, joined", its size is its parts',
+and every system shows the bounding box of one as a fact rather than a field.
+Size is edited in the model tree, and SCALE resizes the whole thing —
+uniformly, which is the only way that composes. Non-uniform resize of a boolean
+is not deferred; it is **not a well-posed question**, and no CAD answers it.
 
 ### The CSP has to allow `unsafe-eval`, and should not have to
 

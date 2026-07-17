@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
 import { regenerateSolidFeature } from './ManifoldEngine';
-import { rotatedFeature, scaledFeature } from './featureTransform';
+import { rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
 
 const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
@@ -88,6 +88,53 @@ describe('scaledFeature', () => {
 function plane(origin: { x: number; y: number; z: number }) {
   return { origin, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } };
 }
+
+describe('translatedFeature', () => {
+  const delta = { x: 3, y: -4, z: 5 };
+
+  const extrusion = (workPlane?: ReturnType<typeof plane>): SolidFeature => ({
+    kind: 'extrusion',
+    profile: { id: 'p', type: 'rectangle', layer: '0', color: 0xffffff, selected: false, first: { x: 0, y: 0 }, opposite: { x: 10, y: 5 } },
+    height: 4,
+    workPlane,
+    transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
+  });
+
+  it('moves an extrusion by its plane, not by its transform', async () => {
+    // The transform moves the *profile*, in the plane's own coordinates. On a
+    // plane turned a quarter turn, adding a world delta to it sends the solid
+    // somewhere else entirely — which is what the copy code used to do.
+    const turned = { origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 0, y: 1, z: 0 }, yAxis: { x: -1, y: 0, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } };
+    const before = (await regenerateSolidFeature(extrusion(turned)))!;
+    const after = (await regenerateSolidFeature(translatedFeature(extrusion(turned), delta)!))!;
+
+    const box = bounds(before.positions);
+    closeTo(bounds(after.positions), {
+      x: { min: box.x.min + delta.x, max: box.x.max + delta.x },
+      y: { min: box.y.min + delta.y, max: box.y.max + delta.y },
+      z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
+    });
+  });
+
+  it('moves a primitive and everything a boolean is made of', async () => {
+    const feature: SolidFeature = {
+      kind: 'boolean', operation: 'union',
+      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 6, y: 0, z: 0 }) }],
+    };
+    const before = (await regenerateSolidFeature(feature))!;
+    const after = (await regenerateSolidFeature(translatedFeature(feature, delta)!))!;
+    const box = bounds(before.positions);
+    closeTo(bounds(after.positions), {
+      x: { min: box.x.min + delta.x, max: box.x.max + delta.x },
+      y: { min: box.y.min + delta.y, max: box.y.max + delta.y },
+      z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
+    }, 1);
+  });
+
+  it('has nothing to move on a bare mesh', () => {
+    expect(translatedFeature({ kind: 'mesh' }, delta)).toBeNull();
+  });
+});
 
 describe('rotatedFeature', () => {
   const up = { x: 0, y: 0, z: 1 };

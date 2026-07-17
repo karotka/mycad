@@ -64,6 +64,42 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
   }
 }
 
+/**
+ * Moved. Every feature can say where it is — a primitive and a sweep in their
+ * work plane's origin, an extrusion in its transform, a boolean in each of its
+ * parts — so this is the one transform that never has to bake anything but a
+ * bare mesh.
+ */
+export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeature | null {
+  if (!Number.isFinite(delta.x) || !Number.isFinite(delta.y) || !Number.isFinite(delta.z)) return null;
+
+  switch (feature.kind) {
+    case 'boolean': {
+      const operands = feature.operands.map((operand) => translatedFeature(operand, delta));
+      if (operands.some((operand) => operand === null)) return null;
+      return { ...feature, operands: operands as SolidFeature[] };
+    }
+    // An extrusion goes through its plane too, not through its transform: the
+    // transform moves the *profile*, in the plane's own coordinates, so adding a
+    // world delta to it is only right when the plane happens to be the world's.
+    // Draw on a moved UCS and it goes somewhere else entirely.
+    case 'extrusion':
+    case 'primitive':
+    case 'sweep': {
+      const plane = planeOf(feature.workPlane);
+      return {
+        ...feature,
+        workPlane: {
+          ...plane,
+          origin: { x: plane.origin.x + delta.x, y: plane.origin.y + delta.y, z: plane.origin.z + delta.z },
+        },
+      };
+    }
+    case 'mesh':
+      return null;
+  }
+}
+
 /** About an axis: `angle` radians around `axis` through `origin`. */
 export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, angle: number): SolidFeature | null {
   if (!Number.isFinite(angle)) return null;
