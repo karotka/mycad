@@ -778,42 +778,45 @@ html, body, #app {
 
 /* The cube is a small isometric SVG that turns above a compass ring. The ring
    is the world's orientation and stays put; the cube turns with the UCS. */
+/* A prominent compass wheel is the anchor; the cube is a small marker standing
+   at its centre, the way a navigation widget reads. */
 .view-toggle .view-cube-stage {
   position: relative;
-  width: 112px;
-  height: 96px;
+  width: 132px;
+  height: 118px;
 }
 
 .view-toggle .view-compass {
   position: absolute;
   inset: 0;
-  width: 112px;
-  height: 96px;
+  width: 132px;
+  height: 118px;
   overflow: visible;
   pointer-events: none;
 }
+.view-toggle .compass-disc { fill: url(#compass-disc); }
 .view-toggle .compass-track {
   fill: none;
-  stroke: #737d87;
-  stroke-width: 3;
-  opacity: 0.65;
+  stroke: #808a94;
+  stroke-width: 2.5;
+  opacity: 0.7;
 }
+.view-toggle .compass-track-inner { stroke-width: 1; opacity: 0.4; }
 .view-toggle .compass-mark {
-  fill: #737d87;
-  font: 700 9px/1 Arial, sans-serif;
+  fill: #97a1ab;
+  font: 700 11px/1 Arial, sans-serif;
   text-anchor: middle;
   dominant-baseline: middle;
-  opacity: 0.8;
 }
 
-/* Centred on the ring, so the ring shows past it on every side. */
+/* Small, centred on the wheel, so the wheel and its N/E/S/W show all around. */
 .view-toggle .view-cube {
   position: absolute;
-  left: 14px;
-  top: 2px;
-  width: 84px;
-  height: 86px;
-  filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.38));
+  left: 30px;
+  top: 8px;
+  width: 72px;
+  height: 74px;
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.42));
   transform-origin: 50% 50%;
   transition: transform 180ms ease;
 }
@@ -831,15 +834,15 @@ html, body, #app {
 
 .view-toggle .cube-label {
   fill: #565d65;
-  font: 700 9px/1 Arial, Helvetica, sans-serif;
+  font: 700 8px/1 Arial, Helvetica, sans-serif;
   text-anchor: middle;
   dominant-baseline: middle;
   letter-spacing: -0.3px;
   pointer-events: none;
 }
 /* The side labels lie along their faces so the text follows the box. */
-.view-toggle .cube-label-front { transform: rotate(27deg); transform-origin: 22px 61px; }
-.view-toggle .cube-label-right { transform: rotate(-27deg); transform-origin: 62px 61px; }
+.view-toggle .cube-label-front { transform: rotate(27deg); transform-origin: 19px 53px; }
+.view-toggle .cube-label-right { transform: rotate(-27deg); transform-origin: 53px 53px; }
 
 .context-menu {
   position: fixed;
