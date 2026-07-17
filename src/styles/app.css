@@ -776,128 +776,70 @@ html, body, #app {
   color: #fff;
 }
 
-/* The cube sits on a compass ring, the way a real navigation cube does. The
-   ring is the world's orientation and stays put; the cube turns above it. */
+/* The cube is a small isometric SVG that turns above a compass ring. The ring
+   is the world's orientation and stays put; the cube turns with the UCS. */
 .view-toggle .view-cube-stage {
   position: relative;
-  width: 118px;
-  height: 116px;
+  width: 112px;
+  height: 96px;
 }
 
 .view-toggle .view-compass {
   position: absolute;
   inset: 0;
-  width: 118px;
-  height: 116px;
+  width: 112px;
+  height: 96px;
   overflow: visible;
   pointer-events: none;
 }
 .view-toggle .compass-track {
   fill: none;
-  stroke: url(#compass-ring);
-  stroke-width: 6;
-  opacity: 0.6;
+  stroke: #737d87;
+  stroke-width: 3;
+  opacity: 0.65;
 }
 .view-toggle .compass-mark {
-  fill: #7f8993;
-  font: 700 11px/1 Arial, sans-serif;
+  fill: #737d87;
+  font: 700 9px/1 Arial, sans-serif;
   text-anchor: middle;
   dominant-baseline: middle;
-  opacity: 0.75;
+  opacity: 0.8;
 }
 
+/* Centred on the ring, so the ring shows past it on every side. */
 .view-toggle .view-cube {
   position: absolute;
-  left: 11px;
-  top: 6px;
-  width: 96px;
-  height: 90px;
-  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.4));
+  left: 14px;
+  top: 2px;
+  width: 84px;
+  height: 86px;
+  filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.38));
   transform-origin: 50% 50%;
-  transform-style: preserve-3d;
   transition: transform 180ms ease;
 }
-
-.view-toggle .view-cube.ucs-oriented {
-  filter: drop-shadow(0 5px 6px rgba(0, 0, 0, 0.5));
-}
+.view-toggle .view-cube svg { width: 100%; height: 100%; overflow: visible; }
 
 .view-toggle .cube-face {
-  position: absolute;
-  margin: 0;
-  padding: 0;
-  border: 1px solid #9099a1;
-  border-radius: 0;
-  color: #5c636b;
-  font: 700 11px/1 Arial, Helvetica, sans-serif;
-  line-height: 1;
-  text-align: center;
-  text-shadow: 0 1px rgba(255, 255, 255, 0.8);
-  transition: filter 100ms, background 100ms, color 100ms;
+  stroke: #9aa2aa;
+  stroke-width: 1;
+  stroke-linejoin: round;
+  cursor: pointer;
+  transition: fill 100ms;
 }
+.view-toggle .cube-face:hover,
+.view-toggle .cube-face.active { fill: #a9d8f4; }
 
 .view-toggle .cube-label {
-  position: absolute;
-  left: 50%;
-  display: block;
-  transform-origin: center;
-  letter-spacing: -0.2px;
+  fill: #565d65;
+  font: 700 9px/1 Arial, Helvetica, sans-serif;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  letter-spacing: -0.3px;
+  pointer-events: none;
 }
-
-.view-toggle .cube-top {
-  left: 8px;
-  top: 0;
-  width: 80px;
-  height: 44px;
-  padding: 0;
-  background: linear-gradient(150deg, #f6f8fa 0%, #e4e8ec 100%);
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-  z-index: 3;
-}
-
-.view-toggle .cube-top .cube-label {
-  top: 17px;
-  transform: translateX(-50%) rotate(25deg);
-}
-
-.view-toggle .cube-front {
-  left: 8px;
-  top: 22px;
-  width: 41px;
-  height: 66px;
-  padding: 0;
-  background: linear-gradient(180deg, #dee2e6 0%, #c5cbd1 100%);
-  clip-path: polygon(0 0, 100% 33.333%, 100% 100%, 0 69.697%);
-  z-index: 2;
-}
-
-.view-toggle .cube-front .cube-label {
-  top: 36px;
-  transform: translateX(-50%) rotate(25deg);
-}
-
-.view-toggle .cube-right {
-  left: 48px;
-  top: 22px;
-  width: 41px;
-  height: 66px;
-  padding: 0;
-  background: linear-gradient(180deg, #c8ced4 0%, #a9b1b9 100%);
-  clip-path: polygon(0 33.333%, 100% 0, 100% 69.697%, 0 100%);
-  z-index: 2;
-}
-
-.view-toggle .cube-right .cube-label {
-  top: 36px;
-  transform: translateX(-50%) rotate(-25deg);
-}
-
-.view-toggle .cube-face:hover,
-.view-toggle .cube-face.active {
-  background: #a9d8f4;
-  color: #245b7a;
-  filter: brightness(1.05);
-}
+/* The side labels lie along their faces so the text follows the box. */
+.view-toggle .cube-label-front { transform: rotate(27deg); transform-origin: 22px 61px; }
+.view-toggle .cube-label-right { transform: rotate(-27deg); transform-origin: 62px 61px; }
 
 .context-menu {
   position: fixed;

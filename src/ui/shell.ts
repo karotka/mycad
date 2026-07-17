@@ -46,23 +46,32 @@ export function shellHtml(tools: ShellTools): string {
       <div class="dimension-toast" id="dimension-toast" hidden></div>
       <div class="view-toggle">
         <div class="view-cube-stage">
-          <svg class="view-compass" viewBox="0 0 120 120" aria-hidden="true">
-            <defs>
-              <linearGradient id="compass-ring" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#c9d0d7"/>
-                <stop offset="1" stop-color="#8b95a0"/>
-              </linearGradient>
-            </defs>
-            <ellipse class="compass-track" cx="60" cy="74" rx="57" ry="23"/>
-            <text class="compass-mark" x="60" y="52">N</text>
-            <text class="compass-mark" x="60" y="101">S</text>
-            <text class="compass-mark" x="7" y="76">W</text>
-            <text class="compass-mark" x="113" y="76">E</text>
+          <svg class="view-compass" viewBox="0 0 112 96" aria-hidden="true">
+            <ellipse class="compass-track" cx="56" cy="66" rx="54" ry="16"/>
+            <text class="compass-mark" x="56" y="88">S</text>
+            <text class="compass-mark" x="5" y="66">W</text>
+            <text class="compass-mark" x="107" y="66">E</text>
           </svg>
           <div id="view-cube" class="view-cube" aria-label="Standard CAD views">
-            <button class="cube-face cube-top" data-standard-view="top" title="Top view"><span class="cube-label">TOP</span></button>
-            <button class="cube-face cube-right" data-standard-view="right" title="Right view"><span class="cube-label">RIGHT</span></button>
-            <button class="cube-face cube-front" data-standard-view="front" title="Front view"><span class="cube-label">FRONT</span></button>
+            <svg viewBox="0 0 84 86" aria-hidden="false">
+              <defs>
+                <linearGradient id="cf-top" x1="0" y1="0" x2="0.3" y2="1">
+                  <stop offset="0" stop-color="#f7f9fb"/><stop offset="1" stop-color="#e2e6ea"/>
+                </linearGradient>
+                <linearGradient id="cf-front" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#dde1e6"/><stop offset="1" stop-color="#c4cad0"/>
+                </linearGradient>
+                <linearGradient id="cf-right" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#c6ccd2"/><stop offset="1" stop-color="#a7afb7"/>
+                </linearGradient>
+              </defs>
+              <polygon class="cube-face" data-standard-view="top" points="42,3 81,23 42,43 3,23" fill="url(#cf-top)"/>
+              <polygon class="cube-face" data-standard-view="front" points="3,23 42,43 42,83 3,63" fill="url(#cf-front)"/>
+              <polygon class="cube-face" data-standard-view="right" points="42,43 81,23 81,63 42,83" fill="url(#cf-right)"/>
+              <text class="cube-label" x="42" y="25">TOP</text>
+              <text class="cube-label cube-label-front" x="22" y="61">FRONT</text>
+              <text class="cube-label cube-label-right" x="62" y="61">RIGHT</text>
+            </svg>
           </div>
         </div>
         <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">
