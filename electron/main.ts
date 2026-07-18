@@ -36,7 +36,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-gcode' | 'settings' | 'undo' | 'redo';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -72,6 +72,7 @@ function buildMenu(win: BrowserWindow): void {
         {
           label: 'Export',
           submenu: [
+            { label: 'DXF…', accelerator: 'Shift+CmdOrCtrl+E', click: send('export-dxf') },
             { label: 'STL…', accelerator: 'CmdOrCtrl+E', click: send('export-stl') },
             { label: 'G-code…', accelerator: 'Shift+CmdOrCtrl+G', click: send('export-gcode') },
           ],
@@ -94,18 +95,6 @@ function buildMenu(win: BrowserWindow): void {
         ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }]),
       ],
     },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        ...(process.env.VITE_DEV_SERVER_URL ? [{ type: 'separator' as const }, { role: 'toggleDevTools' as const }] : []),
-      ],
-    },
-    { role: 'windowMenu' },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -129,9 +118,11 @@ function createWindow() {
 
   buildMenu(win);
 
+  // The window keeps its own title; don't let the loaded page rename it.
+  win.on('page-title-updated', (event) => event.preventDefault());
+
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
-    win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
@@ -197,6 +188,10 @@ ipcMain.handle('quick-save', async (event, options: { filePath?: string; default
   writableFiles.add(filePath);
   return { filePath };
 });
+
+// In development `app.name` defaults to "Electron", which is what shows in the
+// macOS menu bar and the About box; force our name so the branding is ours.
+app.setName('MyCAD');
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));

@@ -20,6 +20,7 @@ import {
 } from './entities/types';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions } from './settings';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci, rgbToAci } from '../io/DxfAci';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from './lineStyles';
 
 export type ViewMode = '2d' | '3d';
 
@@ -55,6 +56,10 @@ export class Document {
    * A cache of `layerAci`, recomputed by `recolour`; never assigned by hand.
    */
   layerColors: Record<string, number> = { '0': aciToRgb(ACI_WHITE)! };
+  /** Pen width per layer, in millimetres — see lineStyles. */
+  layerLineweight: Record<string, number> = { '0': DEFAULT_LINE_WEIGHT_MM };
+  /** Dash pattern name per layer, e.g. 'Continuous', 'Dashed'. */
+  layerLinetype: Record<string, string> = { '0': DEFAULT_LINE_TYPE };
   hiddenLayers = new Set<string>();
   gridSize = 1;
   snapSize = 0.5;

@@ -7,8 +7,6 @@ const press = (overrides: Partial<PointerGestureInput> = {}): PointerGestureInpu
   altKey: false,
   onViewToggle: false,
   zoomWindowArmed: false,
-  gripLatched: false,
-  awaitingPoint: false,
   ...overrides,
 });
 
@@ -64,13 +62,13 @@ describe('what a press in the viewport means', () => {
     });
   });
 
-  describe('the right button yields to whoever asked first', () => {
-    it('keeps out of the way of a latched grip', () => {
-      expect(resolvePointerGesture(press({ button: 2, gripLatched: true }))).toEqual({ kind: 'ignore' });
-    });
-
-    it('keeps out of the way of a command waiting for a point', () => {
-      expect(resolvePointerGesture(press({ button: 2, awaitingPoint: true }))).toEqual({ kind: 'ignore' });
+  describe('the right button is always live', () => {
+    // Mid-command and mid-grip-drag it still pans and can open the menu — that
+    // menu is the only way to pick an object snap, and snaps are what a drawing
+    // command is for. It must never be swallowed.
+    it('stays a pan-and-menu whatever is in progress', () => {
+      expect(resolvePointerGesture(press({ button: 2 }))).toEqual({ kind: 'pan', opensMenuIfStill: true });
+      expect(resolvePointerGesture(press({ button: 2, zoomWindowArmed: true }))).toEqual({ kind: 'pan', opensMenuIfStill: true });
     });
   });
 });

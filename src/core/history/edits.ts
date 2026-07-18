@@ -76,6 +76,8 @@ export class DeleteLayerEdit implements DocumentEdit {
   private readonly solids: Solid[];
   private readonly index: number;
   private readonly aci: number;
+  private readonly lineweight: number | undefined;
+  private readonly linetype: string | undefined;
   private readonly hidden: boolean;
   private readonly wasCurrent: boolean;
 
@@ -85,6 +87,8 @@ export class DeleteLayerEdit implements DocumentEdit {
     this.solids = docAtCreation.solids.filter((solid) => solid.layer === layer).map(cloneSolid);
     this.index = docAtCreation.layers.indexOf(layer);
     this.aci = docAtCreation.layerAci[layer] ?? ACI_WHITE;
+    this.lineweight = docAtCreation.layerLineweight[layer];
+    this.linetype = docAtCreation.layerLinetype[layer];
     this.hidden = docAtCreation.hiddenLayers.has(layer);
     this.wasCurrent = docAtCreation.currentLayer === layer;
   }
@@ -95,6 +99,8 @@ export class DeleteLayerEdit implements DocumentEdit {
     doc.layers = doc.layers.filter((layer) => layer !== this.layer);
     delete doc.layerColors[this.layer];
     delete doc.layerAci[this.layer];
+    delete doc.layerLineweight[this.layer];
+    delete doc.layerLinetype[this.layer];
     doc.hiddenLayers.delete(this.layer);
     if (doc.currentLayer === this.layer) doc.currentLayer = doc.layers[0] ?? '0';
     doc.pruneSelection();
@@ -105,6 +111,8 @@ export class DeleteLayerEdit implements DocumentEdit {
     if (!doc.layers.includes(this.layer)) doc.layers.splice(Math.max(0, this.index), 0, this.layer);
     doc.layerAci[this.layer] = this.aci;
     doc.layerColors[this.layer] = aciToRgb(this.aci) ?? aciToRgb(ACI_WHITE)!;
+    if (this.lineweight !== undefined) doc.layerLineweight[this.layer] = this.lineweight;
+    if (this.linetype !== undefined) doc.layerLinetype[this.layer] = this.linetype;
     if (this.hidden) doc.hiddenLayers.add(this.layer);
     doc.entities.push(...this.entities.map(cloneEntity));
     doc.solids.push(...this.solids.map(cloneSolid));

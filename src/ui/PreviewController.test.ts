@@ -41,6 +41,19 @@ describe('PreviewController', () => {
     expect(previewOf(active('POLYLINE', 0, { vertices: [] }), { x: 4, y: 5 })).toBeUndefined();
   });
 
+  it('carries the moving objects in the move preview so they ride under the cursor', () => {
+    const line = { id: 'l1', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: true, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } };
+    const preview = previewOf(active('MOVE', 2, { basePoint: { x: 0, y: 0 }, entities: [line] }), { x: 5, y: 3 });
+    expect(preview?.type).toBe('move');
+    const data = preview?.data as { entities: Array<{ start: { x: number; y: number }; end: { x: number; y: number }; color: number; selected: boolean }> };
+    // The ghost is the selection shifted by the drag delta (5, 3), recoloured so
+    // it reads as a preview and not as another selected object.
+    expect(data.entities).toHaveLength(1);
+    expect(data.entities[0].start).toEqual({ x: 5, y: 3 });
+    expect(data.entities[0].end).toEqual({ x: 15, y: 3 });
+    expect(data.entities[0].selected).toBe(false);
+  });
+
   it('draws the dimension while the second point is still being picked', () => {
     const preview = previewOf(active('MEASURE', 1, { start: { x: 0, y: 0 } }), { x: 10, y: 0 });
     const data = preview?.data as { start: unknown; end: unknown; offset: unknown; rotation: number };

@@ -11,6 +11,10 @@ export interface DxfImportResult {
   layers: string[];
   /** Layer colours read from the TABLES section, so a drawing keeps its look. */
   layerAci: Record<string, number>;
+  /** Layer line weights, in millimetres, for any layer whose record named one. */
+  layerLineweight: Record<string, number>;
+  /** Layer line types, by name, for any layer whose record named one. */
+  layerLinetype: Record<string, string>;
   ignored: number;
   /** What was skipped, by DXF type — so the report can name it instead of only counting. */
   ignoredTypes: Record<string, number>;
@@ -48,14 +52,21 @@ function number(fields: Pair[], code: number, fallback = 0): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+interface LayerTable {
+  aci: Record<string, number>;
+  lineweight: Record<string, number>;
+  linetype: Record<string, string>;
+}
+
 /**
  * Layer definitions live in TABLES, not with the entities. Without reading them
  * every imported layer fell back to white, however the drawing was authored.
+ * Colour (62), line type (6) and line weight (370, in 1/100 mm) all live here.
  */
-function readLayerTable(pairs: Pair[]): Record<string, number> {
-  const colors: Record<string, number> = {};
+function readLayerTable(pairs: Pair[]): LayerTable {
+  const table: LayerTable = { aci: {}, lineweight: {}, linetype: {} };
   const start = sectionStart(pairs, 'TABLES');
-  if (start < 0) return colors;
+  if (start < 0) return table;
   for (let index = start; index < pairs.length; index++) {
     if (pairs[index].code === 0 && pairs[index].value.toUpperCase() === 'ENDSEC') break;
     if (pairs[index].code !== 0 || pairs[index].value.toUpperCase() !== 'LAYER') continue;
@@ -63,12 +74,18 @@ function readLayerTable(pairs: Pair[]): Record<string, number> {
     while (end < pairs.length && pairs[end].code !== 0) end++;
     const fields = pairs.slice(index + 1, end);
     const name = fields.find((pair) => pair.code === 2)?.value;
-    // A negative colour means the layer is off; the index is its absolute value.
-    const aci = Math.abs(number(fields, 62, ACI_BYLAYER));
-    if (name) colors[name] = aci;
+    if (name) {
+      // A negative colour means the layer is off; the index is its absolute value.
+      table.aci[name] = Math.abs(number(fields, 62, ACI_BYLAYER));
+      const linetype = fields.find((pair) => pair.code === 6)?.value;
+      if (linetype) table.linetype[name] = linetype;
+      // A weight of -3 (default), -2 (byblock) or -1 (bylayer) is not a real width.
+      const weight = number(fields, 370, -1);
+      if (weight >= 0) table.lineweight[name] = weight / 100;
+    }
     index = end - 1;
   }
-  return colors;
+  return table;
 }
 
 /** MTEXT carries inline formatting; our text entity is one plain line. */
@@ -86,7 +103,8 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   const pairs = pairsFromText(text);
   if (pairs.length === 0) throw new Error('The DXF file is empty or not an ASCII DXF file.');
   const scale = millimetreScale(pairs);
-  const layerAci = readLayerTable(pairs);
+  const layerTable = readLayerTable(pairs);
+  const layerAci = layerTable.aci;
   const section = sectionStart(pairs, 'ENTITIES');
   if (section < 0) throw new Error('DXF ENTITIES section was not found. Binary DXF is not supported.');
 
@@ -292,5 +310,5 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   doc.layers = layersBefore;
   doc.layerAci = layerAciBefore;
   doc.layerColors = layerColorsBefore;
-  return { entities, layers: [...layers], layerAci, ignored, ignoredTypes, approximated, unitScale: scale };
+  return { entities, layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale };
 }

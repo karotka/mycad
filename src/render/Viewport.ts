@@ -12,11 +12,16 @@ import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, wo
 import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
 
 export class Canvas2DRenderer {
   private ctx: CanvasRenderingContext2D;
   pan: Vec2 = { x: 0, y: 0 };
   zoom = 20;
+  /** The layers' pen widths and dash patterns for this frame — set by render(),
+      read by drawEntity, since an entity draws in its layer's style. */
+  private layerLineweight: Record<string, number> = {};
+  private layerLinetype: Record<string, string> = {};
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
@@ -38,47 +43,51 @@ export class Canvas2DRenderer {
   }
 
   drawGrid(w: number, h: number, gridSize: number): void {
-    if (!Number.isFinite(gridSize) || gridSize <= 0) return;
-    const topLeft = this.screenToWorld(0, 0, w, h);
-    const bottomRight = this.screenToWorld(w, h, w, h);
+    // The grid is optional, but the origin axes are not: they are the drawing's
+    // datum and stay on screen in 2D whether or not a grid is shown.
+    if (Number.isFinite(gridSize) && gridSize > 0) {
+      const topLeft = this.screenToWorld(0, 0, w, h);
+      const bottomRight = this.screenToWorld(w, h, w, h);
 
-    // A fixed 1 mm grid becomes prohibitively expensive after zoom-to-extents on
-    // architectural DXFs. Keep the logical grid size unchanged for snapping, but
-    // draw only every Nth line so adjacent lines stay several pixels apart.
-    const minimumPixelSpacing = 8;
-    const multiplier = Math.max(1, Math.ceil(minimumPixelSpacing / (gridSize * this.zoom)));
-    const magnitude = 10 ** Math.floor(Math.log10(multiplier));
-    const normalized = multiplier / magnitude;
-    const pleasantMultiplier = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
-    const visibleGridSize = gridSize * pleasantMultiplier;
+      // A fixed 1 mm grid becomes prohibitively expensive after zoom-to-extents on
+      // architectural DXFs. Keep the logical grid size unchanged for snapping, but
+      // draw only every Nth line so adjacent lines stay several pixels apart.
+      const minimumPixelSpacing = 8;
+      const multiplier = Math.max(1, Math.ceil(minimumPixelSpacing / (gridSize * this.zoom)));
+      const magnitude = 10 ** Math.floor(Math.log10(multiplier));
+      const normalized = multiplier / magnitude;
+      const pleasantMultiplier = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+      const visibleGridSize = gridSize * pleasantMultiplier;
 
-    const startX = Math.floor(topLeft.x / visibleGridSize) * visibleGridSize;
-    const endX = Math.ceil(bottomRight.x / visibleGridSize) * visibleGridSize;
-    const startY = Math.floor(bottomRight.y / visibleGridSize) * visibleGridSize;
-    const endY = Math.ceil(topLeft.y / visibleGridSize) * visibleGridSize;
+      const startX = Math.floor(topLeft.x / visibleGridSize) * visibleGridSize;
+      const endX = Math.ceil(bottomRight.x / visibleGridSize) * visibleGridSize;
+      const startY = Math.floor(bottomRight.y / visibleGridSize) * visibleGridSize;
+      const endY = Math.ceil(topLeft.y / visibleGridSize) * visibleGridSize;
 
-    this.ctx.strokeStyle = '#1c2333';
-    this.ctx.lineWidth = 1;
+      this.ctx.strokeStyle = '#1c2333';
+      this.ctx.lineWidth = 1;
 
-    for (let x = startX; x <= endX; x += visibleGridSize) {
-      const s = worldToScreen({ x, y: 0 }, w, h, this.pan, this.zoom);
-      this.ctx.beginPath();
-      this.ctx.moveTo(s.x, 0);
-      this.ctx.lineTo(s.x, h);
-      this.ctx.stroke();
+      for (let x = startX; x <= endX; x += visibleGridSize) {
+        const s = worldToScreen({ x, y: 0 }, w, h, this.pan, this.zoom);
+        this.ctx.beginPath();
+        this.ctx.moveTo(s.x, 0);
+        this.ctx.lineTo(s.x, h);
+        this.ctx.stroke();
+      }
+
+      for (let y = startY; y <= endY; y += visibleGridSize) {
+        const s = worldToScreen({ x: 0, y }, w, h, this.pan, this.zoom);
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, s.y);
+        this.ctx.lineTo(w, s.y);
+        this.ctx.stroke();
+      }
     }
 
-    for (let y = startY; y <= endY; y += visibleGridSize) {
-      const s = worldToScreen({ x: 0, y }, w, h, this.pan, this.zoom);
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, s.y);
-      this.ctx.lineTo(w, s.y);
-      this.ctx.stroke();
-    }
-
-    // axes
+    // The origin axes, always.
     const ox = worldToScreen({ x: 0, y: 0 }, w, h, this.pan, this.zoom);
     this.ctx.strokeStyle = '#334155';
+    this.ctx.lineWidth = 1;
     this.ctx.beginPath();
     this.ctx.moveTo(0, ox.y);
     this.ctx.lineTo(w, ox.y);
@@ -106,6 +115,8 @@ export class Canvas2DRenderer {
   ): void {
     this.clear(w, h);
     this.drawGrid(w, h, doc.gridSize);
+    this.layerLineweight = doc.layerLineweight;
+    this.layerLinetype = doc.layerLinetype;
 
     for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer))) {
       this.drawSolidProjection(solid, w, h);
@@ -169,7 +180,11 @@ export class Canvas2DRenderer {
     this.ctx.save();
     this.ctx.strokeStyle = this.colorHex(entity.color, selected);
     this.ctx.fillStyle = this.colorHex(entity.color, selected);
-    this.ctx.lineWidth = selected && joinMode ? 2.5 : 1;
+    // The layer sets how thick and how dashed; the join highlight overrides the
+    // width so a picked chain still stands out.
+    const weightMm = this.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM;
+    this.ctx.lineWidth = selected && joinMode ? 2.5 : lineWeightToPixels(weightMm);
+    this.ctx.setLineDash(lineTypeDashArray(this.layerLinetype[entity.layer] ?? DEFAULT_LINE_TYPE, this.zoom));
     if (selected && joinMode) {
       this.ctx.shadowColor = '#65c7ff';
       this.ctx.shadowBlur = 4;
@@ -341,6 +356,14 @@ export class Canvas2DRenderer {
       label = `L = ${Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y).toFixed(2)} mm`;
       labelPoint = d.end;
     } else if (preview.type === 'move' && d.start && d.end) {
+      const moveData = preview.data as { start: Vec2; end: Vec2; entities?: Entity[] };
+      if (moveData.entities?.length) {
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.9;
+        this.ctx.setLineDash([5, 4]);
+        moveData.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
+        this.ctx.restore();
+      }
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
       this.ctx.beginPath();
@@ -1179,10 +1202,32 @@ export class Viewport3D {
       this.scene.add(this.previewObject);
       return;
     }
+    if (preview.type === 'move') {
+      // Ghosts only, like COPY: the base and cursor arrive in view-plane
+      // coordinates, not this work plane's, so a guide line drawn through
+      // localToWorld would land nowhere near the drag. The moving ghost already
+      // shows where things are going, and the ΔX/ΔY read-out is a 2D overlay.
+      const move = preview.data as { entities?: Entity[] };
+      const group = new THREE.Group();
+      for (const entity of move.entities ?? []) {
+        const object = this.entityToObject(entity);
+        object.traverse((child) => {
+          const renderable = child as THREE.Line | THREE.Mesh;
+          if (!renderable.material) return;
+          const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
+          materials.forEach((material) => { material.transparent = true; material.opacity = 0.75; material.depthTest = false; });
+        });
+        group.add(object);
+      }
+      group.renderOrder = 20;
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
     const data = preview.data as Record<string, Vec2> & { sides?: number };
     const points: Vec2[] = [];
     let loop = false;
-    if ((preview.type === 'line' || preview.type === 'move') && data.start && data.end) {
+    if (preview.type === 'line' && data.start && data.end) {
       points.push(data.start, data.end);
     } else if (preview.type === 'polyline') {
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };

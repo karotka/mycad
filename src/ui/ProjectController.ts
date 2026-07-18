@@ -4,7 +4,9 @@ import { AddEntitiesEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
+import { exportAsciiDxf } from '../io/DxfExport';
 import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
 
@@ -69,6 +71,8 @@ export class ProjectController {
       this.doc.layers = ['0'];
       this.doc.layerAci = { '0': ACI_WHITE };
       this.doc.layerColors = { '0': aciToRgb(ACI_WHITE)! };
+      this.doc.layerLineweight = { '0': DEFAULT_LINE_WEIGHT_MM };
+      this.doc.layerLinetype = { '0': DEFAULT_LINE_TYPE };
       this.doc.hiddenLayers.clear();
       this.doc.gridSize = 1;
       this.doc.snapSize = 0.5;
@@ -118,6 +122,8 @@ export class ProjectController {
       result.layers.forEach((layer) => {
         if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
         this.doc.layerAci[layer] ??= result.layerAci[layer] ?? ACI_WHITE;
+        if (result.layerLineweight[layer] !== undefined) this.doc.layerLineweight[layer] ??= result.layerLineweight[layer];
+        if (result.layerLinetype[layer] !== undefined) this.doc.layerLinetype[layer] ??= result.layerLinetype[layer];
       });
       this.doc.viewMode = '2d';
       this.doc.transaction(() => {
@@ -148,6 +154,19 @@ export class ProjectController {
       return;
     }
     await this.saveText(exportAsciiStl(this.doc), 'model.stl', 'STL model', 'stl');
+  }
+
+  async exportDxf(): Promise<void> {
+    if (this.doc.entities.length === 0) {
+      this.callbacks.log('DXF export: the document contains no 2D geometry.');
+      return;
+    }
+    const result = exportAsciiDxf(this.doc);
+    const note = result.dimensionsDecomposed > 0
+      ? ` (${result.dimensionsDecomposed} dimension(s) exploded to lines and text)`
+      : '';
+    this.callbacks.log(`DXF: ${result.entityCount} object(s)${note}.`);
+    await this.saveText(result.dxf, 'model.dxf', 'AutoCAD DXF', 'dxf');
   }
 
   async exportGcode(): Promise<void> {

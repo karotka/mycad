@@ -61,26 +61,17 @@ export class PreviewController {
       return;
     }
     if (active.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
-      // Its own kind rather than a plain line, because what a move wants read
-      // off it is how far it went in x and in y, not the length of the hop.
-      this.setPreview({ type: 'move', data: { start: active.data.basePoint, end: cursor } });
+      // The objects ride under the cursor so you see what you are placing — and
+      // it keeps its own kind, not a plain line, because a move reads how far it
+      // went in x and in y, not the length of the hop.
+      const base = active.data.basePoint as Vec2;
+      const entities = this.translatedGhosts(active.data.entities as Entity[], { x: cursor.x - base.x, y: cursor.y - base.y });
+      this.setPreview({ type: 'move', data: { start: base, end: cursor, entities } });
       return;
     }
     if (active.name === 'COPY' && active.stepIndex === 2 && active.data.basePoint) {
       const base = active.data.basePoint as Vec2;
-      const delta = { x: cursor.x - base.x, y: cursor.y - base.y };
-      const entities = (active.data.entities as Entity[]).map((entity) => {
-        const worldDelta = this.copyWorldDelta?.(delta);
-        const copy = worldDelta ? cloneEntity(entity) : transformEntityPoints(entity, (point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
-        if (worldDelta) {
-          const plane = cloneWorkPlane(copy.workPlane ?? WORLD_WORK_PLANE);
-          plane.origin.x += worldDelta.x; plane.origin.y += worldDelta.y; plane.origin.z += worldDelta.z;
-          copy.workPlane = plane;
-        }
-        copy.color = 0xe6f4ff;
-        copy.selected = false;
-        return copy;
-      });
+      const entities = this.translatedGhosts(active.data.entities as Entity[], { x: cursor.x - base.x, y: cursor.y - base.y });
       this.setPreview({ type: 'copy', data: { start: base, end: cursor, entities } });
       return;
     }
@@ -164,6 +155,29 @@ export class PreviewController {
     else if (active.name === 'RECTANGLE' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
     else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) this.setPreview({ type: active.name === 'CIRCLE' ? 'circle' : 'circleDiameter', data: { center: active.data.center, cursor } });
     else if (active.name === 'OCTAGON' && active.data.center) this.setPreview({ type: 'octagon', data: { center: active.data.center, cursor } });
+  }
+
+  /**
+   * The selected entities shifted by a work-plane drag and coloured as a ghost —
+   * what MOVE and COPY show riding under the cursor before the click commits.
+   * A viewport-supplied world delta moves the whole work plane (so 3D geometry
+   * keeps its shape); otherwise the points shift in the plane.
+   */
+  private translatedGhosts(entities: Entity[], delta: Vec2): Entity[] {
+    return entities.map((entity) => {
+      const worldDelta = this.copyWorldDelta?.(delta);
+      const ghost = worldDelta
+        ? cloneEntity(entity)
+        : transformEntityPoints(entity, (point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
+      if (worldDelta) {
+        const plane = cloneWorkPlane(ghost.workPlane ?? WORLD_WORK_PLANE);
+        plane.origin.x += worldDelta.x; plane.origin.y += worldDelta.y; plane.origin.z += worldDelta.z;
+        ghost.workPlane = plane;
+      }
+      ghost.color = 0xe6f4ff;
+      ghost.selected = false;
+      return ghost;
+    });
   }
 
   showDimension(text: string | null, x: number, y: number): void {

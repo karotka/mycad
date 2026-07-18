@@ -64,6 +64,33 @@ describe('ProjectIO', () => {
     expect(target.dimensionStyle).toEqual(source.dimensionStyle);
   });
 
+  it('round-trips per-layer line weight and line type', () => {
+    const source = new Document();
+    source.layers = ['0', 'walls', 'hidden'];
+    source.layerLineweight = { '0': 0.25, walls: 0.7, hidden: 0.18 };
+    source.layerLinetype = { '0': 'Continuous', walls: 'Continuous', hidden: 'Hidden' };
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.layerLineweight).toEqual(source.layerLineweight);
+    expect(target.layerLinetype).toEqual(source.layerLinetype);
+  });
+
+  it('gives an older project without line styles the plain defaults', () => {
+    const source = new Document();
+    source.layers = ['0', 'extra'];
+    const saved = JSON.parse(serializeProject(source));
+    delete saved.settings.layerLineweight;
+    delete saved.settings.layerLinetype;
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.layerLineweight).toEqual({ '0': 0.25, extra: 0.25 });
+    expect(target.layerLinetype).toEqual({ '0': 'Continuous', extra: 'Continuous' });
+  });
+
   it('round-trips the plotter settings, which belong to the drawing', () => {
     const source = new Document();
     source.gcode = { feedRate: 1200, travelRate: 3000, cutDepth: -2.5, safeHeight: 8, segments: 128 };

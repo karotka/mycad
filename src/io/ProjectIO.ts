@@ -1,5 +1,6 @@
 import type { Document } from '../core/Document';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
 
 export interface ProjectViewState {
@@ -24,6 +25,8 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       currentLayer: doc.currentLayer,
       layers: doc.layers,
       layerAci: doc.layerAci,
+      layerLineweight: doc.layerLineweight,
+      layerLinetype: doc.layerLinetype,
       hiddenLayers: Array.from(doc.hiddenLayers),
       gridSize: doc.gridSize,
       snapSize: doc.snapSize,
@@ -96,6 +99,10 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.layerAci = settings.layerAci && typeof settings.layerAci === 'object'
       ? { '0': ACI_WHITE, ...(settings.layerAci as Record<string, number>) }
       : legacyLayerAci(settings.layerColors, doc.layers);
+    // Line weight and type default per layer; a file without them reads as plain
+    // continuous hairlines, which is what an older drawing was.
+    doc.layerLineweight = layerNumberMap(settings.layerLineweight, doc.layers, DEFAULT_LINE_WEIGHT_MM);
+    doc.layerLinetype = layerNameMap(settings.layerLinetype, doc.layers, DEFAULT_LINE_TYPE);
     doc.hiddenLayers = new Set(Array.isArray(settings.hiddenLayers)
       ? (settings.hiddenLayers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer !== '0')
       : []);
@@ -172,6 +179,24 @@ function loadDimensionStyle(value: unknown): DimensionStyle {
 function legacyAci(raw: Record<string, unknown>): number {
   if (typeof raw.aci === 'number') return raw.aci;
   return typeof raw.color === 'number' ? rgbToAci(raw.color) : ACI_BYLAYER;
+}
+
+/** A per-layer number map, filled in for every layer, with a fallback. */
+function layerNumberMap(stored: unknown, layers: string[], fallback: number): Record<string, number> {
+  const raw = stored && typeof stored === 'object' ? stored as Record<string, unknown> : {};
+  const result: Record<string, number> = {};
+  for (const layer of layers) {
+    result[layer] = typeof raw[layer] === 'number' && Number.isFinite(raw[layer]) && (raw[layer] as number) > 0 ? raw[layer] as number : fallback;
+  }
+  return result;
+}
+
+/** A per-layer string map, filled in for every layer, with a fallback. */
+function layerNameMap(stored: unknown, layers: string[], fallback: string): Record<string, string> {
+  const raw = stored && typeof stored === 'object' ? stored as Record<string, unknown> : {};
+  const result: Record<string, string> = {};
+  for (const layer of layers) result[layer] = typeof raw[layer] === 'string' ? raw[layer] as string : fallback;
+  return result;
 }
 
 /** The same, per layer, from an older file's `layerColors` map of RGB. */

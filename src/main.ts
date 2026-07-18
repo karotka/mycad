@@ -142,6 +142,7 @@ const layerController = new LayerController(
   get('layer-current'),
   get('layer-toggle'),
   get('layer-add'),
+  get('layer-close'),
   { log, redraw, objectsDeleted: () => gripController.clear() },
 );
 const propertiesController = new PropertiesController(
@@ -214,6 +215,11 @@ function captureProjectView(): ProjectViewState {
 }
 let commandResize: { startY: number; startHeight: number; pointerId: number } | null = null;
 
+// The command-panel height lives as a custom property on the grid <main.app>,
+// which defines its own default — so it must be set on that same element, not on
+// the outer #app div, or the local default shadows it and nothing moves.
+const gridApp = app.querySelector<HTMLElement>('.app') ?? app;
+
 commandResizeHandle.addEventListener('pointerdown', (event) => {
   const panel = commandResizeHandle.parentElement as HTMLElement;
   commandResize = { startY: event.clientY, startHeight: panel.getBoundingClientRect().height, pointerId: event.pointerId };
@@ -225,7 +231,7 @@ commandResizeHandle.addEventListener('pointerdown', (event) => {
 commandResizeHandle.addEventListener('pointermove', (event) => {
   if (!commandResize || event.pointerId !== commandResize.pointerId) return;
   const nextHeight = Math.max(58, Math.min(window.innerHeight * 0.6, commandResize.startHeight + commandResize.startY - event.clientY));
-  app.style.setProperty('--command-panel-height', `${nextHeight}px`);
+  gridApp.style.setProperty('--command-panel-height', `${nextHeight}px`);
 });
 
 commandResizeHandle.addEventListener('pointerup', (event) => {
@@ -455,8 +461,7 @@ const projectController = new ProjectController(cadDocument, history, {
     previewController.reset();
   },
   resetView: () => {
-    renderer2d.pan = { x: 0, y: 0 };
-    renderer2d.zoom = 20;
+    applyDefaultTwoDView();
     renderer3d.clearFaceHighlight();
     renderer3d.clearEdgeHighlight();
     renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
@@ -485,6 +490,7 @@ const menuActions: Record<string, () => void> = {
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': () => { void projectController.exportStl(); },
+  'export-dxf': () => { void projectController.exportDxf(); },
   'export-gcode': () => { void projectController.exportGcode(); },
   settings: () => settingsController.toggle(),
   undo: () => { log(history.undo() ? 'Undo complete.' : 'Nothing to undo.'); redraw(); },
@@ -935,6 +941,20 @@ function resize(): void {
   redraw();
 }
 
+/**
+ * The starting 2D view: the origin sits near the lower-left corner rather than
+ * dead centre, so a fresh drawing grows up and to the right into the positive
+ * quadrant. The margin keeps the origin axes clear of the very corner.
+ */
+const TWO_D_ORIGIN_MARGIN = 0.08;
+function applyDefaultTwoDView(): void {
+  renderer2d.zoom = 20;
+  renderer2d.pan = {
+    x: (0.5 - TWO_D_ORIGIN_MARGIN) * width / renderer2d.zoom,
+    y: (0.5 - TWO_D_ORIGIN_MARGIN) * height / renderer2d.zoom,
+  };
+}
+
 cadDocument.subscribe(() => {
   redraw();
   if (layerController.isOpen) layerController.render();
@@ -1108,8 +1128,6 @@ viewport.addEventListener('pointerdown', async (event) => {
     altKey: event.altKey,
     onViewToggle: Boolean((event.target as HTMLElement).closest('.view-toggle')),
     zoomWindowArmed: zoomWindowMode,
-    gripLatched: gripController.isDragging && gripInteraction.isLatched,
-    awaitingPoint: drawingInteraction.isPointStep,
   });
 
   if (gesture.kind === 'ignore') return;
@@ -1777,12 +1795,24 @@ document.querySelectorAll<HTMLButtonElement>('[data-view-action]').forEach((butt
 
 document.querySelectorAll<HTMLButtonElement>('[data-standard-view]').forEach((button) => {
   button.addEventListener('click', () => {
-    const view = button.dataset.standardView as 'top' | 'front' | 'right';
+    const view = button.dataset.standardView;
+    document.querySelectorAll('[data-standard-view]').forEach((face) => face.classList.toggle('active', face === button));
+    // The plan (TOP) view IS the 2D drawing mode here: a 3D top-down camera looks
+    // identical but silently disables window selection and grid snap — that was
+    // the "clicking TOP stopped the selection window from working" report.
+    if (view === 'top') {
+      // Keep the cube and axis gizmo reading TOP, but drop onto the flat 2D
+      // plane — that is where window selection and grid snap live.
+      renderer3d.setStandardView('top');
+      cadDocument.viewMode = '2d';
+      cadDocument.notify();
+      redraw();
+      return;
+    }
     cadDocument.viewMode = '3d';
     renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
-    renderer3d.setStandardView(view);
+    renderer3d.setStandardView(view as 'front' | 'left' | 'right');
     cadDocument.notify();
-    document.querySelectorAll('[data-standard-view]').forEach((face) => face.classList.toggle('active', face === button));
   });
 });
 document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach((button) => {
@@ -1808,3 +1838,5 @@ window.addEventListener('beforeunload', () => {
 });
 log('MyCAD ready. Enter HELP for a list of commands.');
 resize();
+applyDefaultTwoDView();
+redraw();

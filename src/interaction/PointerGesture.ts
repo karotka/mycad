@@ -16,10 +16,6 @@ export interface PointerGestureInput {
   onViewToggle: boolean;
   /** Zoom-window mode is armed and waiting for a rectangle. */
   zoomWindowArmed: boolean;
-  /** A grip drag is latched, so it owns the next click. */
-  gripLatched: boolean;
-  /** A command is waiting for a point, so the right button must not steal it. */
-  awaitingPoint: boolean;
 }
 
 export type PointerGesture =
@@ -44,11 +40,11 @@ export function resolvePointerGesture(input: PointerGestureInput): PointerGestur
   if (input.zoomWindowArmed && input.button === 0) return { kind: 'zoomWindow' };
   if (input.button === 0 && input.metaKey) return { kind: 'orbit' };
 
-  if (input.button === 2) {
-    // A latched grip or a pending point has already claimed the right button.
-    if (input.gripLatched || input.awaitingPoint) return { kind: 'ignore' };
-    return { kind: 'pan', opensMenuIfStill: true };
-  }
+  // The right button is always live: it pans on a drag and opens the context
+  // menu on a still click — including mid-command and mid-grip-drag, where that
+  // menu is the only way to choose an object snap. Swallowing it there left
+  // drawing without snaps, which is what "the right button does nothing" was.
+  if (input.button === 2) return { kind: 'pan', opensMenuIfStill: true };
 
   if (input.button === 1 || (input.button === 0 && input.altKey)) {
     return { kind: 'pan', opensMenuIfStill: false };

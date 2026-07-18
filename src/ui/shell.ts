@@ -79,6 +79,15 @@ export function shellHtml(tools: ShellTools): string {
         </button>
       </div>
     </section>
+    <section class="command-panel">
+      <div class="command-resize-handle" id="command-resize-handle" title="Drag to resize command history"></div>
+      <div class="command-log" id="command-log"></div>
+      <form class="command-input-row" id="command-form">
+        <label class="command-prompt" id="command-prompt" for="command-input">Command:</label>
+        <input class="command-input" id="command-input" autocomplete="off" autofocus />
+        <div class="command-suggestions" id="command-suggestions" hidden></div>
+      </form>
+    </section>
     <footer class="statusbar">
       <button class="bar-toggle" id="model-tree-toggle" title="Model Tree — how each solid was built" aria-label="Model Tree">TREE</button>
       <button class="bar-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
@@ -107,7 +116,7 @@ export function shellHtml(tools: ShellTools): string {
         <div class="properties-content" id="model-tree-list"></div>
       </section>
       <section class="layer-panel" id="layer-panel" hidden>
-        <header><strong>Layers</strong><button id="layer-add" title="New layer">+</button></header>
+        <header><strong>Layers</strong><span class="panel-header-actions"><button id="layer-add" title="New layer">+</button><button id="layer-close" title="Close">×</button></span></header>
         <div class="layer-list" id="layer-list"></div>
       </section>
       <section class="properties-panel" id="properties-panel" hidden>
@@ -149,15 +158,6 @@ export function shellHtml(tools: ShellTools): string {
         </form>
       </section>
     </footer>
-    <section class="command-panel">
-      <div class="command-resize-handle" id="command-resize-handle" title="Drag to resize command history"></div>
-      <div class="command-log" id="command-log"></div>
-      <form class="command-input-row" id="command-form">
-        <label class="command-prompt" id="command-prompt" for="command-input">Command:</label>
-        <input class="command-input" id="command-input" autocomplete="off" autofocus />
-        <div class="command-suggestions" id="command-suggestions" hidden></div>
-      </form>
-    </section>
   </main>
   <div class="context-menu" id="grip-menu" hidden>
     <section class="one-shot-snaps">
