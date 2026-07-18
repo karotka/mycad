@@ -8,7 +8,7 @@ import { CommandHistory } from './core/history/CommandHistory';
 import { CompositeEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
 import type { DocumentEdit } from './core/history/CommandHistory';
 import { snapPoint2, worldToScreen, type Vec2 } from './math/geometry';
-import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
+import { cloneWorkPlane, isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
 import { hitTestSolid2d, pickEntityAt, selectionExclusions, solidBounds } from './interaction/PickingService';
@@ -100,7 +100,7 @@ const previewController = new PreviewController(
   (point) => cadDocument.viewMode === '3d'
     ? renderer3d.projectCadPoint(renderer3d.renderer.domElement, point)
     : null,
-  (delta) => cadDocument.viewMode === '3d' ? renderer3d.screenDeltaToCad(delta) : undefined,
+  (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(delta) : undefined,
 );
 const navigation = new ViewportNavigationController(
   cadDocument,
@@ -437,7 +437,7 @@ const commands = new CommandManager({
   doc: cadDocument,
   history,
   moveObjects,
-  copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? renderer3d.screenDeltaToCad(delta) : undefined,
+  copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(delta) : undefined,
   workPlaneChanged: () => renderer3d.setWorkPlane(cadDocument.activeWorkPlane),
   log,
   prompt: (message) => {
@@ -567,20 +567,18 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
       ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
       : nearestPersistentSnap(event);
     if (targetedSnap) {
+      // A snapped base-and-target is a full 3D hop: the world point rides along
+      // (via worldDeltaOf) so grabbing a corner and dropping it on another lands
+      // x, y and z. Otherwise the move stays in the UCS plane.
       if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') active.data.pendingMoveWorldPoint = targetedSnap.world;
-      return (active.name === 'MOVE' || active.name === 'COPY') && cadDocument.viewMode === '3d'
-        ? renderer3d.cadPointToViewPlane(targetedSnap.world)
-        : targetedSnap.point;
+      return targetedSnap.point;
     }
     if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') delete active.data.pendingMoveWorldPoint;
   }
   if (cadDocument.viewMode === '2d') return constrainedPoint(worldPoint(event));
-  const step = commands.active?.steps[commands.active.stepIndex];
-  if ((commands.active?.name === 'MOVE' || commands.active?.name === 'COPY') && step?.kind === 'point') {
-    const point = renderer3d.viewPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
-    const snapped = point && cadDocument.snapEnabled ? snapPoint2(point, cadDocument.snapSize) : point;
-    return snapped ? constrainedPoint(snapped) : null;
-  }
+  // In 3D a transform with no snap slides along the active UCS plane: the ray
+  // meets that plane, so X and Y move and the height is kept. This is why moving
+  // a solid used to drift across the screen instead of across its own floor.
   const point = worldPoint3d(event);
   return point ? constrainedPoint(point) : null;
 }
@@ -703,6 +701,22 @@ function moveObjectEdit(
 }
 
 /**
+ * A drag measured in the active UCS plane, turned into a world vector. Only X
+ * and Y move; the UCS height is untouched — dragging a solid across the floor of
+ * its coordinate system rather than across the screen, which is what "move it,
+ * keep the same height" means. A snapped point-to-point hop overrides this with
+ * its own full-3D delta.
+ */
+function ucsPlaneWorldDelta(local: Vec2): { x: number; y: number; z: number } {
+  const plane = cadDocument.activeWorkPlane;
+  return {
+    x: plane.xAxis.x * local.x + plane.yAxis.x * local.y,
+    y: plane.xAxis.y * local.x + plane.yAxis.y * local.y,
+    z: plane.xAxis.z * local.x + plane.yAxis.z * local.y,
+  };
+}
+
+/**
  * Moves any number of objects as one step in the history: dragging three things
  * is one thing the user did, so one Undo has to put all three back.
  */
@@ -713,7 +727,7 @@ function moveObjects(
 ): void {
   const delta = snappedWorldDelta ?? (cadDocument.viewMode === '2d'
     ? { x: screenDelta.x, y: screenDelta.y, z: 0 }
-    : renderer3d.screenDeltaToCad(screenDelta));
+    : ucsPlaneWorldDelta(screenDelta));
   const edits = objects
     .map((object) => moveObjectEdit(object, delta, Boolean(snappedWorldDelta)))
     .filter((edit): edit is DocumentEdit => edit !== null);
@@ -1805,10 +1819,11 @@ document.querySelectorAll<HTMLButtonElement>('[data-standard-view]').forEach((bu
     // identical but silently disables window selection and grid snap — that was
     // the "clicking TOP stopped the selection window from working" report.
     if (view === 'top') {
-      // Keep the cube and axis gizmo reading TOP, but drop onto the flat 2D
-      // plane — that is where window selection and grid snap live.
       renderer3d.setStandardView('top');
-      cadDocument.viewMode = '2d';
+      // Under the WCS the plan view is the flat 2D drawing plane — where window
+      // selection and grid snap live. A custom UCS has no 2D plane of its own,
+      // so TOP there means looking straight down that UCS's Z, still in 3D.
+      cadDocument.viewMode = isWorldWorkPlane(cadDocument.activeWorkPlane) ? '2d' : '3d';
       cadDocument.notify();
       redraw();
       return;

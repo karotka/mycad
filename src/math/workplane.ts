@@ -18,6 +18,16 @@ export function cloneWorkPlane(plane: WorkPlane): WorkPlane {
   return JSON.parse(JSON.stringify(plane)) as WorkPlane;
 }
 
+/** Whether a plane is the world plane itself — i.e. the UCS is the WCS. */
+export function isWorldWorkPlane(plane: WorkPlane): boolean {
+  const zero = (v: number): boolean => Math.abs(v) < 1e-9;
+  const one = (v: number): boolean => Math.abs(v - 1) < 1e-9;
+  return zero(plane.origin.x) && zero(plane.origin.y) && zero(plane.origin.z)
+    && one(plane.xAxis.x) && zero(plane.xAxis.y) && zero(plane.xAxis.z)
+    && zero(plane.yAxis.x) && one(plane.yAxis.y) && zero(plane.yAxis.z)
+    && zero(plane.zAxis.x) && zero(plane.zAxis.y) && one(plane.zAxis.z);
+}
+
 export function localToWorld(plane: WorkPlane, point: Vec2, z = 0): Vec3 {
   return {
     x: plane.origin.x + plane.xAxis.x * point.x + plane.yAxis.x * point.y + plane.zAxis.x * z,
