@@ -555,7 +555,11 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
       // along its alignment path rather than losing it.
       const acquired = endpointAnchorFromSnap(targetedSnap);
       if (acquired) activeEndpointAnchor = acquired;
-      return targetedSnap.point;
+      // Carry how far the snap sits off the active plane, not just its shadow on
+      // it, so a line drawn in 3D lands on the point it snapped to even when that
+      // point belongs to another UCS. The line keeps the active plane; only the
+      // endpoint's z rides along.
+      return { ...targetedSnap.point, z: worldToLocal(cadDocument.activeWorkPlane, targetedSnap.world).z } as Vec2;
     }
   }
   if (active && transformsObjects(active.name) && active.steps[active.stepIndex]?.kind === 'point') {

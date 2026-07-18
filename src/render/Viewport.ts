@@ -1266,7 +1266,7 @@ export class Viewport3D {
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(
       points.map((point) => {
-        const world = localToWorld(this.activeWorkPlane, point, 0.025);
+        const world = localToWorld(this.activeWorkPlane, point, ((point as { z?: number }).z ?? 0) + 0.025);
         return new THREE.Vector3(world.x, world.z, -world.y);
       })
     );
@@ -1474,7 +1474,10 @@ export class Viewport3D {
 
     const geometry = new THREE.BufferGeometry().setFromPoints(
       points.map((point) => {
-        const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, 0.015);
+        // A per-point z lets a line reach an endpoint off its own plane — how a
+        // 3D line connects to geometry on another UCS. Shapes that rebuild their
+        // points (circles, arcs) never carry one, so they stay planar.
+        const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, ((point as { z?: number }).z ?? 0) + 0.015);
         return new THREE.Vector3(world.x, world.z, -world.y);
       })
     );
