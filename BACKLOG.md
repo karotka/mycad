@@ -7,27 +7,7 @@ use it comfortably, then structural and interoperability work.
 
 ---
 
-## 1. Dynamic UCS on a solid face (F6)
-
-Manual and named UCS are available. What is missing is the modelling workflow:
-hover a planar solid face, press F6 or start a drawing command, and temporarily
-align the active UCS to that face without rotating the object.
-
-Expected behaviour:
-
-- origin at the picked point or a snapped face vertex;
-- Z along the outward face normal;
-- stable X/Y axes derived from a boundary edge, not from camera orientation;
-- grid and drawing tools immediately use the temporary plane;
-- Escape or WCS restores the previous coordinate system;
-- the temporary UCS can be saved as a named UCS when wanted.
-
-Build this on the existing planar-face extraction so PRESSPULL, region picking
-and UCS all agree on what a face is.
-
----
-
-## 2. Make pointer interaction testable outside `main.ts`
+## 1. Make pointer interaction testable outside `main.ts`
 
 `main.ts` is about 2,000 lines and remains the easiest place for interaction
 regressions to hide. Frame coalescing and several interaction services are
@@ -56,7 +36,7 @@ dispatch through their definitions and `advanceStep` is only a small guard.
 
 ---
 
-## 3. DXF interoperability
+## 2. DXF interoperability
 
 ASCII DXF import and export both exist. Export covers current 2D entities,
 layers, colours, line types and line weights; dimensions are decomposed into
@@ -93,7 +73,7 @@ with block support rather than creating an export-only block model.
 
 ---
 
-## 4. Further solid-modelling features
+## 3. Further solid-modelling features
 
 These can now build on the shared planar-face and boundary-loop representation.
 
@@ -127,7 +107,7 @@ cut with caps and section edges, not a modelling operation like SLICE.
 
 ---
 
-## 5. Entity extensibility and drafting workflow
+## 4. Entity extensibility and drafting workflow
 
 Adding an entity type still touches many switches and `if (entity.type === …)`
 chains. Exhaustive core switches catch some omissions, but grips, snaps and 3D
@@ -147,7 +127,6 @@ Remaining F-key workflow:
 | F2 | Expand/collapse the resizable command-history panel. |
 | F4 | Decide whether 3D snaps need a separate toggle; solid edge, centre and perpendicular candidates already work in 3D. |
 | F5 | Isoplane cycle; large and currently low value. |
-| F6 | Dynamic UCS, prioritised above. |
 | F12 | Dynamic input near the cursor; the existing dimension toast is not editable input. |
 
 Drafting values are saved per drawing. There is still no application-level
@@ -158,7 +137,7 @@ with a file-format migration.
 
 ---
 
-## 6. Performance — measure before changing architecture
+## 5. Performance — measure before changing architecture
 
 The reported orbit stutter remains unconfirmed. Establish first whether it is
 sphere/high-triangle specific or affects simple boxes too, using a three-second
@@ -180,7 +159,7 @@ until real models show longer blocking operations.
 
 ---
 
-## 7. Project format and robustness before release
+## 6. Project format and robustness before release
 
 Do this before the first release or as soon as drawings become worth preserving,
 whichever comes first. Parametric `Solid.feature` data is part of the native
@@ -195,7 +174,7 @@ model and must survive migrations.
 
 ---
 
-## 8. Output, text and dimensions
+## 7. Output, text and dimensions
 
 ### G-code
 
@@ -221,7 +200,7 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ---
 
-## 9. Manifold dependency and CSP
+## 8. Manifold dependency and CSP
 
 The browser CSP still needs `unsafe-eval` because manifold 2.5.1's Emscripten
 embind creates invokers with `new Function`. Tightening the policy without
@@ -234,7 +213,7 @@ job: newer releases have API differences and a smaller WASM payload.
 
 ---
 
-## 10. Housekeeping
+## 9. Housekeeping
 
 - no ESLint, Prettier or CI; tests and `tsc` are run manually;
 - `noUnusedLocals` and `noUnusedParameters` are disabled;

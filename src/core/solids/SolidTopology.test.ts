@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
 import { booleanSubtract, createBoxMesh, createCylinderMesh } from './ManifoldEngine';
 import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
+import { localToWorld } from '../../math/workplane';
 
 describe('solid feature topology', () => {
   it('keeps box creases and discards coplanar triangle diagonals', () => {
@@ -61,6 +62,23 @@ describe('solid feature topology', () => {
     );
   });
 
+  it('honours endpoint Z when a WCS line visibly crosses a vertical face', () => {
+    const mesh = createBoxMesh(10, 6, 4);
+    const front = solidPlanarFaces(mesh).find((face) => face.normal.y < -0.9)!;
+    const doc = new Document();
+    const divider = doc.createLine(
+      { x: -5, y: -3, z: 2 } as { x: number; y: number },
+      { x: 5, y: -3, z: 2 } as { x: number; y: number },
+    );
+
+    const regions = planarFaceRegions(front, [divider]);
+
+    expect(regions).toHaveLength(2);
+    expect(planarFaceRegionAt(front, [divider], { x: 0, y: -3, z: 3 })).not.toEqual(
+      planarFaceRegionAt(front, [divider], { x: 0, y: -3, z: 1 }),
+    );
+  });
+
   it('keeps the inner loop of a planar face around a through-hole', async () => {
     const cutter = createCylinderMesh(2, 8);
     for (let index = 2; index < cutter.positions.length; index += 3) cutter.positions[index] -= 1;
@@ -86,5 +104,51 @@ describe('solid feature topology', () => {
     expect(regions.map((region) => region.loops.length).sort()).toEqual([1, 2]);
     expect(planarFaceRegionAt(top, [circle], { x: 0, y: 0, z: 4 })?.loops).toHaveLength(1);
     expect(planarFaceRegionAt(top, [circle], { x: 3, y: 0, z: 4 })?.loops).toHaveLength(2);
+  });
+
+  it('uses the centre Z of a closed WCS profile on a parallel face', () => {
+    const top = solidPlanarFaces(createBoxMesh(10, 6, 4)).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 0, y: 0, z: 4 } as { x: number; y: number }, 1);
+
+    expect(planarFaceRegions(top, [circle])).toHaveLength(2);
+  });
+
+  it('clips a circle crossing a face edge into a selectable partial region', () => {
+    const front = solidPlanarFaces(createBoxMesh(10, 6, 4)).find((face) => face.normal.y < -0.9)!;
+    const xs = front.loops[0].map((point) => point.x), ys = front.loops[0].map((point) => point.y);
+    const edgeX = Math.min(...xs), centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const radius = Math.min(Math.max(...xs) - edgeX, Math.max(...ys) - Math.min(...ys)) / 4;
+    const doc = new Document();
+    doc.activeWorkPlane = front.plane;
+    const circle = doc.createCircle({ x: edgeX, y: centreY }, radius);
+
+    const regions = planarFaceRegions(front, [circle]);
+
+    expect(regions).toHaveLength(2);
+    const inside = localToWorld(front.plane, { x: edgeX + radius / 2, y: centreY });
+    const outside = localToWorld(front.plane, { x: Math.max(...xs) - radius / 2, y: centreY });
+    expect(planarFaceRegionAt(front, [circle], inside)).not.toEqual(planarFaceRegionAt(front, [circle], outside));
+    const boundaryPick = localToWorld(front.plane, { x: edgeX, y: centreY });
+    const selectedLoop = planarFaceRegionAt(front, [circle], boundaryPick)!.loops[0];
+    const selectedArea = Math.abs(selectedLoop.reduce((area, point, index) => {
+      const next = selectedLoop[(index + 1) % selectedLoop.length];
+      return area + point.x * next.y - next.x * point.y;
+    }, 0)) / 2;
+    expect(selectedArea).toBeLessThan(10);
+  });
+
+  it('accepts rectangles, ellipses, octagons and closed polylines as face regions', () => {
+    const top = solidPlanarFaces(createBoxMesh(10, 6, 4)).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    doc.activeWorkPlane.origin.z = 4;
+    const profiles = [
+      doc.createRectangle({ x: -1, y: -1 }, { x: 1, y: 1 }),
+      doc.createEllipse({ x: 0, y: 0 }, 1.5, 0.75),
+      doc.createOctagon({ x: 0, y: 0 }, 1),
+      doc.createPolyline([{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 0, y: 1 }], true),
+    ];
+
+    for (const profile of profiles) expect(planarFaceRegions(top, [profile]), profile.type).toHaveLength(2);
   });
 });

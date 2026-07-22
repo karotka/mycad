@@ -223,8 +223,13 @@ export function planarFaceRegions(face: PlanarFace, entities: readonly Entity[])
   for (const entity of entities) {
     if (entity.type !== 'line') continue;
     const entityPlane = entity.workPlane ?? WORLD_WORK_PLANE;
-    const start = worldToLocal(face.plane, localToWorld(entityPlane, entity.start));
-    const end = worldToLocal(face.plane, localToWorld(entityPlane, entity.end));
+    // A LINE may have per-endpoint Z values when it was drawn by snapping to
+    // 3D geometry while another UCS was active. The renderer honours those
+    // values; ignoring them here projected the visible divider back onto its
+    // base plane, so a line visibly crossing a vertical box face did not split
+    // that face for PRESSPULL.
+    const start = worldToLocal(face.plane, localToWorld(entityPlane, entity.start, localPointZ(entity.start)));
+    const end = worldToLocal(face.plane, localToWorld(entityPlane, entity.end, localPointZ(entity.end)));
     if (Math.abs(start.z) > 1e-5 || Math.abs(end.z) > 1e-5) continue;
     const splitter = [{ x: start.x, y: start.y }, { x: end.x, y: end.y }] as const;
     const next: SolidFaceRegion[] = [];
@@ -241,19 +246,26 @@ export function planarFaceRegions(face: PlanarFace, entities: readonly Entity[])
 
   // A closed sketch inside a face makes two regions: its interior and the
   // surrounding face with the sketch as a hole. This is enough for a true
-  // pocket as well as an island; nested or intersecting profiles are accepted
-  // only when one loop is wholly contained in one existing region.
+  // pocket as well as an island. Profiles crossing a face edge are handled
+  // below as in-face open chains closed by the face boundary.
   for (const entity of entities) {
     const profile = closedEntityLoopOnFace(entity, face.plane);
     if (!profile) continue;
     const containerIndex = regions.findIndex((region) => loopStrictlyInsideRegion(profile, region.loops));
-    if (containerIndex < 0) continue;
-    const container = regions[containerIndex];
     const outer = polygonSignedArea(profile) < 0 ? [...profile].reverse() : profile;
-    regions.splice(containerIndex, 1,
-      { plane: face.plane, loops: [container.loops[0], ...container.loops.slice(1), [...outer].reverse()] },
-      { plane: face.plane, loops: [outer] },
-    );
+    if (containerIndex >= 0) {
+      const container = regions[containerIndex];
+      regions.splice(containerIndex, 1,
+        { plane: face.plane, loops: [container.loops[0], ...container.loops.slice(1), [...outer].reverse()] },
+        { plane: face.plane, loops: [outer] },
+      );
+    } else {
+      // A closed profile is also useful when it crosses the face boundary: a
+      // circle centred on an edge creates a semicircular region closed by that
+      // edge. Break its in-face arcs into open chains and use each as another
+      // divider of the current simple regions.
+      regions = splitRegionsByProfileChains(regions, outer, face.plane);
+    }
   }
   return regions;
 }
@@ -262,41 +274,168 @@ export function planarFaceRegions(face: PlanarFace, entities: readonly Entity[])
 export function planarFaceRegionAt(face: PlanarFace, entities: readonly Entity[], point: Vec3): SolidFaceRegion | null {
   const local = worldToLocal(face.plane, point);
   if (Math.abs(local.z) > 1e-4) return null;
-  return planarFaceRegions(face, entities).find((region) => pointInRegion({ x: local.x, y: local.y }, region.loops)) ?? null;
+  const candidates = planarFaceRegions(face, entities)
+    .filter((region) => pointInRegion({ x: local.x, y: local.y }, region.loops));
+  // A click exactly on a shared divider belongs geometrically to both sides.
+  // Prefer the smaller bounded region, which makes clicking the centre of a
+  // semicircle on a face edge select the semicircle instead of almost the whole
+  // face around it.
+  candidates.sort((a, b) => regionArea(a.loops) - regionArea(b.loops));
+  return candidates[0] ?? null;
 }
+
+const regionArea = (loops: Vec2[][]): number => loops.reduce(
+  (area, loop, index) => area + (index === 0 ? 1 : -1) * Math.abs(polygonSignedArea(loop)),
+  0,
+);
 
 function cloneLoop(loop: Vec2[]): Vec2[] { return loop.map((point) => ({ ...point })); }
 
+const localPointZ = (point: Vec2): number => (point as Vec2 & { z?: number }).z ?? 0;
+
 function closedEntityLoopOnFace(entity: Entity, facePlane: WorkPlane): Vec2[] | null {
-  const samples: Vec2[] | null = entity.type === 'circle'
-    ? Array.from({ length: 64 }, (_unused, index) => {
+  let defaultZ = 0;
+  let samples: Vec2[] | null = null;
+  if (entity.type === 'circle') {
+    defaultZ = localPointZ(entity.center);
+    samples = Array.from({ length: 64 }, (_unused, index) => {
       const angle = index * Math.PI * 2 / 64;
       return { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
-    })
-    : entity.type === 'ellipse'
-      ? Array.from({ length: 64 }, (_unused, index) => {
-        const angle = index * Math.PI * 2 / 64;
-        const x = Math.cos(angle) * entity.radiusX, y = Math.sin(angle) * entity.radiusY;
-        const cos = Math.cos(entity.rotation), sin = Math.sin(entity.rotation);
-        return { x: entity.center.x + x * cos - y * sin, y: entity.center.y + x * sin + y * cos };
-      })
-      : entity.type === 'rectangle'
-        ? [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]
-        : entity.type === 'octagon'
-          ? entity.vertices
-          : entity.type === 'polyline' && entity.closed
-            ? entity.vertices
-            : null;
+    });
+  } else if (entity.type === 'ellipse') {
+    defaultZ = localPointZ(entity.center);
+    samples = Array.from({ length: 64 }, (_unused, index) => {
+      const angle = index * Math.PI * 2 / 64;
+      const x = Math.cos(angle) * entity.radiusX, y = Math.sin(angle) * entity.radiusY;
+      const cos = Math.cos(entity.rotation), sin = Math.sin(entity.rotation);
+      return { x: entity.center.x + x * cos - y * sin, y: entity.center.y + x * sin + y * cos };
+    });
+  } else if (entity.type === 'rectangle') {
+    defaultZ = (localPointZ(entity.first) + localPointZ(entity.opposite)) / 2;
+    samples = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
+  } else if (entity.type === 'octagon') {
+    defaultZ = localPointZ(entity.center);
+    samples = entity.vertices;
+  } else if (entity.type === 'polyline' && entity.closed) {
+    samples = entity.vertices;
+  }
   if (!samples || samples.length < 3) return null;
   const entityPlane = entity.workPlane ?? WORLD_WORK_PLANE;
   const projected: Vec2[] = [];
   for (const sample of samples) {
-    const local = worldToLocal(facePlane, localToWorld(entityPlane, sample));
+    const explicitZ = (sample as Vec2 & { z?: number }).z;
+    const local = worldToLocal(facePlane, localToWorld(entityPlane, sample, explicitZ ?? defaultZ));
     if (Math.abs(local.z) > 1e-5) return null;
     projected.push({ x: local.x, y: local.y });
   }
   const loop = dedupeLoop(projected);
   return loop.length >= 3 && Math.abs(polygonSignedArea(loop)) > 1e-9 ? loop : null;
+}
+
+function splitRegionsByProfileChains(
+  regions: SolidFaceRegion[],
+  profile: Vec2[],
+  plane: WorkPlane,
+): SolidFaceRegion[] {
+  const result: SolidFaceRegion[] = [];
+  for (const region of regions) {
+    if (region.loops.length !== 1) { result.push(region); continue; }
+    let polygons = [region.loops[0]];
+    const chains = profileChainsInsidePolygon(profile, region.loops[0]);
+    for (const chain of chains) {
+      const midpoint = chain[Math.floor(chain.length / 2)];
+      const target = polygons.findIndex((polygon) => pointInPolygon(midpoint, polygon)
+        && pointOnPolygonBoundary(chain[0], polygon)
+        && pointOnPolygonBoundary(chain.at(-1)!, polygon));
+      if (target < 0) continue;
+      const split = splitPolygonByChain(polygons[target], chain);
+      if (split) polygons.splice(target, 1, ...split);
+    }
+    result.push(...polygons.map((polygon) => ({ plane, loops: [polygon] })));
+  }
+  return result;
+}
+
+/** Oriented portions of a closed profile that run through a polygon interior. */
+function profileChainsInsidePolygon(profile: Vec2[], polygon: Vec2[]): Vec2[][] {
+  const pieces: Array<[Vec2, Vec2]> = [];
+  for (let index = 0; index < profile.length; index++) {
+    const start = profile[index], end = profile[(index + 1) % profile.length];
+    const cuts: Array<{ t: number; point: Vec2 }> = [{ t: 0, point: start }, { t: 1, point: end }];
+    for (let edge = 0; edge < polygon.length; edge++) {
+      const hit = segmentIntersection(start, end, polygon[edge], polygon[(edge + 1) % polygon.length]);
+      if (!hit) continue;
+      const lengthSquared = (end.x - start.x) ** 2 + (end.y - start.y) ** 2 || 1;
+      const t = ((hit.x - start.x) * (end.x - start.x) + (hit.y - start.y) * (end.y - start.y)) / lengthSquared;
+      if (!cuts.some((cut) => Math.abs(cut.t - t) < 1e-8)) cuts.push({ t, point: hit });
+    }
+    cuts.sort((a, b) => a.t - b.t);
+    for (let cut = 0; cut + 1 < cuts.length; cut++) {
+      const a = cuts[cut].point, b = cuts[cut + 1].point;
+      const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (pointInPolygon(midpoint, polygon) && !pointOnPolygonBoundary(midpoint, polygon)) pieces.push([{ ...a }, { ...b }]);
+    }
+  }
+  if (pieces.length === 0) return [];
+
+  const chains: Vec2[][] = [];
+  for (const [start, end] of pieces) {
+    const previous = chains.at(-1);
+    if (previous && samePoint(previous.at(-1)!, start)) previous.push(end);
+    else chains.push([start, end]);
+  }
+  if (chains.length > 1 && samePoint(chains.at(-1)!.at(-1)!, chains[0][0])) {
+    const last = chains.pop()!;
+    chains[0] = [...last, ...chains[0].slice(1)];
+  }
+  return chains.filter((chain) => !samePoint(chain[0], chain.at(-1)!)
+    && pointOnPolygonBoundary(chain[0], polygon)
+    && pointOnPolygonBoundary(chain.at(-1)!, polygon));
+}
+
+function splitPolygonByChain(polygon: Vec2[], chain: Vec2[]): [Vec2[], Vec2[]] | null {
+  const start = chain[0], end = chain.at(-1)!;
+  const boundary = polygonWithBoundaryPoints(polygon, [start, end]);
+  const startIndex = boundary.findIndex((point) => samePoint(point, start));
+  const endIndex = boundary.findIndex((point) => samePoint(point, end));
+  if (startIndex < 0 || endIndex < 0 || startIndex === endIndex) return null;
+  const boundaryPath = (from: number, to: number): Vec2[] => {
+    const path: Vec2[] = [];
+    for (let index = from; ; index = (index + 1) % boundary.length) {
+      path.push(boundary[index]);
+      if (index === to) return path;
+    }
+  };
+  const first = dedupeLoop([...chain, ...boundaryPath(endIndex, startIndex).slice(1)]);
+  const second = dedupeLoop([[...chain].reverse(), boundaryPath(startIndex, endIndex).slice(1)].flat());
+  if (first.length < 3 || second.length < 3) return null;
+  const orient = (loop: Vec2[]): Vec2[] => polygonSignedArea(loop) < 0 ? [...loop].reverse() : loop;
+  const output: [Vec2[], Vec2[]] = [orient(first), orient(second)];
+  const sourceArea = Math.abs(polygonSignedArea(polygon));
+  const outputArea = output.reduce((sum, loop) => sum + Math.abs(polygonSignedArea(loop)), 0);
+  return Math.abs(outputArea - sourceArea) <= Math.max(1e-6, sourceArea * 1e-6) ? output : null;
+}
+
+function polygonWithBoundaryPoints(polygon: Vec2[], points: Vec2[]): Vec2[] {
+  const result: Vec2[] = [];
+  for (let index = 0; index < polygon.length; index++) {
+    const start = polygon[index], end = polygon[(index + 1) % polygon.length];
+    result.push(start);
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy || 1;
+    const inserted = points
+      .filter((point) => pointOnSegment(point, start, end, 1e-7) && !samePoint(point, start) && !samePoint(point, end))
+      .map((point) => ({ point, t: ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared }))
+      .sort((a, b) => a.t - b.t);
+    inserted.forEach(({ point }) => result.push({ ...point }));
+  }
+  return dedupeLoop(result);
+}
+
+const samePoint = (a: Vec2, b: Vec2, tolerance = 1e-7): boolean => Math.hypot(a.x - b.x, a.y - b.y) <= tolerance;
+
+function pointOnPolygonBoundary(point: Vec2, polygon: Vec2[]): boolean {
+  return polygon.some((start, index) => pointOnSegment(point, start, polygon[(index + 1) % polygon.length], 1e-7));
 }
 
 function loopStrictlyInsideRegion(loop: Vec2[], regionLoops: Vec2[][]): boolean {

@@ -3,6 +3,7 @@ import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from
 import { createBoxMesh, createTorusMesh, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
 import { planarFaceRegionAt, solidPlanarFaces } from './SolidTopology';
 import { Document } from '../Document';
+import { localToWorld } from '../../math/workplane';
 
 const signedVolume = (mesh: { positions: Float32Array; indices: Uint32Array }): number => {
   let volume = 0;
@@ -97,6 +98,26 @@ describe('parametric solid regeneration', () => {
 
     expect(pocketed).not.toBeNull();
     expect(Math.abs(signedVolume(pocketed!))).toBeCloseTo(232, 2);
+  });
+
+  it('press-pulls the partial region made by a circle crossing a face edge', async () => {
+    const source = createBoxMesh(10, 6, 4);
+    const front = solidPlanarFaces(source).find((face) => face.normal.y < -0.9)!;
+    const xs = front.loops[0].map((point) => point.x), ys = front.loops[0].map((point) => point.y);
+    const edgeX = Math.min(...xs), centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const radius = 1;
+    const doc = new Document();
+    doc.activeWorkPlane = front.plane;
+    const circle = doc.createCircle({ x: edgeX, y: centreY }, radius);
+    const pick = localToWorld(front.plane, { x: edgeX + radius / 2, y: centreY });
+    const region = planarFaceRegionAt(front, [circle], pick)!;
+
+    const pulled = await pressPullRegion(source, region, 2);
+
+    expect(pulled).not.toBeNull();
+    const ysWorld = Array.from(pulled!.positions).filter((_value, index) => index % 3 === 1);
+    expect(Math.min(...ysWorld)).toBeCloseTo(-5, 4);
+    expect(Math.abs(signedVolume(pulled!))).toBeCloseTo(240 + Math.PI, 1);
   });
 
   it('regenerates an extrusion from profile, transform and height', async () => {

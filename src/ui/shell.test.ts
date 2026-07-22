@@ -16,3 +16,17 @@ describe('visual style controls', () => {
     expect(buttons.find((button) => button.classList.contains('active'))?.dataset.visualStyle).toBe('xray');
   });
 });
+
+describe('drafting controls', () => {
+  it('offers Dynamic UCS on F6', () => {
+    document.body.innerHTML = shellHtml({
+      primitive: 'BOX',
+      circle: 'CIRCLE',
+      dimension: 'MEASURE',
+      zoom: 'ZOOM_ALL',
+    });
+
+    expect(document.querySelector<HTMLButtonElement>('#ducs-toggle')?.textContent).toContain('F6');
+    expect(document.querySelector<HTMLButtonElement>('#ducs-save')?.hidden).toBe(true);
+  });
+});

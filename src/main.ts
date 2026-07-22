@@ -1,6 +1,6 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
+import { CommandManager, hitTestEntity, type ActiveCommand, type CommandName } from './core/commands/CommandManager';
 import { boxLikePrimitiveFeature } from './core/commands/steps/solids';
 import { extrusionFeature } from './core/solids/extrusion';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
@@ -25,6 +25,7 @@ import { ProjectController } from './ui/ProjectController';
 import { SelectionController } from './interaction/SelectionController';
 import { GripInteractionController } from './interaction/GripInteractionController';
 import { DrawingInteractionController } from './interaction/DrawingInteractionController';
+import { DynamicUcsController } from './interaction/DynamicUcsController';
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
@@ -59,6 +60,13 @@ const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandNam
 const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
 const initialZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
+const dynamicUcsController = new DynamicUcsController(localStorage.getItem('mycad.dynamicUcs') !== 'off');
+
+const DYNAMIC_UCS_COMMANDS = new Set<CommandName>([
+  'LINE', 'POLYLINE', 'RECTANGLE', 'CIRCLE', 'CIRCLE_DIAMETER', 'OCTAGON',
+  'ELLIPSE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT',
+  'BOX', 'WEDGE', 'SPHERE', 'CONE', 'CYLINDER', 'PYRAMID', 'TORUS',
+]);
 
 app.innerHTML = shellHtml({
   primitive: initialPrimitive,
@@ -333,6 +341,7 @@ function syncChrome(): void {
     cadDocument.snapEnabled, cadDocument.snapSize, cadDocument.gridSize, cadDocument.gridVisible,
     cadDocument.drafting.objectSnapEnabled, cadDocument.drafting.orthoEnabled,
     cadDocument.drafting.polarEnabled, cadDocument.drafting.objectSnapTrackingEnabled,
+    dynamicUcsController.enabled, dynamicUcsController.isTemporary,
     zoomWindowMode,
   ].join('|');
   if (state === chromeState) return;
@@ -341,6 +350,7 @@ function syncChrome(): void {
 }
 
 function drawFrame(): void {
+  syncDynamicUcsLifecycle();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
   if (!is2d) framePrimitiveBaseForHeight();
@@ -388,6 +398,8 @@ function drawChrome(): void {
   get<HTMLButtonElement>('grid-toggle').classList.toggle('active', cadDocument.gridVisible);
   get<HTMLButtonElement>('snap-toggle').classList.toggle('active', cadDocument.snapEnabled);
   get<HTMLButtonElement>('otrack-toggle').classList.toggle('active', cadDocument.drafting.objectSnapTrackingEnabled);
+  get<HTMLButtonElement>('ducs-toggle').classList.toggle('active', dynamicUcsController.enabled);
+  get<HTMLButtonElement>('ducs-save').hidden = !dynamicUcsController.isTemporary;
   document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
     button.classList.toggle('active', button.dataset.command === commands.active?.name);
   });
@@ -474,15 +486,119 @@ const commands = new CommandManager({
   redraw,
 });
 const drawingInteraction = new DrawingInteractionController(commands);
+let dynamicUcsCommand: ActiveCommand | null = null;
+
+function useWorkPlaneWithoutDocumentEvent(plane: typeof WORLD_WORK_PLANE): void {
+  cadDocument.activeWorkPlane = cloneWorkPlane(plane);
+  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+}
+
+/** Restores the named/manual UCS that was active before a face was acquired. */
+function releaseDynamicUcs(restored = dynamicUcsController.release()): boolean {
+  dynamicUcsCommand = null;
+  if (!restored) return false;
+  useWorkPlaneWithoutDocumentEvent(restored);
+  renderer3d.clearFaceHighlight();
+  namedUcsController.render();
+  return true;
+}
+
+function syncDynamicUcsLifecycle(): void {
+  if (!dynamicUcsController.isTemporary) return;
+  if (cadDocument.viewMode !== '3d'
+    || commands.active !== dynamicUcsCommand
+    || !commands.active
+    || !DYNAMIC_UCS_COMMANDS.has(commands.active.name)) {
+    releaseDynamicUcs();
+  }
+}
+
+function canAcquireDynamicUcs(): boolean {
+  const active = commands.active;
+  return Boolean(
+    dynamicUcsController.enabled
+    && !dynamicUcsController.isLocked
+    && cadDocument.viewMode === '3d'
+    && active
+    && DYNAMIC_UCS_COMMANDS.has(active.name)
+    && active.steps[active.stepIndex]?.kind === 'point'
+  );
+}
+
+function acquireDynamicUcs(face: SolidFaceSelection, event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
+  if (!face.region) return;
+  const snap = nearestMeasurementPoint(event);
+  const snapOnFacePlane = snap && Math.abs(worldToLocal(face.region.plane, snap).z) < 1e-5 ? snap : null;
+  const origin = snapOnFacePlane ?? face.hitPoint ?? face.region.plane.origin;
+  const key = `${face.solidId}:${[...face.vertexIndices].sort((a, b) => a - b).join(',')}`;
+  const temporary = dynamicUcsController.acquire(cadDocument.activeWorkPlane, face.region.plane, origin, key);
+  if (!temporary) return;
+  dynamicUcsCommand = commands.active;
+  useWorkPlaneWithoutDocumentEvent(temporary);
+  namedUcsController.render();
+}
+
+interface DynamicUcsAnswer {
+  command: ActiveCommand;
+  data: Record<string, unknown>;
+  stepIndex: number;
+  stepKind: string;
+}
+
+function beforeDynamicUcsAnswer(): DynamicUcsAnswer | null {
+  const active = commands.active;
+  if (!dynamicUcsController.isTemporary || !active || active !== dynamicUcsCommand) return null;
+  return {
+    command: active,
+    data: active.data,
+    stepIndex: active.stepIndex,
+    stepKind: active.steps[active.stepIndex]?.kind ?? '',
+  };
+}
+
+/** Locks after the first point, or restores after the object/command finishes. */
+function afterDynamicUcsAnswer(before: DynamicUcsAnswer | null): void {
+  if (!before || !dynamicUcsController.isTemporary) return;
+  const active = commands.active;
+  if (active !== before.command || active.data !== before.data) {
+    releaseDynamicUcs();
+    return;
+  }
+  if (before.stepKind === 'point' && active.stepIndex !== before.stepIndex) dynamicUcsController.lock();
+}
+
+function toggleDynamicUcs(): void {
+  const restored = dynamicUcsController.toggle();
+  if (restored) releaseDynamicUcs(restored);
+  localStorage.setItem('mycad.dynamicUcs', dynamicUcsController.enabled ? 'on' : 'off');
+  log(`Dynamic UCS: ${dynamicUcsController.enabled ? 'ON' : 'OFF'}`);
+  if (!dynamicUcsController.enabled) renderer3d.clearFaceHighlight();
+  redraw();
+}
+
+/** Promotes the live face plane to the same named-UCS list as manual UCS. */
+function saveDynamicUcs(): void {
+  if (!dynamicUcsController.isTemporary) return;
+  const plane = cloneWorkPlane(cadDocument.activeWorkPlane);
+  dynamicUcsController.release();
+  dynamicUcsCommand = null;
+  const named = cadDocument.addNamedWorkPlane(plane);
+  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+  log(`${named.name} saved from Dynamic UCS.`);
+  redraw();
+}
+
 const namedUcsController = new NamedUcsController(
   cadDocument,
   get('named-ucs-list'),
   get<HTMLButtonElement>('wcs-reset'),
   {
     beforeWorkPlaneChange: () => {
+      releaseDynamicUcs();
       commands.cancelActive();
       previewController.hideSnap();
     },
+    isTemporaryWorkPlane: () => dynamicUcsController.isTemporary,
     workPlaneChanged: () => {
       renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
       redraw();
@@ -494,6 +610,7 @@ const namedUcsController = new NamedUcsController(
 const projectController = new ProjectController(cadDocument, history, {
   captureView: captureProjectView,
   cancelInteraction: () => {
+    releaseDynamicUcs();
     commands.cancelActive();
     gripInteraction.cancel();
     gripController.clear();
@@ -1104,12 +1221,27 @@ viewport.addEventListener('pointermove', (event) => {
   const choosingPressPullFace = commands.active?.name === 'PRESSPULL' && commands.active.stepIndex === 0;
   const choosingSlicePlane = commands.active?.name === 'SLICE'
     && commands.active.steps[commands.active.stepIndex]?.kind === 'plane';
+  const choosingDynamicUcs = canAcquireDynamicUcs();
   const slicePlanePoint = choosingSlicePlane
     ? ((drawingInteraction.targetSnapMode
       ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
       : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event))
     : null;
-  if (cadDocument.viewMode === '3d' && (choosingPressPullFace || (choosingSlicePlane && !slicePlanePoint))) {
+  let dynamicFace: SolidFaceSelection | null = null;
+  if (choosingDynamicUcs) {
+    dynamicFace = renderer3d.pickSolidFace(
+      renderer3d.renderer.domElement,
+      event.clientX,
+      event.clientY,
+      cadDocument.solids,
+      cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+    );
+    if (dynamicFace) acquireDynamicUcs(dynamicFace, event);
+    else {
+      releaseDynamicUcs();
+      renderer3d.clearFaceHighlight();
+    }
+  } else if (cadDocument.viewMode === '3d' && (choosingPressPullFace || (choosingSlicePlane && !slicePlanePoint))) {
     renderer3d.pickSolidFace(
       renderer3d.renderer.domElement,
       event.clientX,
@@ -1117,7 +1249,7 @@ viewport.addEventListener('pointermove', (event) => {
       cadDocument.solids,
       cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
     );
-  } else if (commands.active?.name !== 'PRESSPULL') {
+  } else if (commands.active?.name !== 'PRESSPULL' && !dynamicUcsController.isTemporary) {
     renderer3d.clearFaceHighlight();
   }
   if (windowDrag.active) {
@@ -1361,7 +1493,9 @@ viewport.addEventListener('pointerdown', async (event) => {
   const boxLikeDrag = boxLikeHeightUnderCursor(event);
   if (boxLikeDrag) {
     previewController.clearPreview();
+    const dynamicAnswer = beforeDynamicUcsAnswer();
     await commands.submitInput(String(boxLikeDrag.height));
+    afterDynamicUcsAnswer(dynamicAnswer);
     snapMarker.hidden = true;
     input.focus();
     event.preventDefault();
@@ -1467,6 +1601,17 @@ viewport.addEventListener('pointerdown', async (event) => {
       input.focus();
       return;
     }
+    if (canAcquireDynamicUcs()) {
+      const dynamicClickFace = renderer3d.pickSolidFace(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        cadDocument.solids,
+        cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+      );
+      if (dynamicClickFace) acquireDynamicUcs(dynamicClickFace, event);
+      else releaseDynamicUcs();
+    }
     const point = interactionPoint(event);
     if (commands.active?.name === 'MOVE' && activeStep?.kind === 'point') {
       if (!point) return;
@@ -1538,7 +1683,9 @@ viewport.addEventListener('pointerdown', async (event) => {
 
     if (action.kind === 'commandClick') {
       if ((activeStep?.kind === 'point' || activeStep?.kind === 'plane') && !point && !face) return;
+      const dynamicAnswer = beforeDynamicUcsAnswer();
       await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined);
+      afterDynamicUcsAnswer(dynamicAnswer);
     } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid') {
       selectionController.selectHit(entity, solidId, true);
     } else if (action.kind === 'clearSelection') {
@@ -1580,6 +1727,7 @@ new InputController(input, commandForm, {
   escape: () => {
     gripInteraction.cancel();
     drawingInteraction.cancel();
+    releaseDynamicUcs();
     ucsHoverPoint = null;
     zoomWindowMode = false;
     windowDrag.cancel();
@@ -1613,11 +1761,13 @@ new InputController(input, commandForm, {
   export: startStlExport,
   deleteSelection: deleteSelectedObjects,
   show2d: () => {
+    releaseDynamicUcs();
     cadDocument.viewMode = '2d';
     cadDocument.notify();
     redraw();
   },
   toggleObjectSnap: () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'),
+  toggleDynamicUcs,
   toggleGridDisplay,
   toggleOrtho: () => toggleDraftingMode('orthoEnabled', 'Ortho'),
   toggleGridSnap,
@@ -1656,6 +1806,8 @@ function toggleGridDisplay(): void {
 }
 
 get('osnap-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'));
+get('ducs-toggle').addEventListener('click', () => toggleDynamicUcs());
+get('ducs-save').addEventListener('click', () => saveDynamicUcs());
 get('grid-toggle').addEventListener('click', () => toggleGridDisplay());
 get('snap-toggle').addEventListener('click', () => toggleGridSnap());
 get('otrack-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'));
@@ -1695,7 +1847,9 @@ commandForm.addEventListener('submit', async (event) => {
     : input.value;
   if (value.trim()) log(`> ${value}`);
   input.value = '';
+  const dynamicAnswer = beforeDynamicUcsAnswer();
   await commands.submitInput(value);
+  afterDynamicUcsAnswer(dynamicAnswer);
   updateCommandSuggestions();
   if (!commands.active) previewController.clearPreview();
   redraw();

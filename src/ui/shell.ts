@@ -98,6 +98,8 @@ export function shellHtml(tools: ShellTools): string {
       <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
+        <button id="ducs-toggle" title="Dynamic UCS on planar faces (F6)" aria-label="Dynamic UCS (F6)">DUCS <kbd>F6</kbd></button>
+        <button id="ducs-save" title="Save the current Dynamic UCS as a named UCS" aria-label="Save Dynamic UCS" hidden>SAVE UCS</button>
         <button id="grid-toggle" title="Grid display (F7)" aria-label="Grid display (F7)">GRID <kbd>F7</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
         <button id="snap-toggle" title="Snap Mode — cursor stepping (F9)" aria-label="Snap Mode (F9)">SNAP <kbd>F9</kbd></button>

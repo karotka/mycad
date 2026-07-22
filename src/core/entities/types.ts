@@ -249,6 +249,8 @@ export interface SolidFaceSelection {
   solidId: string;
   vertexIndices: number[];
   normal: Vec3;
+  /** Exact world-space point where the pointer ray met the planar face. */
+  hitPoint?: Vec3;
   /** The bounded planar region under the pointer, in its own 2D face frame. */
   region?: SolidFaceRegion;
 }

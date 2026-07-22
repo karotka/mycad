@@ -4,6 +4,8 @@ export interface NamedUcsCallbacks {
   beforeWorkPlaneChange(): void;
   workPlaneChanged(): void;
   log(message: string): void;
+  /** A Dynamic UCS is current but has not been promoted to a named UCS. */
+  isTemporaryWorkPlane?(): boolean;
 }
 
 const AXIS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V7M5 19h12M5 19l7-7M5 7l-2 3M5 7l2 3M17 19l-3-2M17 19l-3 2M12 12l-1-4M12 12l4-1"/></svg>';
@@ -20,14 +22,15 @@ export class NamedUcsController {
   }
 
   render(): void {
-    this.wcsButton.classList.toggle('active', this.doc.activeNamedWorkPlaneId === null);
+    const temporary = this.callbacks.isTemporaryWorkPlane?.() === true;
+    this.wcsButton.classList.toggle('active', !temporary && this.doc.activeNamedWorkPlaneId === null);
     this.list.replaceChildren(...this.doc.namedWorkPlanes.map((item) => this.itemElement(item)));
   }
 
   private itemElement(item: NamedWorkPlane): HTMLElement {
     const root = document.createElement('div');
     root.className = 'named-ucs-item';
-    root.classList.toggle('active', item.id === this.doc.activeNamedWorkPlaneId);
+    root.classList.toggle('active', this.callbacks.isTemporaryWorkPlane?.() !== true && item.id === this.doc.activeNamedWorkPlaneId);
     root.dataset.ucsId = item.id;
 
     const activate = document.createElement('button');

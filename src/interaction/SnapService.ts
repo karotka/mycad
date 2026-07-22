@@ -20,14 +20,30 @@ export interface SnapCandidate {
   mode?: ObjectSnapMode;
 }
 
-const midpoint = (a: Vec2, b: Vec2): Vec2 => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
+
+const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
+    return localPointZ(entity.center) ?? 0;
+  }
+  if (entity.type === 'rectangle') return ((localPointZ(entity.first) ?? 0) + (localPointZ(entity.opposite) ?? 0)) / 2;
+  if (entity.type === 'bezier') return localPointZ(entity.start) ?? 0;
+  return 0;
+};
+
+const midpoint = (a: Vec2, b: Vec2): Vec2 => {
+  const point = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } as Vec2 & { z?: number };
+  const firstZ = localPointZ(a), secondZ = localPointZ(b);
+  if (firstZ !== undefined || secondZ !== undefined) point.z = ((firstZ ?? 0) + (secondZ ?? 0)) / 2;
+  return point;
+};
 
 export function measurementCandidates(doc: Document): Vec3[] {
   const candidates: Vec3[] = [];
   for (const entity of doc.entities) {
     if (doc.hiddenLayers.has(entity.layer)) continue;
     for (const point of getEntityPoints(entity)) {
-      candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point));
+      candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, localPointZ(point) ?? entityPlaneOffset(entity)));
     }
   }
   for (const solid of doc.solids) {
@@ -49,7 +65,7 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
   if (mode === 'perpendicular') return tag(perpendicularCandidates(doc, reference, excludedId));
   const candidates: Vec3[] = [];
   const addLocal = (entity: Entity, point: Vec2): void => {
-    candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point));
+    candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, localPointZ(point) ?? entityPlaneOffset(entity)));
   };
   for (const entity of doc.entities) {
     if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
@@ -131,12 +147,12 @@ function intersectionCandidates(doc: Document, excludedId?: string | null): Vec3
     for (let second = first + 1; second < entities.length; second++) {
       const b = entities[second];
       const bSegments = entitySegments(b).map(([start, end]) => [
-        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, start)),
-        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, end)),
+        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, start, localPointZ(start) ?? entityPlaneOffset(b))),
+        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, end, localPointZ(end) ?? entityPlaneOffset(b))),
       ] as [Vec3, Vec3]);
       for (const [aStart, aEnd] of entitySegments(a)) for (const [bStart, bEnd] of bSegments) {
         const point = segmentIntersection(aStart, aEnd, bStart, bEnd);
-        if (point) candidates.push(localToWorld(plane, point));
+        if (point) candidates.push(localToWorld(plane, point, entityPlaneOffset(a)));
       }
     }
   }
@@ -155,7 +171,9 @@ function perpendicularCandidates(doc: Document, reference?: Vec3 | null, exclude
       const lengthSquared = dx * dx + dy * dy;
       if (lengthSquared < 1e-12) continue;
       const t = Math.max(0, Math.min(1, ((localReference.x - start.x) * dx + (localReference.y - start.y) * dy) / lengthSquared));
-      candidates.push(localToWorld(plane, { x: start.x + dx * t, y: start.y + dy * t }));
+      const startZ = localPointZ(start) ?? entityPlaneOffset(entity);
+      const endZ = localPointZ(end) ?? entityPlaneOffset(entity);
+      candidates.push(localToWorld(plane, { x: start.x + dx * t, y: start.y + dy * t }, startZ + (endZ - startZ) * t));
     }
   }
   for (const solid of doc.solids) {

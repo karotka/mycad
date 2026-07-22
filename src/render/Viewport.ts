@@ -15,6 +15,20 @@ import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
 import { planarFaceRegionAt, solidPlanarFaces } from '../core/solids/SolidTopology';
 
+const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
+
+/** Height shared by points generated from a planar entity's defining anchor. */
+const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
+    return localPointZ(entity.center) ?? 0;
+  }
+  if (entity.type === 'rectangle') {
+    return ((localPointZ(entity.first) ?? 0) + (localPointZ(entity.opposite) ?? 0)) / 2;
+  }
+  if (entity.type === 'bezier') return localPointZ(entity.start) ?? 0;
+  return 0;
+};
+
 export class Canvas2DRenderer {
   private ctx: CanvasRenderingContext2D;
   pan: Vec2 = { x: 0, y: 0 };
@@ -1255,12 +1269,14 @@ export class Viewport3D {
     const data = preview.data as Record<string, Vec2> & { sides?: number };
     const points: Vec2[] = [];
     let loop = false;
+    let previewPlaneOffset = 0;
     if (preview.type === 'line' && data.start && data.end) {
       points.push(data.start, data.end);
     } else if (preview.type === 'polyline') {
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
       points.push(...chain.vertices, chain.cursor);
     } else if (preview.type === 'rectangle' && data.start && data.end) {
+      previewPlaneOffset = ((localPointZ(data.start) ?? 0) + (localPointZ(data.end) ?? 0)) / 2;
       points.push(
         data.start,
         { x: data.end.x, y: data.start.y },
@@ -1269,6 +1285,7 @@ export class Viewport3D {
       );
       loop = true;
     } else if ((preview.type === 'circle' || preview.type === 'octagon') && data.center && data.cursor) {
+      previewPlaneOffset = localPointZ(data.center) ?? 0;
       const radius = Math.hypot(data.cursor.x - data.center.x, data.cursor.y - data.center.y);
       const segments = preview.type === 'circle' ? 96 : 8;
       const offset = preview.type === 'octagon' ? Math.PI / 8 : 0;
@@ -1278,6 +1295,7 @@ export class Viewport3D {
       }
       loop = true;
     } else if (preview.type === 'polygon' && data.center && data.cursor && data.sides) {
+      previewPlaneOffset = localPointZ(data.center) ?? 0;
       const apothem = Math.hypot(data.cursor.x - data.center.x, data.cursor.y - data.center.y);
       const radius = apothem / Math.cos(Math.PI / data.sides);
       const normalAngle = Math.atan2(data.cursor.y - data.center.y, data.cursor.x - data.center.x);
@@ -1287,14 +1305,14 @@ export class Viewport3D {
       }
       loop = true;
     } else if (preview.type === 'arc') {
-      const q=preview.data as unknown as {center:Vec2;start:Vec2;cursor:Vec2};const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y);const start=Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-start;if(sweep<=0)sweep+=Math.PI*2;for(let i=0;i<=64;i++){const a=start+sweep*i/64;points.push({x:q.center.x+Math.cos(a)*r,y:q.center.y+Math.sin(a)*r});}
+      const q=preview.data as unknown as {center:Vec2;start:Vec2;cursor:Vec2};previewPlaneOffset=localPointZ(q.center)??0;const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y);const start=Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-start;if(sweep<=0)sweep+=Math.PI*2;for(let i=0;i<=64;i++){const a=start+sweep*i/64;points.push({x:q.center.x+Math.cos(a)*r,y:q.center.y+Math.sin(a)*r});}
     } else if (preview.type === 'bezier') {
-      const q=preview.data as unknown as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2};for(let i=0;i<=64;i++){const t=i/64,u=1-t;points.push({x:u**3*q.start.x+3*u*u*t*q.control1.x+3*u*t*t*q.control2.x+t**3*q.end.x,y:u**3*q.start.y+3*u*u*t*q.control1.y+3*u*t*t*q.control2.y+t**3*q.end.y});}
+      const q=preview.data as unknown as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2};previewPlaneOffset=localPointZ(q.start)??0;for(let i=0;i<=64;i++){const t=i/64,u=1-t;points.push({x:u**3*q.start.x+3*u*u*t*q.control1.x+3*u*t*t*q.control2.x+t**3*q.end.x,y:u**3*q.start.y+3*u*u*t*q.control1.y+3*u*t*t*q.control2.y+t**3*q.end.y});}
     }
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(
       points.map((point) => {
-        const world = localToWorld(this.activeWorkPlane, point, ((point as { z?: number }).z ?? 0) + 0.025);
+        const world = localToWorld(this.activeWorkPlane, point, (localPointZ(point) ?? previewPlaneOffset) + 0.025);
         return new THREE.Vector3(world.x, world.z, -world.y);
       })
     );
@@ -1505,7 +1523,7 @@ export class Viewport3D {
         // A per-point z lets a line reach an endpoint off its own plane — how a
         // 3D line connects to geometry on another UCS. Shapes that rebuild their
         // points (circles, arcs) never carry one, so they stay planar.
-        const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, ((point as { z?: number }).z ?? 0) + 0.015);
+        const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, (localPointZ(point) ?? entityPlaneOffset(entity)) + 0.015);
         return new THREE.Vector3(world.x, world.z, -world.y);
       })
     );
@@ -1667,6 +1685,7 @@ export class Viewport3D {
       solidId,
       vertexIndices: face.vertexIndices,
       normal: face.normal,
+      hitPoint,
       region,
     };
   }

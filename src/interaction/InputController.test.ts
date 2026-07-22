@@ -23,7 +23,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -50,7 +50,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -74,7 +74,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -82,11 +82,13 @@ describe('InputController', () => {
     const controller = new InputController(input, form, callbacks, target);
 
     target.dispatchEvent(keyboard('F3'));
+    target.dispatchEvent(keyboard('F6'));
     target.dispatchEvent(keyboard('F7'));
     target.dispatchEvent(keyboard('F8'));
     target.dispatchEvent(keyboard('F10'));
 
     expect(callbacks.toggleObjectSnap).toHaveBeenCalledOnce();
+    expect(callbacks.toggleDynamicUcs).toHaveBeenCalledOnce();
     expect(callbacks.toggleGridDisplay).toHaveBeenCalledOnce();
     expect(callbacks.toggleOrtho).toHaveBeenCalledOnce();
     expect(callbacks.togglePolar).toHaveBeenCalledOnce();
@@ -102,7 +104,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -114,6 +116,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
 
   it.each([
     ['F3', 'toggleObjectSnap'],
+    ['F6', 'toggleDynamicUcs'],
     ['F7', 'toggleGridDisplay'],
     ['F8', 'toggleOrtho'],
     ['F9', 'toggleGridSnap'],
@@ -130,6 +133,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     target.dispatchEvent(keyboard('F9'));
     expect(callbacks.toggleGridSnap).toHaveBeenCalledTimes(1);
     expect(callbacks.toggleObjectSnap).not.toHaveBeenCalled();
+    expect(callbacks.toggleDynamicUcs).not.toHaveBeenCalled();
     expect(callbacks.toggleGridDisplay).not.toHaveBeenCalled();
     expect(callbacks.toggleOrtho).not.toHaveBeenCalled();
     expect(callbacks.togglePolar).not.toHaveBeenCalled();

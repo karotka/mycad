@@ -122,4 +122,26 @@ describe('NamedUcsController', () => {
     expect(doc.activeNamedWorkPlaneId).toBeNull();
     expect(document.getElementById('wcs')?.classList.contains('active')).toBe(true);
   });
+
+  it('marks neither WCS nor a named UCS active while a temporary plane is in use', () => {
+    document.body.innerHTML = '<button id="wcs"></button><div id="list"></div>';
+    const doc = new Document();
+    const item = doc.addNamedWorkPlane(customPlane(10));
+    const controller = new NamedUcsController(
+      doc,
+      document.getElementById('list')!,
+      document.getElementById('wcs') as HTMLButtonElement,
+      {
+        beforeWorkPlaneChange: vi.fn(),
+        workPlaneChanged: vi.fn(),
+        log: vi.fn(),
+        isTemporaryWorkPlane: () => true,
+      },
+    );
+
+    controller.render();
+
+    expect(document.getElementById('wcs')?.classList.contains('active')).toBe(false);
+    expect(document.querySelector(`[data-ucs-id="${item.id}"]`)?.classList.contains('active')).toBe(false);
+  });
 });

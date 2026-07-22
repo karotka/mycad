@@ -37,6 +37,19 @@ describe('SnapService', () => {
       .toEqual({ x: 2, y: 3, z: 0 });
   });
 
+  it('keeps per-point 3D height for profile centres and line midpoints', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 4, y: 5, z: 7 } as { x: number; y: number }, 2);
+    const line = doc.createLine(
+      { x: 0, y: 0, z: 2 } as { x: number; y: number },
+      { x: 10, y: 0, z: 6 } as { x: number; y: number },
+    );
+    doc.entities.push(circle, line);
+
+    expect(points(doc, 'center')).toContainEqual({ x: 4, y: 5, z: 7 });
+    expect(points(doc, 'middle')).toContainEqual({ x: 5, y: 0, z: 4 });
+  });
+
   it('calculates intersections and perpendicular feet', () => {
     const doc = new Document();
     doc.entities.push(
