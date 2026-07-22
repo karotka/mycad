@@ -12,7 +12,7 @@
  * history to keep, and a sweep is a profile and a path rather than numbers. The
  * caller bakes those, honestly, rather than this inventing something.
  */
-import type { SerializedSolidMesh, SolidEdgeSelection, SolidFeature } from '../entities/types';
+import type { SerializedSolidMesh, SolidEdgeSelection, SolidFaceRegion, SolidFeature } from '../entities/types';
 import { mirrorPoint2, type Vec2, type Vec3 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../../math/workplane';
 
@@ -30,6 +30,25 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
   if (!Number.isFinite(factor) || factor === 0) return null;
 
   switch (feature.kind) {
+    case 'presspull-region': {
+      const magnitude = Math.abs(factor);
+      const direction = factor < 0 ? -1 : 1;
+      return {
+        ...feature,
+        source: scaledFeature(feature.source, base, factor) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
+        region: {
+          plane: {
+            origin: scaledPoint(feature.region.plane.origin, base, factor),
+            xAxis: scaleDirection(feature.region.plane.xAxis, direction),
+            yAxis: scaleDirection(feature.region.plane.yAxis, direction),
+            zAxis: scaleDirection(feature.region.plane.zAxis, direction),
+          },
+          loops: feature.region.loops.map((loop) => loop.map((point) => ({ x: point.x * magnitude, y: point.y * magnitude }))),
+        },
+        distance: feature.distance * magnitude,
+      };
+    }
     case 'edge-modification': {
       const directionFactor = factor < 0 ? -1 : 1;
       return {
@@ -88,6 +107,15 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
   if (!Number.isFinite(delta.x) || !Number.isFinite(delta.y) || !Number.isFinite(delta.z)) return null;
 
   switch (feature.kind) {
+    case 'presspull-region': {
+      const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
+      return {
+        ...feature,
+        source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, move),
+        region: transformedRegion(feature.region, (plane) => ({ ...plane, origin: move(plane.origin) })),
+      };
+    }
     case 'edge-modification': {
       const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
       return {
@@ -130,6 +158,21 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
   if (!unit) return null;
 
   switch (feature.kind) {
+    case 'presspull-region': {
+      const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
+      const turnPlane = (plane: WorkPlane): WorkPlane => ({
+        origin: turn(plane.origin),
+        xAxis: turnDirection(plane.xAxis, unit, angle),
+        yAxis: turnDirection(plane.yAxis, unit, angle),
+        zAxis: turnDirection(plane.zAxis, unit, angle),
+      });
+      return {
+        ...feature,
+        source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, turn),
+        region: transformedRegion(feature.region, turnPlane),
+      };
+    }
     case 'edge-modification': {
       const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
       const turnNormal = (normal: Vec3): Vec3 => turnDirection(normal, unit, angle);
@@ -190,6 +233,18 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
   };
 
   switch (feature.kind) {
+    case 'presspull-region':
+      return {
+        ...feature,
+        source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
+        region: transformedRegion(feature.region, (plane) => ({
+          origin: reflectPoint(plane.origin),
+          xAxis: reflectDirection(plane.xAxis),
+          yAxis: reflectDirection(plane.yAxis),
+          zAxis: reflectDirection(plane.zAxis),
+        })),
+      };
     case 'edge-modification':
       return {
         ...feature,
@@ -229,6 +284,19 @@ function scaledPoint(point: Vec3, base: Vec3, factor: number): Vec3 {
     x: base.x + (point.x - base.x) * factor,
     y: base.y + (point.y - base.y) * factor,
     z: base.z + (point.z - base.z) * factor,
+  };
+}
+
+const scaleDirection = (direction: Vec3, factor: number): Vec3 => ({
+  x: direction.x * factor,
+  y: direction.y * factor,
+  z: direction.z * factor,
+});
+
+function transformedRegion(region: SolidFaceRegion, transformPlane: (plane: WorkPlane) => WorkPlane): SolidFaceRegion {
+  return {
+    plane: transformPlane(region.plane),
+    loops: region.loops.map((loop) => loop.map((point) => ({ ...point }))),
   };
 }
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { WORLD_WORK_PLANE } from '../math/workplane';
-import type { EdgeModificationFeature, PrimitiveFeature } from '../core/entities/types';
+import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature } from '../core/entities/types';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
+import { solidPlanarFaces } from '../core/solids/SolidTopology';
 
 describe('ProjectIO', () => {
   it('serializes a versioned millimetre project with typed meshes', () => {
@@ -93,6 +94,29 @@ describe('ProjectIO', () => {
     expect(target.solids[0].feature).toMatchObject({ kind: 'edge-modification', amount: 1 });
     if (target.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
     expect(target.solids[0].feature.sourceMesh.positions).toEqual(Array.from(mesh.positions));
+    expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
+  });
+
+  it('round-trips an editable bounded PressPull region', () => {
+    const source = new Document();
+    const base: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const mesh = primitiveMesh(base);
+    const face = solidPlanarFaces(mesh).find((candidate) => candidate.normal.z > 0.9)!;
+    const feature: PressPullFeature = {
+      kind: 'presspull-region', source: base, distance: 3,
+      region: { plane: face.plane, loops: face.loops },
+      sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+    };
+    source.addSolid(source.createSolid(mesh, 'Pulled box', 7, [], undefined, feature));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.solids[0].feature).toMatchObject({ kind: 'presspull-region', distance: 3 });
+    if (target.solids[0].feature.kind !== 'presspull-region') throw new Error('expected a PressPull feature');
+    expect(target.solids[0].feature.region.loops).toEqual(JSON.parse(JSON.stringify(face.loops)));
     expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
   });
 

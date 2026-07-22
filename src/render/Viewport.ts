@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Document } from '../core/Document';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
-import type { Entity, Solid, SolidEdgeSelection, SolidFaceSelection, SolidMesh } from '../core/entities/types';
+import type { Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import { isStrokeFont, strokeText } from '../core/text/strokeFont';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
@@ -13,6 +13,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
+import { planarFaceRegionAt, solidPlanarFaces } from '../core/solids/SolidTopology';
 
 export class Canvas2DRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -1077,6 +1078,25 @@ export class Viewport3D {
       this.previewHiddenSolid = null;
     }
     if (!preview) return;
+    if (preview.type === 'presspull-region') {
+      const data = preview.data as { region: SolidFaceRegion; distance: number };
+      const geometry = this.faceRegionPrismGeometry(data.region, data.distance);
+      if (!geometry) return;
+      const group = new THREE.Group();
+      const color = data.distance >= 0 ? 0x67c9ff : 0xffa65c;
+      const surface = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+        color, side: THREE.DoubleSide, transparent: true, opacity: 0.5, depthWrite: false,
+      }));
+      surface.renderOrder = 20;
+      group.add(surface);
+      group.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry, 20),
+        new THREE.LineBasicMaterial({ color }),
+      ));
+      this.previewObject = group;
+      this.scene.add(group);
+      return;
+    }
     if (preview.type === 'solid') {
       const data = preview.data as { solidId: string; mesh: SolidMesh };
       // The solid it replaces is hidden rather than drawn behind it: a face
@@ -1586,43 +1606,68 @@ export class Viewport3D {
     return geom;
   }
 
+  private faceRegionPrismGeometry(region: SolidFaceRegion, distance: number): THREE.BufferGeometry | null {
+    const outer = region.loops[0];
+    if (!outer || outer.length < 3 || !Number.isFinite(distance) || Math.abs(distance) < 1e-9) return null;
+    const shape = new THREE.Shape();
+    shape.moveTo(outer[0].x, outer[0].y);
+    outer.slice(1).forEach((point) => shape.lineTo(point.x, point.y));
+    shape.closePath();
+    for (const loop of region.loops.slice(1)) {
+      if (loop.length < 3) continue;
+      const hole = new THREE.Path();
+      hole.moveTo(loop[0].x, loop[0].y);
+      loop.slice(1).forEach((point) => hole.lineTo(point.x, point.y));
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    const localOffset = Math.min(0, distance);
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: Math.abs(distance), bevelEnabled: false, curveSegments: 1, steps: 1,
+    });
+    const positions = geometry.getAttribute('position');
+    for (let index = 0; index < positions.count; index++) {
+      const world = localToWorld(
+        region.plane,
+        { x: positions.getX(index), y: positions.getY(index) },
+        positions.getZ(index) + localOffset,
+      );
+      positions.setXYZ(index, world.x, world.z, -world.y);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
   render(): void {
     this.renderer.render(this.scene, this.camera);
   }
 
-  pickSolidFace(canvas: HTMLCanvasElement, sx: number, sy: number): SolidFaceSelection | null {
+  pickSolidFace(
+    canvas: HTMLCanvasElement,
+    sx: number,
+    sy: number,
+    solids: readonly Solid[],
+    entities: readonly Entity[] = [],
+  ): SolidFaceSelection | null {
     const hit = this.picking.firstIntersection(canvas, sx, sy, this.solidMeshes.values());
     if (!hit || hit.faceIndex == null) return null;
     const entry = Array.from(this.solidMeshes.entries()).find(([, object]) => object === hit.object);
     if (!entry) return null;
     const [solidId] = entry;
-    const geometry = (hit.object as THREE.Mesh).geometry;
-    const index = geometry.index;
-    const position = geometry.getAttribute('position');
-    if (!index) return null;
-    const triangleOffset = hit.faceIndex * 3;
-    const seed = [index.getX(triangleOffset), index.getX(triangleOffset + 1), index.getX(triangleOffset + 2)];
-    const a = new THREE.Vector3().fromBufferAttribute(position, seed[0]);
-    const b = new THREE.Vector3().fromBufferAttribute(position, seed[1]);
-    const c = new THREE.Vector3().fromBufferAttribute(position, seed[2]);
-    const normal = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
-    const vertices = new Set<number>();
-    const highlightPositions: number[] = [];
-    for (let i = 0; i < index.count; i += 3) {
-      const ids = [index.getX(i), index.getX(i + 1), index.getX(i + 2)];
-      const p0 = new THREE.Vector3().fromBufferAttribute(position, ids[0]);
-      const p1 = new THREE.Vector3().fromBufferAttribute(position, ids[1]);
-      const p2 = new THREE.Vector3().fromBufferAttribute(position, ids[2]);
-      const candidate = new THREE.Vector3().crossVectors(p1.clone().sub(p0), p2.clone().sub(p0)).normalize();
-      if (Math.abs(candidate.dot(normal)) < 0.999 || Math.abs(normal.dot(p0.clone().sub(a))) > 0.001) continue;
-      ids.forEach((id) => vertices.add(id));
-      for (const point of [p0, p1, p2]) highlightPositions.push(point.x, point.y, point.z);
-    }
-    this.showFaceHighlight(highlightPositions);
+    const solid = solids.find((candidate) => candidate.id === solidId);
+    if (!solid) return null;
+    const face = solidPlanarFaces(solid.mesh).find((candidate) => candidate.triangleIndices.includes(hit.faceIndex!));
+    if (!face) return null;
+    const hitPoint = { x: hit.point.x, y: -hit.point.z, z: hit.point.y };
+    const region = planarFaceRegionAt(face, entities, hitPoint);
+    if (!region) return null;
+    this.showFaceRegionHighlight(region);
     return {
       solidId,
-      vertexIndices: Array.from(vertices),
-      normal: { x: normal.x, y: -normal.z, z: normal.y },
+      vertexIndices: face.vertexIndices,
+      normal: face.normal,
+      region,
     };
   }
 
@@ -1637,7 +1682,13 @@ export class Viewport3D {
   }
 
   faceDragDelta(canvas: HTMLCanvasElement, solid: Solid, face: SolidFaceSelection, sx: number, sy: number): number | null {
-    const centre = verticesCentre(solid.mesh.positions, face.vertexIndices);
+    const regionLoop = face.region?.loops[0];
+    const centre = regionLoop && regionLoop.length > 0
+      ? localToWorld(face.region!.plane, {
+        x: regionLoop.reduce((sum, point) => sum + point.x, 0) / regionLoop.length,
+        y: regionLoop.reduce((sum, point) => sum + point.y, 0) / regionLoop.length,
+      })
+      : verticesCentre(solid.mesh.positions, face.vertexIndices);
     if (!centre) return null;
     const ray = this.picking.pointerRay(canvas, sx, sy);
     return axisOffsetUnderRay(centre, face.normal, ray.origin, ray.direction);
@@ -1722,10 +1773,31 @@ export class Viewport3D {
     return result;
   }
 
-  private showFaceHighlight(positions: number[]): void {
+  private showFaceRegionHighlight(region: SolidFaceRegion): void {
     this.clearFaceHighlight();
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const outer = region.loops[0];
+    if (!outer || outer.length < 3) return;
+    const shape = new THREE.Shape();
+    shape.moveTo(outer[0].x, outer[0].y);
+    outer.slice(1).forEach((point) => shape.lineTo(point.x, point.y));
+    shape.closePath();
+    for (const loop of region.loops.slice(1)) {
+      if (loop.length < 3) continue;
+      const hole = new THREE.Path();
+      hole.moveTo(loop[0].x, loop[0].y);
+      loop.slice(1).forEach((point) => hole.lineTo(point.x, point.y));
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    const geometry = new THREE.ShapeGeometry(shape);
+    const positions = geometry.getAttribute('position');
+    const offset = 1e-4;
+    for (let index = 0; index < positions.count; index++) {
+      const world = localToWorld(region.plane, { x: positions.getX(index), y: positions.getY(index) }, offset);
+      positions.setXYZ(index, world.x, world.z, -world.y);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
     const material = new THREE.MeshBasicMaterial({ color: 0x32aaff, transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthTest: false });
     this.faceHighlight = new THREE.Mesh(geometry, material);
     this.faceHighlight.renderOrder = 40;

@@ -1,497 +1,245 @@
 # MyCAD backlog
 
-Work that is deliberately deferred, with the reasoning behind each decision so it
-can be picked up cold. Ordered roughly by value within each section.
-
-Written in English to match the codebase; everything here was verified against the
-code at the time of writing unless marked otherwise.
-
----
-
-## UI: the bottom bar and a Settings window
-
-The status bar has grown into a row of unrelated things — panel toggles, live
-read-outs, mode buttons, visual-style cubes — with no order to it. The intent:
-
-**Left, in this order:** `TREE`, `PROPERTIES`, `LAYERS`, then the coordinate
-read-out. All three panel toggles are plain text buttons of the same weight — the
-tree loses its icon and its accent, the layers toggle loses its icon, so the row
-reads as one family rather than three different-looking controls.
-
-**Gone from the bar:** the `2D`/`3D` indicator and the `SNAP · GRID` read-out.
-The view is obvious from what is on screen, and the snap/grid values live in
-Settings now, so a static label for them is noise.
-
-**Right, aligned to the edge:** the three visual-style cubes (wireframe, shaded,
-X-ray). They belong together, away from the panel toggles, at the far end.
-*(Open: the reporter said "first wire, second shades, third the middle one" —
-clarify the third icon's look when building; the order wire/shaded/x-ray stands.)*
-
-**Moved into a Settings window:** Drafting, Dimension Style and G-code are three
-panels doing the same job — a form of document settings — and each has its own
-toggle cluttering the bar. A single **Settings** entry in the application menu
-opens one window with three tabs. The controllers already exist
-(`DraftingSettingsController`, `DimensionStyleController`, `GcodeSettingsController`)
-and each already carries the `applying` guard; this is a container with tabs
-around them, not a rewrite. The F-key mode buttons (OSNAP/ORTHO/…) stay on the
-bar — they are toggles you reach mid-draw, not settings.
-
-Effort: medium, and all presentation — no model change. Best done as its own
-pass because it touches `shell.ts`, `app.css`, the menu wiring in
-`electron/main.ts`, and how `main.ts` binds the three controllers.
+Only open work belongs here. Completed features and obsolete implementation
+notes are removed rather than kept as a history log. The order is the proposed
+implementation order: modelling capability first, then the workflow needed to
+use it comfortably, then structural and interoperability work.
 
 ---
 
-## DXF import
+## 1. Dynamic UCS on a solid face (F6)
 
-The importer now covers LINE, CIRCLE, ARC, LWPOLYLINE/POLYLINE (arcs via bulge),
-TEXT, MTEXT, SPLINE and DIMENSION. What is left:
+Manual and named UCS are available. What is missing is the modelling workflow:
+hover a planar solid face, press F6 or start a drawing command, and temporarily
+align the active UCS to that face without rotating the object.
 
-| Entity | Why it is deferred | Effort |
+Expected behaviour:
+
+- origin at the picked point or a snapped face vertex;
+- Z along the outward face normal;
+- stable X/Y axes derived from a boundary edge, not from camera orientation;
+- grid and drawing tools immediately use the temporary plane;
+- Escape or WCS restores the previous coordinate system;
+- the temporary UCS can be saved as a named UCS when wanted.
+
+Build this on the existing planar-face extraction so PRESSPULL, region picking
+and UCS all agree on what a face is.
+
+---
+
+## 2. Make pointer interaction testable outside `main.ts`
+
+`main.ts` is about 2,000 lines and remains the easiest place for interaction
+regressions to hide. Frame coalescing and several interaction services are
+already extracted; the next boundary is the remaining pointer-move orchestration.
+
+In order:
+
+- move pointer-move decisions into a controller with explicit inputs and
+  outcomes, leaving `main.ts` to execute them;
+- introduce a small `Panel { isOpen, render() }` contract for tree, properties,
+  layers and settings instead of hand-written subscriber branches;
+- centralise the repeated global "click outside" listeners;
+- remove the obsolete `data-view-action` handler and unused `curvePoints` and
+  `solidBounds` imports.
+
+Related command-runtime debt:
+
+- `ActiveCommand.data` is still `Record<string, unknown>`; a generic data type
+  would turn misspelled state keys into build errors;
+- repeating command steps are encoded indirectly instead of having an explicit
+  `repeat` property;
+- JOIN still needs its documented complete-on-start special case.
+
+The command registry itself is no longer an open refactor: commands already
+dispatch through their definitions and `advanceStep` is only a small guard.
+
+---
+
+## 3. DXF interoperability
+
+ASCII DXF import and export both exist. Export covers current 2D entities,
+layers, colours, line types and line weights; dimensions are decomposed into
+ordinary drawing geometry because native DXF dimensions require block records.
+
+### Import priorities
+
+| Entity or fidelity item | Remaining work | Effort |
 |---|---|---|
-| **INSERT / blocks** | Needs a block concept in `Document`: a definition plus references with their own transform. Real AutoCAD drawings are largely blocks, so this is the biggest gap in practice — but it is a model change, not an importer change. | Large |
-| **HATCH** | No entity for it. Needs a filled/boundary-path entity and renderer support. | Large |
-| **POINT** | No entity type for a bare point. | Small |
-| **3DFACE** | Genuinely 3D: a 3- or 4-corner flat face. Could become a `Solid` with `feature: { kind: 'mesh' }`, which already exists — but a face soup is *not watertight*, and our `Solid` assumes a closed body, so Manifold would reject it in a boolean. It would import for viewing and break on UNION/SUBTRACT. Also a legacy entity. | Medium |
-| **DIMENSION: angular (types 2, 5) and ordinate (type 6)** | `DimensionEntity.dimensionKind` only has `aligned \| radius \| diameter`. Angular needs an arc dimension line and an angle readout; ordinate needs a leader. Both are new kinds in the model + renderer. | Medium |
-| **Dimension refinements** | Style details from the file (DIMSTYLE: arrow size, text height, precision) are ignored; imported dimensions take the current document style. | Medium |
+| **INSERT / blocks** | Add block definitions plus transformed references to `Document`. This is the largest real-world import gap. | Large |
+| **HATCH** | Add a filled/boundary-path entity and renderer support. Reuse the existing face-region loop model where practical. | Large |
+| **POINT** | Add a bare point entity, picking, snaps, properties and rendering. | Small |
+| **3DFACE** | Needs a non-watertight surface object; importing it as a `Solid` would make booleans falsely appear supported. | Medium |
+| **Angular/ordinate dimensions** | Add dimension kinds and their geometry before mapping DXF types 2, 5 and 6. | Medium |
+| **DIMSTYLE fidelity** | Read arrow size, text height, precision and other style data instead of applying the current document style. | Medium |
 
-### Known fidelity limits in what *is* imported
+Known import fidelity limits that remain:
 
-These are reported to the user (`approximated` / `ignoredTypes`), not silent:
+- overridden dimension text (DXF code 1, such as `25 TYP`) is dropped;
+- polyline bulge arcs are expanded into straight segments;
+- general NURBS splines are sampled; only one clamped cubic maps exactly to a
+  Bezier entity;
+- MTEXT is flattened to an unformatted line and should at least count as an
+  approximation in the import report;
+- entity Z is flattened because drawing entities are 2D inside a work plane;
+- only ASCII DXF is supported;
+- `pairsFromText` assumes perfect two-line code/value pairing and cannot report
+  a desynchronised malformed file precisely.
 
-- **Overridden dimension text** (code 1, e.g. `25 TYP`) is lost — our dimension
-  always renders its own measurement.
-- **Polyline arcs** are expanded into segments; `PolylineEntity` holds straight
-  segments only.
-- **General NURBS splines** are sampled into a polyline. Only degree 3 with four
-  control points and no weights maps exactly, onto `BezierEntity`.
+### Export follow-up
 
-Not yet reported, and inconsistent with the above:
-
-- **MTEXT is flattened** to a single unformatted line (`\P` → space, formatting
-  stripped) but is *not* counted in `approximated`. Either count it, or give
-  `TextEntity` real multi-line support. Counting it is a few lines.
-
-### Structural limits
-
-- **Z is flattened.** Entities are 2D within a work plane, so any Z is dropped
-  (reported). A true 3D line has no home in the model.
-- **ASCII DXF only.** Binary DXF throws a clear error.
-- **`pairsFromText` is positional.** It walks the file two lines at a time; one
-  stray line desynchronises everything after it. A real DXF is always paired, but
-  the parser has no way to notice if it isn't.
+Native semantic dimensions would require BLOCKS plus DIMENSION records. Do this
+with block support rather than creating an export-only block model.
 
 ---
 
-## DXF export
+## 4. Further solid-modelling features
 
-Missing entirely. Deferred until the import is good enough to be worth
-round-tripping. The only export today is ASCII STL, which covers solids only —
-a 2D drawing exports to nothing.
+These can now build on the shared planar-face and boundary-loop representation.
 
----
+### Delete an arbitrary face and heal the body
 
-## Refactor: command registry
+Removing CHAMFER/FILLET features is already reversible. What remains is deleting
+a face from an imported or otherwise baked mesh. Adjacent analytic surfaces must
+be extended and intersected to close the body; deleting triangles is not enough.
+Start with planar faces and reuse the existing face representation.
 
-`src/core/commands/registry.ts` is now the single declaration of a command:
-`CommandName` is *derived* from it, and aliases, autocomplete, help, sticky,
-point-input, steps, `data`, `onStart` and `run` all come from the entry.
-`startCommand` is down from 443 lines / 45 branches to 28 lines / 0 branches.
+### Persistent SLICE feature
 
-What remains:
+SLICE currently produces two correct capped mesh bodies. A future feature-tree
+version could retain the cutting plane and offer keep-both/keep-side choices.
+This is useful but lower priority because the existing command is already usable.
 
-- **`advanceStep` — 1033 lines, 40 branches.** The last big switch: each command's
-  actual behaviour. It should become `execute` on the definition, migrated in
-  batches the way the rest was. Once done, adding a command costs two places (the
-  definition and an icon) instead of the 15 that TORUS needed.
-- **JOIN's special case in `startCommand`.** The one command that can complete on
-  start (enough preselected objects means nothing to ask), so it still needs an
-  `if` in the manager. Documented in place.
-- **`data: Record<string, unknown>`.** The per-run state is an untyped bag, which
-  forces casts everywhere (`data.start as Vec2`) and makes a typo a silent
-  `undefined`. A generic `ActiveCommand<TData>` would fix it.
-- **`CommandStep` has no `repeat`.** POLYLINE's repeating vertex step is faked
-  with `optional: true` plus "accumulate and return without advancing" — the same
-  trick ARRAY uses. It works, but the step model should say so directly.
+### Loft and freeform surfaces
 
----
+A loft through a sequence of profiles is the smallest useful step toward organic
+modelling. It is large and should wait until freeform modelling becomes a real
+goal; the current engine is intentionally CSG-oriented.
 
-## Refactor: main.ts
+### Editable sweep inputs
 
-**1893 lines, and the single largest source of bugs in this project.** Three
-separate defects this session landed here and were invisible to both the type
-checker and the tests, because nothing in `main.ts` is testable:
+A sweep stores its profile and path but the model tree cannot replace either
+with another entity. This needs a geometry-picker control in panels, not another
+numeric field.
 
-- the grip `angle` was dropped by a `map` that rebuilt the object field by field;
-- ortho/tracking priority was wrong three times over;
-- picking was fed the grid-snapped cursor instead of the real one.
-
-Every one of them would have failed instantly in a tested layer. Extracting this
-is not cosmetic.
-
-Candidates, in order:
-
-- **`pointermove`** (~146 lines) — the last of the pointer handling still doing
-  its own thinking. `pointerdown` now asks PointerGesture and ViewportAction and
-  only carries out what they say.
-- **`Panel` interface `{ isOpen, render() }`** — three controllers already
-  implement it informally; the subscriber has a hand-written `if` per panel.
-- **One "click outside" manager** — there are seven separate global `pointerdown`
-  listeners doing the same thing.
-
-### Dead code in main.ts (verified)
-
-- **`data-view-action` handler** (~21 lines) never runs: no element in the shell
-  carries that attribute. Three `querySelector` calls against it are no-ops
-  (lines ~342, ~1394, ~1847). `activateZoom()` is a working duplicate of it.
-- **Unused imports**: `curvePoints`, `solidBounds` — zero uses. `tsc` does not
-  catch these because `noUnusedLocals` is off.
+SECTION remains deferred until drawing views exist. It is a non-destructive view
+cut with caps and section edges, not a modelling operation like SLICE.
 
 ---
 
-## Solid modelling: what is actually missing
+## 5. Entity extensibility and drafting workflow
 
-Modelling the reference elephant was a probe of the solid engine, and it turned
-up one missing capability, one primitive that cannot be expressed, and a
-systemic hole. `scale` and the model tree are done; the rest is here.
+Adding an entity type still touches many switches and `if (entity.type === …)`
+chains. Exhaustive core switches catch some omissions, but grips, snaps and 3D
+window outlines can silently miss a new type.
 
-### Face regions and arbitrary face healing
+- Introduce entity traits for bounds, points, segments, grips, snap candidates,
+  drawing and properties.
+- Move the 3D window-selection outline sampler into the same trait system.
+- Extend object-snap tracking to follow configured polar angles, not only
+  horizontal and vertical paths.
 
-These reports remain one topological family, not small command-wiring bugs:
+Remaining F-key workflow:
 
-- **PRESSPULL a bounded part of a face.** Drawing a line across a box face must
-  split that face into selectable regions, then push only the chosen region.
-  Today a line is an independent 2D entity and a solid is only a triangle mesh;
-  neither records face loops or says that the line divides one. The current
-  face PRESSPULL moves all coplanar vertices and is suitable only for a simple
-  whole planar face.
-- **Delete an arbitrary face and heal the body.** The important first case is
-  done: CHAMFER and FILLET are persistent `edge-modification` features, expose
-  their distance/radius in the model tree, and can be removed there with the
-  × button (including Undo/Redo). What remains is deleting a face from an
-  imported or otherwise baked mesh, where adjacent surfaces must be extended
-  and intersected to close the body.
-- **SECTION is deliberately postponed until drawing views.** It is a
-  non-destructive renderer clipping plane with section-edge/cap display, not a
-  modelling command. `SLICE` remains the command that physically changes the
-  model.
+| Key | Open work |
+|---|---|
+| F1 | Bind the existing HELP command. |
+| F2 | Expand/collapse the resizable command-history panel. |
+| F4 | Decide whether 3D snaps need a separate toggle; solid edge, centre and perpendicular candidates already work in 3D. |
+| F5 | Isoplane cycle; large and currently low value. |
+| F6 | Dynamic UCS, prioritised above. |
+| F12 | Dynamic input near the cursor; the existing dimension toast is not editable input. |
 
-This needs an explicit face/region representation (or a feature-history answer
-for each operation) before UI commands are added. Otherwise bounded PRESSPULL
-and delete face would each invent incompatible topology from raw triangles.
-
-### ~~SLICE / split a solid with a plane~~ — done
-
-`SLICE` takes one or more selected solids (including preselection), then accepts
-either an existing planar solid face or three snapped points for the cutting
-plane. Manifold's `splitByPlane` produces both capped, watertight halves; all
-selected solids that the plane crosses are replaced in one undoable edit, while
-solids missed by the plane stay untouched. Both halves are kept and selected.
-
-The output honestly becomes `{ kind: 'mesh' }`: the geometric split is exact,
-but there is no slice feature in the parametric tree yet. Adding keep-side
-choices or a persistent, editable slice plane can build on this command later.
-
-### ~~The feature tree is thrown away by half the app~~ — done
-
-A `Solid` keeps how it was built in `feature`, and five places used to overwrite
-it with `{ kind: 'mesh' }`, destroying the model history for good. Three of them
-had no reason to, and all three baked for the same reason: **the feature had
-nowhere to put the result**. It does now — a move is the work plane's origin, a
-rotation is its axes, a scale is `scale` — so `featureTransform.ts` writes them
-down instead: `translatedFeature`, `rotatedFeature`, `scaledFeature`.
-
-**FILLET/CHAMFER no longer bake.** Each operation wraps the preceding feature,
-keeps a JSON-safe snapshot when that source was already a mesh, and regenerates
-through `modifySolidEdge`. Its distance/radius is editable and the operation is
-removable in the model tree; MOVE, COPY, ROTATE, SCALE and MIRROR carry the edge
-reference and saved source with the body. Features below a later edge operation
-are shown but deliberately locked until that later operation is removed,
-because changing the source topology can invalidate its selected edge.
-
-One still bakes, and honestly: **PRESSPULL on a picked face** — an arbitrary
-face push is not a parameter of anything. It is a candidate for a feature of its
-own, not a command-wiring bug.
-
-The properties panel no longer offers to resize a solid that has a recipe. Real
-CAD does not either: a union is "these things, joined", its size is its parts',
-and every system shows the bounding box of one as a fact rather than a field.
-Size is edited in the model tree, and SCALE resizes the whole thing —
-uniformly, which is the only way that composes. Non-uniform resize of a boolean
-is not deferred; it is **not a well-posed question**, and no CAD answers it.
-
-### The CSP has to allow `unsafe-eval`, and should not have to
-
-`index.html` allows `'unsafe-eval'` for one reason: manifold's Emscripten
-bindings build their invokers with `new Function(args, body)`. embind composes
-JavaScript out of strings from the type signatures it registers, so compiling
-the WASM is not the part that needs permission and `'wasm-unsafe-eval'` alone is
-not enough. Without it every boolean, extrusion and sweep throws on its first
-call. Upstream still does this in 3.5.1, so upgrading does not fix it.
-
-The real fix is a manifold build with `-sDYNAMIC_EXECUTION=0`, which makes
-embind fall back to closures. That means building manifold from source and
-vendoring it, or getting the option upstream. Until then the policy stays as it
-is, and `csp.test.ts` pins the coupling — the tests run in Node, where there is
-no policy to violate, so tightening the CSP breaks the app while every test
-still passes. That is how this got shipped in the first place.
-
-Worth doing at the same time: **manifold 3.5.1** is out (we are on 2.5.1) and
-its WASM is 541 KB against our 916 KB. Its API differs; treat it as its own job.
-
-### ~~No truncated cone~~ — done
-
-`createConeMesh` takes a `radiusTop`: 0 is a cone, anything else a frustum, the
-same value as `radius` a cylinder. `PrimitiveFeature.radiusTop` carries it, both
-panels offer it, and the tree line says `r 10 → 4` — because two cones of one
-radius can be different shapes. The elephant's trunk is four tapered cones now
-rather than four capsules of one radius each pretending to taper.
-
-### No loft, no freeform surface
-
-The reference picture is a sculpted organic model. Everything here is a surface
-of revolution plus booleans, so anything genuinely freeform is out of reach.
-A loft through a stack of profiles would be the smallest useful step. Large, and
-only worth it if organic modelling is actually a goal — CSG is a different craft.
-
-### Primitives with no UI
-
-`torus` is reachable from `TORUS` and now from the panels. Check the rest: the
-lesson from `tubeRadius` is that a capability existing in `PrimitiveFeature` and
-`ManifoldEngine` says nothing about whether anything can reach it.
-
-### Sweep is a black box in the tree
-
-`featureParams` returns nothing for a sweep, because its profile and its path are
-shapes, not numbers. Editing it means picking a different entity — a different
-kind of control than a number field. Deliberate; revisit when there is a way to
-select geometry from a panel.
+Drafting values are saved per drawing. There is still no application-level
+preferences store for defaults such as "my snap step is always 0.5". Decide this
+before the first release. `snapEnabled`, snap/grid sizes and the other drafting
+toggles also live in two different document structures; consolidate them only
+with a file-format migration.
 
 ---
 
-## Extensibility: entities
+## 6. Performance — measure before changing architecture
 
-Adding an entity type still costs ~17 places across 11 files. The switches in
-`core/entities/types.ts` are exhaustive via their return types, so they fail the
-build — but `GripController` and `SnapService` use ~69 `if (entity.type === …)`
-chains with no fallback, so a new entity silently gets no grips and no snaps.
+The reported orbit stutter remains unconfirmed. Establish first whether it is
+sphere/high-triangle specific or affects simple boxes too, using a three-second
+Performance recording and Bottom-Up self time. Frame requests already coalesce
+through `requestAnimationFrame`, so old notes blaming queued redraw calls no
+longer apply.
 
-- **Entity traits** — one object per entity (`bounds`, `points`, `segments`,
-  `grips`, `snapPoints`, `draw`, `properties`) instead of scattered switches.
-- **3D window selection now has another entity outline switch.** It projects
-  sampled curves and solid triangles in `PickingService`; it works, including
-  contained versus crossing direction, but it is one more place a new entity
-  must remember to join. Moving that sampler into the same trait would remove
-  the duplication rather than add more behaviour.
-- **Object snap tracking follows horizontal/vertical paths only.** With Polar
-  (F10) on, AutoCAD also tracks the polar angles. `alignmentPath` in
-  `DraftingService` is the one function to extend.
+Current candidates, only if profiling points at them:
 
----
+- picks, window selection and bounds scans have no spatial index;
+- intersection snap is O(entity pairs × segment pairs) and performs work-plane
+  transforms inside the nested loops on every relevant pointer move;
+- `entityRenderKey` serialises each mutable entity with `JSON.stringify`;
+- Manifold booleans run synchronously on the main thread after async WASM init.
 
-## Performance
-
-> **Open report, parked deliberately: the viewport stutters while orbiting** — and
-> the reporter's own reading is that it may be **the sphere only**; box, cylinder
-> and the rest were never tried. That is the first thing to establish, because it
-> splits the problem in two: a sphere is ~550 vertices where a box is 8, so if it
-> is sphere-only the cost is per-vertex and this list is where to look; if every
-> solid does it, the cost is per-frame and fixed, and the list is wrong.
->
-> Already ruled out **by measurement**, against the reported model (a sphere with
-> a cylinder subtracted — 550 vertices, 1100 triangles):
-> - `measurementCandidates` rebuilds every solid vertex per pointer move: **0.12 ms**.
-> - Booleans block the frame, but only when one runs: **306 ms** for a sweep.
->
-> Already changed, effect unconfirmed: `redraw` now coalesces into one
-> `requestAnimationFrame`, the chrome only redraws when its inputs change, and
-> `syncGrips` compares before rebuilding.
->
-> **What would settle it:** a Performance recording of three seconds of orbit,
-> range-selected, Bottom-Up by self time. Note that **INP is the wrong
-> instrument** — it measures discrete interactions and ignores the continuous
-> pointer moves an orbit is made of, so a green INP says nothing about this.
-
-Nothing here is proven to bite yet, but all of it is O(n) or worse per frame:
-
-- **No spatial index anywhere.** Every pick, window select and zoom-extents is a
-  linear scan, and `entityBounds` is recomputed inside a sort comparator.
-- **`intersectionCandidates` is O(n²) over entity pairs × O(m²) over their
-  segments**, with a work-plane transform inside the inner loop — and it runs on
-  every `pointermove` while intersection snap is on. Likely the first thing to
-  make the UI stutter.
-- **`entityRenderKey` is `JSON.stringify(entity)`**, computed per entity per
-  frame as a dirty key. Solids already use a `revision` integer; entities should
-  too.
-- **Manifold runs on the main thread.** The API is `async`, but only the WASM
-  init is awaited — the boolean itself is synchronous, so it blocks the frame.
-  Measured, after this was first written as "freezes the UI for seconds" on no
-  evidence at all: a circle swept along a circle (64 extrusions, then one union
-  of 64) takes **306 ms**; a union of 64 spheres takes **378 ms**. That is a
-  visible hitch on a one-off command, not a freeze, and nowhere near worth a
-  worker yet. Revisit if a sweep along a long polyline, or a model with hundreds
-  of parts, makes it minutes — the cost is per-operand, so it scales with the
-  model.
-- **`redraw()` is a full synchronous sync** on every pointer move, with
-  `getElementById` calls in the hot path and no `requestAnimationFrame`
-  batching.
+Measured reference costs were roughly 0.12 ms for measurement candidates and
+300–400 ms for large one-off sweep/union operations. A worker is not justified
+until real models show longer blocking operations.
 
 ---
 
-## Robustness and file format
+## 7. Project format and robustness before release
 
-> **Decided: not now.** There are no drawings worth keeping yet, so nothing is at
-> risk and there is nothing to migrate. The whole item below — versioning, the DTO
-> boundary, load validation — waits.
->
-> **Trigger to revisit: before the first release, or the first time a drawing is
-> worth reopening.** Whichever comes first. Doing it while `.mycad` files still
-> only live on one machine is cheap; doing it afterwards means writing migrations
-> for shapes nobody designed.
->
-> Parametric solids stay. `Solid.feature` is the model, not an optimisation, and
-> no interchange format holds it — which is why DXF is the export path and not the
-> native one.
+Do this before the first release or as soon as drawings become worth preserving,
+whichever comes first. Parametric `Solid.feature` data is part of the native
+model and must survive migrations.
 
-- **`writableFiles` grows unbounded** for the session — after opening fifty
-  files the renderer may write to all fifty until it quits.
-- **`ProjectIO` serialises `doc.entities` directly** — the in-memory model *is*
-  the file format, so any refactor of the entity types silently breaks saved
-  files. Wants a DTO boundary.
-- **`ProjectIO` has no migration path**: `version !== 1` throws. The first bump
-  makes every existing file unopenable, and a newer file gives the same generic
-  error as a corrupt one.
-- **Entities are loaded with a blind cast** (`{ ...raw } as Entity`) with no
-  validation, so a corrupt file crashes in the renderer rather than at load.
-  Solids and settings *are* validated.
-- **Meshes serialise as pretty-printed JSON numbers**, one float per line. A
-  100k-vertex solid becomes tens of megabytes.
-- **`LayerController`'s `escapeHtml` does not escape `<`** (`PropertiesController`'s
-  does). Layer names reach `innerHTML` and can come from a `.mycad` or DXF file.
-  CSP makes real XSS unlikely; it is still a hole in defence in depth, and the two
-  copies should be one.
+- introduce explicit project DTOs instead of serialising live entities;
+- add version migrations instead of rejecting every version except 1;
+- validate entities on load instead of blind casting;
+- avoid pretty-printed raw mesh floats making large files enormous;
+- bound or reset Electron's session-wide `writableFiles` set;
+- escape `<` as well as `&` and `"` in layer names inserted through `innerHTML`.
 
 ---
 
-## Housekeeping
+## 8. Output, text and dimensions
 
-- **No ESLint, no Prettier, no CI.** 230 tests and a clean `tsc` are all enforced
-  by hand today.
-- **`noUnusedLocals` / `noUnusedParameters` are off** — see the dead imports above.
-- **No README.**
-- **`Document` exposes public mutable fields** and a global singleton
-  (`export const document = new Document()`, which also shadows the DOM global).
-  History can be bypassed: nothing forces a mutation through an edit.
-- **`Document.getEntity` is a linear scan**, called per pick.
-- **Layers are three parallel structures** (`layers[]`, `layerColors{}`,
-  `hiddenLayers`) kept in sync by hand.
-- **`createX` factories are inconsistent**: `createLine` returns a detached
-  entity, while `createDimension` mutates the document (registering its style
-  layer). That bit the DXF import, which had to snapshot and restore
-  `doc.layers` to stay side-effect free.
+### G-code
 
----
+Settings, layer ordering and single-stroke text paths are available. Remaining:
 
-## Drafting modes and F keys
+- retain circular geometry long enough to emit G2/G3 instead of only G1
+  segments;
+- optionally support different feed/depth settings per layer;
+- add tool-radius compensation only if router use becomes a goal. The current
+  centreline path is correct for pens and lasers.
 
-The common AutoCAD drafting toggles are wired to keys and status buttons. The
-rest of the map, with what it would cost:
+### Text
 
-| Key | AutoCAD | Here |
-|---|---|---|
-| F1 | Help | HELP exists as a command; no key. Trivial. |
-| F2 | Expanded command history | The command log panel exists and resizes; no key to expand it. Small. |
-| **F3** | Object snap | **Done** — key and status button. |
-| F4 | 3D object snap | No 3D object snap at all. Large. |
-| F5 | Isoplane cycle | No isometric drafting mode. Large, low value for us. |
-| F6 | Dynamic UCS | UCS exists as a command, but not the "hover a face to align" behaviour. Medium. |
-| **F7** | Grid display | **Done** — key and status button, in both 2D and 3D. |
-| **F8** | Ortho | **Done** — key and status button. |
-| **F9** | Snap mode (cursor stepping) | **Done** — key and status button. The step itself is still only settable in code (`doc.snapSize`); see below. |
-| **F10** | Polar tracking | **Done** — key and status button. |
-| **F11** | Object snap tracking | **Done** — key and status button. |
-| F12 | Dynamic input | No dynamic input. The dimension toast is a different thing. Medium. |
+- render text in 3D using the existing stroke polylines on the work plane;
+- add glyph coverage beyond ASCII so Czech characters do not disappear;
+- measure stroke-font bounds exactly; system-font bounds remain an estimate.
 
-### Settings are per drawing, not per application
+### Dimensions
 
-`snapSize`, `gridSize` and the polar angles are saved into the `.mycad` file, so
-they travel with it: open someone else's drawing and you get their snap step.
-AutoCAD does the same, so this is a defensible default — but there is no
-application-level settings store at all (localStorage only remembers which tool a
-flyout last used), so "my step is always 0.5" has nowhere to live. Worth deciding
-before the first release.
-
-Note also that `snapEnabled`, `snapSize`, `gridSize` and `gridVisible` sit on `Document` while
-the other drafting toggles live in `drafting`, which is why F9 needs its own
-toggle function rather than going through `toggleDraftingMode`. Tidying that
-touches the file format, so it waits with the rest of that item.
+- add angular and ordinate dimension kinds;
+- import DIMSTYLE details;
+- preserve overridden dimension text.
 
 ---
 
-## Text: single-stroke fonts
+## 9. Manifold dependency and CSP
 
-> **Done for the plotter.** The Hershey simplex roman font ("rowmans") is
-> vendored as data in `core/text/hersheyData.ts` — public domain, with the
-> acknowledgement its licence asks for — and `strokeFont.ts` decodes it. Both the
-> 2D renderer and `entityToPaths` draw from that one function, so what is on the
-> screen is what the pen draws. `TextEntity.font` chooses: `Single-stroke` plots,
-> and a system font is still filled and still reported as unplottable, which is
-> the honest answer rather than a silent gap.
+The browser CSP still needs `unsafe-eval` because manifold 2.5.1's Emscripten
+embind creates invokers with `new Function`. Tightening the policy without
+changing the build breaks every boolean, extrusion and sweep while Node tests
+continue to pass.
 
-What is left:
-
-- **No 3D text.** The 3D renderer has no text geometry at all, and now that
-  glyphs are polylines it could have some cheaply — they are just polylines on
-  the work plane.
-- **One font, ASCII only.** Anything outside 32..126 is skipped, so `č` draws
-  nothing. Hershey has cyrillic and a script face in the same format; the decoder
-  takes them unchanged, and the data is one more file each.
-- **DXF export of text** would want this too — it is the same reason: an outline
-  is not a path a machine can follow.
-- **`entityBounds` still guesses** for system fonts (`length × height × .62`).
-  A stroke font measures itself exactly, so only the unplottable case is a guess.
+The real fix is a manifold build with `-sDYNAMIC_EXECUTION=0`, either vendored or
+supported upstream. Evaluate that together with a manifold upgrade as a separate
+job: newer releases have API differences and a smaller WASM payload.
 
 ---
 
-## G-code export
+## 10. Housekeeping
 
-> **Decided: a pen plotter. Slicing is a slicer's job and not this app's** —
-> the earlier idea of reading PrusaSlicer's configuration and producing print
-> G-code is withdrawn, along with the notes for it. One pass per visible
-> layer, in layer order, from the 2D geometry. `GcodeExport.ts` does that today:
-> `G28` first, points put back through `localToWorld` so the file agrees with the
-> screen, geometry off the world XY plane refused rather than cut flat in the
-> wrong place, and unsupported types reported rather than dropped quietly. Layer
-> order is drag-to-reorder in the panel.
-
-What is left, in the order it bites:
-
-- **No settings dialog.** `exportGcode` runs on `DEFAULT_GCODE_OPTIONS` — feed
-  800, travel 2400, cut depth 0, safe height 5. The options object and its
-  plumbing exist; it needs a panel, and `DraftingSettingsController` is the shape
-  to copy. Per-layer settings (a different depth or feed per pass) would be the
-  step after, and would change `GcodeOptions` from one object to one per layer.
-- **Text is skipped**, and reported as skipped. It needs single-stroke fonts,
-  above: an outline font engraves the *outline* of each letter rather than the
-  letter.
-- **No arcs.** Everything curved is broken into `G1` segments. Real machines take
-  `G2`/`G3`, which is fewer lines and a smoother path. `entityToPaths` throws the
-  arc away by flattening; emitting arcs means keeping them.
-- **No tool compensation.** The path runs along the geometry, which is exactly
-  right for a pen and for a laser. A router would cut half a tool-width off on
-  each side — only worth solving if this ever drives one.
-
----
-
-## Dimensions: what is left
-
-`linear` and `aligned` both exist now, and DXF types 0 and 1 map onto them
-exactly. Still missing:
-
-- **Angular (DXF types 2 and 5) and ordinate (type 6)** — new kinds, each needing
-  geometry of its own: an arc dimension line and an angle readout, or a leader.
-- **DIMSTYLE from the file** — an imported dimension takes the current document
-  style; the arrow size, text height and precision in the file are ignored.
-- **Overridden dimension text** (DXF code 1, e.g. `25 TYP`) — our dimension always
-  renders its own measurement, so an override is dropped. Reported.
+- no ESLint, Prettier or CI; tests and `tsc` are run manually;
+- `noUnusedLocals` and `noUnusedParameters` are disabled;
+- no README;
+- `Document` exposes mutable public fields and can bypass command history;
+- `Document.getEntity` is a linear scan;
+- layers are parallel arrays/maps/sets maintained by convention;
+- `createX` factories are inconsistent about whether they mutate the document.

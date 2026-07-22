@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { EdgeModificationFeature, PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
+import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
 import { primitiveMesh, regenerateSolidFeature } from './ManifoldEngine';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
+import { solidPlanarFaces } from './SolidTopology';
 
 const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
@@ -17,6 +18,18 @@ const edgeFeature = (): EdgeModificationFeature => {
       solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
       normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
     },
+    sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+  };
+};
+
+const pressPullFeature = (): PressPullFeature => {
+  const source: PrimitiveFeature = {
+    kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+  };
+  const mesh = primitiveMesh(source);
+  const face = solidPlanarFaces(mesh).find((candidate) => candidate.normal.z > 0.9)!;
+  return {
+    kind: 'presspull-region', source, region: { plane: face.plane, loops: face.loops }, distance: 2,
     sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
   };
 };
@@ -104,6 +117,14 @@ describe('scaledFeature', () => {
     expect(scaled).toMatchObject({ kind: 'edge-modification', amount: 2 });
     expect((await regenerateSolidFeature(scaled))?.indices.length).toBeGreaterThan(0);
   });
+
+  it('scales a PressPull region, distance and saved source together', async () => {
+    const scaled = scaledFeature(pressPullFeature(), { x: 0, y: 0, z: 0 }, 2)!;
+    expect(scaled).toMatchObject({ kind: 'presspull-region', distance: 4 });
+    closeTo(bounds((await regenerateSolidFeature(scaled))!.positions), {
+      x: { min: -10, max: 10 }, y: { min: -6, max: 6 }, z: { min: 0, max: 12 },
+    });
+  });
 });
 
 function plane(origin: { x: number; y: number; z: number }) {
@@ -168,6 +189,19 @@ describe('translatedFeature', () => {
       z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
     });
   });
+
+  it('moves a PressPull without losing the removable feature', async () => {
+    const before = (await regenerateSolidFeature(pressPullFeature()))!;
+    const moved = translatedFeature(pressPullFeature(), delta)!;
+    const after = (await regenerateSolidFeature(moved))!;
+    expect(moved.kind).toBe('presspull-region');
+    const box = bounds(before.positions);
+    closeTo(bounds(after.positions), {
+      x: { min: box.x.min + delta.x, max: box.x.max + delta.x },
+      y: { min: box.y.min + delta.y, max: box.y.max + delta.y },
+      z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
+    });
+  });
 });
 
 describe('rotatedFeature', () => {
@@ -219,6 +253,19 @@ describe('rotatedFeature', () => {
     expect(rotatedFeature({ kind: 'mesh' }, { x: 0, y: 0, z: 0 }, up, 1)).toBeNull();
     expect(rotatedFeature(sphere(), { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 1)).toBeNull();
   });
+
+  it('rotates a PressPull region and keeps it regenerable', async () => {
+    const turned = rotatedFeature(
+      pressPullFeature(),
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      Math.PI / 2,
+    )!;
+    expect(turned.kind).toBe('presspull-region');
+    closeTo(bounds((await regenerateSolidFeature(turned))!.positions), {
+      x: { min: -5, max: 5 }, y: { min: -6, max: 0 }, z: { min: -3, max: 3 },
+    });
+  });
 });
 
 describe('mirroredFeature', () => {
@@ -244,5 +291,16 @@ describe('mirroredFeature', () => {
       { x: 0, y: 0 },
       { x: 0, y: 1 },
     )).toBeNull();
+  });
+
+  it('mirrors a PressPull and keeps the feature tree regenerable', async () => {
+    const mirrored = mirroredFeature(
+      pressPullFeature(),
+      plane({ x: 0, y: 0, z: 0 }),
+      { x: 0, y: -1 },
+      { x: 0, y: 1 },
+    )!;
+    expect(mirrored.kind).toBe('presspull-region');
+    expect((await regenerateSolidFeature(mirrored))?.indices.length).toBeGreaterThan(0);
   });
 });

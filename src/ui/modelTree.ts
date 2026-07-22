@@ -55,6 +55,11 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
         label: feature.operation === 'fillet' ? 'Fillet' : 'Chamfer',
         detail: `${Number(feature.amount.toFixed(2))} mm`,
       };
+    case 'presspull-region':
+      return {
+        label: 'PressPull',
+        detail: `${Number(feature.distance.toFixed(2))} mm`,
+      };
     case 'mesh':
       return { label: 'Mesh', detail: 'no history' };
   }
@@ -62,7 +67,7 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
 
 function featureChildren(feature: SolidFeature): SolidFeature[] {
   if (feature.kind === 'boolean') return feature.operands;
-  if (feature.kind === 'edge-modification') return [feature.source];
+  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region') return [feature.source];
   return [];
 }
 
@@ -89,7 +94,7 @@ export function featureRows(
     collapsed,
     [...path, index],
     depth + 1,
-    blockedByEdge || feature.kind === 'edge-modification',
+    blockedByEdge || feature.kind === 'edge-modification' || feature.kind === 'presspull-region',
   ));
   return [row, ...children];
 }
@@ -123,17 +128,18 @@ export async function editedSolid(
   // otherwise: forget this and the model keeps the shape it used to be.
   after.revision = solid.revision + 1;
   if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
+  else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(mesh);
   return after;
 }
 
 /**
- * Removes one Chamfer/Fillet wrapper and rebuilds what remains. The saved mesh
+ * Removes one Chamfer/Fillet/PressPull wrapper and rebuilds what remains. The saved mesh
  * is used when its source was already a mesh and therefore has no recipe.
  */
 export async function removedFeatureSolid(solid: Solid, path: readonly number[]): Promise<Solid | null> {
   const after = cloneSolid(solid);
   const target = featureAt(after.feature, path);
-  if (!target || target.kind !== 'edge-modification') return null;
+  if (!target || !isRemovableFeature(target)) return null;
 
   if (path.length === 0) {
     after.feature = target.source;
@@ -144,7 +150,7 @@ export async function removedFeatureSolid(solid: Solid, path: readonly number[])
     if (parent.kind === 'boolean') {
       if (!parent.operands[index]) return null;
       parent.operands[index] = target.source;
-    } else if (parent.kind === 'edge-modification' && index === 0) {
+    } else if ((parent.kind === 'edge-modification' || parent.kind === 'presspull-region') && index === 0) {
       parent.source = target.source;
       // If the removed operation began with a baked mesh, this is now also the
       // geometry on which the parent operation must work.
@@ -163,7 +169,17 @@ export async function removedFeatureSolid(solid: Solid, path: readonly number[])
   after.mesh = mesh;
   after.revision = solid.revision + 1;
   if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
+  else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(mesh);
   return after;
+}
+
+function meshZSpan(mesh: Solid['mesh']): number {
+  let min = Infinity, max = -Infinity;
+  for (let index = 2; index < mesh.positions.length; index += 3) {
+    min = Math.min(min, mesh.positions[index]);
+    max = Math.max(max, mesh.positions[index]);
+  }
+  return Number.isFinite(min) && Number.isFinite(max) ? Math.max(0.01, max - min) : 0.01;
 }
 
 /** The feature a row's path points at, or null if the tree has since changed. */
@@ -172,7 +188,7 @@ export function featureAt(root: SolidFeature, path: readonly number[]): SolidFea
   for (const index of path) {
     const next = feature.kind === 'boolean'
       ? feature.operands[index]
-      : feature.kind === 'edge-modification' && index === 0
+      : (feature.kind === 'edge-modification' || feature.kind === 'presspull-region') && index === 0
         ? feature.source
         : null;
     if (!next) return null;
@@ -180,3 +196,8 @@ export function featureAt(root: SolidFeature, path: readonly number[]): SolidFea
   }
   return feature;
 }
+
+const isRemovableFeature = (
+  feature: SolidFeature,
+): feature is Extract<SolidFeature, { kind: 'edge-modification' | 'presspull-region' }> =>
+  feature.kind === 'edge-modification' || feature.kind === 'presspull-region';

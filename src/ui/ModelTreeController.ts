@@ -82,7 +82,7 @@ export class ModelTreeController {
     const twist = row.hasChildren ? (this.collapsed.has(pathKey(row.path)) ? '▸' : '▾') : '·';
     element.innerHTML = `<span class="tree-twist">${twist}</span><span class="tree-label">${escapeHtml(row.label)}</span><span class="tree-detail">${escapeHtml(row.detail)}</span>`;
 
-    if (row.feature.kind === 'edge-modification') {
+    if (row.feature.kind === 'edge-modification' || row.feature.kind === 'presspull-region') {
       const remove = document.createElement('button');
       remove.className = 'tree-delete';
       remove.type = 'button';
@@ -109,7 +109,7 @@ export class ModelTreeController {
     // parametric as anything in the file, looking like a dead end.
     const params = row.blockedByEdge ? [] : featureParams(row.feature);
     if (row.blockedByEdge) {
-      element.title = 'Remove the later Chamfer/Fillet before editing this feature.';
+      element.title = 'Remove the later modelling feature before editing this feature.';
     }
     if (params.length === 0) return [element];
 

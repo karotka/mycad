@@ -31,7 +31,7 @@ import { ModelTreeController } from './ui/ModelTreeController';
 import { GcodeSettingsController } from './ui/GcodeSettingsController';
 import { SettingsController } from './ui/SettingsController';
 import { NamedUcsController } from './ui/NamedUcsController';
-import { pressPullFace, primitiveMesh, regenerateSolidFeature } from './core/solids/ManifoldEngine';
+import { primitiveMesh, regenerateSolidFeature } from './core/solids/ManifoldEngine';
 import { translatedFeature } from './core/solids/featureTransform';
 import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
@@ -815,18 +815,16 @@ function showDimension(text: string | null, x: number, y: number): void {
  * rather than a number typed at a stationary picture — and returns the distance
  * so the click that ends it commits exactly what was on screen.
  */
-function pressPullDrag(event: PointerEvent): { delta: number; mesh: SolidMesh } | null {
+function pressPullDrag(event: PointerEvent): { delta: number } | null {
   const active = commands.active;
   if (cadDocument.viewMode !== '3d' || active?.name !== 'PRESSPULL' || active.stepIndex !== 1) return null;
   const face = active.data.face as SolidFaceSelection | undefined;
   const solid = cadDocument.getSolid(active.data.solidId as string);
-  if (!face || !solid) return null;
+  if (!face?.region || !solid) return null;
   const delta = renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
   if (delta === null || Math.abs(delta) < 1e-6) return null;
-  const mesh = pressPullFace(solid.mesh, face.vertexIndices, face.normal, delta);
-  if (!mesh) return null;
-  previewController.setPreview({ type: 'solid', data: { solidId: solid.id, mesh } });
-  return { delta, mesh };
+  previewController.setPreview({ type: 'presspull-region', data: { region: face.region, distance: delta } });
+  return { delta };
 }
 
 /** Which way the profile is being pulled, and how far. Null when it is neither. */
@@ -1112,7 +1110,13 @@ viewport.addEventListener('pointermove', (event) => {
       : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event))
     : null;
   if (cadDocument.viewMode === '3d' && (choosingPressPullFace || (choosingSlicePlane && !slicePlanePoint))) {
-    renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    renderer3d.pickSolidFace(
+      renderer3d.renderer.domElement,
+      event.clientX,
+      event.clientY,
+      cadDocument.solids,
+      cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+    );
   } else if (commands.active?.name !== 'PRESSPULL') {
     renderer3d.clearFaceHighlight();
   }
@@ -1514,7 +1518,13 @@ viewport.addEventListener('pointerdown', async (event) => {
         : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event)
       : null;
     const face = commands.active?.name === 'PRESSPULL' || (choosingSlicePlane && !slicePointSnap)
-      ? renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY)
+      ? renderer3d.pickSolidFace(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        cadDocument.solids,
+        cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+      )
       : null;
     const action = resolveViewportAction({
       commandActive: Boolean(commands.active),

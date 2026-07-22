@@ -249,6 +249,15 @@ export interface SolidFaceSelection {
   solidId: string;
   vertexIndices: number[];
   normal: Vec3;
+  /** The bounded planar region under the pointer, in its own 2D face frame. */
+  region?: SolidFaceRegion;
+}
+
+/** JSON-safe geometry of one selectable part of a planar solid face. */
+export interface SolidFaceRegion {
+  plane: WorkPlane;
+  /** Outer loop first (CCW), then holes (CW), with no repeated closing point. */
+  loops: Vec2[][];
 }
 
 export interface SolidEdgeSelection {
@@ -311,6 +320,16 @@ export interface EdgeModificationFeature {
   sourceMesh: SerializedSolidMesh;
 }
 
+/** A reversible union/subtraction made by pulling a bounded planar face region. */
+export interface PressPullFeature {
+  kind: 'presspull-region';
+  source: SolidFeature;
+  region: SolidFaceRegion;
+  distance: number;
+  /** Geometry immediately before this operation, for a baked mesh source. */
+  sourceMesh: SerializedSolidMesh;
+}
+
 export interface PrimitiveFeature {
   kind: 'primitive';
   primitive: 'box' | 'wedge' | 'sphere' | 'cone' | 'cylinder' | 'pyramid' | 'torus';
@@ -340,7 +359,7 @@ export interface PrimitiveFeature {
   workPlane?: WorkPlane;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature;
 
 export interface Solid {
   id: string;

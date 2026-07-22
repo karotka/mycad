@@ -8,7 +8,7 @@
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, isSweepProfileEntity, type Entity, type SolidFaceSelection, type SolidEdgeSelection } from '../../entities/types';
-import { modifySolidEdge, pressPullFace, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
+import { modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
 import { extrusionFeature } from '../../solids/extrusion';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
@@ -126,14 +126,32 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
     return 'advance';
   }
   const delta = value as number;
+  if (!Number.isFinite(delta) || Math.abs(delta) < 1e-6) {
+    ctx.log('PressPull distance must be greater than zero.');
+    return 'stay';
+  }
   const before = cloneSolid(solid);
   ctx.log('Applying PressPull…');
 
   const face = data.face as SolidFaceSelection | undefined;
   let mesh;
-  if (face) {
-    // An arbitrary face push is not a parameter of anything, so this is one of
-    // the two places that honestly has to bake. See BACKLOG.md.
+  if (face?.region) {
+    mesh = await pressPullRegion(solid.mesh, face.region, delta);
+    if (mesh) {
+      solid.feature = {
+        kind: 'presspull-region',
+        source: JSON.parse(JSON.stringify(before.feature)),
+        region: JSON.parse(JSON.stringify(face.region)),
+        distance: delta,
+        sourceMesh: {
+          positions: Array.from(before.mesh.positions),
+          indices: Array.from(before.mesh.indices),
+        },
+      };
+    }
+  } else if (face) {
+    // Compatibility for selections stored by older projects. New picks always
+    // carry a bounded planar region and take the parametric branch above.
     mesh = pressPullFace(solid.mesh, face.vertexIndices, face.normal, delta);
     if (mesh) solid.feature = { kind: 'mesh' };
   } else if (solid.feature.kind === 'extrusion') {
@@ -146,10 +164,17 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
   } else {
     mesh = await pressPullSolid(solid.mesh, delta);
   }
-  if (!mesh) return 'advance';
+  if (!mesh) {
+    ctx.log('PressPull failed — select a bounded planar face region or use a smaller distance.');
+    return 'stay';
+  }
 
   solid.mesh = mesh;
-  solid.height = solid.feature.kind === 'extrusion' ? solid.feature.height : Math.max(0.01, solid.height + delta);
+  if (solid.feature.kind === 'extrusion') solid.height = solid.feature.height;
+  else {
+    const zValues = Array.from(mesh.positions).filter((_coordinate, index) => index % 3 === 2);
+    solid.height = Math.max(0.01, Math.max(...zValues) - Math.min(...zValues));
+  }
   solid.revision++;
   ctx.history.recordApplied(new UpdateSolidEdit('Press/Pull', before, cloneSolid(solid)));
   ctx.doc.notify();

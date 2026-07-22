@@ -8,6 +8,7 @@ import { dimensionGeometry } from '../entities/types';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, primitiveMesh } from '../solids/ManifoldEngine';
 import { boxLikePrimitiveFeature } from './steps/solids';
+import { planarFaceRegionAt, solidPlanarFaces } from '../solids/SolidTopology';
 
 function setup() {
   const doc = new Document();
@@ -1604,6 +1605,47 @@ describe('EXTRUDE', () => {
     expect(kit.history.undo()).toBe(true);
     expect(kit.doc.entities).toHaveLength(2);
     expect(kit.doc.solids).toHaveLength(0);
+  });
+});
+
+describe('PRESSPULL', () => {
+  it('rejects a solid hit without a planar face instead of modifying the whole body', async () => {
+    const kit = setup();
+    const solid = kit.doc.createSolid(createBoxMesh(10, 6, 4), 'Box', 4, []);
+    kit.doc.addSolid(solid);
+
+    kit.manager.startCommand('PRESSPULL');
+    await kit.manager.handleClick({ x: 0, y: 0, z: 0 }, undefined, solid.id);
+
+    expect(kit.manager.active?.stepIndex).toBe(0);
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('planar face'));
+  });
+
+  it('keeps a bounded face pull as an editable feature and one undo restores the source', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceMesh = primitiveMesh(feature);
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    kit.doc.addSolid(solid);
+    kit.doc.activeWorkPlane.origin.z = 4;
+    const divider = kit.doc.createLine({ x: -5, y: 0 }, { x: 5, y: 0 });
+    const top = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.z > 0.9)!;
+    const region = planarFaceRegionAt(top, [divider], { x: 0, y: 2, z: 4 })!;
+
+    kit.manager.startCommand('PRESSPULL');
+    await kit.manager.handleClick(
+      { x: 0, y: 2, z: 4 },
+      undefined,
+      solid.id,
+      { solidId: solid.id, vertexIndices: top.vertexIndices, normal: top.normal, region },
+    );
+    await kit.manager.submitInput('3');
+
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'presspull-region', distance: 3 });
+    expect(Math.max(...Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2))).toBeCloseTo(7, 4);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(kit.doc.solids[0].mesh.positions).toEqual(sourceMesh.positions);
   });
 });
 

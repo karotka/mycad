@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
+import type { EdgeModificationFeature, ExtrusionFeature, PressPullFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
 import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
 import { editedSolid, featureAt, featureLabel, featureRows, removedFeatureSolid } from './modelTree';
+import { solidPlanarFaces } from '../core/solids/SolidTopology';
 
 const sphere = (radius: number, scale?: { x: number; y: number; z: number }): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius, height: radius * 2, scale });
@@ -26,6 +27,18 @@ const chamfer = (): EdgeModificationFeature => {
       solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
       normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
     },
+    sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+  };
+};
+
+const pressPull = (): PressPullFeature => {
+  const source: PrimitiveFeature = {
+    kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+  };
+  const mesh = primitiveMesh(source);
+  const face = solidPlanarFaces(mesh).find((candidate) => candidate.normal.z > 0.9)!;
+  return {
+    kind: 'presspull-region', source, region: { plane: face.plane, loops: face.loops }, distance: 2,
     sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
   };
 };
@@ -66,6 +79,13 @@ describe('featureRows', () => {
       ['Box', [0], true],
     ]);
   });
+
+  it('shows PressPull above its protected source', () => {
+    expect(featureRows(pressPull()).map((row) => [row.label, row.path, row.blockedByEdge])).toEqual([
+      ['PressPull', [], false],
+      ['Box', [0], true],
+    ]);
+  });
 });
 
 describe('featureLabel', () => {
@@ -82,6 +102,10 @@ describe('featureLabel', () => {
 
   it('names reversible edge operations and their value', () => {
     expect(featureLabel(chamfer())).toEqual({ label: 'Chamfer', detail: '1 mm' });
+  });
+
+  it('names a reversible bounded PressPull and its distance', () => {
+    expect(featureLabel(pressPull())).toEqual({ label: 'PressPull', detail: '2 mm' });
   });
 });
 
@@ -174,6 +198,17 @@ describe('editedSolid', () => {
     expect(after?.feature).toMatchObject({ kind: 'edge-modification', operation: 'chamfer', amount: 1.5 });
     expect(after?.mesh.indices.length).toBeGreaterThan(0);
   });
+
+  it('changes a PressPull distance and rebuilds its watertight result', async () => {
+    const doc = new Document();
+    const feature = pressPull();
+    const solid = doc.createSolid((await regenerateSolidFeature(feature))!, 'Pulled box', 6, [], undefined, feature);
+
+    const after = await editedSolid(solid, [], 'distance', 5);
+
+    expect(after?.feature).toMatchObject({ kind: 'presspull-region', distance: 5 });
+    expect(Math.max(...Array.from(after!.mesh.positions).filter((_value, index) => index % 3 === 2))).toBeCloseTo(9, 4);
+  });
 });
 
 describe('removedFeatureSolid', () => {
@@ -190,6 +225,17 @@ describe('removedFeatureSolid', () => {
     expect(restored?.revision).toBe(solid.revision + 1);
     expect(solid.feature.kind).toBe('edge-modification');
   });
+
+  it('removes a PressPull and restores its source', async () => {
+    const doc = new Document();
+    const feature = pressPull();
+    const solid = doc.createSolid((await regenerateSolidFeature(feature))!, 'Pulled box', 6, [], undefined, feature);
+
+    const restored = await removedFeatureSolid(solid, []);
+
+    expect(restored?.feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh.indices.length);
+  });
 });
 
 describe('featureAt', () => {
@@ -197,6 +243,7 @@ describe('featureAt', () => {
     expect(featureAt(elephant, [0, 1])).toMatchObject({ primitive: 'sphere', radius: 4 });
     expect(featureAt(elephant, [])).toBe(elephant);
     expect(featureAt(chamfer(), [0])).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(featureAt(pressPull(), [0])).toMatchObject({ kind: 'primitive', primitive: 'box' });
   });
 
   it('returns null rather than guess when the path leads nowhere', () => {

@@ -30,6 +30,12 @@ export function featureParams(feature: SolidFeature): FeatureParam[] {
     value: feature.amount,
     min: 1e-6,
   }];
+  if (feature.kind === 'presspull-region') return [{
+    key: 'distance',
+    label: 'Distance',
+    value: feature.distance,
+    min: -Infinity,
+  }];
   return [];
 }
 
@@ -38,6 +44,10 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   if (feature.kind === 'extrusion') return setExtrusionParam(feature, key, value);
   if (feature.kind === 'edge-modification' && key === 'amount' && Number.isFinite(value) && value >= 1e-6) {
     feature.amount = value;
+    return true;
+  }
+  if (feature.kind === 'presspull-region' && key === 'distance' && Number.isFinite(value) && Math.abs(value) >= 1e-6) {
+    feature.distance = value;
     return true;
   }
   return false;

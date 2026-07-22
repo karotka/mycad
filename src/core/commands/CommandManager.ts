@@ -293,6 +293,10 @@ export class CommandManager {
       this.ctx.doc.selectSolid(pickSolidId, this.isAdditiveStep);
       await this.advanceStep(pickSolidId);
     } else if (step.kind === 'solid' && (pickSolidId || pickFace)) {
+      if (this.active.name === 'PRESSPULL' && !pickFace) {
+        this.ctx.log('PressPull requires a planar face or bounded face region.');
+        return;
+      }
       const solidId = pickFace?.solidId ?? pickSolidId!;
       this.ctx.doc.selectSolid(solidId, this.isAdditiveStep);
       await this.advanceStep(this.active.name === 'PRESSPULL' && pickFace ? pickFace : pickSolidId);

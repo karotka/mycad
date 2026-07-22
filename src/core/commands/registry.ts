@@ -239,7 +239,7 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select closed 2D profile:' }, { kind: 'entity', label: 'Select path:' }, { kind: 'done' }],
     data: () => ({ profile: undefined }),
     onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Select sweep path.') },
-  { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
+  { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a planar face region', suggest: true, steps: [{ kind: 'solid', label: 'Select planar face or bounded region:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
   { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true,
     steps: [

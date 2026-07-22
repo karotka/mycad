@@ -1,7 +1,7 @@
 import type ModuleFactory from 'manifold-3d';
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
-import type { Entity, PrimitiveFeature, SolidEdgeSelection, SolidFeature, SolidMesh } from '../entities/types';
+import type { Entity, PrimitiveFeature, SolidEdgeSelection, SolidFaceRegion, SolidFeature, SolidMesh } from '../entities/types';
 import { curvePoints } from '../entities/types';
 import { localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, type WorkPlane } from '../../math/workplane';
 
@@ -314,6 +314,14 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
     };
     return modifySolidEdge(source, feature.edge, feature.amount, feature.operation === 'fillet');
   }
+  if (feature.kind === 'presspull-region') {
+    const regenerated = await regenerateSolidFeature(feature.source);
+    const source = regenerated ?? {
+      positions: new Float32Array(feature.sourceMesh.positions),
+      indices: new Uint32Array(feature.sourceMesh.indices),
+    };
+    return pressPullRegion(source, feature.region, feature.distance);
+  }
 
   const operands: SolidMesh[] = [];
   for (const operand of feature.operands) {
@@ -445,6 +453,86 @@ export function pressPullFace(
     positions[offset + 2] += normal.z * delta;
   }
   return { positions, indices: mesh.indices.slice() };
+}
+
+/**
+ * Pulls one bounded planar region as a real watertight solid operation. Positive
+ * distance unions an outward prism; negative distance subtracts an inward one.
+ * The tiny overlap avoids asking a boolean to decide whether two exactly
+ * coincident caps touch or belong to the same shell.
+ */
+export async function pressPullRegion(
+  mesh: SolidMesh,
+  region: SolidFaceRegion,
+  distance: number,
+): Promise<SolidMesh | null> {
+  if (!Number.isFinite(distance) || Math.abs(distance) < 1e-9 || region.loops.length === 0) return null;
+  const contours = region.loops
+    .filter((loop) => loop.length >= 3)
+    .map((loop) => loop.map((point): [number, number] => [point.x, point.y]));
+  if (contours.length === 0) return null;
+
+  const manifold = await initManifold();
+  const crossSection = new manifold.CrossSection(contours);
+  const extent = meshExtent(mesh);
+  const overlap = Math.max(1e-6, extent * 1e-6);
+  const height = Math.abs(distance) + overlap;
+  const prism = crossSection.extrude(height);
+  crossSection.delete();
+  try {
+    const local = manifoldToMesh(manifold, prism);
+    const localOffset = distance > 0 ? -overlap : distance;
+    for (let index = 2; index < local.positions.length; index += 3) local.positions[index] += localOffset;
+    const tool = {
+      positions: transformMeshByWorkPlane(local.positions, region.plane),
+      indices: transformMeshIndicesByWorkPlane(local.indices, region.plane),
+    };
+    // Legacy primitives use the opposite winding from meshes emitted by
+    // manifold. Mixing both conventions makes an additive boolean interpret
+    // the source as its complement, while subtraction happens to look mostly
+    // correct. Normalise both operands at this boundary so PRESSPULL behaves
+    // the same for old primitives and newly generated solids.
+    const source = outwardWoundMesh(mesh);
+    const operand = outwardWoundMesh(tool);
+    return distance > 0 ? booleanUnion([source, operand]) : booleanSubtract(source, operand);
+  } finally {
+    prism.delete();
+  }
+}
+
+function meshExtent(mesh: SolidMesh): number {
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    minX = Math.min(minX, mesh.positions[index]); maxX = Math.max(maxX, mesh.positions[index]);
+    minY = Math.min(minY, mesh.positions[index + 1]); maxY = Math.max(maxY, mesh.positions[index + 1]);
+    minZ = Math.min(minZ, mesh.positions[index + 2]); maxZ = Math.max(maxZ, mesh.positions[index + 2]);
+  }
+  return Math.max(1, maxX - minX, maxY - minY, maxZ - minZ);
+}
+
+function outwardWoundMesh(mesh: SolidMesh): SolidMesh {
+  let signedVolume = 0;
+  for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
+    const ai = mesh.indices[offset] * 3;
+    const bi = mesh.indices[offset + 1] * 3;
+    const ci = mesh.indices[offset + 2] * 3;
+    const ax = mesh.positions[ai], ay = mesh.positions[ai + 1], az = mesh.positions[ai + 2];
+    const bx = mesh.positions[bi], by = mesh.positions[bi + 1], bz = mesh.positions[bi + 2];
+    const cx = mesh.positions[ci], cy = mesh.positions[ci + 1], cz = mesh.positions[ci + 2];
+    signedVolume += (
+      ax * (by * cz - bz * cy)
+      + ay * (bz * cx - bx * cz)
+      + az * (bx * cy - by * cx)
+    ) / 6;
+  }
+  if (signedVolume >= 0) return mesh;
+  const indices = mesh.indices.slice();
+  for (let offset = 0; offset + 2 < indices.length; offset += 3) {
+    const second = indices[offset + 1];
+    indices[offset + 1] = indices[offset + 2];
+    indices[offset + 2] = second;
+  }
+  return { positions: mesh.positions, indices };
 }
 
 export function createBoxMesh(width: number, depth: number, height: number, cx = 0, cy = 0, z0 = 0): SolidMesh {

@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../entities/types';
-import { createBoxMesh, createTorusMesh, modifySolidEdge, pressPullFace, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
+import { createBoxMesh, createTorusMesh, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
+import { planarFaceRegionAt, solidPlanarFaces } from './SolidTopology';
+import { Document } from '../Document';
+
+const signedVolume = (mesh: { positions: Float32Array; indices: Uint32Array }): number => {
+  let volume = 0;
+  for (let offset = 0; offset < mesh.indices.length; offset += 3) {
+    const ids = [mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2]];
+    const point = (index: number) => ({
+      x: mesh.positions[index * 3], y: mesh.positions[index * 3 + 1], z: mesh.positions[index * 3 + 2],
+    });
+    const [a, b, c] = ids.map(point);
+    volume += (
+      a.x * (b.y * c.z - b.z * c.y)
+      + a.y * (b.z * c.x - b.x * c.z)
+      + a.z * (b.x * c.y - b.y * c.x)
+    ) / 6;
+  }
+  return volume;
+};
 
 describe('parametric solid regeneration', () => {
   it('regenerates every parametric primitive feature', async () => {
@@ -42,6 +61,42 @@ describe('parametric solid regeneration', () => {
     expect(changed).not.toBeNull();
     expect(changed!.positions[3]).toBeCloseTo(8);
     expect(changed!.positions[0]).toBeCloseTo(-5);
+  });
+
+  it('press-pulls only one half of a face split by a line as a watertight boolean', async () => {
+    const source = createBoxMesh(10, 6, 4);
+    const top = solidPlanarFaces(source).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    doc.activeWorkPlane.origin.z = 4;
+    const divider = doc.createLine({ x: -5, y: 0 }, { x: 5, y: 0 });
+    const upperHalf = planarFaceRegionAt(top, [divider], { x: 0, y: 2, z: 4 })!;
+
+    const pulled = await pressPullRegion(source, upperHalf, 3);
+
+    expect(pulled).not.toBeNull();
+    const zs = Array.from(pulled!.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zs)).toBeCloseTo(7, 4);
+    expect(Math.abs(signedVolume(pulled!))).toBeCloseTo(330, 2);
+  });
+
+  it('subtracts an inward face region to make a pocket', async () => {
+    const source = createBoxMesh(10, 6, 4);
+    const top = solidPlanarFaces(source).find((face) => face.normal.z > 0.9)!;
+    const xs = top.loops[0].map((point) => point.x), ys = top.loops[0].map((point) => point.y);
+    const centreX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const region = {
+      plane: top.plane,
+      loops: [[
+        { x: centreX - 1, y: centreY - 1 }, { x: centreX + 1, y: centreY - 1 },
+        { x: centreX + 1, y: centreY + 1 }, { x: centreX - 1, y: centreY + 1 },
+      ]],
+    };
+
+    const pocketed = await pressPullRegion(source, region, -2);
+
+    expect(pocketed).not.toBeNull();
+    expect(Math.abs(signedVolume(pocketed!))).toBeCloseTo(232, 2);
   });
 
   it('regenerates an extrusion from profile, transform and height', async () => {
