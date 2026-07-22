@@ -24,9 +24,8 @@ export interface GcodeResult {
    */
   skipped: Record<string, number>;
   /**
-   * Entities lying off the world XY plane. A three-axis machine owns Z, so their
-   * height cannot be honoured and dropping them beats cutting them flat in the
-   * wrong place.
+   * Entities lying off the world XY plane. This plotter output contains XY paths
+   * only, so dropping tilted geometry beats drawing it flat in the wrong place.
    */
   offPlane: number;
   moveCount: number;
@@ -37,8 +36,8 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
     '; MyCAD G-code',
     'G21 ; mm',
     'G90 ; absolute',
-    'G28 ; home',
-    `G0 Z${format(options.safeHeight)} F${format(options.travelRate)}`,
+    ...codeLines(options.penUpCode),
+    ...codeLines(options.homingCode),
   ];
   const skipped: Record<string, number> = {};
   const written: string[] = [];
@@ -64,13 +63,13 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
       for (const path of flat) {
         if (path.points.length < 2) continue;
         const points = path.closed ? [...path.points, path.points[0]] : path.points;
-        passes.push(`G0 X${format(points[0].x)} Y${format(points[0].y)}`);
-        passes.push(`G1 Z${format(options.cutDepth)} F${format(options.feedRate)}`);
+        passes.push(`G0 X${format(points[0].x)} Y${format(points[0].y)} F${format(options.travelRate)}`);
+        passes.push(...codeLines(options.penDownCode));
         for (const point of points.slice(1)) {
           passes.push(`G1 X${format(point.x)} Y${format(point.y)} F${format(options.feedRate)}`);
           moveCount++;
         }
-        passes.push(`G0 Z${format(options.safeHeight)} F${format(options.travelRate)}`);
+        passes.push(...codeLines(options.penUpCode));
       }
     }
     if (passes.length === 0) continue;
@@ -78,7 +77,7 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
     written.push(layer);
   }
 
-  lines.push('G0 Z' + format(options.safeHeight), 'M2 ; end');
+  lines.push('M2 ; end');
   return { gcode: lines.join('\n') + '\n', layers: written, skipped, offPlane, moveCount };
 }
 
@@ -107,4 +106,9 @@ function toWorldXY(entity: Entity, paths: ReturnType<typeof entityToPaths>): Arr
 function format(value: number): string {
   const rounded = Number(value.toFixed(3));
   return Object.is(rounded, -0) ? '0' : String(rounded);
+}
+
+/** A setting is one line in the UI, but imported project data may use a sequence. */
+function codeLines(code: string): string[] {
+  return code.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }

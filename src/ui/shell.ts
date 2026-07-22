@@ -156,10 +156,11 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
         </form>
         <form class="properties-content settings-tab-panel" id="gcode-settings-form" hidden>
-          <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
+          <label class="property-row"><span>Homing code</span><input id="gcode-homing-code" type="text" spellcheck="false" title="Controller command emitted before the first move"></label>
+          <label class="property-row"><span>Pen up code</span><input id="gcode-pen-up-code" type="text" spellcheck="false" title="Controller command that lifts or disables the pen"></label>
+          <label class="property-row"><span>Pen down code</span><input id="gcode-pen-down-code" type="text" spellcheck="false" title="Controller command that lowers or enables the pen"></label>
           <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
-          <label class="property-row"><span>Pen down Z</span><input id="gcode-cut-depth" type="number" step="0.1" title="Z where the pen touches; negative cuts"></label>
-          <label class="property-row"><span>Pen up Z</span><input id="gcode-safe-height" type="number" min="0.1" step="0.5" title="Z to lift to before travelling"></label>
+          <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
           <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
         </form>
       </section>

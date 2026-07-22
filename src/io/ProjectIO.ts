@@ -207,11 +207,6 @@ function loadDimensionStyle(value: unknown): DimensionStyle {
 }
 
 /**
- * A pen plotter's feed rates and pen heights belong to the drawing that was set
- * up for it. Cut depth is the one that may be negative or zero — a pen touches
- * the paper at Z 0 and a knife goes below it — so it cannot use `positive`.
- */
-/**
  * An object's colour index: its own if the file has one, otherwise inferred
  * from the RGB an older file stored — so a drawing from before the palette
  * keeps roughly the colours it had rather than all going white.
@@ -254,11 +249,13 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
   if (!value || typeof value !== 'object') return defaults;
   const raw = value as Partial<Record<keyof GcodeOptions, unknown>>;
   const positive = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
+  const command = (candidate: unknown, fallback: string): string => typeof candidate === 'string' && candidate.trim() ? candidate.trim() : fallback;
   return {
     feedRate: positive(raw.feedRate, defaults.feedRate),
     travelRate: positive(raw.travelRate, defaults.travelRate),
-    cutDepth: typeof raw.cutDepth === 'number' && Number.isFinite(raw.cutDepth) ? raw.cutDepth : defaults.cutDepth,
-    safeHeight: positive(raw.safeHeight, defaults.safeHeight),
+    penUpCode: command(raw.penUpCode, defaults.penUpCode),
+    penDownCode: command(raw.penDownCode, defaults.penDownCode),
+    homingCode: command(raw.homingCode, defaults.homingCode),
     segments: typeof raw.segments === 'number' && Number.isInteger(raw.segments) && raw.segments >= 3 ? raw.segments : defaults.segments,
   };
 }

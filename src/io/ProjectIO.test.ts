@@ -217,7 +217,14 @@ describe('ProjectIO', () => {
 
   it('round-trips the plotter settings, which belong to the drawing', () => {
     const source = new Document();
-    source.gcode = { feedRate: 1200, travelRate: 3000, cutDepth: -2.5, safeHeight: 8, segments: 128 };
+    source.gcode = {
+      feedRate: 1200,
+      travelRate: 3000,
+      penUpCode: 'M9',
+      penDownCode: 'M8',
+      homingCode: 'G28',
+      segments: 128,
+    };
     const target = new Document();
 
     loadProject(target, serializeProject(source));
@@ -228,14 +235,37 @@ describe('ProjectIO', () => {
   it('refuses plotter settings a machine could not use', () => {
     const source = new Document();
     const saved = JSON.parse(serializeProject(source));
-    saved.settings.gcode = { feedRate: 0, travelRate: -5, cutDepth: -3, safeHeight: 0, segments: 1 };
+    saved.settings.gcode = { feedRate: 0, travelRate: -5, penUpCode: '', penDownCode: 3, homingCode: ' ', segments: 1 };
     const target = new Document();
 
     loadProject(target, JSON.stringify(saved));
 
-    // A feed of zero never moves and a pen that lifts to 0 never lifts, so those
-    // fall back — but a negative pen-down Z is a knife, and is kept.
-    expect(target.gcode).toMatchObject({ feedRate: 800, travelRate: 2400, safeHeight: 5, segments: 64, cutDepth: -3 });
+    expect(target.gcode).toEqual({
+      feedRate: 4000,
+      travelRate: 6000,
+      penUpCode: 'M5',
+      penDownCode: 'M3 S19',
+      homingCode: '$H',
+      segments: 64,
+    });
+  });
+
+  it('adds command defaults when loading a project saved before command-driven pen control', () => {
+    const source = new Document();
+    const saved = JSON.parse(serializeProject(source));
+    saved.settings.gcode = { feedRate: 900, travelRate: 1800, cutDepth: 0, safeHeight: 5, segments: 32 };
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.gcode).toEqual({
+      feedRate: 900,
+      travelRate: 1800,
+      penUpCode: 'M5',
+      penDownCode: 'M3 S19',
+      homingCode: '$H',
+      segments: 32,
+    });
   });
 
   it('uses drafting defaults when loading an older project', () => {

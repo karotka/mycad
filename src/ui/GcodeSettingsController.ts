@@ -1,9 +1,8 @@
 import type { Document } from '../core/Document';
 
 /**
- * What the plotter is told: how fast to draw, how fast to travel, and where the
- * pen sits when it is down and when it is lifted. The export used to run on
- * defaults with no way to reach them.
+ * What the plotter is told: how fast to draw and travel, and which controller
+ * commands home the machine and move the pen.
  *
  * A sibling of DraftingSettingsController and DimensionStyleController, and the
  * same shape deliberately.
@@ -26,10 +25,11 @@ export class GcodeSettingsController {
    */
   render(): void {
     if (this.applying) return;
+    this.set('gcode-homing-code', this.doc.gcode.homingCode);
+    this.set('gcode-pen-up-code', this.doc.gcode.penUpCode);
+    this.set('gcode-pen-down-code', this.doc.gcode.penDownCode);
     this.set('gcode-feed-rate', this.doc.gcode.feedRate);
     this.set('gcode-travel-rate', this.doc.gcode.travelRate);
-    this.set('gcode-cut-depth', this.doc.gcode.cutDepth);
-    this.set('gcode-safe-height', this.doc.gcode.safeHeight);
     this.set('gcode-segments', this.doc.gcode.segments);
   }
 
@@ -47,13 +47,12 @@ export class GcodeSettingsController {
       const value = Number(this.get(id).value);
       return Number.isFinite(value) && value > 0 ? value : fallback;
     };
+    const command = (id: string, fallback: string): string => this.get(id).value.trim() || fallback;
+    this.doc.gcode.homingCode = command('gcode-homing-code', this.doc.gcode.homingCode);
+    this.doc.gcode.penUpCode = command('gcode-pen-up-code', this.doc.gcode.penUpCode);
+    this.doc.gcode.penDownCode = command('gcode-pen-down-code', this.doc.gcode.penDownCode);
     this.doc.gcode.feedRate = positive('gcode-feed-rate', this.doc.gcode.feedRate);
     this.doc.gcode.travelRate = positive('gcode-travel-rate', this.doc.gcode.travelRate);
-    this.doc.gcode.safeHeight = positive('gcode-safe-height', this.doc.gcode.safeHeight);
-    // The only one that may be zero or below: a pen touches the paper at Z 0 and
-    // a knife goes under it, so `positive` would refuse the ordinary case.
-    const depth = Number(this.get('gcode-cut-depth').value);
-    if (Number.isFinite(depth)) this.doc.gcode.cutDepth = depth;
     // Below three there is no curve left to draw, whatever the field says.
     const segments = Number(this.get('gcode-segments').value);
     if (Number.isInteger(segments) && segments >= 3) this.doc.gcode.segments = segments;
@@ -67,5 +66,5 @@ export class GcodeSettingsController {
     return input;
   }
 
-  private set(id: string, value: number): void { this.get(id).value = String(value); }
+  private set(id: string, value: string | number): void { this.get(id).value = String(value); }
 }

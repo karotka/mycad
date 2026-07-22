@@ -186,7 +186,7 @@ export class ProjectController {
     const skipped = Object.entries(result.skipped).map(([type, count]) => `${type}×${count}`).join(', ');
     if (skipped) this.callbacks.log(`No tool path for: ${skipped}. Text needs a single-stroke font.`);
     if (result.offPlane > 0) {
-      this.callbacks.log(`${result.offPlane} object(s) skipped: they do not lie on the world XY plane, and Z belongs to the tool.`);
+      this.callbacks.log(`${result.offPlane} object(s) skipped: they do not lie on the world XY plane, and plotter output contains XY paths only.`);
     }
     await this.saveText(result.gcode, 'model.gcode', 'G-code', 'gcode');
   }

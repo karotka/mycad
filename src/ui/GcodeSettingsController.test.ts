@@ -8,10 +8,11 @@ function setup() {
   document.body.innerHTML = `
     <section id="panel" hidden></section>
     <form id="form">
+      <input id="gcode-homing-code" type="text">
+      <input id="gcode-pen-up-code" type="text">
+      <input id="gcode-pen-down-code" type="text">
       <input id="gcode-feed-rate" type="number">
       <input id="gcode-travel-rate" type="number">
-      <input id="gcode-cut-depth" type="number">
-      <input id="gcode-safe-height" type="number">
       <input id="gcode-segments" type="number">
     </form>
     <button id="toggle"></button>
@@ -34,9 +35,11 @@ describe('GcodeSettingsController', () => {
   it('shows what the document will be exported with', () => {
     const { controller } = setup();
     controller.render();
-    expect(field('gcode-feed-rate').value).toBe('800');
-    expect(field('gcode-cut-depth').value).toBe('0');
-    expect(field('gcode-safe-height').value).toBe('5');
+    expect(field('gcode-homing-code').value).toBe('$H');
+    expect(field('gcode-pen-up-code').value).toBe('M5');
+    expect(field('gcode-pen-down-code').value).toBe('M3 S19');
+    expect(field('gcode-travel-rate').value).toBe('6000');
+    expect(field('gcode-feed-rate').value).toBe('4000');
   });
 
   it('changes what comes out of the export', () => {
@@ -44,10 +47,10 @@ describe('GcodeSettingsController', () => {
     controller.render();
 
     type('gcode-feed-rate', '1200');
-    type('gcode-cut-depth', '-2');
+    type('gcode-pen-down-code', 'M3 S30');
 
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
-    expect(exportGcode(doc).gcode).toContain('G1 Z-2 F1200');
+    expect(exportGcode(doc).gcode).toContain('M3 S30\nG1 X10 Y0 F1200');
   });
 
   it('lets a field be cleared and retyped', () => {
@@ -68,22 +71,21 @@ describe('GcodeSettingsController', () => {
     controller.render();
 
     type('gcode-feed-rate', '0');   // a plotter that never moves
-    type('gcode-safe-height', '-1'); // a pen that lifts into the paper
+    type('gcode-travel-rate', '-1'); // a travel that never reaches the work
     type('gcode-segments', '1');     // not a curve
 
-    expect(doc.gcode.feedRate).toBe(800);
-    expect(doc.gcode.safeHeight).toBe(5);
+    expect(doc.gcode.feedRate).toBe(4000);
+    expect(doc.gcode.travelRate).toBe(6000);
     expect(doc.gcode.segments).toBe(64);
   });
 
-  it('takes a pen-down Z of zero or below, which the others could not', () => {
+  it('keeps the last usable command while a code field is empty', () => {
     const { doc, controller } = setup();
     controller.render();
-    // A pen touches the paper at 0 and a knife goes under it, so the guard the
-    // other fields use would refuse the ordinary case.
-    type('gcode-cut-depth', '-3.5');
-    expect(doc.gcode.cutDepth).toBe(-3.5);
-    type('gcode-cut-depth', '0');
-    expect(doc.gcode.cutDepth).toBe(0);
+    type('gcode-pen-up-code', '  ');
+    expect(doc.gcode.penUpCode).toBe('M5');
+    expect(field('gcode-pen-up-code').value).toBe('  ');
+    type('gcode-pen-up-code', 'M9');
+    expect(doc.gcode.penUpCode).toBe('M9');
   });
 });

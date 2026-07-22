@@ -15,9 +15,9 @@ describe('exportGcode', () => {
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
     const { gcode } = exportGcode(doc);
     const lines = gcode.split('\n');
-    expect(lines.slice(0, 4)).toEqual(['; MyCAD G-code', 'G21 ; mm', 'G90 ; absolute', 'G28 ; home']);
+    expect(lines.slice(0, 5)).toEqual(['; MyCAD G-code', 'G21 ; mm', 'G90 ; absolute', 'M5', '$H']);
     // Homing after a move would drag the tool across the work to reach it.
-    expect(lines.findIndex((line) => line.startsWith('G28'))).toBeLessThan(
+    expect(lines.findIndex((line) => line === '$H')).toBeLessThan(
       lines.findIndex((line) => line.startsWith('G0 X') || line.startsWith('G1 X')),
     );
   });
@@ -47,8 +47,14 @@ describe('exportGcode', () => {
   it('lifts the tool to travel and lowers it to cut', () => {
     const doc = setup();
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 5 }));
-    const { gcode } = exportGcode(doc, { ...defaultGcodeOptions(), cutDepth: -1, safeHeight: 4 });
-    expect(gcode).toContain('G0 X0 Y0\nG1 Z-1 F800\nG1 X10 Y5 F800\nG0 Z4 F2400');
+    const { gcode } = exportGcode(doc, {
+      ...defaultGcodeOptions(),
+      penUpCode: 'M9',
+      penDownCode: 'M8',
+      travelRate: 3000,
+      feedRate: 1200,
+    });
+    expect(gcode).toContain('G0 X0 Y0 F3000\nM8\nG1 X10 Y5 F1200\nM9');
   });
 
   it('closes a closed path by returning to its first point', () => {
@@ -59,10 +65,10 @@ describe('exportGcode', () => {
     // Four corners to walk and then back to the start: an open rectangle would
     // leave the last side uncut.
     expect(cuts).toEqual([
-      'G1 X10 Y0 F800',
-      'G1 X10 Y5 F800',
-      'G1 X0 Y5 F800',
-      'G1 X0 Y0 F800',
+      'G1 X10 Y0 F4000',
+      'G1 X10 Y5 F4000',
+      'G1 X0 Y5 F4000',
+      'G1 X0 Y0 F4000',
     ]);
   });
 
@@ -89,7 +95,7 @@ describe('exportGcode', () => {
     // letter rather than the letter. Saying so is the difference between a known
     // gap and a file that quietly came out missing its label.
     expect(skipped).toEqual({ text: 1 });
-    expect(gcode).toContain('G1 X10 Y0 F800');
+    expect(gcode).toContain('G1 X10 Y0 F4000');
   });
 
   it('plots text in the single-stroke font', () => {
@@ -101,7 +107,7 @@ describe('exportGcode', () => {
     expect(moveCount).toBeGreaterThan(5);
     // Each run lifts the pen, travels to where the next begins and puts it down:
     // letters are strokes, not one continuous scribble.
-    expect(gcode).toContain('G1 Z0 F800');
+    expect(gcode).toContain('M3 S19');
     expect(gcode.split('\n').filter((line) => line.startsWith('G0 X')).length).toBeGreaterThan(2);
     // And it lands where it was put.
     const first = gcode.split('\n').find((line) => line.startsWith('G0 X'))!;
@@ -116,8 +122,8 @@ describe('exportGcode', () => {
     line.workPlane = { origin: { x: 0, y: 0, z: 3 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } };
     doc.addEntity(line);
     const { offPlane, moveCount } = exportGcode(doc);
-    // Z belongs to the tool. Cutting this at Z = 0 would put it in the right
-    // place on the wrong workpiece.
+    // The plotter file owns only world XY. Flattening this would put it in the
+    // right apparent place on the wrong plane.
     expect(offPlane).toBe(1);
     expect(moveCount).toBe(0);
   });
@@ -131,13 +137,13 @@ describe('exportGcode', () => {
     // Drawn along local X on a plane turned a quarter turn and moved: the file
     // says where it actually is in the world, which is what the screen shows.
     expect(gcode).toContain('G0 X100 Y50');
-    expect(gcode).toContain('G1 X100 Y60 F800');
+    expect(gcode).toContain('G1 X100 Y60 F4000');
   });
 
   it('ends by lifting the tool', () => {
     const doc = setup();
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 }));
     const gcode = exportGcode(doc).gcode;
-    expect(gcode.endsWith('G0 Z5\nM2 ; end\n')).toBe(true);
+    expect(gcode.endsWith('M5\nM2 ; end\n')).toBe(true);
   });
 });
