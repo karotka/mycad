@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
+import { WORLD_WORK_PLANE } from '../math/workplane';
+import type { EdgeModificationFeature, PrimitiveFeature } from '../core/entities/types';
+import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 
 describe('ProjectIO', () => {
@@ -14,7 +17,7 @@ describe('ProjectIO', () => {
     doc.addSolid(solid);
     const saved = JSON.parse(serializeProject(doc));
     expect(saved).toMatchObject({ format: 'mycad', version: 1, units: 'mm' });
-    expect(saved.settings).toMatchObject({ gridSize: 1, snapSize: 0.5 });
+    expect(saved.settings).toMatchObject({ gridSize: 1, gridVisible: true, snapSize: 0.5 });
     expect(saved.entities[0].type).toBe('rectangle');
     expect(saved.solids[0].mesh.positions).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 1]);
   });
@@ -25,12 +28,31 @@ describe('ProjectIO', () => {
       { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
       'triangle', 0, []
     ));
-    const stl = exportAsciiStl(doc);
+    const stl = exportAsciiStl(doc.solids);
     expect(stl.match(/facet normal/g)).toHaveLength(1);
     expect(stl).toContain('facet normal 0 0 1');
     expect(stl).toContain('vertex 1 0 0');
     expect(stl).toMatch(/^solid MyCAD/);
     expect(stl).toMatch(/endsolid MyCAD\n$/);
+  });
+
+  it('exports only the solids explicitly passed to the STL writer', () => {
+    const doc = new Document();
+    const omitted = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'omitted', 0, [],
+    );
+    const selected = doc.createSolid(
+      { positions: new Float32Array([10, 0, 0, 11, 0, 0, 10, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'selected', 0, [],
+    );
+    doc.solids.push(omitted, selected);
+
+    const stl = exportAsciiStl([selected]);
+
+    expect(stl.match(/facet normal/g)).toHaveLength(1);
+    expect(stl).toContain('vertex 10 0 0');
+    expect(stl).not.toContain('vertex 0 0 0');
   });
 
   it('loads a saved project and restores typed mesh arrays', () => {
@@ -49,6 +71,69 @@ describe('ProjectIO', () => {
     expect(target.activeWorkPlane.origin).toEqual({ x: 2, y: 3, z: 4 });
   });
 
+  it('round-trips a reversible chamfer with a JSON-safe source mesh', () => {
+    const source = new Document();
+    const base: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const mesh = primitiveMesh(base);
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'chamfer', source: base, amount: 1,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+    };
+    source.addSolid(source.createSolid(mesh, 'Chamfered box', 4, [], undefined, feature));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.solids[0].feature).toMatchObject({ kind: 'edge-modification', amount: 1 });
+    if (target.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
+    expect(target.solids[0].feature.sourceMesh.positions).toEqual(Array.from(mesh.positions));
+    expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
+  });
+
+  it('round-trips named UCS shortcuts and restores the active origin and axes', () => {
+    const source = new Document();
+    const firstPlane = { ...source.activeWorkPlane, origin: { x: 10, y: 20, z: 30 } };
+    const secondPlane = {
+      origin: { x: 4, y: 5, z: 6 },
+      xAxis: { x: 0, y: 1, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 1, y: 0, z: 0 },
+    };
+    source.addNamedWorkPlane(firstPlane, 'Table');
+    const active = source.addNamedWorkPlane(secondPlane, 'Vice origin');
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.namedWorkPlanes.map((item) => item.name)).toEqual(['Table', 'Vice origin']);
+    expect(target.activeNamedWorkPlaneId).toBe(active.id);
+    expect(target.activeWorkPlane).toEqual(secondPlane);
+    expect(target.activeWorkPlane).not.toBe(target.namedWorkPlanes[1].workPlane);
+    expect(target.viewMode).toBe('3d');
+  });
+
+  it('ignores invalid saved UCS entries instead of loading broken axes', () => {
+    const source = new Document();
+    const saved = JSON.parse(serializeProject(source));
+    saved.settings.namedWorkPlanes = [
+      { id: 'good', name: 'Good', workPlane: WORLD_WORK_PLANE },
+      { id: 'bad', name: 'Bad', workPlane: { origin: { x: 'no', y: 0, z: 0 } } },
+    ];
+    saved.settings.activeNamedWorkPlaneId = 'bad';
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.namedWorkPlanes.map((item) => item.id)).toEqual(['good']);
+    expect(target.activeNamedWorkPlaneId).toBeNull();
+  });
+
   it('round-trips drafting and dimension settings', () => {
     const source = new Document();
     source.drafting.orthoEnabled = true;
@@ -62,6 +147,21 @@ describe('ProjectIO', () => {
 
     expect(target.drafting).toEqual(source.drafting);
     expect(target.dimensionStyle).toEqual(source.dimensionStyle);
+  });
+
+  it('round-trips grid visibility and defaults older drawings to visible', () => {
+    const source = new Document();
+    source.gridVisible = false;
+    const hidden = new Document();
+    loadProject(hidden, serializeProject(source));
+    expect(hidden.gridVisible).toBe(false);
+
+    const older = JSON.parse(serializeProject(source));
+    delete older.settings.gridVisible;
+    const visible = new Document();
+    visible.gridVisible = false;
+    loadProject(visible, JSON.stringify(older));
+    expect(visible.gridVisible).toBe(true);
   });
 
   it('round-trips per-layer line weight and line type', () => {

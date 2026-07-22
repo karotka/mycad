@@ -290,6 +290,27 @@ export interface MeshFeature {
   kind: 'mesh';
 }
 
+/**
+ * A JSON-safe copy of a mesh. Feature trees are written straight into project
+ * files, so typed arrays cannot live here: JSON would turn them into objects
+ * with numeric keys instead of arrays that can be restored reliably.
+ */
+export interface SerializedSolidMesh {
+  positions: number[];
+  indices: number[];
+}
+
+/** A reversible operation on one solid edge. */
+export interface EdgeModificationFeature {
+  kind: 'edge-modification';
+  operation: 'chamfer' | 'fillet';
+  source: SolidFeature;
+  edge: SolidEdgeSelection;
+  amount: number;
+  /** Geometry immediately before this operation, for a baked mesh source. */
+  sourceMesh: SerializedSolidMesh;
+}
+
 export interface PrimitiveFeature {
   kind: 'primitive';
   primitive: 'box' | 'wedge' | 'sphere' | 'cone' | 'cylinder' | 'pyramid' | 'torus';
@@ -319,7 +340,7 @@ export interface PrimitiveFeature {
   workPlane?: WorkPlane;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature;
 
 export interface Solid {
   id: string;

@@ -304,6 +304,16 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
   if (feature.kind === 'sweep') {
     return sweepProfile(feature.profile, feature.path, feature.workPlane ?? WORLD_WORK_PLANE);
   }
+  if (feature.kind === 'edge-modification') {
+    // Most sources can be rebuilt from their recipe. A legacy/baked mesh has no
+    // recipe, so the feature keeps exactly the geometry it received instead.
+    const regenerated = await regenerateSolidFeature(feature.source);
+    const source = regenerated ?? {
+      positions: new Float32Array(feature.sourceMesh.positions),
+      indices: new Uint32Array(feature.sourceMesh.indices),
+    };
+    return modifySolidEdge(source, feature.edge, feature.amount, feature.operation === 'fillet');
+  }
 
   const operands: SolidMesh[] = [];
   for (const operand of feature.operands) {
@@ -365,6 +375,37 @@ export async function booleanSubtract(base: SolidMesh, tool: SolidMesh): Promise
     result.delete();
     baseManifold.delete();
     toolManifold.delete();
+  }
+}
+
+/**
+ * Cuts one watertight mesh into the two capped meshes on either side of a
+ * world-space plane. A plane outside or merely tangent to the body is not a
+ * split: returning null lets the command leave that source solid untouched.
+ */
+export async function splitSolidByPlane(
+  mesh: SolidMesh,
+  origin: Vec3,
+  normal: Vec3,
+): Promise<[SolidMesh, SolidMesh] | null> {
+  const length = Math.hypot(normal.x, normal.y, normal.z);
+  if (!Number.isFinite(length) || length < 1e-9) return null;
+  const unit: [number, number, number] = [normal.x / length, normal.y / length, normal.z / length];
+  const offset = unit[0] * origin.x + unit[1] * origin.y + unit[2] * origin.z;
+  if (!Number.isFinite(offset)) return null;
+
+  const manifold = await initManifold();
+  const sourceMesh = new manifold.Mesh({ numProp: 3, vertProperties: mesh.positions, triVerts: mesh.indices });
+  const source = new manifold.Manifold(sourceMesh);
+  let parts: InstanceType<typeof manifold.Manifold>[] = [];
+  try {
+    parts = source.splitByPlane(unit, offset);
+    const nonEmpty = parts.filter((part) => !part.isEmpty());
+    if (nonEmpty.length !== 2) return null;
+    return [manifoldToMesh(manifold, nonEmpty[0]), manifoldToMesh(manifold, nonEmpty[1])];
+  } finally {
+    for (const part of parts) part.delete();
+    source.delete();
   }
 }
 

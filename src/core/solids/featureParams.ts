@@ -24,12 +24,22 @@ export interface FeatureParam {
 export function featureParams(feature: SolidFeature): FeatureParam[] {
   if (feature.kind === 'primitive') return primitiveParams(feature);
   if (feature.kind === 'extrusion') return extrusionParams(feature);
+  if (feature.kind === 'edge-modification') return [{
+    key: 'amount',
+    label: feature.operation === 'fillet' ? 'Radius' : 'Distance',
+    value: feature.amount,
+    min: 1e-6,
+  }];
   return [];
 }
 
 export function setFeatureParam(feature: SolidFeature, key: string, value: number): boolean {
   if (feature.kind === 'primitive') return setPrimitiveParam(feature, key, value);
   if (feature.kind === 'extrusion') return setExtrusionParam(feature, key, value);
+  if (feature.kind === 'edge-modification' && key === 'amount' && Number.isFinite(value) && value >= 1e-6) {
+    feature.amount = value;
+    return true;
+  }
   return false;
 }
 

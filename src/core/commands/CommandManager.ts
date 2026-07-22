@@ -56,6 +56,8 @@ export class CommandManager {
   historyIndex = -1;
   /** What Enter at an empty prompt repeats, however that command was started. */
   private lastCommand: CommandName | null = null;
+  /** Per-command defaults accepted by Enter, such as the last circle radius. */
+  private rememberedStepValues = new Map<string, number>();
 
   constructor(private ctx: CommandContext) {}
 
@@ -95,7 +97,10 @@ export class CommandManager {
   syncWindowSelection(): boolean {
     if (!this.active || !this.isMultiObjectStep) return false;
     this.active.data.entities = [...this.ctx.doc.getSelectedEntities()];
-    this.active.data.solids = [...this.ctx.doc.getSelectedSolids()];
+    const excludedSolidIds = new Set(
+      [this.active.data.baseId, this.active.data.solidId].filter((id): id is string => typeof id === 'string'),
+    );
+    this.active.data.solids = this.ctx.doc.getSelectedSolids().filter((solid) => !excludedSolidIds.has(solid.id));
     const count = (this.active.data.entities as Entity[]).length + (this.active.data.solids as Solid[]).length;
     this.ctx.log(`${count} object(s) selected. Select more or press Enter.`);
     this.showCurrentPrompt();
@@ -231,6 +236,13 @@ export class CommandManager {
     if (step.kind === 'done') return;
 
     if (trimmed.toUpperCase() === 'CANCEL' || trimmed === '') {
+      if (trimmed === '') {
+        const remembered = this.rememberedAnswer(step);
+        if (remembered !== null) {
+          await this.advanceStep(remembered);
+          return;
+        }
+      }
       if (step.optional) {
         await this.advanceStep(null);
         return;
@@ -268,6 +280,8 @@ export class CommandManager {
 
     if (step.kind === 'point') {
       await this.advanceStep(world);
+    } else if (step.kind === 'plane') {
+      await this.advanceStep(pickFace ?? world);
     } else if (step.kind === 'entity' && pickEntity && this.stepAccepts('entity')) {
       this.ctx.doc.selectEntity(pickEntity.id, this.isAdditiveStep);
       if (this.active.name === 'TRIM' && this.active.stepIndex === 1) this.active.data.targetPickPoint = world;
@@ -316,6 +330,7 @@ export class CommandManager {
 
   private async processStepInput(input: string, step: CommandStep): Promise<void> {
     switch (step.kind) {
+      case 'plane':
       case 'point': {
         // C closes the polyline: the same answer as Enter, with the ends
         // joined. Routed through the one path rather than a second way in.
@@ -437,6 +452,37 @@ export class CommandManager {
    */
   private advancing = false;
 
+  private stepMemoryKey(): string | null {
+    return this.active ? `${this.active.name}:${this.active.stepIndex}` : null;
+  }
+
+  /** Turns a stored semantic value back into the answer shape a step consumes. */
+  private rememberedAnswer(step: CommandStep): unknown | null {
+    const key = this.stepMemoryKey();
+    if (!key) return null;
+    const remembered = this.rememberedStepValues.get(key);
+    if (remembered === undefined) return null;
+    if (step.kind === 'number' && step.remember) return remembered;
+    if (step.kind === 'point' && step.rememberDistanceFrom && this.active) {
+      const base = this.active.data[step.rememberDistanceFrom] as Vec2 | undefined;
+      return base ? { x: base.x + remembered, y: base.y } : null;
+    }
+    return null;
+  }
+
+  /** Records only an answer the command accepted, never one it refused. */
+  private rememberAcceptedAnswer(step: CommandStep, value: unknown, data: Record<string, unknown>): void {
+    const key = this.stepMemoryKey();
+    if (!key) return;
+    if (step.kind === 'number' && step.remember && typeof value === 'number' && Number.isFinite(value)) {
+      this.rememberedStepValues.set(key, value);
+    } else if (step.kind === 'point' && step.rememberDistanceFrom && value && typeof value === 'object' && 'x' in value && 'y' in value) {
+      const base = data[step.rememberDistanceFrom] as Vec2 | undefined;
+      const point = value as Vec2;
+      if (base) this.rememberedStepValues.set(key, dist2(base, point));
+    }
+  }
+
   private async advanceStep(value: unknown): Promise<void> {
     if (this.advancing) return;
     this.advancing = true;
@@ -480,6 +526,7 @@ export class CommandManager {
         this.ctx.redraw();
         return;
       }
+      this.rememberAcceptedAnswer(step, value, data);
       this.finishStep();
       return;
     }

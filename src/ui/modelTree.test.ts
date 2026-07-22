@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import type { ExtrusionFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
-import { editedSolid, featureAt, featureLabel, featureRows } from './modelTree';
+import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
+import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
+import { editedSolid, featureAt, featureLabel, featureRows, removedFeatureSolid } from './modelTree';
 
 const sphere = (radius: number, scale?: { x: number; y: number; z: number }): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius, height: radius * 2, scale });
@@ -12,6 +13,21 @@ const elephant: SolidFeature = {
     { kind: 'boolean', operation: 'union', operands: [sphere(10), sphere(4, { x: 3, y: 1, z: 0.5 })] },
     sphere(2),
   ],
+};
+
+const chamfer = (): EdgeModificationFeature => {
+  const source: PrimitiveFeature = {
+    kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+  };
+  const mesh = primitiveMesh(source);
+  return {
+    kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+    edge: {
+      solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    },
+    sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+  };
 };
 
 describe('featureRows', () => {
@@ -42,6 +58,14 @@ describe('featureRows', () => {
     const rows = featureRows(elephant);
     expect(rows.map((row) => row.hasChildren)).toEqual([true, true, false, false, false]);
   });
+
+  it('shows an edge operation above its source and protects the dependent source', () => {
+    const rows = featureRows(chamfer());
+    expect(rows.map((row) => [row.label, row.path, row.blockedByEdge])).toEqual([
+      ['Chamfer', [], false],
+      ['Box', [0], true],
+    ]);
+  });
 });
 
 describe('featureLabel', () => {
@@ -54,6 +78,10 @@ describe('featureLabel', () => {
 
   it('counts what a boolean is made of', () => {
     expect(featureLabel(elephant)).toEqual({ label: 'Subtract', detail: '2 parts' });
+  });
+
+  it('names reversible edge operations and their value', () => {
+    expect(featureLabel(chamfer())).toEqual({ label: 'Chamfer', detail: '1 mm' });
   });
 });
 
@@ -134,12 +162,41 @@ describe('editedSolid', () => {
     // being a tree: the part changed, so what it was welded into changed too.
     expect(bounds(after!).maxX).toBeCloseTo(26, 1);
   });
+
+  it('changes a chamfer amount without baking its feature', async () => {
+    const doc = new Document();
+    const feature = chamfer();
+    const mesh = (await regenerateSolidFeature(feature))!;
+    const solid = doc.createSolid(mesh, 'Chamfered box', 4, [], undefined, feature);
+
+    const after = await editedSolid(solid, [], 'amount', 1.5);
+
+    expect(after?.feature).toMatchObject({ kind: 'edge-modification', operation: 'chamfer', amount: 1.5 });
+    expect(after?.mesh.indices.length).toBeGreaterThan(0);
+  });
+});
+
+describe('removedFeatureSolid', () => {
+  it('removes a chamfer and restores the feature and geometry before it', async () => {
+    const doc = new Document();
+    const feature = chamfer();
+    const changed = (await regenerateSolidFeature(feature))!;
+    const solid = doc.createSolid(changed, 'Chamfered box', 4, [], undefined, feature);
+
+    const restored = await removedFeatureSolid(solid, []);
+
+    expect(restored?.feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh.indices.length);
+    expect(restored?.revision).toBe(solid.revision + 1);
+    expect(solid.feature.kind).toBe('edge-modification');
+  });
 });
 
 describe('featureAt', () => {
   it('finds the feature a row points at', () => {
     expect(featureAt(elephant, [0, 1])).toMatchObject({ primitive: 'sphere', radius: 4 });
     expect(featureAt(elephant, [])).toBe(elephant);
+    expect(featureAt(chamfer(), [0])).toMatchObject({ kind: 'primitive', primitive: 'box' });
   });
 
   it('returns null rather than guess when the path leads nowhere', () => {

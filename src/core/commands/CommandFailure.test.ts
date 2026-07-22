@@ -44,6 +44,7 @@ describe('when the 3D engine cannot be loaded', () => {
 
     manager.startCommand('EXTRUDE');
     await manager.handleClick({ x: 5, y: 2 }, profile);
+    await manager.submitInput('');
     await manager.submitInput('10');
 
     const failure = lines(log).find((line) => line.includes('failed'));
@@ -61,6 +62,7 @@ describe('when the 3D engine cannot be loaded', () => {
 
     manager.startCommand('EXTRUDE');
     await manager.handleClick({ x: 5, y: 2 }, profile);
+    await manager.submitInput('');
     await manager.submitInput('10');
 
     expect(manager.active).toMatchObject({ name: 'EXTRUDE', stepIndex: 1 });
@@ -73,6 +75,7 @@ describe('when the 3D engine cannot be loaded', () => {
     doc.addEntity(profile);
     manager.startCommand('EXTRUDE');
     await manager.handleClick({ x: 5, y: 2 }, profile);
+    await manager.submitInput('');
 
     await manager.submitInput('10');
     await manager.submitInput('10');

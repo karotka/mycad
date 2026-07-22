@@ -4,6 +4,7 @@ import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
 import type { ObjectSnapMode } from '../core/settings';
+import { solidCircularEdgeCenters, solidFeatureEdges } from '../core/solids/SolidTopology';
 export type { ObjectSnapMode } from '../core/settings';
 
 export interface SnapTarget {
@@ -70,6 +71,10 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
         y: (bounds.minY + bounds.maxY) / 2,
         z: (bounds.minZ + bounds.maxZ) / 2,
       });
+      // A cylindrical hole has two usable centres: one on each face it opens
+      // through. They are centres of circular feature-edge loops, not the
+      // body's bounding-box centre.
+      candidates.push(...solidCircularEdgeCenters(solid.mesh));
     } else {
       addSolidEdgeMiddles(solid.mesh.positions, solid.mesh.indices, candidates);
     }
@@ -151,6 +156,26 @@ function perpendicularCandidates(doc: Document, reference?: Vec3 | null, exclude
       if (lengthSquared < 1e-12) continue;
       const t = Math.max(0, Math.min(1, ((localReference.x - start.x) * dx + (localReference.y - start.y) * dy) / lengthSquared));
       candidates.push(localToWorld(plane, { x: start.x + dx * t, y: start.y + dy * t }));
+    }
+  }
+  for (const solid of doc.solids) {
+    if (solid.id === excludedId || doc.hiddenLayers.has(solid.layer)) continue;
+    for (const edge of solidFeatureEdges(solid.mesh)) {
+      const dx = edge.end.x - edge.start.x;
+      const dy = edge.end.y - edge.start.y;
+      const dz = edge.end.z - edge.start.z;
+      const lengthSquared = dx * dx + dy * dy + dz * dz;
+      if (lengthSquared < 1e-12) continue;
+      const t = Math.max(0, Math.min(1, (
+        (reference.x - edge.start.x) * dx
+        + (reference.y - edge.start.y) * dy
+        + (reference.z - edge.start.z) * dz
+      ) / lengthSquared));
+      candidates.push({
+        x: edge.start.x + dx * t,
+        y: edge.start.y + dy * t,
+        z: edge.start.z + dz * t,
+      });
     }
   }
   return candidates;

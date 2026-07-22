@@ -15,7 +15,8 @@ export class DrawingInteractionController {
 
   get isPointStep(): boolean {
     const active = this.commands.active;
-    return Boolean(active && takesPointInput(active.name) && active.steps[active.stepIndex]?.kind === 'point');
+    const kind = active?.steps[active.stepIndex]?.kind;
+    return Boolean(active && takesPointInput(active.name) && (kind === 'point' || kind === 'plane'));
   }
 
   setTargetSnapMode(mode: ObjectSnapMode | null): void {

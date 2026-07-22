@@ -42,48 +42,6 @@ pass because it touches `shell.ts`, `app.css`, the menu wiring in
 
 ---
 
-## The WCS button: predefined UCS, and saving your own
-
-The view cube resets orientation; the little WCS button beside it returns the
-coordinate system to the world. The next step is to make that button a menu:
-
-- **Predefined UCS.** Front, Top, Right, Left and so on as named coordinate
-  systems, not just camera views — so "draw on the front" sets the work plane
-  there, and everything drawn after it lives on that plane. The engine already
-  places geometry on `activeWorkPlane`; this is a menu that sets it to one of a
-  handful of standard planes rather than only through the three-point UCS
-  command.
-- **User-defined UCS, saved.** Set a work plane with the UCS command, name it,
-  and have it in the list next time. This needs a decision the model does not
-  make yet: **where a named UCS lives.** Options —
-  - on the `Document`, saved in the `.mycad` file, so it travels with the
-    drawing (a named plane is part of how *this* drawing is set up, like its
-    layers). This is the likely answer, and it mirrors `layerAci`/`gcode`.
-  - as an application preference, shared across drawings — wrong, because a plane
-    is defined by geometry that only means something in one drawing.
-
-  So: a `namedWorkPlanes: Record<string, WorkPlane>` on the Document, round-tripped
-  through `ProjectIO` the way the other settings are, and a menu on the WCS button
-  that lists them plus the standard ones. Deciding this is the real work; the UI
-  is small once it is decided.
-
----
-
-## BOX and the other two-corner solids: drag the height live
-
-BOX, WEDGE and the rest ask for two corners and then a *typed* height, against a
-still picture — the same gap PRESSPULL and EXTRUDE had before they were given a
-live drag. The fix is the same shape: once the base rectangle is placed, the
-cursor drags the height and the solid is rebuilt as it moves, by the engine that
-will build the real one, so what is on screen is what gets made. A vertex under
-the cursor snaps, so a box can be pulled to exactly the height of something
-already drawn.
-
-`extrudeHeightUnderCursor` / `pressPullDrag` in `main.ts` are the pattern, and
-`axisOffsetUnderRay` already answers "how far along the up axis is the pointer".
-The primitives build synchronously (no WASM), so the preview costs a mesh rebuild
-per frame and nothing else.
-
 ## DXF import
 
 The importer now covers LINE, CIRCLE, ARC, LWPOLYLINE/POLYLINE (arcs via bulge),
@@ -198,6 +156,43 @@ Modelling the reference elephant was a probe of the solid engine, and it turned
 up one missing capability, one primitive that cannot be expressed, and a
 systemic hole. `scale` and the model tree are done; the rest is here.
 
+### Face regions and arbitrary face healing
+
+These reports remain one topological family, not small command-wiring bugs:
+
+- **PRESSPULL a bounded part of a face.** Drawing a line across a box face must
+  split that face into selectable regions, then push only the chosen region.
+  Today a line is an independent 2D entity and a solid is only a triangle mesh;
+  neither records face loops or says that the line divides one. The current
+  face PRESSPULL moves all coplanar vertices and is suitable only for a simple
+  whole planar face.
+- **Delete an arbitrary face and heal the body.** The important first case is
+  done: CHAMFER and FILLET are persistent `edge-modification` features, expose
+  their distance/radius in the model tree, and can be removed there with the
+  × button (including Undo/Redo). What remains is deleting a face from an
+  imported or otherwise baked mesh, where adjacent surfaces must be extended
+  and intersected to close the body.
+- **SECTION is deliberately postponed until drawing views.** It is a
+  non-destructive renderer clipping plane with section-edge/cap display, not a
+  modelling command. `SLICE` remains the command that physically changes the
+  model.
+
+This needs an explicit face/region representation (or a feature-history answer
+for each operation) before UI commands are added. Otherwise bounded PRESSPULL
+and delete face would each invent incompatible topology from raw triangles.
+
+### ~~SLICE / split a solid with a plane~~ — done
+
+`SLICE` takes one or more selected solids (including preselection), then accepts
+either an existing planar solid face or three snapped points for the cutting
+plane. Manifold's `splitByPlane` produces both capped, watertight halves; all
+selected solids that the plane crosses are replaced in one undoable edit, while
+solids missed by the plane stay untouched. Both halves are kept and selected.
+
+The output honestly becomes `{ kind: 'mesh' }`: the geometric split is exact,
+but there is no slice feature in the parametric tree yet. Adding keep-side
+choices or a persistent, editable slice plane can build on this command later.
+
 ### ~~The feature tree is thrown away by half the app~~ — done
 
 A `Solid` keeps how it was built in `feature`, and five places used to overwrite
@@ -207,11 +202,17 @@ nowhere to put the result**. It does now — a move is the work plane's origin, 
 rotation is its axes, a scale is `scale` — so `featureTransform.ts` writes them
 down instead: `translatedFeature`, `rotatedFeature`, `scaledFeature`.
 
-Two still bake, and honestly: **FILLET/CHAMFER** (`CommandManager:1364`) cuts the
-mesh with `modifySolidEdge` and there is no fillet feature to write to, and
-**PRESSPULL on a picked face** (`CommandManager:1730`) — an arbitrary face push
-is not a parameter of anything. Both are candidates for features of their own,
-not bugs.
+**FILLET/CHAMFER no longer bake.** Each operation wraps the preceding feature,
+keeps a JSON-safe snapshot when that source was already a mesh, and regenerates
+through `modifySolidEdge`. Its distance/radius is editable and the operation is
+removable in the model tree; MOVE, COPY, ROTATE, SCALE and MIRROR carry the edge
+reference and saved source with the body. Features below a later edge operation
+are shown but deliberately locked until that later operation is removed,
+because changing the source topology can invalidate its selected edge.
+
+One still bakes, and honestly: **PRESSPULL on a picked face** — an arbitrary
+face push is not a parameter of anything. It is a candidate for a feature of its
+own, not a command-wiring bug.
 
 The properties panel no longer offers to resize a solid that has a recipe. Real
 CAD does not either: a union is "these things, joined", its size is its parts',
@@ -278,12 +279,11 @@ chains with no fallback, so a new entity silently gets no grips and no snaps.
 
 - **Entity traits** — one object per entity (`bounds`, `points`, `segments`,
   `grips`, `snapPoints`, `draw`, `properties`) instead of scattered switches.
-- **3D window select** — does not exist. Needs an entity outline sampler to
-  project entities to screen (`getEntityPoints` returns only the centre for a
-  circle), which is exactly what traits would provide. `SelectionController:71`
-  has a latent bug waiting for it: the 3D path computes world coordinates via
-  `renderer2d.screenToWorld`. Unreachable today because 3D never starts a
-  selection window.
+- **3D window selection now has another entity outline switch.** It projects
+  sampled curves and solid triangles in `PickingService`; it works, including
+  contained versus crossing direction, but it is one more place a new entity
+  must remember to join. Moving that sampler into the same trait would remove
+  the duplication rather than add more behaviour.
 - **Object snap tracking follows horizontal/vertical paths only.** With Polar
   (F10) on, AutoCAD also tracks the polar angles. `alignmentPath` in
   `DraftingService` is the one function to extend.
@@ -390,17 +390,13 @@ Nothing here is proven to bite yet, but all of it is O(n) or worse per frame:
   entity, while `createDimension` mutates the document (registering its style
   layer). That bit the DXF import, which had to snapshot and restore
   `doc.layers` to stay side-effect free.
-- **GRID was removed** as a dead command (aliases `GR`/`GRID` resolved but the
-  switch never handled it, and there is no grid visibility state to toggle). A
-  real grid toggle would be a small feature: a field on `Document` plus renderer
-  support.
 
 ---
 
 ## Drafting modes and F keys
 
-We have three of AutoCAD's toggles wired to keys and to buttons in the status
-bar: F3, F8, F10. The rest of the map, with what it would cost:
+The common AutoCAD drafting toggles are wired to keys and status buttons. The
+rest of the map, with what it would cost:
 
 | Key | AutoCAD | Here |
 |---|---|---|
@@ -410,7 +406,7 @@ bar: F3, F8, F10. The rest of the map, with what it would cost:
 | F4 | 3D object snap | No 3D object snap at all. Large. |
 | F5 | Isoplane cycle | No isometric drafting mode. Large, low value for us. |
 | F6 | Dynamic UCS | UCS exists as a command, but not the "hover a face to align" behaviour. Medium. |
-| F7 | Grid display | **No grid visibility state** — the grid is always drawn. Needs a field on `Document` plus renderer support. This is also what the removed GRID command would have toggled. Small. |
+| **F7** | Grid display | **Done** — key and status button, in both 2D and 3D. |
 | **F8** | Ortho | **Done** — key and status button. |
 | **F9** | Snap mode (cursor stepping) | **Done** — key and status button. The step itself is still only settable in code (`doc.snapSize`); see below. |
 | **F10** | Polar tracking | **Done** — key and status button. |
@@ -426,7 +422,7 @@ application-level settings store at all (localStorage only remembers which tool 
 flyout last used), so "my step is always 0.5" has nowhere to live. Worth deciding
 before the first release.
 
-Note also that `snapEnabled`, `snapSize` and `gridSize` sit on `Document` while
+Note also that `snapEnabled`, `snapSize`, `gridSize` and `gridVisible` sit on `Document` while
 the other drafting toggles live in `drafting`, which is why F9 needs its own
 toggle function rather than going through `toggleDraftingMode`. Tidying that
 touches the file format, so it waits with the rest of that item.

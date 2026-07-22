@@ -5,7 +5,7 @@
  */
 import type { Document } from '../Document';
 import type { CommandHistory } from '../history/CommandHistory';
-import type { Entity } from '../entities/types';
+import type { Entity, Solid } from '../entities/types';
 import type { Vec2, Vec3 } from '../../math/geometry';
 import type { CommandName } from './registry';
 
@@ -21,6 +21,8 @@ export interface CommandContext {
   moveObjects: (objects: ReadonlyArray<Entity | string>, screenDelta: Vec2, worldDelta?: Vec3) => void;
   copyWorldDelta: (viewDelta: Vec2) => Vec3 | undefined;
   workPlaneChanged?: () => void;
+  /** Opens the STL save flow for exactly the solids gathered by EXPORTSTL. */
+  exportStl?: (solids: readonly Solid[]) => void | Promise<void>;
 }
 
 /**
@@ -85,9 +87,14 @@ export type CommandStep =
    * touch it. A box's opposite corner is one: snapping it onto an axis through
    * the first corner collapses the shape to nothing. So is a dimension line's
    * location — an axis through the first measurement point means nothing there.
+   * `rememberDistanceFrom` and `remember` make Enter reuse the last accepted
+   * value for that command step; a point distance is rebuilt from the new base
+   * instead of replaying an old absolute point.
    */
-  | { kind: 'point'; label: string; optional?: boolean; ignoresDirection?: boolean }
-  | { kind: 'number'; label: string; optional?: boolean }
+  | { kind: 'point'; label: string; optional?: boolean; ignoresDirection?: boolean; rememberDistanceFrom?: string }
+  /** First point of a plane, or a planar solid face that defines it outright. */
+  | { kind: 'plane'; label: string; optional?: boolean }
+  | { kind: 'number'; label: string; optional?: boolean; remember?: boolean }
   | { kind: 'entity'; label: string; optional?: boolean; multi?: boolean; additive?: boolean; accepts?: PickTarget[] }
   | { kind: 'solid'; label: string; optional?: boolean; multi?: boolean; additive?: boolean }
   | { kind: 'edge'; label: string; optional?: boolean }

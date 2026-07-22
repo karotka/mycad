@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { nearestCandidate2d, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
+import { measurementCandidates, nearestCandidate2d, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
+import { createBoxMesh, createCylinderMesh } from '../core/solids/ManifoldEngine';
 
 /** Candidates carry the snap that found them; these tests care about the points. */
 const points = (doc: CadDocument, mode: ObjectSnapMode, excluded?: string | null, reference?: { x: number; y: number; z: number } | null) =>
@@ -46,6 +47,36 @@ describe('SnapService', () => {
 
     expect(points(doc, 'intersection')).toContainEqual({ x: 5, y: 5, z: 0 });
     expect(points(doc, 'perpendicular', null, { x: 25, y: 8, z: 0 })).toContainEqual({ x: 25, y: 0, z: 0 });
+  });
+
+  it('finds a perpendicular foot on a real 3D solid edge', () => {
+    const doc = new Document();
+    const box = doc.createSolid(createBoxMesh(10, 6, 4), 'box', 4, []);
+    doc.solids.push(box);
+
+    expect(points(doc, 'perpendicular', null, { x: 8, y: 3, z: 2 }))
+      .toContainEqual({ x: 5, y: 3, z: 2 });
+  });
+
+  it('offers Center at both circular rims of a 3D body', () => {
+    const doc = new Document();
+    const cylinder = doc.createSolid(createCylinderMesh(3, 10), 'cylinder', 10, []);
+    doc.solids.push(cylinder);
+
+    const centres = points(doc, 'center');
+    expect(centres).toContainEqual({ x: 0, y: 0, z: 0 });
+    expect(centres).toContainEqual({ x: 0, y: 0, z: 10 });
+  });
+
+  it('keeps opposite box vertices available as 3D plane points even while the solid is selected', () => {
+    const doc = new Document();
+    const box = doc.createSolid(createBoxMesh(10, 6, 4), 'box', 4, []);
+    doc.solids.push(box);
+    doc.selectSolid(box.id);
+
+    const candidates = measurementCandidates(doc);
+    expect(candidates).toContainEqual({ x: -5, y: -3, z: 0 });
+    expect(candidates).toContainEqual({ x: 5, y: 3, z: 4 });
   });
 });
 

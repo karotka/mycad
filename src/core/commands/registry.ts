@@ -18,6 +18,8 @@ import { explodeObjects } from './steps/explode';
 import { extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
 import { arrayPolar, arrayRectangular } from './steps/array';
+import { exportStlSelection } from './steps/export';
+import { sliceSolids } from './steps/slice';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -49,17 +51,6 @@ function preselectObjects(
     active.data.solids = [...solids];
     if (options.skipStep !== false) active.stepIndex = 1;
     ctx.log(message(count));
-  };
-}
-
-/** Like `preselectObjects`, for commands that act on entities only. */
-function preselectEntities(message: (count: number) => string): (active: ActiveCommand, ctx: CommandContext) => void {
-  return (active, ctx) => {
-    const entities = ctx.doc.getSelectedEntities();
-    if (entities.length === 0) return;
-    active.data.entities = [...entities];
-    active.stepIndex = 1;
-    ctx.log(message(entities.length));
   };
 }
 
@@ -147,9 +138,9 @@ export const COMMANDS = [
   { name: 'LINE', aliases: ['L', 'LINE'], help: 'draw line', suggest: true, sticky: true, pointInput: true, execute: drawLine, steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }] },
   { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], execute: drawPolyline, help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
   { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, execute: drawRectangle, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
-  { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, execute: drawCircle, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:' }, { kind: 'done' }] },
+  { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, execute: drawCircle, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:', rememberDistanceFrom: 'center' }, { kind: 'done' }] },
   { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true, execute: drawCircleByDiameter,
-    steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify diameter or a point at that distance:' }, { kind: 'done' }] },
+    steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify diameter or a point at that distance:', rememberDistanceFrom: 'center' }, { kind: 'done' }] },
   { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true, execute: drawEllipse,
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
@@ -188,9 +179,9 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify rotation base point.`) },
-  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
-    data: () => ({ entities: [] }),
-    onStart: preselectEntities((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
+  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
   { name: 'JOIN', aliases: ['J', 'JOIN'], execute: joinObjects, help: 'join connected 2D lines into one polyline', suggest: true,
     steps: [{ kind: 'entity', label: 'Select connected lines or curves, then press Enter:', multi: true }, { kind: 'done' }],
     data: () => ({ entities: [] }),
@@ -217,8 +208,8 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
-  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:' }, { kind: 'done' }] },
-  { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:' }, { kind: 'done' }] },
+  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:', remember: true }, { kind: 'done' }] },
+  { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:', remember: true }, { kind: 'done' }] },
   { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
   { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
   { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
@@ -235,13 +226,14 @@ export const COMMANDS = [
     data: () => ({ entities: [], solids: [], totalAngle: 360 }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter polar array settings.`) },
   { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], execute: extrudeProfileStep, help: 'extrude closed profile', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select a closed 2D profile:' }, { kind: 'number', label: 'Enter extrusion height:' }, { kind: 'done' }],
+    steps: [{ kind: 'entity', label: 'Select closed 2D profile(s), then press Enter:', multi: true }, { kind: 'number', label: 'Enter extrusion height:' }, { kind: 'done' }],
     data: () => ({ entities: [] }),
     onStart: (active, ctx) => {
-      const profile = ctx.doc.getSelectedEntities()[0] ?? ctx.doc.entities.find((entity) => entity.selected);
-      if (!profile) return;
-      active.data.entities = [profile];
+      const profiles = ctx.doc.getSelectedEntities().filter(isSweepProfileEntity);
+      if (profiles.length === 0) return;
+      active.data.entities = profiles;
       active.stepIndex = 1;
+      ctx.log(`${profiles.length} profile(s) preselected. Enter extrusion height.`);
     } },
   { name: 'SWEEP', aliases: ['SW', 'SWEEP'], execute: sweepProfileStep, help: 'sweep profile along path', suggest: true,
     steps: [{ kind: 'entity', label: 'Select closed 2D profile:' }, { kind: 'entity', label: 'Select path:' }, { kind: 'done' }],
@@ -249,10 +241,41 @@ export const COMMANDS = [
     onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Select sweep path.') },
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a solid face', suggest: true, steps: [{ kind: 'solid', label: 'Select solid:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
-  { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true, steps: [{ kind: 'solid', label: 'Select base solid:', additive: true }, { kind: 'solid', label: 'Select solid to subtract:', additive: true }, { kind: 'done' }] },
+  { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true,
+    steps: [
+      { kind: 'solid', label: 'Select base solid, then press Enter:', additive: true, optional: true },
+      { kind: 'solid', label: 'Select solid(s) to subtract, then press Enter:', multi: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [] }) },
+  { name: 'SLICE', aliases: ['SL', 'SLICE'], execute: sliceSolids, help: 'split solids with a plane', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'solid', label: 'Select solid(s) to slice, then press Enter:', multi: true },
+      { kind: 'plane', label: 'Select a planar face or specify first slice-plane point:' },
+      { kind: 'point', label: 'Specify second slice-plane point:', ignoresDirection: true },
+      { kind: 'point', label: 'Specify third slice-plane point:', ignoresDirection: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [] }),
+    onStart: (active, ctx) => {
+      const solids = ctx.doc.getSelectedSolids();
+      if (solids.length === 0) return;
+      active.data.solids = [...solids];
+      active.stepIndex = 1;
+      ctx.log(`${solids.length} solid(s) preselected. Specify the slice plane.`);
+    } },
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  { name: 'EXPORTSTL', aliases: ['STL', 'EXPORTSTL'], execute: exportStlSelection, help: 'export selected 3D solids to STL',
+    steps: [{ kind: 'solid', label: 'Select 3D solid(s) to export, then press Enter:', multi: true }, { kind: 'done' }],
+    data: () => ({ solids: [] }),
+    onStart: (active, ctx) => {
+      const solids = ctx.doc.getSelectedSolids();
+      if (solids.length === 0) return;
+      active.data.solids = [...solids];
+      ctx.log(`${solids.length} solid(s) preselected for STL export.`);
+    } },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),

@@ -20,17 +20,19 @@ const isSweepPath = (entity: Entity): boolean =>
 
 export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> {
   const { active, data, value, step, ctx } = run;
-  if (step.kind === 'entity' && value) {
-    (data.entities as Entity[]).push(value as Entity);
-    ctx.log(`Profile added: ${(value as Entity).type} (${(value as Entity).id})`);
-    // One profile is enough, so this jumps straight to asking for the height
-    // rather than gathering more.
-    active.stepIndex = 1;
+  if (step.kind === 'entity') {
+    if (!value) return 'advance';
+    const profile = value as Entity;
+    if (!isSweepProfileEntity(profile)) {
+      ctx.log('Extrude profile must be a closed circle, rectangle, octagon or polyline.');
+      return 'stay';
+    }
+    run.gather(profile);
     return 'stay';
   }
 
   const entered = value as number;
-  const entities = data.entities as Entity[];
+  const entities = (data.entities as Entity[]).filter(isSweepProfileEntity);
   if (entities.length === 0) {
     ctx.log('No profile selected.');
     return 'advance';
@@ -40,23 +42,24 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
     return 'stay';
   }
   ctx.log('Extruding…');
-  const feature = extrusionFeature(entities[0], entered);
-  // Built from the feature, not beside it: the mesh used to come from
-  // extrudeProfile while the feature described the same solid a second time, so
-  // the shape you got and the shape it regenerated into were two answers that
-  // only happened to agree.
-  const mesh = await regenerateSolidFeature(feature);
-  if (!mesh) {
-    ctx.log('Extrusion failed — select a closed profile.');
+  const results = await Promise.all(entities.map(async (profile) => {
+    const feature = extrusionFeature(profile, entered);
+    // Built from the feature, not beside it: the mesh and its editable recipe
+    // stay the same answer for every selected profile.
+    const mesh = await regenerateSolidFeature(feature);
+    return mesh ? { profile, feature, mesh } : null;
+  }));
+  const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
+  if (completed.length === 0) {
+    ctx.log('Extrusion failed — select one or more closed profiles.');
     return 'advance';
   }
-  const solid = ctx.doc.createSolid(
-    mesh, `Extrusion_${entities.map((entity) => entity.id).join('_')}`,
-    feature.height, entities.map((entity) => entity.id), undefined, feature,
-  );
-  ctx.history.execute(new ReplaceObjectsEdit('Extrude', entities, [], [], [solid]));
+  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
+    mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature,
+  ));
+  ctx.history.execute(new ReplaceObjectsEdit('Extrude', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
-  ctx.log(`Extrusion complete, height=${entered}`);
+  ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}`);
   return 'advance';
 }
 
@@ -184,9 +187,18 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     return 'stay';
   }
   solid.mesh = mesh;
-  // There is no fillet feature to write to, and the mesh is cut rather than
-  // rebuilt, so this is the other honest bake. See BACKLOG.md.
-  solid.feature = { kind: 'mesh' };
+  solid.feature = {
+    kind: 'edge-modification',
+    operation: rounded ? 'fillet' : 'chamfer',
+    source: JSON.parse(JSON.stringify(solid.feature)),
+    edge: JSON.parse(JSON.stringify(edge)),
+    amount,
+    // Plain arrays are intentional: the feature tree is serialized to JSON.
+    sourceMesh: {
+      positions: Array.from(before.mesh.positions),
+      indices: Array.from(before.mesh.indices),
+    },
+  };
   solid.revision++;
   ctx.history.recordApplied(new UpdateSolidEdit(rounded ? 'Fillet edge' : 'Chamfer edge', before, cloneSolid(solid)));
   ctx.doc.notify();

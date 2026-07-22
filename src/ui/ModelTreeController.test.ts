@@ -2,7 +2,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
-import type { ExtrusionFeature } from '../core/entities/types';
+import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../core/entities/types';
+import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
 import { ModelTreeController } from './ModelTreeController';
 
 /**
@@ -56,6 +57,20 @@ function type(input: HTMLInputElement, value: string) {
 }
 
 describe('ModelTreeController', () => {
+  it('adds body-row picks to the selection until Escape clears it', () => {
+    const { doc, controller } = setup();
+    const first = extrusion(doc);
+    const second = extrusion(doc);
+    first.name = 'First'; second.name = 'Second';
+    controller.toggle();
+
+    const bodyRows = [...document.querySelectorAll<HTMLElement>('.tree-solid')];
+    bodyRows[0].click();
+    bodyRows[1].click();
+
+    expect([...doc.selectedSolidIds]).toEqual([first.id, second.id]);
+  });
+
   it('shows an extrusion and opens its values', () => {
     const { doc, controller } = setup();
     extrusion(doc);
@@ -127,5 +142,31 @@ describe('ModelTreeController', () => {
     expect(fieldLabelled('Height').value).toBe('10');
     // Silently restoring the field is indistinguishable from doing nothing.
     expect(log.mock.calls[0][0]).toContain('nothing to build');
+  });
+
+  it('removes a chamfer from its row and undo restores it', async () => {
+    const { doc, history, controller } = setup();
+    const source: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const sourceMesh = primitiveMesh(source);
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(sourceMesh.positions), indices: Array.from(sourceMesh.indices) },
+    };
+    const solid = doc.createSolid((await regenerateSolidFeature(feature))!, 'Box', 4, [], undefined, feature);
+    doc.addSolid(solid);
+    controller.toggle();
+
+    rowLabelled('Chamfer').querySelector<HTMLButtonElement>('.tree-delete')!.click();
+    await vi.waitFor(() => expect(doc.solids[0].feature.kind).toBe('primitive'));
+    expect(doc.solids[0].mesh.indices.length).toBe(sourceMesh.indices.length);
+
+    history.undo();
+    expect(doc.solids[0].feature.kind).toBe('edge-modification');
   });
 });

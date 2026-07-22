@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { applyWindowSelection, pickEntityAt } from './PickingService';
+import { applyProjectedWindowSelection, applyWindowSelection, pickEntityAt } from './PickingService';
 import { snapPoint2 } from '../math/geometry';
+import { createBoxMesh } from '../core/solids/ManifoldEngine';
 
 describe('window selection', () => {
   it('distinguishes contained and crossing objects and ignores hidden layers', () => {
@@ -20,6 +21,26 @@ describe('window selection', () => {
 
     applyWindowSelection(doc, box, true, false);
     expect([...doc.selectedEntityIds]).toEqual([inside.id, crossing.id]);
+  });
+
+  it('selects projected entities and solids in the 3D view', () => {
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const inside = doc.createLine({ x: 2, y: 2 }, { x: 4, y: 4 });
+    const crossing = doc.createLine({ x: 8, y: 8 }, { x: 14, y: 14 });
+    doc.entities.push(inside, crossing);
+    const solid = doc.createSolid(createBoxMesh(4, 4, 3, 5, 5), 'box', 3, []);
+    doc.solids.push(solid);
+    const project = (point: { x: number; y: number }) => ({ x: point.x, y: point.y });
+    const box = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+
+    applyProjectedWindowSelection(doc, box, false, false, project);
+    expect([...doc.selectedEntityIds]).toEqual([inside.id]);
+    expect([...doc.selectedSolidIds]).toEqual([solid.id]);
+
+    applyProjectedWindowSelection(doc, box, true, false, project);
+    expect([...doc.selectedEntityIds]).toEqual([inside.id, crossing.id]);
+    expect([...doc.selectedSolidIds]).toEqual([solid.id]);
   });
 });
 

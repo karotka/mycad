@@ -9,6 +9,7 @@ import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
+import type { Solid } from '../core/entities/types';
 
 export interface ProjectControllerCallbacks {
   captureView(): ProjectViewState;
@@ -59,7 +60,7 @@ export class ProjectController {
   }
 
   newProject(confirmDiscard = true): boolean {
-    if (confirmDiscard && (this.doc.entities.length > 0 || this.doc.solids.length > 0)
+    if (confirmDiscard && (this.doc.entities.length > 0 || this.doc.solids.length > 0 || this.doc.namedWorkPlanes.length > 0)
       && !window.confirm('Create a new project? Unsaved changes will be lost.')) return false;
     this.callbacks.cancelInteraction();
     this.doc.transaction(() => {
@@ -75,6 +76,7 @@ export class ProjectController {
       this.doc.layerLinetype = { '0': DEFAULT_LINE_TYPE };
       this.doc.hiddenLayers.clear();
       this.doc.gridSize = 1;
+      this.doc.gridVisible = true;
       this.doc.snapSize = 0.5;
       this.doc.snapEnabled = true;
       this.doc.drafting = defaultDraftingSettings();
@@ -82,6 +84,8 @@ export class ProjectController {
       this.doc.gcode = defaultGcodeOptions();
       this.doc.viewMode = '2d';
       this.doc.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
+      this.doc.namedWorkPlanes = [];
+      this.doc.activeNamedWorkPlaneId = null;
       this.doc.notify();
     });
     this.history.clear();
@@ -148,12 +152,13 @@ export class ProjectController {
     } catch (error) { this.report('DXF import failed', error); }
   }
 
-  async exportStl(): Promise<void> {
-    if (this.doc.solids.length === 0) {
-      this.callbacks.log('STL export: the document contains no 3D solids.');
+  async exportStl(solids: readonly Solid[]): Promise<void> {
+    if (solids.length === 0) {
+      this.callbacks.log('STL export: no 3D solids were selected.');
       return;
     }
-    await this.saveText(exportAsciiStl(this.doc), 'model.stl', 'STL model', 'stl');
+    this.callbacks.log(`STL: ${solids.length} selected solid(s).`);
+    await this.saveText(exportAsciiStl(solids), 'model.stl', 'STL model', 'stl');
   }
 
   async exportDxf(): Promise<void> {

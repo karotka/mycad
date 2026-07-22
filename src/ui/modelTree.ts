@@ -20,6 +20,8 @@ export interface TreeRow {
   detail: string;
   feature: SolidFeature;
   hasChildren: boolean;
+  /** A later edge operation depends on this feature's present topology. */
+  blockedByEdge: boolean;
 }
 
 export function featureLabel(feature: SolidFeature): { label: string; detail: string } {
@@ -48,9 +50,20 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       return { label: 'Extrusion', detail: `${Number(feature.height.toFixed(2))} high` };
     case 'sweep':
       return { label: 'Sweep', detail: 'profile along path' };
+    case 'edge-modification':
+      return {
+        label: feature.operation === 'fillet' ? 'Fillet' : 'Chamfer',
+        detail: `${Number(feature.amount.toFixed(2))} mm`,
+      };
     case 'mesh':
       return { label: 'Mesh', detail: 'no history' };
   }
+}
+
+function featureChildren(feature: SolidFeature): SolidFeature[] {
+  if (feature.kind === 'boolean') return feature.operands;
+  if (feature.kind === 'edge-modification') return [feature.source];
+  return [];
 }
 
 /**
@@ -63,14 +76,21 @@ export function featureRows(
   collapsed: ReadonlySet<string> = new Set(),
   path: number[] = [],
   depth = 0,
+  blockedByEdge = false,
 ): TreeRow[] {
   const { label, detail } = featureLabel(feature);
-  const hasChildren = feature.kind === 'boolean' && feature.operands.length > 0;
-  const row: TreeRow = { path, depth, label, detail, feature, hasChildren };
+  const featureParts = featureChildren(feature);
+  const hasChildren = featureParts.length > 0;
+  const row: TreeRow = { path, depth, label, detail, feature, hasChildren, blockedByEdge };
   if (!hasChildren || collapsed.has(pathKey(path))) return [row];
 
-  const children = (feature as { operands: SolidFeature[] }).operands
-    .flatMap((operand, index) => featureRows(operand, collapsed, [...path, index], depth + 1));
+  const children = featureParts.flatMap((operand, index) => featureRows(
+    operand,
+    collapsed,
+    [...path, index],
+    depth + 1,
+    blockedByEdge || feature.kind === 'edge-modification',
+  ));
   return [row, ...children];
 }
 
@@ -106,12 +126,55 @@ export async function editedSolid(
   return after;
 }
 
+/**
+ * Removes one Chamfer/Fillet wrapper and rebuilds what remains. The saved mesh
+ * is used when its source was already a mesh and therefore has no recipe.
+ */
+export async function removedFeatureSolid(solid: Solid, path: readonly number[]): Promise<Solid | null> {
+  const after = cloneSolid(solid);
+  const target = featureAt(after.feature, path);
+  if (!target || target.kind !== 'edge-modification') return null;
+
+  if (path.length === 0) {
+    after.feature = target.source;
+  } else {
+    const parent = featureAt(after.feature, path.slice(0, -1));
+    const index = path[path.length - 1];
+    if (!parent) return null;
+    if (parent.kind === 'boolean') {
+      if (!parent.operands[index]) return null;
+      parent.operands[index] = target.source;
+    } else if (parent.kind === 'edge-modification' && index === 0) {
+      parent.source = target.source;
+      // If the removed operation began with a baked mesh, this is now also the
+      // geometry on which the parent operation must work.
+      parent.sourceMesh = target.sourceMesh;
+    } else {
+      return null;
+    }
+  }
+
+  const regenerated = await regenerateSolidFeature(after.feature);
+  const mesh = regenerated ?? (path.length === 0 ? {
+    positions: new Float32Array(target.sourceMesh.positions),
+    indices: new Uint32Array(target.sourceMesh.indices),
+  } : null);
+  if (!mesh) return null;
+  after.mesh = mesh;
+  after.revision = solid.revision + 1;
+  if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
+  return after;
+}
+
 /** The feature a row's path points at, or null if the tree has since changed. */
 export function featureAt(root: SolidFeature, path: readonly number[]): SolidFeature | null {
   let feature: SolidFeature = root;
   for (const index of path) {
-    if (feature.kind !== 'boolean') return null;
-    const next = feature.operands[index];
+    const next = feature.kind === 'boolean'
+      ? feature.operands[index]
+      : feature.kind === 'edge-modification' && index === 0
+        ? feature.source
+        : null;
     if (!next) return null;
     feature = next;
   }

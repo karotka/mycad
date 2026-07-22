@@ -10,6 +10,7 @@ export interface InputControllerCallbacks {
   deleteSelection(): boolean;
   show2d(): void;
   toggleObjectSnap(): void;
+  toggleGridDisplay(): void;
   toggleOrtho(): void;
   togglePolar(): void;
   toggleGridSnap(): void;
@@ -31,6 +32,7 @@ export class InputController {
     // The drafting toggles, on the keys AutoCAD puts them on.
     const draftingKey: Record<string, () => void> = {
       F3: this.callbacks.toggleObjectSnap,
+      F7: this.callbacks.toggleGridDisplay,
       F8: this.callbacks.toggleOrtho,
       F9: this.callbacks.toggleGridSnap,
       F10: this.callbacks.togglePolar,

@@ -114,7 +114,7 @@ export class Canvas2DRenderer {
     joinMode = false
   ): void {
     this.clear(w, h);
-    this.drawGrid(w, h, doc.gridSize);
+    this.drawGrid(w, h, doc.gridVisible ? doc.gridSize : 0);
     this.layerLineweight = doc.layerLineweight;
     this.layerLinetype = doc.layerLinetype;
 
@@ -541,7 +541,7 @@ export class Viewport3D {
   activeStandardView: 'top' | 'front' | 'left' | 'right' | null = null;
   private viewportAspect = 1;
   private activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
-  private visualStyle: 'wireframe' | 'shaded' | 'xray' = 'wireframe';
+  private visualStyle: 'wireframe' | 'shaded' | 'xray' = 'xray';
 
   constructor(container: HTMLElement) {
     this.scene = new THREE.Scene();
@@ -569,26 +569,14 @@ export class Viewport3D {
 
   setWorkPlane(plane: WorkPlane): void {
     const toThree = (axis: { x: number; y: number; z: number }) => new THREE.Vector3(axis.x, axis.z, -axis.y);
-    const oldX = toThree(this.activeWorkPlane.xAxis).normalize();
-    const oldY = toThree(this.activeWorkPlane.yAxis).normalize();
-    const oldZ = toThree(this.activeWorkPlane.zAxis).normalize();
     const newX = toThree(plane.xAxis).normalize();
     const newY = toThree(plane.yAxis).normalize();
     const newZ = toThree(plane.zAxis).normalize();
-    const intoNewUcs = (vector: THREE.Vector3): THREE.Vector3 => new THREE.Vector3()
-      .addScaledVector(newX, vector.dot(oldX))
-      .addScaledVector(newY, vector.dot(oldY))
-      .addScaledVector(newZ, vector.dot(oldZ));
 
-    const cameraOffset = this.camera.position.clone().sub(this.orbitTarget);
-    if (cameraOffset.lengthSq() > 1e-9) {
-      const rotatedOffset = intoNewUcs(cameraOffset);
-      const rotatedUp = intoNewUcs(this.camera.up).normalize();
-      this.camera.position.copy(this.orbitTarget).add(rotatedOffset);
-      this.camera.up.copy(rotatedUp);
-      this.camera.lookAt(this.orbitTarget);
-    }
-
+    // Setting a UCS changes the construction plane, not the model or the view.
+    // Rotating the camera here made stationary objects appear to turn as soon as
+    // the third UCS point was picked. The grid and triad adopt the new plane;
+    // subsequent orbiting already uses its Z axis in orbitByScreenDelta.
     this.activeWorkPlane = cloneWorkPlane(plane);
     const matrix = new THREE.Matrix4().makeBasis(newX, newZ, newY);
     const origin = toThree(plane.origin);
@@ -601,6 +589,10 @@ export class Viewport3D {
     this.axisTriad.quaternion.setFromRotationMatrix(triadBasis);
     this.axisTriad.updateMatrixWorld(true);
     this.render();
+  }
+
+  setGridVisible(visible: boolean): void {
+    this.grid.visible = visible;
   }
 
   captureViewState(): ProjectViewState['threeD'] {
@@ -882,6 +874,22 @@ export class Viewport3D {
     const span = Math.max(maxX - minX, maxY - minY, 1);
     this.orbitTarget.set((minX + maxX) / 2, 0, -(minY + maxY) / 2);
     this.orbitRadius = Math.max(3, span * 1.6);
+    this.updateCamera();
+  }
+
+  /** Frames arbitrary CAD-space points, including geometry not in the document yet. */
+  framePoints(points: Vec3[]): void {
+    if (points.length === 0) return;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+      minZ = Math.min(minZ, point.z); maxZ = Math.max(maxZ, point.z);
+    }
+    const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+    this.orbitTarget.set((minX + maxX) / 2, (minZ + maxZ) / 2, -(minY + maxY) / 2);
+    this.orbitRadius = Math.max(3, span * 1.8);
     this.updateCamera();
   }
 

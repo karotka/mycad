@@ -7,9 +7,9 @@
  * saying how many. Two of them had also grown their own copy of the gathering
  * branch that `run.gather` already does.
  */
-import { AddEntitiesEdit, ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
+import { ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, closedVertices, genId, transformEntityPoints, type Entity, type Solid } from '../../entities/types';
-import { rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
+import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
 import { dist2, formatPoint, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { Document } from '../../Document';
@@ -171,14 +171,43 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
   const axisStart = data.axisStart as Vec2;
   const axisEnd = value as Vec2;
   const entities = data.entities as Entity[];
+  const solids = (data.solids as Solid[] | undefined) ?? [];
   // A mirror keeps the originals, so the copies need ids of their own.
   const mirrored = entities.map((entity) => {
     const copy = transformEntityPoints(entity, (point) => mirrorPoint2(point, axisStart, axisEnd));
     copy.id = genId(entity.type);
     return copy;
   });
-  ctx.history.execute(new AddEntitiesEdit('Mirror', mirrored));
-  ctx.log(`Mirrored ${entities.length} object(s).`);
+  const plane = ctx.doc.activeWorkPlane;
+  const mirroredSolids = solids.map((solid) => {
+    const copy = cloneSolid(solid);
+    copy.id = genId('solid');
+    copy.name = `${solid.name}_mirror`;
+    for (let index = 0; index < copy.mesh.positions.length; index += 3) {
+      const local = worldToLocal(plane, {
+        x: copy.mesh.positions[index],
+        y: copy.mesh.positions[index + 1],
+        z: copy.mesh.positions[index + 2],
+      });
+      const reflected = mirrorPoint2(local, axisStart, axisEnd);
+      const world = localToWorld(plane, reflected, local.z);
+      copy.mesh.positions[index] = world.x;
+      copy.mesh.positions[index + 1] = world.y;
+      copy.mesh.positions[index + 2] = world.z;
+    }
+    // A reflection reverses handedness, so restore outward triangle winding.
+    for (let index = 0; index + 2 < copy.mesh.indices.length; index += 3) {
+      const second = copy.mesh.indices[index + 1];
+      copy.mesh.indices[index + 1] = copy.mesh.indices[index + 2];
+      copy.mesh.indices[index + 2] = second;
+    }
+    copy.feature = mirroredFeature(copy.feature, plane, axisStart, axisEnd) ?? { kind: 'mesh' };
+    copy.revision++;
+    copy.selected = false;
+    return copy;
+  });
+  ctx.history.execute(new ReplaceObjectsEdit('Mirror', [], [], mirrored, mirroredSolids));
+  ctx.log(`Mirrored ${mirrored.length + mirroredSolids.length} object(s).`);
   return 'advance';
 }
 

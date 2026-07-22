@@ -24,6 +24,12 @@ import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from './lineStyles';
 
 export type ViewMode = '2d' | '3d';
 
+export interface NamedWorkPlane {
+  id: string;
+  name: string;
+  workPlane: WorkPlane;
+}
+
 export interface DocumentState {
   entities: Entity[];
   solids: Solid[];
@@ -31,6 +37,7 @@ export interface DocumentState {
   selectedSolidIds: Set<string>;
   currentLayer: string;
   gridSize: number;
+  gridVisible: boolean;
   snapSize: number;
   snapEnabled: boolean;
   viewMode: ViewMode;
@@ -62,10 +69,13 @@ export class Document {
   layerLinetype: Record<string, string> = { '0': DEFAULT_LINE_TYPE };
   hiddenLayers = new Set<string>();
   gridSize = 1;
+  gridVisible = true;
   snapSize = 0.5;
   snapEnabled = true;
   viewMode: ViewMode = '2d';
   activeWorkPlane: WorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
+  namedWorkPlanes: NamedWorkPlane[] = [];
+  activeNamedWorkPlaneId: string | null = null;
   drafting: DraftingSettings = defaultDraftingSettings();
   dimensionStyle: DimensionStyle = defaultDimensionStyle();
   gcode: GcodeOptions = defaultGcodeOptions();
@@ -122,6 +132,58 @@ export class Document {
       return;
     }
     for (const fn of this.listeners) fn(this);
+  }
+
+  /** Saves a UCS and makes it active. The stored plane never shares mutable axes with the caller. */
+  addNamedWorkPlane(workPlane: WorkPlane, name?: string): NamedWorkPlane {
+    let number = this.namedWorkPlanes.length + 1;
+    while (this.namedWorkPlanes.some((item) => item.name === `UCS ${number}`)) number++;
+    let id = genId('ucs');
+    while (this.namedWorkPlanes.some((item) => item.id === id)) id = genId('ucs');
+    const item: NamedWorkPlane = {
+      id,
+      name: name?.trim() || `UCS ${number}`,
+      workPlane: cloneWorkPlane(workPlane),
+    };
+    this.namedWorkPlanes.push(item);
+    this.activeNamedWorkPlaneId = item.id;
+    this.activeWorkPlane = cloneWorkPlane(item.workPlane);
+    this.notify();
+    return item;
+  }
+
+  renameNamedWorkPlane(id: string, name: string): boolean {
+    const item = this.namedWorkPlanes.find((candidate) => candidate.id === id);
+    const trimmed = name.trim();
+    if (!item || !trimmed || item.name === trimmed) return false;
+    item.name = trimmed;
+    this.notify();
+    return true;
+  }
+
+  activateNamedWorkPlane(id: string): NamedWorkPlane | null {
+    const item = this.namedWorkPlanes.find((candidate) => candidate.id === id);
+    if (!item) return null;
+    this.activeNamedWorkPlaneId = item.id;
+    this.activeWorkPlane = cloneWorkPlane(item.workPlane);
+    this.viewMode = '3d';
+    this.notify();
+    return item;
+  }
+
+  removeNamedWorkPlane(id: string): NamedWorkPlane | null {
+    const index = this.namedWorkPlanes.findIndex((candidate) => candidate.id === id);
+    if (index < 0) return null;
+    const [removed] = this.namedWorkPlanes.splice(index, 1);
+    if (this.activeNamedWorkPlaneId === id) this.restoreWorldWorkPlane();
+    else this.notify();
+    return removed;
+  }
+
+  restoreWorldWorkPlane(): void {
+    this.activeNamedWorkPlaneId = null;
+    this.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
+    this.notify();
   }
 
   transaction<T>(fn: () => T): T {

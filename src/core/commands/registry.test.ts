@@ -73,6 +73,15 @@ describe('command registry', () => {
     }
   });
 
+  it('enables point input for every command with a face-or-point plane step', () => {
+    for (const command of COMMAND_LIST) {
+      if (command.steps?.some((step) => step.kind === 'plane')) {
+        expect(takesPointInput(command.name), command.name).toBe(true);
+      }
+    }
+    expect(takesPointInput('SLICE')).toBe(true);
+  });
+
   it('keeps transform tools out of the sticky set', () => {
     for (const command of COMMAND_LIST) {
       if (command.transformsObjects) {
@@ -81,6 +90,8 @@ describe('command registry', () => {
       }
     }
     expect(transformsObjects('MOVE')).toBe(true);
+    expect(transformsObjects('MIRROR')).toBe(true);
+    expect(takesPointInput('MIRROR')).toBe(true);
     expect(transformsObjects('LINE')).toBe(false);
   });
 
@@ -148,7 +159,7 @@ describe('a command is either a wizard or an immediate action', () => {
     for (const command of COMMAND_LIST) {
       if (!command.onStart || !command.steps) continue;
       expect(command.steps.length, `${command.name} has nothing after its first step`).toBeGreaterThan(1);
-      expect(command.steps[0].kind, `${command.name} preselects into a non-object step`).toBe('entity');
+      expect(['entity', 'solid'], `${command.name} preselects into a non-object step`).toContain(command.steps[0].kind);
     }
   });
 });

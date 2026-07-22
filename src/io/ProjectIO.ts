@@ -1,7 +1,9 @@
 import type { Document } from '../core/Document';
+import type { Solid } from '../core/entities/types';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
+import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 
 export interface ProjectViewState {
   mode: '2d' | '3d';
@@ -29,9 +31,12 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       layerLinetype: doc.layerLinetype,
       hiddenLayers: Array.from(doc.hiddenLayers),
       gridSize: doc.gridSize,
+      gridVisible: doc.gridVisible,
       snapSize: doc.snapSize,
       snapEnabled: doc.snapEnabled,
       activeWorkPlane: doc.activeWorkPlane,
+      namedWorkPlanes: doc.namedWorkPlanes,
+      activeNamedWorkPlaneId: doc.activeNamedWorkPlaneId,
       drafting: doc.drafting,
       dimensionStyle: doc.dimensionStyle,
       gcode: doc.gcode,
@@ -107,15 +112,23 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
       ? (settings.hiddenLayers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer !== '0')
       : []);
     doc.gridSize = typeof settings.gridSize === 'number' ? settings.gridSize : 1;
+    doc.gridVisible = typeof settings.gridVisible === 'boolean' ? settings.gridVisible : true;
     doc.snapSize = typeof settings.snapSize === 'number' ? settings.snapSize : 0.5;
     doc.snapEnabled = typeof settings.snapEnabled === 'boolean' ? settings.snapEnabled : true;
     doc.drafting = loadDraftingSettings(settings.drafting);
     doc.dimensionStyle = loadDimensionStyle(settings.dimensionStyle);
     doc.gcode = loadGcodeOptions(settings.gcode);
-    if (settings.activeWorkPlane && typeof settings.activeWorkPlane === 'object') {
-      doc.activeWorkPlane = JSON.parse(JSON.stringify(settings.activeWorkPlane));
-    }
-    doc.viewMode = view?.mode ?? '2d';
+    doc.namedWorkPlanes = loadNamedWorkPlanes(settings.namedWorkPlanes);
+    const activeNamed = typeof settings.activeNamedWorkPlaneId === 'string'
+      ? doc.namedWorkPlanes.find((item) => item.id === settings.activeNamedWorkPlaneId)
+      : undefined;
+    doc.activeNamedWorkPlaneId = activeNamed?.id ?? null;
+    doc.activeWorkPlane = activeNamed
+      ? cloneWorkPlane(activeNamed.workPlane)
+      : validWorkPlane(settings.activeWorkPlane)
+        ? cloneWorkPlane(settings.activeWorkPlane)
+        : cloneWorkPlane(WORLD_WORK_PLANE);
+    doc.viewMode = view?.mode ?? (activeNamed ? '3d' : '2d');
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
     // The RGB every object and layer draws in is a cache of the indices just
@@ -127,6 +140,33 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
 }
 
 const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular']);
+
+function validWorkPlane(value: unknown): value is WorkPlane {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Partial<Record<keyof WorkPlane, unknown>>;
+  const finite3 = (candidate: unknown): boolean => {
+    if (!candidate || typeof candidate !== 'object') return false;
+    const point = candidate as { x?: unknown; y?: unknown; z?: unknown };
+    return Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z);
+  };
+  return finite3(raw.origin) && finite3(raw.xAxis) && finite3(raw.yAxis) && finite3(raw.zAxis);
+}
+
+function loadNamedWorkPlanes(value: unknown): Document['namedWorkPlanes'] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  const result: Document['namedWorkPlanes'] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const raw = candidate as { id?: unknown; name?: unknown; workPlane?: unknown };
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    if (!id || ids.has(id) || !name || !validWorkPlane(raw.workPlane)) continue;
+    ids.add(id);
+    result.push({ id, name, workPlane: cloneWorkPlane(raw.workPlane) });
+  }
+  return result;
+}
 
 function loadDraftingSettings(value: unknown): DraftingSettings {
   const defaults = defaultDraftingSettings();
@@ -246,9 +286,9 @@ function validViewState(value: unknown): value is ProjectViewState {
       && (view.threeD.activeStandardView === null || ['top', 'front', 'left', 'right'].includes(view.threeD.activeStandardView)));
 }
 
-export function exportAsciiStl(doc: Document, name = 'MyCAD'): string {
+export function exportAsciiStl(solids: readonly Solid[], name = 'MyCAD'): string {
   const lines = [`solid ${sanitizeName(name)}`];
-  for (const solid of doc.solids) {
+  for (const solid of solids) {
     const positions = solid.mesh.positions;
     const indices = solid.mesh.indices;
     for (let i = 0; i + 2 < indices.length; i += 3) {

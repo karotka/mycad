@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ExtrusionFeature, PrimitiveFeature } from '../entities/types';
-import { createBoxMesh, createTorusMesh, modifySolidEdge, pressPullFace, regenerateSolidFeature } from './ManifoldEngine';
+import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../entities/types';
+import { createBoxMesh, createTorusMesh, modifySolidEdge, pressPullFace, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
 
 describe('parametric solid regeneration', () => {
   it('regenerates every parametric primitive feature', async () => {
@@ -82,6 +82,39 @@ describe('parametric solid regeneration', () => {
     expect(fillet).not.toBeNull();
     expect(chamfer!.indices.length).toBeGreaterThan(mesh.indices.length);
     expect(fillet!.indices.length).toBeGreaterThan(chamfer!.indices.length);
+  });
+
+  it('regenerates a chamfer feature from its parametric source', async () => {
+    const source: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const sourceMesh = createBoxMesh(10, 6, 4);
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(sourceMesh.positions), indices: Array.from(sourceMesh.indices) },
+    };
+
+    const regenerated = await regenerateSolidFeature(feature);
+
+    expect(regenerated?.indices.length).toBeGreaterThan(sourceMesh.indices.length);
+  });
+
+  it('regenerates an edge feature even when its source was already a mesh', async () => {
+    const sourceMesh = createBoxMesh(10, 6, 4);
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'fillet', source: { kind: 'mesh' }, amount: 1,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(sourceMesh.positions), indices: Array.from(sourceMesh.indices) },
+    };
+
+    expect((await regenerateSolidFeature(feature))?.indices.length).toBeGreaterThan(sourceMesh.indices.length);
   });
 });
 
@@ -217,5 +250,41 @@ describe('createTorusMesh', () => {
     }
     // Nothing may reach the middle: the nearest surface is radius - tubeRadius.
     expect(minDistance).toBeCloseTo(8, 5);
+  });
+});
+
+describe('splitSolidByPlane', () => {
+  const axisBounds = (positions: Float32Array, axis: 0 | 1 | 2) => {
+    let min = Infinity, max = -Infinity;
+    for (let index = axis; index < positions.length; index += 3) {
+      min = Math.min(min, positions[index]);
+      max = Math.max(max, positions[index]);
+    }
+    return { min, max };
+  };
+
+  it('returns both closed halves of a box cut through its middle', async () => {
+    const parts = await splitSolidByPlane(
+      createBoxMesh(10, 6, 4),
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+    );
+
+    expect(parts).not.toBeNull();
+    expect(parts![0].indices.length).toBeGreaterThan(0);
+    expect(parts![1].indices.length).toBeGreaterThan(0);
+    const bounds = parts!.map((part) => axisBounds(part.positions, 0));
+    expect(bounds).toEqual(expect.arrayContaining([
+      { min: expect.closeTo(0, 5), max: expect.closeTo(5, 5) },
+      { min: expect.closeTo(-5, 5), max: expect.closeTo(0, 5) },
+    ]));
+  });
+
+  it('does not report a split when the plane misses the body', async () => {
+    expect(await splitSolidByPlane(
+      createBoxMesh(10, 6, 4),
+      { x: 20, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+    )).toBeNull();
   });
 });

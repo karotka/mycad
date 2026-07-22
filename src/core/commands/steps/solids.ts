@@ -11,7 +11,7 @@
 import { ReplaceObjectsEdit } from '../../history/edits';
 import type { PrimitiveFeature } from '../../entities/types';
 import { primitiveMesh } from '../../solids/ManifoldEngine';
-import { cloneWorkPlane } from '../../../math/workplane';
+import { cloneWorkPlane, type WorkPlane } from '../../../math/workplane';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 
@@ -30,24 +30,57 @@ function place(run: CommandRun, name: string, feature: PrimitiveFeature, message
 
 const round = (value: number) => value.toFixed(3);
 
+/**
+ * The one description used by both the live drag and the finished command.
+ * Returning null keeps all three dimensions subject to the same validation.
+ */
+export function boxLikePrimitiveFeature(
+  primitive: 'box' | 'wedge',
+  start: Vec2,
+  end: Vec2,
+  heightValue: number,
+  workPlane: WorkPlane,
+): PrimitiveFeature | null {
+  const width = Math.abs(end.x - start.x);
+  const depth = Math.abs(end.y - start.y);
+  const height = Math.abs(heightValue);
+  if (width < 1e-9 || depth < 1e-9 || height < 1e-9) return null;
+  return {
+    kind: 'primitive',
+    primitive,
+    center: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+    width,
+    depth,
+    height,
+    workPlane: cloneWorkPlane(workPlane),
+  };
+}
+
 /** A box and a wedge are the same wizard: two corners, then a height. */
 function boxLike(run: CommandRun, name: 'Box' | 'Wedge', primitive: 'box' | 'wedge'): StepOutcome {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.start = value; return 'advance'; }
-  if (active.stepIndex === 1) { data.end = value; return 'advance'; }
+  if (active.stepIndex === 1) {
+    data.end = value;
+    // The third dimension is picked in space. Reveal the 3D view as soon as the
+    // base is complete; typed height input remains available in the same step.
+    data.framePrimitiveBase = ctx.doc.viewMode === '2d';
+    ctx.doc.viewMode = '3d';
+    return 'advance';
+  }
 
   const start = data.start as Vec2, end = data.end as Vec2;
-  const width = Math.abs(end.x - start.x);
-  const depth = Math.abs(end.y - start.y);
-  const height = Math.abs(value as number);
-  if (width < 1e-9 || depth < 1e-9 || height < 1e-9) {
+  const feature = boxLikePrimitiveFeature(primitive, start, end, value as number, ctx.doc.activeWorkPlane);
+  if (!feature) {
     ctx.log(`${name} dimensions must be greater than zero.`);
     return 'stay';
   }
-  const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-  return place(run, name,
-    { kind: 'primitive', primitive, center, width, depth, height, workPlane: cloneWorkPlane(ctx.doc.activeWorkPlane) },
-    `${name} created: ${round(width)} × ${round(depth)} × ${round(height)}`);
+  return place(
+    run,
+    name,
+    feature,
+    `${name} created: ${round(feature.width!)} × ${round(feature.depth!)} × ${round(feature.height)}`,
+  );
 }
 
 export const createBox = (run: CommandRun): StepOutcome => boxLike(run, 'Box', 'box');

@@ -6,7 +6,8 @@ import { linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { primitiveMesh } from '../solids/ManifoldEngine';
+import { createBoxMesh, primitiveMesh } from '../solids/ManifoldEngine';
+import { boxLikePrimitiveFeature } from './steps/solids';
 
 function setup() {
   const doc = new Document();
@@ -39,6 +40,55 @@ describe('CommandManager history integration', () => {
     expect(manager.resolveAlias('u')).toBe('UNION');
     expect(manager.resolveAlias('j')).toBe('JOIN');
     expect(manager.resolveAlias('erase')).toBe('ERASE');
+  });
+
+  it('requires an explicit solid selection and exports exactly the gathered solids', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'first', 0, [],
+    );
+    const second = doc.createSolid(
+      { positions: new Float32Array([10, 0, 0, 11, 0, 0, 10, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'second', 0, [],
+    );
+    doc.solids.push(first, second);
+    const exportStl = vi.fn();
+    manager.updateContext({ exportStl });
+
+    manager.startCommand('EXPORTSTL');
+    expect(manager.currentPrompt()).toContain('Select 3D solid(s)');
+    expect(exportStl).not.toHaveBeenCalled();
+
+    await manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    expect(exportStl).not.toHaveBeenCalled();
+    await manager.submitInput('');
+
+    expect(exportStl).toHaveBeenCalledOnce();
+    expect(exportStl).toHaveBeenCalledWith([second]);
+    expect(manager.active).toBeNull();
+  });
+
+  it('uses preselected solids for STL export without including other solids', () => {
+    const { doc, manager } = setup();
+    const first = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'first', 0, [],
+    );
+    const second = doc.createSolid(
+      { positions: new Float32Array([10, 0, 0, 11, 0, 0, 10, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'second', 0, [],
+    );
+    doc.solids.push(first, second);
+    doc.selectSolid(first.id);
+    const exportStl = vi.fn();
+    manager.updateContext({ exportStl });
+
+    manager.startCommand('EXPORTSTL');
+
+    expect(exportStl).toHaveBeenCalledOnce();
+    expect(exportStl).toHaveBeenCalledWith([first]);
+    expect(manager.active).toBeNull();
   });
 
   it('joins connected lines into one closed polyline', async () => {
@@ -608,11 +658,35 @@ describe('CommandManager history integration', () => {
     expect(doc.entities.at(-1)).toMatchObject({ type: 'dimension', dimensionKind: 'diameter', end: { x: 2, y: 8 } });
   });
 
+  it('saves every completed UCS as an active named coordinate system', async () => {
+    const { doc, manager, log } = setup();
+    const workPlaneChanged = vi.fn();
+    manager.updateContext({ workPlaneChanged });
+
+    manager.startCommand('UCS');
+    await manager.handleClick({ x: 10, y: 20, z: 30 });
+    await manager.handleClick({ x: 11, y: 20, z: 30 });
+    await manager.handleClick({ x: 10, y: 20, z: 31 });
+
+    expect(doc.namedWorkPlanes).toHaveLength(1);
+    expect(doc.namedWorkPlanes[0]).toMatchObject({
+      name: 'UCS 1',
+      workPlane: { origin: { x: 10, y: 20, z: 30 }, zAxis: { x: 0, y: -1, z: 0 } },
+    });
+    expect(doc.activeNamedWorkPlaneId).toBe(doc.namedWorkPlanes[0].id);
+    expect(doc.activeWorkPlane).toEqual(doc.namedWorkPlanes[0].workPlane);
+    expect(doc.activeWorkPlane).not.toBe(doc.namedWorkPlanes[0].workPlane);
+    expect(workPlaneChanged).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('UCS 1 saved'));
+  });
+
   it('creates parametric box and cylinder primitives with undo support', async () => {
     const { doc, history, manager } = setup();
     manager.startCommand('BOX');
     await manager.handleClick({ x: 0, y: 0 });
     await manager.handleClick({ x: 10, y: 6 });
+    expect(doc.viewMode).toBe('3d');
+    expect(manager.active).toMatchObject({ name: 'BOX', stepIndex: 2, data: { framePrimitiveBase: true } });
     await manager.submitInput('4');
     expect(doc.solids[0]).toMatchObject({ name: 'Box', feature: { kind: 'primitive', primitive: 'box', width: 10, depth: 6, height: 4 } });
     history.undo(); expect(doc.solids).toHaveLength(0);
@@ -623,6 +697,27 @@ describe('CommandManager history integration', () => {
     await manager.submitInput('3');
     await manager.submitInput('8');
     expect(doc.solids.at(-1)).toMatchObject({ name: 'Cylinder', feature: { kind: 'primitive', primitive: 'cylinder', radius: 3, height: 8 } });
+  });
+
+  it('uses one normalized BOX/WEDGE feature for live preview and placement', () => {
+    const plane = {
+      origin: { x: 2, y: 3, z: 4 },
+      xAxis: { x: 0, y: 1, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 1, y: 0, z: 0 },
+    };
+    const feature = boxLikePrimitiveFeature('wedge', { x: 5, y: 8 }, { x: -3, y: 2 }, -7, plane);
+
+    expect(feature).toMatchObject({
+      primitive: 'wedge',
+      center: { x: 1, y: 5 },
+      width: 8,
+      depth: 6,
+      height: 7,
+      workPlane: plane,
+    });
+    expect(feature?.workPlane).not.toBe(plane);
+    expect(boxLikePrimitiveFeature('box', { x: 1, y: 1 }, { x: 1, y: 4 }, 3, WORLD_WORK_PLANE)).toBeNull();
   });
 
   it('creates wedge, sphere, cone and pyramid primitives', async () => {
@@ -636,6 +731,81 @@ describe('CommandManager history integration', () => {
     manager.startCommand('PYRAMID');
     await manager.handleClick({ x: 30, y: 0 }); await manager.submitInput('4'); await manager.submitInput('9');
     expect(doc.solids.map((solid) => solid.feature.kind === 'primitive' ? solid.feature.primitive : '')).toEqual(['wedge', 'sphere', 'cone', 'pyramid']);
+  });
+
+  it('selects a solid, slices it with three plane points and undoes both halves together', async () => {
+    const { doc, history, manager } = setup();
+    const source = doc.createSolid(createBoxMesh(10, 6, 4), 'Block', 4, [], undefined, {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    });
+    doc.addSolid(source);
+
+    manager.startCommand('SLICE');
+    expect(manager.active).toMatchObject({ name: 'SLICE', stepIndex: 0 });
+    await manager.handleClick({ x: 0, y: 0 }, undefined, source.id);
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'SLICE', stepIndex: 1 });
+    await manager.handleClick({ x: 0, y: -3, z: 0 });
+    await manager.handleClick({ x: 0, y: 3, z: 0 });
+    await manager.handleClick({ x: 0, y: 0, z: 4 });
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids).toHaveLength(2);
+    expect(doc.solids.every((solid) => solid.feature.kind === 'mesh')).toBe(true);
+    expect(doc.solids.map((solid) => solid.name)).toEqual(['Block_Slice1', 'Block_Slice2']);
+    expect(doc.getSelectedSolids()).toHaveLength(2);
+
+    expect(history.undo()).toBe(true);
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].id).toBe(source.id);
+    expect(history.redo()).toBe(true);
+    expect(doc.solids).toHaveLength(2);
+  });
+
+  it('uses an existing planar face as the SLICE plane', async () => {
+    const { doc, manager } = setup();
+    const source = doc.createSolid(createBoxMesh(10, 6, 4), 'Source', 4, []);
+    // Its left face lies at x=0 and therefore cuts the source through its middle.
+    const reference = doc.createSolid(createBoxMesh(2, 8, 6, 1, 0), 'Reference', 6, []);
+    doc.addSolid(source);
+    doc.addSolid(reference);
+    doc.selectSolid(source.id);
+    manager.startCommand('SLICE');
+
+    await manager.handleClick(
+      { x: 0, y: 0, z: 0 },
+      undefined,
+      reference.id,
+      { solidId: reference.id, vertexIndices: [0, 3, 4, 7], normal: { x: 1, y: 0, z: 0 } },
+    );
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids).toHaveLength(3);
+    expect(doc.getSolid(reference.id)).toBe(reference);
+    expect(doc.getSolid(source.id)).toBeUndefined();
+    expect(doc.solids.filter((solid) => solid.name.startsWith('Source_Slice'))).toHaveLength(2);
+  });
+
+  it('slices every selected solid crossed by the plane and leaves missed solids untouched', async () => {
+    const { doc, history, manager } = setup();
+    const crossed = doc.createSolid(createBoxMesh(10, 6, 4), 'Crossed', 4, []);
+    const missed = doc.createSolid(createBoxMesh(4, 4, 4, 20, 0), 'Missed', 4, []);
+    doc.addSolid(crossed);
+    doc.addSolid(missed);
+    doc.selectSolid(crossed.id, true);
+    doc.selectSolid(missed.id, true);
+    manager.startCommand('SLICE');
+
+    await manager.handleClick({ x: 0, y: -3, z: 0 });
+    await manager.handleClick({ x: 0, y: 3, z: 0 });
+    await manager.handleClick({ x: 0, y: 0, z: 4 });
+
+    expect(doc.solids).toHaveLength(3);
+    expect(doc.getSolid(missed.id)).toBe(missed);
+    expect(doc.getSolid(crossed.id)).toBeUndefined();
+    expect(doc.solids.filter((solid) => solid.name.startsWith('Crossed_Slice'))).toHaveLength(2);
+    expect(history.undo()).toBe(true);
+    expect(doc.solids.map((solid) => solid.id).sort()).toEqual([crossed.id, missed.id].sort());
   });
 
   it('creates a polygon from center, side count and apothem', async () => {
@@ -687,13 +857,23 @@ describe('object selection steps', () => {
     }
   });
 
-  it('advances boolean operations additively without offering a window', () => {
-    for (const name of ['UNION', 'SUBTRACT'] as const) {
-      const { manager } = setup();
-      manager.startCommand(name);
-      expect(manager.isAdditiveStep).toBe(true);
-      expect(manager.isMultiObjectStep).toBe(false);
-    }
+  it('keeps UNION additive and stages SUBTRACT around Enter', async () => {
+    const union = setup();
+    union.manager.startCommand('UNION');
+    expect(union.manager.isAdditiveStep).toBe(true);
+    expect(union.manager.isMultiObjectStep).toBe(false);
+
+    const subtract = setup();
+    const base = subtract.doc.createSolid(primitiveMesh({ kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 }), 'base', 10, []);
+    subtract.doc.addSolid(base);
+    subtract.manager.startCommand('SUBTRACT');
+    expect(subtract.manager.isAdditiveStep).toBe(true);
+    expect(subtract.manager.isMultiObjectStep).toBe(false);
+    await subtract.manager.handleClick({ x: 0, y: 0 }, undefined, base.id);
+    expect(subtract.manager.active?.stepIndex).toBe(0);
+    await subtract.manager.submitInput('');
+    expect(subtract.manager.active?.stepIndex).toBe(1);
+    expect(subtract.manager.isMultiObjectStep).toBe(true);
   });
 
   it('reports which picks the active step accepts', () => {
@@ -990,6 +1170,31 @@ describe('commands take the selection you already made', () => {
     await manager.handleClick({ x: 5, y: -1 });
     // One original plus one mirrored copy.
     expect(doc.entities).toHaveLength(2);
+  });
+
+  it('MIRROR takes a preselected solid from the model tree and mirrors it', async () => {
+    const { doc, history, manager } = setup();
+    const feature = {
+      kind: 'primitive' as const, primitive: 'box' as const, center: { x: 4, y: 0 }, width: 2, depth: 2, height: 2,
+    };
+    const solid = doc.createSolid(primitiveMesh(feature), 'box', 2, [], undefined, feature);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id, true);
+
+    manager.startCommand('MIRROR');
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(manager.active?.data.solids).toHaveLength(1);
+    await manager.handleClick({ x: 0, y: -1 });
+    await manager.handleClick({ x: 0, y: 1 });
+
+    expect(doc.solids).toHaveLength(2);
+    const copy = doc.solids.find((item) => item.id !== solid.id)!;
+    expect(copy.feature.kind).toBe('primitive');
+    const xs = Array.from(copy.mesh.positions).filter((_, index) => index % 3 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(-5, 5);
+    expect(Math.max(...xs)).toBeCloseTo(-3, 5);
+    expect(history.undo()).toBe(true);
+    expect(doc.solids).toHaveLength(1);
   });
 
   it('MOVE takes however many objects were preselected', () => {
@@ -1328,6 +1533,7 @@ describe('EXTRUDE', () => {
     kit.doc.addEntity(profile);
     kit.manager.startCommand('EXTRUDE');
     await kit.manager.handleClick({ x: 5, y: 2 }, profile);
+    await kit.manager.submitInput('');
     await kit.manager.submitInput(height);
     const solid = kit.doc.solids[0];
     let minZ = Infinity, maxZ = -Infinity;
@@ -1378,6 +1584,101 @@ describe('EXTRUDE', () => {
     // in the document the same work plane object to scribble on.
     expect(solid.feature.workPlane).not.toBe(WORLD_WORK_PLANE);
     expect(solid.feature.workPlane).toEqual(WORLD_WORK_PLANE);
+  });
+
+  it('extrudes every gathered profile in one undoable command', async () => {
+    const kit = setup();
+    const first = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 4, y: 3 });
+    const second = kit.doc.createCircle({ x: 10, y: 2 }, 2);
+    kit.doc.addEntity(first); kit.doc.addEntity(second);
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 1, y: 1 }, first);
+    await kit.manager.handleClick({ x: 10, y: 2 }, second);
+    expect(kit.manager.active?.stepIndex).toBe(0);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('6');
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(2);
+    expect(kit.doc.solids.every((solid) => solid.feature.kind === 'extrusion')).toBe(true);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(2);
+    expect(kit.doc.solids).toHaveLength(0);
+  });
+});
+
+describe('remembered command values', () => {
+  it('uses the previous circle radius when Enter answers the next radius prompt', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('CIRCLE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 5, y: 0 });
+    await manager.handleClick({ x: 20, y: 10 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(2);
+    expect(doc.entities[1]).toMatchObject({ type: 'circle', center: { x: 20, y: 10 }, radius: 5 });
+  });
+
+  it.each(['CHAMFER', 'FILLET'] as const)('reuses the last successful %s amount', async (name) => {
+    const { doc, history, manager } = setup();
+    const solid = doc.createSolid(primitiveMesh({
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    }), 'box', 4, []);
+    doc.addSolid(solid);
+    const edge = {
+      solidId: solid.id,
+      start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    };
+
+    manager.startCommand(name);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    await manager.submitInput('1');
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].feature).toMatchObject({
+      kind: 'edge-modification', operation: name === 'FILLET' ? 'fillet' : 'chamfer', amount: 1,
+    });
+    if (doc.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
+    expect(Array.isArray(doc.solids[0].feature.sourceMesh.positions)).toBe(true);
+    expect(history.undo()).toBe(true);
+
+    manager.startCommand(name);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    await manager.submitInput('');
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].mesh.indices.length).toBeGreaterThan(primitiveMesh({
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    }).indices.length);
+  });
+});
+
+describe('staged SUBTRACT', () => {
+  it('confirms the base with Enter and subtracts every gathered cutter with the next Enter', async () => {
+    const { doc, history, manager } = setup();
+    const makeBox = (name: string, centerX: number, width: number) => doc.createSolid(primitiveMesh({
+      kind: 'primitive', primitive: 'box', center: { x: centerX, y: 0 }, width, depth: 8, height: 8,
+    }), name, 8, []);
+    const base = makeBox('base', 0, 20);
+    const first = makeBox('first cutter', -4, 2);
+    const second = makeBox('second cutter', 4, 2);
+    doc.addSolid(base); doc.addSolid(first); doc.addSolid(second);
+
+    manager.startCommand('SUBTRACT');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, base.id);
+    expect(manager.active?.stepIndex).toBe(0);
+    await manager.submitInput('');
+    expect(manager.active?.stepIndex).toBe(1);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    expect(manager.active?.stepIndex).toBe(1);
+    await manager.submitInput('');
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].feature).toMatchObject({ kind: 'boolean', operation: 'subtract' });
+    expect(history.undo()).toBe(true);
+    expect(doc.solids).toHaveLength(3);
   });
 });
 

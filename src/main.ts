@@ -1,9 +1,10 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
+import { boxLikePrimitiveFeature } from './core/commands/steps/solids';
 import { extrusionFeature } from './core/solids/extrusion';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
-import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidFeature, type SolidMesh } from './core/entities/types';
+import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidMesh } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { CompositeEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
 import type { DocumentEdit } from './core/history/CommandHistory';
@@ -29,7 +30,9 @@ import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
 import { GcodeSettingsController } from './ui/GcodeSettingsController';
 import { SettingsController } from './ui/SettingsController';
-import { pressPullFace, regenerateSolidFeature } from './core/solids/ManifoldEngine';
+import { NamedUcsController } from './ui/NamedUcsController';
+import { pressPullFace, primitiveMesh, regenerateSolidFeature } from './core/solids/ManifoldEngine';
+import { translatedFeature } from './core/solids/featureTransform';
 import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
@@ -304,13 +307,30 @@ function redraw(): void {
  */
 let chromeState = '';
 
+function framePrimitiveBaseForHeight(): void {
+  const active = commands.active;
+  if ((active?.name !== 'BOX' && active?.name !== 'WEDGE')
+    || active.stepIndex !== 2
+    || !active.data.framePrimitiveBase) return;
+  const start = active.data.start as Vec2;
+  const end = active.data.end as Vec2;
+  const plane = cadDocument.activeWorkPlane;
+  renderer3d.framePoints([
+    localToWorld(plane, start),
+    localToWorld(plane, { x: end.x, y: start.y }),
+    localToWorld(plane, end),
+    localToWorld(plane, { x: start.x, y: end.y }),
+  ]);
+  delete active.data.framePrimitiveBase;
+}
+
 function syncChrome(): void {
   const state = [
     commands.active?.name ?? '',
     commands.currentPrompt(),
     cadDocument.viewMode,
     renderer3d.activeStandardView ?? '',
-    cadDocument.snapEnabled, cadDocument.snapSize, cadDocument.gridSize,
+    cadDocument.snapEnabled, cadDocument.snapSize, cadDocument.gridSize, cadDocument.gridVisible,
     cadDocument.drafting.objectSnapEnabled, cadDocument.drafting.orthoEnabled,
     cadDocument.drafting.polarEnabled, cadDocument.drafting.objectSnapTrackingEnabled,
     zoomWindowMode,
@@ -322,8 +342,10 @@ function syncChrome(): void {
 
 function drawFrame(): void {
   const is2d = cadDocument.viewMode === '2d';
+  renderer3d.setGridVisible(cadDocument.gridVisible);
+  if (!is2d) framePrimitiveBaseForHeight();
   const activeStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
-  const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'edge';
+  const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'edge' || activeStepKind === 'plane';
   canvas2d.style.display = is2d ? 'block' : 'none';
   viewport3dHost.style.display = is2d ? 'none' : 'block';
   // The native cursor is hidden over the viewport, so the software CAD cursor
@@ -363,6 +385,7 @@ function drawChrome(): void {
   get<HTMLButtonElement>('osnap-toggle').classList.toggle('active', cadDocument.drafting.objectSnapEnabled);
   get<HTMLButtonElement>('ortho-toggle').classList.toggle('active', cadDocument.drafting.orthoEnabled);
   get<HTMLButtonElement>('polar-toggle').classList.toggle('active', cadDocument.drafting.polarEnabled);
+  get<HTMLButtonElement>('grid-toggle').classList.toggle('active', cadDocument.gridVisible);
   get<HTMLButtonElement>('snap-toggle').classList.toggle('active', cadDocument.snapEnabled);
   get<HTMLButtonElement>('otrack-toggle').classList.toggle('active', cadDocument.drafting.objectSnapTrackingEnabled);
   document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
@@ -451,6 +474,22 @@ const commands = new CommandManager({
   redraw,
 });
 const drawingInteraction = new DrawingInteractionController(commands);
+const namedUcsController = new NamedUcsController(
+  cadDocument,
+  get('named-ucs-list'),
+  get<HTMLButtonElement>('wcs-reset'),
+  {
+    beforeWorkPlaneChange: () => {
+      commands.cancelActive();
+      previewController.hideSnap();
+    },
+    workPlaneChanged: () => {
+      renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+      redraw();
+    },
+    log,
+  },
+);
 
 const projectController = new ProjectController(cadDocument, history, {
   captureView: captureProjectView,
@@ -481,6 +520,15 @@ const projectController = new ProjectController(cadDocument, history, {
   redraw,
   focusInput: () => input.focus(),
 });
+commands.updateContext({ exportStl: (solids) => projectController.exportStl(solids) });
+
+function startStlExport(): void {
+  if (cadDocument.solids.length === 0) {
+    log('STL export: the document contains no 3D solids.');
+    return;
+  }
+  commands.startCommand('EXPORTSTL');
+}
 
 /** The native menu owns these on Electron; each maps to an action the app already had. */
 const menuActions: Record<string, () => void> = {
@@ -489,7 +537,7 @@ const menuActions: Record<string, () => void> = {
   'import-dxf': () => { void projectController.importDxf(); },
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
-  'export-stl': () => { void projectController.exportStl(); },
+  'export-stl': startStlExport,
   'export-dxf': () => { void projectController.exportDxf(); },
   'export-gcode': () => { void projectController.exportGcode(); },
   settings: () => settingsController.toggle(),
@@ -545,7 +593,7 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
   const active = commands.active;
   // Tools that place new geometry: they snap, but have no object to track.
   const drawing = active && takesPointInput(active.name) && !transformsObjects(active.name)
-    && active.steps[active.stepIndex]?.kind === 'point';
+    && (active.steps[active.stepIndex]?.kind === 'point' || active.steps[active.stepIndex]?.kind === 'plane');
   if (drawing) {
     const targetedSnap = drawingInteraction.targetSnapMode
       ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
@@ -560,6 +608,17 @@ function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec
       // point belongs to another UCS. The line keeps the active plane; only the
       // endpoint's z rides along.
       return { ...targetedSnap.point, z: worldToLocal(cadDocument.activeWorkPlane, targetedSnap.world).z } as Vec2;
+    }
+  }
+  // Defining a cutting plane by points must not depend on whether End happens
+  // to be enabled in persistent OSNAP. A nearby 3D vertex is an explicit plane
+  // point and therefore wins over the planar face underneath it.
+  const sliceStep = active?.name === 'SLICE' ? active.steps[active.stepIndex] : undefined;
+  if (sliceStep?.kind === 'plane' || sliceStep?.kind === 'point') {
+    const vertex = nearestMeasurementPoint(event);
+    if (vertex) {
+      const local = worldToLocal(cadDocument.activeWorkPlane, vertex);
+      return { x: local.x, y: local.y, z: local.z } as Vec2;
     }
   }
   if (active && transformsObjects(active.name) && active.steps[active.stepIndex]?.kind === 'point') {
@@ -695,7 +754,7 @@ function moveObjectEdit(
     after.mesh.positions[i + 1] += delta.y;
     after.mesh.positions[i + 2] += delta.z;
   }
-  translateFeature(after.feature, delta);
+  after.feature = translatedFeature(after.feature, delta) ?? { kind: 'mesh' };
   after.revision++;
   return new UpdateSolidEdit('Move solid', before, after);
 }
@@ -733,16 +792,6 @@ function moveObjects(
     .filter((edit): edit is DocumentEdit => edit !== null);
   if (edits.length === 0) return;
   history.execute(edits.length === 1 ? edits[0] : new CompositeEdit('Move objects', edits));
-}
-
-function translateFeature(feature: SolidFeature, delta: { x: number; y: number; z: number }): void {
-  if (feature.kind === 'extrusion') {
-    feature.transform.translateX += delta.x;
-    feature.transform.translateY += delta.y;
-    feature.transform.translateZ = (feature.transform.translateZ ?? 0) + delta.z;
-  } else if (feature.kind === 'boolean') {
-    for (const operand of feature.operands) translateFeature(operand, delta);
-  }
 }
 
 function updatePreview(cursor: Vec2): void {
@@ -804,6 +853,60 @@ function extrudeHeightUnderCursor(event: PointerEvent): { height: number; profil
   const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
   const height = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
   return height !== null && Math.abs(height) > 1e-6 ? { height, profile } : null;
+}
+
+interface BoxLikeHeightDrag {
+  height: number;
+  mesh: SolidMesh;
+  snap: { x: number; y: number; z: number } | null;
+}
+
+/**
+ * Height of a BOX/WEDGE after its base has been placed. A nearby vertex wins;
+ * elsewhere the cursor ray is measured along the current UCS Z axis.
+ */
+function boxLikeHeightUnderCursor(event: PointerEvent): BoxLikeHeightDrag | null {
+  const active = commands.active;
+  if (cadDocument.viewMode !== '3d'
+    || (active?.name !== 'BOX' && active?.name !== 'WEDGE')
+    || active.stepIndex !== 2) return null;
+  const start = active.data.start as Vec2 | undefined;
+  const end = active.data.end as Vec2 | undefined;
+  if (!start || !end) return null;
+
+  const plane = cadDocument.activeWorkPlane;
+  const snap = nearestMeasurementPoint(event);
+  const centre = localToWorld(plane, {
+    x: (start.x + end.x) / 2,
+    y: (start.y + end.y) / 2,
+  });
+  let height: number | null;
+  if (snap) {
+    height = worldToLocal(plane, snap).z;
+  } else {
+    const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    height = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
+  }
+  if (height === null || Math.abs(height) < 1e-6) return null;
+
+  const feature = boxLikePrimitiveFeature(
+    active.name === 'BOX' ? 'box' : 'wedge',
+    start,
+    end,
+    height,
+    plane,
+  );
+  if (!feature) return null;
+  return { height: feature.height, mesh: primitiveMesh(feature), snap };
+}
+
+function updateBoxLikePreview(event: PointerEvent, sx: number, sy: number): BoxLikeHeightDrag | null {
+  const drag = boxLikeHeightUnderCursor(event);
+  if (!drag) return null;
+  const name = commands.active?.name === 'WEDGE' ? 'Wedge' : 'Box';
+  previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: drag.mesh } });
+  showDimension(`${name} height ${drag.height.toFixed(2)} mm`, sx, sy);
+  return drag;
 }
 
 /** Guards against a slow frame's preview landing on top of a newer one. */
@@ -975,6 +1078,7 @@ function applyDefaultTwoDView(): void {
 
 cadDocument.subscribe(() => {
   redraw();
+  namedUcsController.render();
   if (layerController.isOpen) layerController.render();
   if (propertiesController.isOpen) propertiesController.render();
   settingsController.renderActive();
@@ -999,7 +1103,15 @@ viewport.addEventListener('pointermove', (event) => {
   // Highlighting follows the cursor only while a face is still being chosen.
   // Once one is picked the cursor is dragging it, and re-picking under the
   // cursor would light up whatever it happens to pass over instead.
-  if (cadDocument.viewMode === '3d' && commands.active?.name === 'PRESSPULL' && commands.active.stepIndex === 0) {
+  const choosingPressPullFace = commands.active?.name === 'PRESSPULL' && commands.active.stepIndex === 0;
+  const choosingSlicePlane = commands.active?.name === 'SLICE'
+    && commands.active.steps[commands.active.stepIndex]?.kind === 'plane';
+  const slicePlanePoint = choosingSlicePlane
+    ? ((drawingInteraction.targetSnapMode
+      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
+      : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event))
+    : null;
+  if (cadDocument.viewMode === '3d' && (choosingPressPullFace || (choosingSlicePlane && !slicePlanePoint))) {
     renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY);
   } else if (commands.active?.name !== 'PRESSPULL') {
     renderer3d.clearFaceHighlight();
@@ -1059,6 +1171,7 @@ viewport.addEventListener('pointermove', (event) => {
   const pressPull = pressPullDrag(event);
   if (pressPull) showDimension(`${pressPull.delta > 0 ? 'Pull' : 'Push'} ${Math.abs(pressPull.delta).toFixed(2)} mm`, sx, sy);
   updateExtrudePreview(event, sx, sy);
+  const boxLikeDrag = updateBoxLikePreview(event, sx, sy);
   const active = commands.active;
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
@@ -1077,13 +1190,20 @@ viewport.addEventListener('pointermove', (event) => {
   const extrudeSnap = active?.name === 'EXTRUDE' && active.stepIndex === 1
     ? nearestMeasurementPoint(event)
     : null;
+  const boxLikeSnap = boxLikeDrag?.snap ?? null;
   const rotateSnap = active?.name === 'ROTATE' && active.steps[active.stepIndex]?.kind === 'point'
     ? nearestMeasurementPoint(event)
     : null;
-  if (drawingSnap || extrudeSnap || rotateSnap) {
+  const sliceVertexSnap = active?.name === 'SLICE'
+    && (active.steps[active.stepIndex]?.kind === 'plane' || active.steps[active.stepIndex]?.kind === 'point')
+    ? nearestMeasurementPoint(event)
+    : null;
+  if (drawingSnap || extrudeSnap || boxLikeSnap || rotateSnap || sliceVertexSnap) {
     if (targetedDrawingSnap) positionSnapMarker(targetedDrawingSnap.world, sx, sy, targetedDrawingSnap.mode);
     else if (persistentDrawingSnap) positionSnapMarker(persistentDrawingSnap.world, sx, sy, persistentDrawingSnap.mode);
+    else if (boxLikeSnap) positionSnapMarker(boxLikeSnap, sx, sy);
     else if (rotateSnap) positionSnapMarker(rotateSnap, sx, sy);
+    else if (sliceVertexSnap) positionSnapMarker(sliceVertexSnap, sx, sy);
     else positionMeasureMarker(snapMarker, sx, sy);
     if (extrudeSnap) {
       const height = worldToLocal(cadDocument.activeWorkPlane, extrudeSnap).z;
@@ -1234,6 +1354,15 @@ viewport.addEventListener('pointerdown', async (event) => {
     event.preventDefault();
     return;
   }
+  const boxLikeDrag = boxLikeHeightUnderCursor(event);
+  if (boxLikeDrag) {
+    previewController.clearPreview();
+    await commands.submitInput(String(boxLikeDrag.height));
+    snapMarker.hidden = true;
+    input.focus();
+    event.preventDefault();
+    return;
+  }
   if (commands.active?.name === 'MEASURE') {
     // The first two steps measure, so they must land on real geometry. Where the
     // dimension line and its text then go is free: those steps take the cursor
@@ -1259,7 +1388,8 @@ viewport.addEventListener('pointerdown', async (event) => {
     return;
   }
   if (cadDocument.viewMode === '2d') {
-    const expectsPoint = commands.active?.steps[commands.active.stepIndex]?.kind === 'point';
+    const pointStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
+    const expectsPoint = pointStepKind === 'point' || pointStepKind === 'plane';
     const point = expectsPoint ? interactionPoint(event) ?? worldPoint(event) : worldPoint(event);
     const gripIndex = gripController.nearest2d(rawWorldPoint(event), 10 / renderer2d.zoom);
     const selected = selectedEntity();
@@ -1299,10 +1429,10 @@ viewport.addEventListener('pointerdown', async (event) => {
       await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
     } else if (action.kind === 'selectEntity' && entity) {
       if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
-      selectionController.selectHit(entity, null, event.shiftKey);
+      selectionController.selectHit(entity, null, true);
     } else if (action.kind === 'selectSolid' && solid) {
       if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
-      selectionController.selectHit(null, solid.id, event.shiftKey);
+      selectionController.selectHit(null, solid.id, true);
     }
   } else {
     const activeStep = commands.active?.steps[commands.active.stepIndex];
@@ -1334,15 +1464,14 @@ viewport.addEventListener('pointerdown', async (event) => {
       return;
     }
     const point = interactionPoint(event);
-    if (!point) return;
     if (commands.active?.name === 'MOVE' && activeStep?.kind === 'point') {
+      if (!point) return;
       await commands.handleClick(point);
       if (!commands.active) previewController.clearPreview();
       input.focus();
       return;
     }
     const pickPoint = rawWorldPoint3d(event);
-    if (!pickPoint) return;
     const gripIndex = renderer3d.pickGripIndex(
       renderer3d.renderer.domElement,
       activeGripsInWorld(),
@@ -1368,14 +1497,23 @@ viewport.addEventListener('pointerdown', async (event) => {
       cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
       event.clientX,
       event.clientY,
-    ) ?? (commands.active?.name === 'EXTRUDE' ? profileContainingPoint(pickPoint) : undefined);
+    ) ?? (commands.active?.name === 'EXTRUDE' && pickPoint ? profileContainingPoint(pickPoint) : undefined);
     const solidId = renderer3d.pickSolid(
       renderer3d.renderer.domElement,
       event.clientX,
       event.clientY,
       solidSelectionExclusions()
     );
-    const face = commands.active?.name === 'PRESSPULL'
+    const choosingSlicePlane = commands.active?.name === 'SLICE' && activeStep?.kind === 'plane';
+    // A requested or persistent object snap means the click is the first of
+    // three plane points. Away from a snap, clicking the face interior chooses
+    // that whole planar face instead, so the two input methods do not fight.
+    const slicePointSnap = choosingSlicePlane
+      ? (drawingInteraction.targetSnapMode
+        ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
+        : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event)
+      : null;
+    const face = commands.active?.name === 'PRESSPULL' || (choosingSlicePlane && !slicePointSnap)
       ? renderer3d.pickSolidFace(renderer3d.renderer.domElement, event.clientX, event.clientY)
       : null;
     const action = resolveViewportAction({
@@ -1385,15 +1523,14 @@ viewport.addEventListener('pointerdown', async (event) => {
       hasSelection: Boolean(selected || selectedBody),
       entityHit: Boolean(entity),
       solidHit: Boolean(solidId),
-      // The 3D view cannot drag a selection rectangle yet, so an empty click
-      // clears instead. See "3D window select" in BACKLOG.md.
-      canWindowSelect: false,
+      canWindowSelect: true,
     });
 
     if (action.kind === 'commandClick') {
-      await drawingInteraction.handleClick(point, entity ?? undefined, solidId ?? undefined, face ?? undefined);
+      if ((activeStep?.kind === 'point' || activeStep?.kind === 'plane') && !point && !face) return;
+      await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined);
     } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid') {
-      selectionController.selectHit(entity, solidId, event.shiftKey);
+      selectionController.selectHit(entity, solidId, true);
     } else if (action.kind === 'clearSelection') {
       cadDocument.clearSelection();
     }
@@ -1463,7 +1600,7 @@ new InputController(input, commandForm, {
   saveAs: () => { void projectController.saveAs(); },
   newProject: () => projectController.newProject(),
   open: () => { void projectController.open(); },
-  export: () => { void projectController.exportStl(); },
+  export: startStlExport,
   deleteSelection: deleteSelectedObjects,
   show2d: () => {
     cadDocument.viewMode = '2d';
@@ -1471,6 +1608,7 @@ new InputController(input, commandForm, {
     redraw();
   },
   toggleObjectSnap: () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'),
+  toggleGridDisplay,
   toggleOrtho: () => toggleDraftingMode('orthoEnabled', 'Ortho'),
   toggleGridSnap,
   toggleObjectSnapTracking: () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'),
@@ -1501,7 +1639,14 @@ function toggleGridSnap(): void {
   cadDocument.notify();
 }
 
+function toggleGridDisplay(): void {
+  cadDocument.gridVisible = !cadDocument.gridVisible;
+  log(`Grid: ${cadDocument.gridVisible ? 'ON' : 'OFF'}`);
+  cadDocument.notify();
+}
+
 get('osnap-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'));
+get('grid-toggle').addEventListener('click', () => toggleGridDisplay());
 get('snap-toggle').addEventListener('click', () => toggleGridSnap());
 get('otrack-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'));
 get('ortho-toggle').addEventListener('click', () => toggleDraftingMode('orthoEnabled', 'Ortho'));
@@ -1843,19 +1988,11 @@ document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach((but
     redraw();
   });
 });
-get<HTMLButtonElement>('wcs-reset').addEventListener('click', () => {
-  commands.cancelActive();
-  cadDocument.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
-  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-  previewController.hideSnap();
-  cadDocument.notify();
-  log('World Coordinate System restored.');
-  redraw();
-});
 window.addEventListener('beforeunload', () => {
   removeMenuListener?.();
 });
 log('MyCAD ready. Enter HELP for a list of commands.');
 resize();
 applyDefaultTwoDView();
+namedUcsController.render();
 redraw();

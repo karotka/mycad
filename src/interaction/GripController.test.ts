@@ -2,8 +2,38 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { GripController } from './GripController';
+import type { EdgeModificationFeature, PrimitiveFeature } from '../core/entities/types';
+import { primitiveMesh } from '../core/solids/ManifoldEngine';
 
 describe('GripController', () => {
+  it('moves a chamfer feature with a solid centre grip instead of leaving its history behind', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const source: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const mesh = primitiveMesh(source);
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+    };
+    const solid = doc.createSolid(mesh, 'Box', 4, [], undefined, feature);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+    grips.mode = 'center';
+
+    grips.begin(undefined, solid, 0, { x: 0, y: 0 });
+    grips.update({ x: 7, y: -2 });
+
+    expect(solid.feature).toMatchObject({
+      kind: 'edge-modification', edge: { start: { x: 12, y: 1, z: 0 } },
+    });
+  });
+
   it('records a whole line move as one edit', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

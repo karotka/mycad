@@ -4,6 +4,7 @@ import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
 import { solidBounds } from './PickingService';
+import { translatedFeature } from '../core/solids/featureTransform';
 
 export type GripMode = 'end' | 'center' | 'middle';
 /** `angle` (radians) orients an edge grip along the edge it sits on. */
@@ -509,20 +510,25 @@ export class GripController {
     }
     solid.mesh.positions = positions;
     const originalFeature = this.drag.originalFeature;
-    if (originalFeature?.kind === 'extrusion') {
+    if (originalFeature && this.mode === 'center') {
+      // Moving the whole body moves the feature's edge references and saved
+      // source mesh too, so a later Chamfer/Fillet removal still lands exactly
+      // where the body now is.
+      solid.feature = translatedFeature(originalFeature, { x: dx, y: dy, z: 0 }) ?? { kind: 'mesh' };
+    } else if (originalFeature?.kind === 'extrusion') {
       const feature = JSON.parse(JSON.stringify(originalFeature)) as typeof originalFeature;
-      if (this.mode === 'center') {
-        feature.transform.translateX += dx;
-        feature.transform.translateY += dy;
-      } else {
-        const anchorX = this.mode === 'end' ? anchors[this.drag.gripIndex % 4][0] : (this.drag.gripIndex % 4 === 1 ? b.minX : b.maxX);
-        const anchorY = this.mode === 'end' ? anchors[this.drag.gripIndex % 4][1] : (this.drag.gripIndex % 4 === 2 ? b.minY : b.maxY);
-        feature.transform.scaleX *= appliedScaleX;
-        feature.transform.scaleY *= appliedScaleY;
-        feature.transform.translateX = anchorX + (feature.transform.translateX - anchorX) * appliedScaleX;
-        feature.transform.translateY = anchorY + (feature.transform.translateY - anchorY) * appliedScaleY;
-      }
+      const anchorX = this.mode === 'end' ? anchors[this.drag.gripIndex % 4][0] : (this.drag.gripIndex % 4 === 1 ? b.minX : b.maxX);
+      const anchorY = this.mode === 'end' ? anchors[this.drag.gripIndex % 4][1] : (this.drag.gripIndex % 4 === 2 ? b.minY : b.maxY);
+      feature.transform.scaleX *= appliedScaleX;
+      feature.transform.scaleY *= appliedScaleY;
+      feature.transform.translateX = anchorX + (feature.transform.translateX - anchorX) * appliedScaleX;
+      feature.transform.translateY = anchorY + (feature.transform.translateY - anchorY) * appliedScaleY;
       solid.feature = feature;
+    } else {
+      // Non-uniform grip deformation has no representation in most recipes.
+      // Marking it as a mesh is safer than retaining a feature that would
+      // regenerate a different shape.
+      solid.feature = { kind: 'mesh' };
     }
     solid.revision++;
   }

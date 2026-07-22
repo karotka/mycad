@@ -30,4 +30,28 @@ describe('SelectionController', () => {
     expect([...doc.selectedEntityIds]).toEqual(['a', 'b']);
     expect(selectionChanged).toHaveBeenCalledTimes(2);
   });
+
+  it('finishes a 3D selection window in projected screen space', () => {
+    const doc = new Document();
+    doc.viewMode = '3d';
+    doc.entities = [line('inside')];
+    const renderer2d = { screenToWorld: vi.fn() } as unknown as Canvas2DRenderer;
+    const renderer3d = {
+      renderer: { domElement: {} },
+      projectCadPoint: (_canvas: HTMLCanvasElement, point: { x: number; y: number }) => ({ x: point.x, y: point.y }),
+    } as unknown as Viewport3D;
+    const windowDrag = {
+      finish: () => ({
+        start: { x: -1, y: -1 }, current: { x: 12, y: 12 }, additive: true, pointerId: 4, purpose: 'select' as const,
+      }),
+    } as unknown as WindowDragController;
+    const controller = new SelectionController(
+      doc, {} as HTMLElement, renderer2d, renderer3d, windowDrag,
+      { viewportSize: () => ({ width: 100, height: 100 }), selectionChanged: vi.fn(), zoomFinished: vi.fn(), redraw: vi.fn() },
+    );
+
+    expect(controller.finishWindow(4)).toBe(true);
+    expect([...doc.selectedEntityIds]).toEqual(['inside']);
+    expect(renderer2d.screenToWorld).not.toHaveBeenCalled();
+  });
 });

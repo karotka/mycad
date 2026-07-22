@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import type { PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
-import { regenerateSolidFeature } from './ManifoldEngine';
-import { rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
+import type { EdgeModificationFeature, PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
+import { primitiveMesh, regenerateSolidFeature } from './ManifoldEngine';
+import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
 
 const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
+
+const edgeFeature = (): EdgeModificationFeature => {
+  const source: PrimitiveFeature = {
+    kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+  };
+  const mesh = primitiveMesh(source);
+  return {
+    kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+    edge: {
+      solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    },
+    sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+  };
+};
 
 /** What the old code did: drag every vertex, and forget how the solid was made. */
 function bakedScale(mesh: SolidMesh, base: { x: number; y: number; z: number }, factor: number): Float32Array {
@@ -83,6 +98,12 @@ describe('scaledFeature', () => {
     expect(scaledFeature(sphere(), { x: 0, y: 0, z: 0 }, 0)).toBeNull();
     expect(scaledFeature(sphere(), { x: 0, y: 0, z: 0 }, Number.NaN)).toBeNull();
   });
+
+  it('keeps a chamfer editable and scales its distance and saved source', async () => {
+    const scaled = scaledFeature(edgeFeature(), { x: 0, y: 0, z: 0 }, 2)!;
+    expect(scaled).toMatchObject({ kind: 'edge-modification', amount: 2 });
+    expect((await regenerateSolidFeature(scaled))?.indices.length).toBeGreaterThan(0);
+  });
 });
 
 function plane(origin: { x: number; y: number; z: number }) {
@@ -134,6 +155,19 @@ describe('translatedFeature', () => {
   it('has nothing to move on a bare mesh', () => {
     expect(translatedFeature({ kind: 'mesh' }, delta)).toBeNull();
   });
+
+  it('moves a chamfer without losing the removable feature', async () => {
+    const before = (await regenerateSolidFeature(edgeFeature()))!;
+    const moved = translatedFeature(edgeFeature(), delta)!;
+    const after = (await regenerateSolidFeature(moved))!;
+    expect(moved.kind).toBe('edge-modification');
+    const box = bounds(before.positions);
+    closeTo(bounds(after.positions), {
+      x: { min: box.x.min + delta.x, max: box.x.max + delta.x },
+      y: { min: box.y.min + delta.y, max: box.y.max + delta.y },
+      z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
+    });
+  });
 });
 
 describe('rotatedFeature', () => {
@@ -184,5 +218,31 @@ describe('rotatedFeature', () => {
   it('has nothing to say about a mesh, or about no axis at all', () => {
     expect(rotatedFeature({ kind: 'mesh' }, { x: 0, y: 0, z: 0 }, up, 1)).toBeNull();
     expect(rotatedFeature(sphere(), { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 1)).toBeNull();
+  });
+});
+
+describe('mirroredFeature', () => {
+  it('reflects a primitive and keeps it regenerable', async () => {
+    const feature = sphere({ radius: 1, workPlane: plane({ x: 6, y: 0, z: 0 }) });
+    const mirrored = mirroredFeature(
+      feature,
+      plane({ x: 0, y: 0, z: 0 }),
+      { x: 0, y: -1 },
+      { x: 0, y: 1 },
+    ) as PrimitiveFeature;
+
+    expect(mirrored.kind).toBe('primitive');
+    expect(mirrored.workPlane?.origin.x).toBeCloseTo(-6, 6);
+    const mesh = (await regenerateSolidFeature(mirrored))!;
+    closeTo(bounds(mesh.positions), { x: { min: -7, max: -5 }, y: { min: -1, max: 1 }, z: { min: -1, max: 1 } });
+  });
+
+  it('bakes only a featureless mesh', () => {
+    expect(mirroredFeature(
+      { kind: 'mesh' },
+      plane({ x: 0, y: 0, z: 0 }),
+      { x: 0, y: 0 },
+      { x: 0, y: 1 },
+    )).toBeNull();
   });
 });

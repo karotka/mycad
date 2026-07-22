@@ -73,10 +73,13 @@ export function shellHtml(tools: ShellTools): string {
             </div>
           </div>
         </div>
-        <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M21 12l-3-3M21 12l-3 3"/><circle cx="12" cy="12" r="2"/></svg>
-          <span>WCS</span>
-        </button>
+        <div class="ucs-bar" aria-label="Saved coordinate systems">
+          <button class="wcs-reset" id="wcs-reset" title="Return to World Coordinate System" aria-label="Return to World Coordinate System">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M21 12l-3-3M21 12l-3 3"/><circle cx="12" cy="12" r="2"/></svg>
+            <span>WCS</span>
+          </button>
+          <div class="named-ucs-list" id="named-ucs-list"></div>
+        </div>
       </div>
     </section>
     <section class="command-panel">
@@ -95,20 +98,21 @@ export function shellHtml(tools: ShellTools): string {
       <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
+        <button id="grid-toggle" title="Grid display (F7)" aria-label="Grid display (F7)">GRID <kbd>F7</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
         <button id="snap-toggle" title="Snap Mode — cursor stepping (F9)" aria-label="Snap Mode (F9)">SNAP <kbd>F9</kbd></button>
         <button id="polar-toggle" title="Polar Tracking (F10)" aria-label="Polar Tracking (F10)">POLAR <kbd>F10</kbd></button>
         <button id="otrack-toggle" title="Object Snap Tracking (F11)" aria-label="Object Snap Tracking (F11)">OTRACK <kbd>F11</kbd></button>
       </div>
       <div class="visual-style" role="group" aria-label="Visual style">
-        <button class="active" data-visual-style="wireframe" title="Wireframe" aria-label="Wireframe">
+        <button data-visual-style="wireframe" title="Wireframe" aria-label="Wireframe">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm0 0v9m8-4.5L12 12 4 7.5M12 12v9"/></svg>
+        </button>
+        <button class="active" data-visual-style="xray" title="X-Ray with Edges" aria-label="X-Ray with Edges">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="xray-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="xray-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="xray-right" d="M20 7.5L12 12v9l8-4.5v-9z"/><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"/></svg>
         </button>
         <button data-visual-style="shaded" title="Shaded with Edges" aria-label="Shaded with Edges">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path class="shade-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="shade-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="shade-right" d="M20 7.5L12 12v9l8-4.5v-9z"/></svg>
-        </button>
-        <button data-visual-style="xray" title="X-Ray with Edges" aria-label="X-Ray with Edges">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="xray-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="xray-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="xray-right" d="M20 7.5L12 12v9l8-4.5v-9z"/><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"/></svg>
         </button>
       </div>
       <section class="properties-panel model-tree-panel" id="model-tree-panel" hidden>

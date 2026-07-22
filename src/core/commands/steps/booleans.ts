@@ -16,33 +16,58 @@ import type { CommandRun, StepOutcome } from '../types';
 /** Deep, because the operand keeps its own tree and the source may yet be edited. */
 const copyFeature = (solid: Solid): SolidFeature => JSON.parse(JSON.stringify(solid.feature)) as SolidFeature;
 
-export async function subtractSolids({ ctx, active, data, value }: CommandRun): Promise<StepOutcome> {
+export async function subtractSolids(run: CommandRun): Promise<StepOutcome> {
+  const { ctx, active, data, value } = run;
   if (active.stepIndex === 0) {
-    data.baseId = value;
-    ctx.doc.selectSolid(value as string);
-    ctx.log(`Base solid selected: ${value as string}`);
+    if (typeof value === 'string') {
+      if (!data.baseId) {
+        data.baseId = value;
+        ctx.log(`Base solid selected: ${value}. Press Enter to select cutting solids.`);
+      } else {
+        ctx.log('A base solid is already selected. Press Enter to continue.');
+      }
+      return 'stay';
+    }
+    if (!data.baseId) {
+      ctx.log('Select one base solid first.');
+      return 'stay';
+    }
     return 'advance';
   }
 
   const baseSolid = ctx.doc.getSolid(data.baseId as string);
-  const toolSolid = ctx.doc.getSolid(value as string);
-  if (!baseSolid || !toolSolid) {
-    ctx.log('Solid not found.');
-    return 'advance';
+  if (typeof value === 'string') {
+    if (value === data.baseId) {
+      ctx.log('The base solid cannot subtract itself.');
+      return 'stay';
+    }
+    run.gather(value);
+    return 'stay';
   }
-  ctx.log('Subtracting…');
-  const mesh = await booleanSubtract(baseSolid.mesh, toolSolid.mesh);
-  if (!mesh) {
-    ctx.log('Subtract failed.');
-    return 'advance';
+  const toolSolids = (data.solids as Solid[]).filter((solid) => solid.id !== data.baseId);
+  if (!baseSolid || toolSolids.length === 0) {
+    ctx.log('Select a base solid and at least one cutting solid.');
+    return 'stay';
   }
-  const solid = ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], undefined, {
-    kind: 'boolean',
-    operation: 'subtract',
-    operands: [copyFeature(baseSolid), copyFeature(toolSolid)],
-  });
-  ctx.history.execute(new ReplaceObjectsEdit('Subtract', [], [baseSolid, toolSolid], [], [solid]));
-  ctx.log('Subtract complete.');
+  ctx.log(`Subtracting ${toolSolids.length} solid(s)…`);
+  let mesh = baseSolid.mesh;
+  let feature = copyFeature(baseSolid);
+  for (const toolSolid of toolSolids) {
+    const next = await booleanSubtract(mesh, toolSolid.mesh);
+    if (!next) {
+      ctx.log(`Subtract failed on ${toolSolid.name}.`);
+      return 'stay';
+    }
+    mesh = next;
+    feature = {
+      kind: 'boolean',
+      operation: 'subtract',
+      operands: [feature, copyFeature(toolSolid)],
+    };
+  }
+  const solid = ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], undefined, feature);
+  ctx.history.execute(new ReplaceObjectsEdit('Subtract', [], [baseSolid, ...toolSolids], [], [solid]));
+  ctx.log(`Subtract complete: ${toolSolids.length} cutting solid(s).`);
   return 'advance';
 }
 

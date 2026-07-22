@@ -42,6 +42,7 @@ export function toolIcon(command: ToolbarIcon): string {
     CHAMFER: '<path d="M4 19V7h7l9 9v3H4zM11 7v5l5 5"/>',
     FILLET: '<path d="M4 20V5h15M4 20c0-8.3 6.7-15 15-15"/>',
     PRESSPULL: '<path d="M3 17l9 4 9-4-9-4-9 4zM12 13V4M9 7l3-3 3 3M9 10l3 3 3-3"/>',
+    SLICE: '<path d="M4 7l8-4 8 4-8 4-8-4zm0 10l8 4 8-4-8-4-8 4z"/><path d="M2 12h20M5 10l-3 2 3 2M19 10l3 2-3 2"/>',
     ERASE: '<path d="M4 16L14 4l6 5-9 11H7l-3-4zM11 20h10"/>',
     MEASURE: '<path d="M4 19L19 4M3 15l6 6M15 3l6 6M8 14l2 2M11 11l2 2M14 8l2 2"/>',
     DIMALIGNED: '<path d="M4 20L20 4"/><path d="M2 14l4 4M18 2l4 4" stroke-dasharray="2 2"/><path d="M6 18l3 1-1-3M18 6l-3-1 1 3"/>',

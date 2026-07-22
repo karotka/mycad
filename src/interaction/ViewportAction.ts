@@ -15,11 +15,7 @@ export interface ViewportPick {
   hasSelection: boolean;
   entityHit: boolean;
   solidHit: boolean;
-  /**
-   * Whether this view can drag a selection rectangle at all. The 3D view cannot
-   * yet — projecting entities to the screen needs an outline sampler it does not
-   * have — so there an empty click clears the selection instead.
-   */
+  /** Whether this view can drag a selection rectangle. */
   canWindowSelect: boolean;
 }
 

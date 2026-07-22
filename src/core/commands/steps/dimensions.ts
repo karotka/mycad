@@ -84,10 +84,9 @@ export function setWorkPlane({ active, data, value, ctx }: CommandRun): StepOutc
   const origin = data.origin as Vec3;
   const xPoint = data.xPoint as Vec3;
   const yPoint = value as Vec3;
-  ctx.doc.activeWorkPlane = workPlaneFromXYAxes(origin, xPoint, yPoint);
+  const named = ctx.doc.addNamedWorkPlane(workPlaneFromXYAxes(origin, xPoint, yPoint));
   ctx.doc.viewMode = '3d';
   ctx.workPlaneChanged?.();
-  ctx.doc.notify();
-  ctx.log(`UCS set: origin ${formatPoint(origin)}, X through ${formatPoint(xPoint)}, Y through ${formatPoint(yPoint)}`);
+  ctx.log(`${named.name} saved: origin ${formatPoint(origin)}, X through ${formatPoint(xPoint)}, Y through ${formatPoint(yPoint)}`);
   return 'advance';
 }
