@@ -342,6 +342,7 @@ function syncChrome(): void {
     cadDocument.drafting.objectSnapEnabled, cadDocument.drafting.orthoEnabled,
     cadDocument.drafting.polarEnabled, cadDocument.drafting.objectSnapTrackingEnabled,
     dynamicUcsController.enabled, dynamicUcsController.isTemporary,
+    cadDocument.gcode.frameVisible,
     zoomWindowMode,
   ].join('|');
   if (state === chromeState) return;
@@ -353,6 +354,7 @@ function drawFrame(): void {
   syncDynamicUcsLifecycle();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
+  renderer3d.syncCutAreaFrame(cadDocument.gcode);
   if (!is2d) framePrimitiveBaseForHeight();
   const activeStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
   const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'edge' || activeStepKind === 'plane';
@@ -400,6 +402,7 @@ function drawChrome(): void {
   get<HTMLButtonElement>('otrack-toggle').classList.toggle('active', cadDocument.drafting.objectSnapTrackingEnabled);
   get<HTMLButtonElement>('ducs-toggle').classList.toggle('active', dynamicUcsController.enabled);
   get<HTMLButtonElement>('ducs-save').hidden = !dynamicUcsController.isTemporary;
+  get<HTMLButtonElement>('area-toggle').classList.toggle('active', cadDocument.gcode.frameVisible);
   document.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
     button.classList.toggle('active', button.dataset.command === commands.active?.name);
   });
@@ -1769,6 +1772,7 @@ new InputController(input, commandForm, {
   toggleObjectSnap: () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'),
   toggleDynamicUcs,
   toggleGridDisplay,
+  toggleCutArea,
   toggleOrtho: () => toggleDraftingMode('orthoEnabled', 'Ortho'),
   toggleGridSnap,
   toggleObjectSnapTracking: () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'),
@@ -1805,10 +1809,29 @@ function toggleGridDisplay(): void {
   cadDocument.notify();
 }
 
+function toggleCutArea(): void {
+  const options = cadDocument.gcode;
+  options.frameVisible = !options.frameVisible;
+  if (options.frameVisible) {
+    const first = { x: options.frameOriginX, y: options.frameOriginY };
+    const opposite = { x: first.x + options.frameWidth, y: first.y + options.frameHeight };
+    if (cadDocument.viewMode === '2d') renderer2d.zoomWindow(first, opposite, width, height);
+    else renderer3d.framePoints([
+      { ...first, z: 0 },
+      { x: opposite.x, y: first.y, z: 0 },
+      { ...opposite, z: 0 },
+      { x: first.x, y: opposite.y, z: 0 },
+    ]);
+  }
+  log(`Print/cut area: ${options.frameVisible ? `ON, ${options.frameWidth} × ${options.frameHeight} mm` : 'OFF'}`);
+  cadDocument.notify();
+}
+
 get('osnap-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'));
 get('ducs-toggle').addEventListener('click', () => toggleDynamicUcs());
 get('ducs-save').addEventListener('click', () => saveDynamicUcs());
 get('grid-toggle').addEventListener('click', () => toggleGridDisplay());
+get('area-toggle').addEventListener('click', () => toggleCutArea());
 get('snap-toggle').addEventListener('click', () => toggleGridSnap());
 get('otrack-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'));
 get('ortho-toggle').addEventListener('click', () => toggleDraftingMode('orthoEnabled', 'Ortho'));

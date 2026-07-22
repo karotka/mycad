@@ -30,6 +30,11 @@ export class GcodeSettingsController {
     this.set('gcode-pen-down-code', this.doc.gcode.penDownCode);
     this.set('gcode-feed-rate', this.doc.gcode.feedRate);
     this.set('gcode-travel-rate', this.doc.gcode.travelRate);
+    this.get('gcode-frame-visible').checked = this.doc.gcode.frameVisible;
+    this.set('gcode-frame-width', this.doc.gcode.frameWidth);
+    this.set('gcode-frame-height', this.doc.gcode.frameHeight);
+    this.set('gcode-frame-origin-x', this.doc.gcode.frameOriginX);
+    this.set('gcode-frame-origin-y', this.doc.gcode.frameOriginY);
     this.set('gcode-segments', this.doc.gcode.segments);
   }
 
@@ -47,12 +52,23 @@ export class GcodeSettingsController {
       const value = Number(this.get(id).value);
       return Number.isFinite(value) && value > 0 ? value : fallback;
     };
+    const finite = (id: string, fallback: number): number => {
+      const raw = this.get(id).value.trim();
+      if (!raw) return fallback;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : fallback;
+    };
     const command = (id: string, fallback: string): string => this.get(id).value.trim() || fallback;
     this.doc.gcode.homingCode = command('gcode-homing-code', this.doc.gcode.homingCode);
     this.doc.gcode.penUpCode = command('gcode-pen-up-code', this.doc.gcode.penUpCode);
     this.doc.gcode.penDownCode = command('gcode-pen-down-code', this.doc.gcode.penDownCode);
     this.doc.gcode.feedRate = positive('gcode-feed-rate', this.doc.gcode.feedRate);
     this.doc.gcode.travelRate = positive('gcode-travel-rate', this.doc.gcode.travelRate);
+    this.doc.gcode.frameVisible = this.get('gcode-frame-visible').checked;
+    this.doc.gcode.frameWidth = positive('gcode-frame-width', this.doc.gcode.frameWidth);
+    this.doc.gcode.frameHeight = positive('gcode-frame-height', this.doc.gcode.frameHeight);
+    this.doc.gcode.frameOriginX = finite('gcode-frame-origin-x', this.doc.gcode.frameOriginX);
+    this.doc.gcode.frameOriginY = finite('gcode-frame-origin-y', this.doc.gcode.frameOriginY);
     // Below three there is no curve left to draw, whatever the field says.
     const segments = Number(this.get('gcode-segments').value);
     if (Number.isInteger(segments) && segments >= 3) this.doc.gcode.segments = segments;

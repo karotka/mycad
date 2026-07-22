@@ -101,6 +101,7 @@ export function shellHtml(tools: ShellTools): string {
         <button id="ducs-toggle" title="Dynamic UCS on planar faces (F6)" aria-label="Dynamic UCS (F6)">DUCS <kbd>F6</kbd></button>
         <button id="ducs-save" title="Save the current Dynamic UCS as a named UCS" aria-label="Save Dynamic UCS" hidden>SAVE UCS</button>
         <button id="grid-toggle" title="Grid display (F7)" aria-label="Grid display (F7)">GRID <kbd>F7</kbd></button>
+        <button id="area-toggle" title="Print/cut area (Shift+F7)" aria-label="Print/cut area (Shift+F7)">AREA <kbd>⇧F7</kbd></button>
         <button id="ortho-toggle" title="Ortho Mode (F8)" aria-label="Ortho Mode (F8)">ORTHO <kbd>F8</kbd></button>
         <button id="snap-toggle" title="Snap Mode — cursor stepping (F9)" aria-label="Snap Mode (F9)">SNAP <kbd>F9</kbd></button>
         <button id="polar-toggle" title="Polar Tracking (F10)" aria-label="Polar Tracking (F10)">POLAR <kbd>F10</kbd></button>
@@ -161,6 +162,11 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Pen down code</span><input id="gcode-pen-down-code" type="text" spellcheck="false" title="Controller command that lowers or enables the pen"></label>
           <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
           <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
+          <label class="property-row"><span>Show area</span><input id="gcode-frame-visible" type="checkbox" title="Show the non-exported print/cut area"></label>
+          <label class="property-row"><span>Frame width</span><input id="gcode-frame-width" type="number" min="0.1" step="1" title="Print/cut area width in mm"></label>
+          <label class="property-row"><span>Frame height</span><input id="gcode-frame-height" type="number" min="0.1" step="1" title="Print/cut area height in mm"></label>
+          <label class="property-row"><span>Frame origin X</span><input id="gcode-frame-origin-x" type="number" step="1" title="Lower-left corner X in world coordinates"></label>
+          <label class="property-row"><span>Frame origin Y</span><input id="gcode-frame-origin-y" type="number" step="1" title="Lower-left corner Y in world coordinates"></label>
           <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
         </form>
       </section>

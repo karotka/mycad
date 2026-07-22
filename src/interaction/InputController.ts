@@ -12,6 +12,7 @@ export interface InputControllerCallbacks {
   toggleObjectSnap(): void;
   toggleDynamicUcs(): void;
   toggleGridDisplay(): void;
+  toggleCutArea(): void;
   toggleOrtho(): void;
   togglePolar(): void;
   toggleGridSnap(): void;
@@ -27,6 +28,15 @@ export class InputController {
     if (event.key === 'Escape') {
       event.preventDefault();
       this.callbacks.escape();
+      return;
+    }
+
+    // Shift+F7 is deliberately separate from AutoCAD's F7 grid toggle: it shows
+    // the plotter work area without consuming any of AutoCAD's F1-F12 meanings.
+    if (event.key === 'F7' && event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.callbacks.toggleCutArea();
       return;
     }
 

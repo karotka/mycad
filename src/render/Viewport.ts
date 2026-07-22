@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Document } from '../core/Document';
+import type { GcodeOptions } from '../core/settings';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
 import type { Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
@@ -130,6 +131,7 @@ export class Canvas2DRenderer {
   ): void {
     this.clear(w, h);
     this.drawGrid(w, h, doc.gridVisible ? doc.gridSize : 0);
+    this.drawCutAreaFrame(doc.gcode, w, h);
     this.layerLineweight = doc.layerLineweight;
     this.layerLinetype = doc.layerLinetype;
 
@@ -143,6 +145,32 @@ export class Canvas2DRenderer {
 
     if (preview) this.drawPreview(preview, w, h);
     this.drawGrips(grips, w, h);
+  }
+
+  /** A non-entity overlay: visible for layout, absent from picking and export. */
+  private drawCutAreaFrame(options: GcodeOptions, w: number, h: number): void {
+    if (!options.frameVisible) return;
+    const lowerLeft = worldToScreen({ x: options.frameOriginX, y: options.frameOriginY }, w, h, this.pan, this.zoom);
+    const upperRight = worldToScreen({
+      x: options.frameOriginX + options.frameWidth,
+      y: options.frameOriginY + options.frameHeight,
+    }, w, h, this.pan, this.zoom);
+    const left = Math.min(lowerLeft.x, upperRight.x);
+    const top = Math.min(lowerLeft.y, upperRight.y);
+    const width = Math.abs(upperRight.x - lowerLeft.x);
+    const height = Math.abs(upperRight.y - lowerLeft.y);
+    this.ctx.save();
+    this.ctx.fillStyle = 'rgba(240, 180, 41, 0.045)';
+    this.ctx.fillRect(left, top, width, height);
+    this.ctx.strokeStyle = '#f0b429';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.setLineDash([8, 5]);
+    this.ctx.strokeRect(left, top, width, height);
+    this.ctx.setLineDash([]);
+    this.ctx.fillStyle = '#f0b429';
+    this.ctx.font = '12px SFMono-Regular, Menlo, monospace';
+    this.ctx.fillText(`${options.frameWidth} × ${options.frameHeight} mm`, left + 8, top + 18);
+    this.ctx.restore();
   }
 
   private drawSolidProjection(solid: Solid, w: number, h: number): void {
@@ -539,6 +567,8 @@ export class Viewport3D {
   private gripKey = '';
   private faceHighlight: THREE.Mesh | null = null;
   private edgeHighlight: THREE.Line | null = null;
+  private cutAreaFrame: THREE.Group | null = null;
+  private cutAreaFrameKey = '';
   private grid: THREE.GridHelper;
   private axisTriad: THREE.Group;
   private isDragging = false;
@@ -608,6 +638,48 @@ export class Viewport3D {
 
   setGridVisible(visible: boolean): void {
     this.grid.visible = visible;
+  }
+
+  /** Keeps the plotter area in world XY even while a custom UCS turns the grid. */
+  syncCutAreaFrame(options: GcodeOptions): void {
+    const key = [options.frameVisible, options.frameOriginX, options.frameOriginY, options.frameWidth, options.frameHeight].join('|');
+    if (key === this.cutAreaFrameKey) return;
+    this.cutAreaFrameKey = key;
+    if (this.cutAreaFrame) {
+      this.scene.remove(this.cutAreaFrame);
+      this.disposeObject(this.cutAreaFrame);
+      this.cutAreaFrame = null;
+    }
+    if (!options.frameVisible) return;
+
+    const x = options.frameOriginX, y = options.frameOriginY;
+    const width = options.frameWidth, height = options.frameHeight;
+    const group = new THREE.Group();
+    group.name = 'cut-area-frame';
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, height),
+      new THREE.MeshBasicMaterial({ color: 0xf0b429, transparent: true, opacity: 0.045, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    fill.rotation.x = -Math.PI / 2;
+    fill.position.set(x + width / 2, 0.005, -(y + height / 2));
+    fill.renderOrder = 3;
+    group.add(fill);
+
+    const borderGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x, 0.01, -y),
+      new THREE.Vector3(x + width, 0.01, -y),
+      new THREE.Vector3(x + width, 0.01, -(y + height)),
+      new THREE.Vector3(x, 0.01, -(y + height)),
+    ]);
+    const border = new THREE.LineLoop(
+      borderGeometry,
+      new THREE.LineDashedMaterial({ color: 0xf0b429, dashSize: 4, gapSize: 2, depthTest: false }),
+    );
+    border.computeLineDistances();
+    border.renderOrder = 4;
+    group.add(border);
+    this.cutAreaFrame = group;
+    this.scene.add(group);
   }
 
   captureViewState(): ProjectViewState['threeD'] {

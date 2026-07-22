@@ -13,6 +13,11 @@ function setup() {
       <input id="gcode-pen-down-code" type="text">
       <input id="gcode-feed-rate" type="number">
       <input id="gcode-travel-rate" type="number">
+      <input id="gcode-frame-visible" type="checkbox">
+      <input id="gcode-frame-width" type="number">
+      <input id="gcode-frame-height" type="number">
+      <input id="gcode-frame-origin-x" type="number">
+      <input id="gcode-frame-origin-y" type="number">
       <input id="gcode-segments" type="number">
     </form>
     <button id="toggle"></button>
@@ -30,6 +35,10 @@ const type = (id: string, value: string) => {
   field(id).value = value;
   field(id).dispatchEvent(new Event('input', { bubbles: true }));
 };
+const check = (id: string, value: boolean) => {
+  field(id).checked = value;
+  field(id).dispatchEvent(new Event('input', { bubbles: true }));
+};
 
 describe('GcodeSettingsController', () => {
   it('shows what the document will be exported with', () => {
@@ -40,6 +49,11 @@ describe('GcodeSettingsController', () => {
     expect(field('gcode-pen-down-code').value).toBe('M3 S19');
     expect(field('gcode-travel-rate').value).toBe('6000');
     expect(field('gcode-feed-rate').value).toBe('4000');
+    expect(field('gcode-frame-visible').checked).toBe(false);
+    expect(field('gcode-frame-width').value).toBe('297');
+    expect(field('gcode-frame-height').value).toBe('210');
+    expect(field('gcode-frame-origin-x').value).toBe('0');
+    expect(field('gcode-frame-origin-y').value).toBe('0');
   });
 
   it('changes what comes out of the export', () => {
@@ -87,5 +101,24 @@ describe('GcodeSettingsController', () => {
     expect(field('gcode-pen-up-code').value).toBe('  ');
     type('gcode-pen-up-code', 'M9');
     expect(doc.gcode.penUpCode).toBe('M9');
+  });
+
+  it('updates the saved print area dimensions, origin and visibility', () => {
+    const { doc, controller } = setup();
+    controller.render();
+
+    check('gcode-frame-visible', true);
+    type('gcode-frame-width', '420');
+    type('gcode-frame-height', '297');
+    type('gcode-frame-origin-x', '-10');
+    type('gcode-frame-origin-y', '25');
+
+    expect(doc.gcode).toMatchObject({
+      frameVisible: true,
+      frameWidth: 420,
+      frameHeight: 297,
+      frameOriginX: -10,
+      frameOriginY: 25,
+    });
   });
 });

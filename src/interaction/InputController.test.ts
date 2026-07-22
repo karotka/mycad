@@ -23,7 +23,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -50,7 +50,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -74,7 +74,7 @@ describe('InputController', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -104,7 +104,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
-      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
@@ -138,5 +138,12 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     expect(callbacks.toggleOrtho).not.toHaveBeenCalled();
     expect(callbacks.togglePolar).not.toHaveBeenCalled();
     expect(callbacks.toggleObjectSnapTracking).not.toHaveBeenCalled();
+  });
+
+  it('uses Shift+F7 for the print area without toggling the grid', () => {
+    const { target, callbacks } = setup();
+    target.dispatchEvent(keyboard('F7', { shiftKey: true }));
+    expect(callbacks.toggleCutArea).toHaveBeenCalledOnce();
+    expect(callbacks.toggleGridDisplay).not.toHaveBeenCalled();
   });
 });

@@ -39,6 +39,13 @@ export interface GcodeOptions {
   penDownCode: string;
   /** Controller-specific homing sequence emitted before any coordinate move. */
   homingCode: string;
+  /** Whether the non-exported print/cut area overlay is visible. */
+  frameVisible: boolean;
+  /** Print/cut area in world XY millimetres; A4 landscape by default. */
+  frameWidth: number;
+  frameHeight: number;
+  frameOriginX: number;
+  frameOriginY: number;
   /** How finely curves are broken into straight moves. */
   segments: number;
 }
@@ -50,6 +57,11 @@ export function defaultGcodeOptions(): GcodeOptions {
     penUpCode: 'M5',
     penDownCode: 'M3 S19',
     homingCode: '$H',
+    frameVisible: false,
+    frameWidth: 297,
+    frameHeight: 210,
+    frameOriginX: 0,
+    frameOriginY: 0,
     segments: 64,
   };
 }

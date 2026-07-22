@@ -223,6 +223,11 @@ describe('ProjectIO', () => {
       penUpCode: 'M9',
       penDownCode: 'M8',
       homingCode: 'G28',
+      frameVisible: true,
+      frameWidth: 420,
+      frameHeight: 297,
+      frameOriginX: -10,
+      frameOriginY: 20,
       segments: 128,
     };
     const target = new Document();
@@ -246,6 +251,11 @@ describe('ProjectIO', () => {
       penUpCode: 'M5',
       penDownCode: 'M3 S19',
       homingCode: '$H',
+      frameVisible: false,
+      frameWidth: 297,
+      frameHeight: 210,
+      frameOriginX: 0,
+      frameOriginY: 0,
       segments: 64,
     });
   });
@@ -264,6 +274,11 @@ describe('ProjectIO', () => {
       penUpCode: 'M5',
       penDownCode: 'M3 S19',
       homingCode: '$H',
+      frameVisible: false,
+      frameWidth: 297,
+      frameHeight: 210,
+      frameOriginX: 0,
+      frameOriginY: 0,
       segments: 32,
     });
   });

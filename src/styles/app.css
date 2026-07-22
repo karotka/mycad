@@ -570,6 +570,7 @@ html, body, #app {
 .property-row > span { padding-left: 6px; color: #aeb8c2; }
 .property-row input, .property-row select { min-width: 0; height: 24px; padding: 2px 5px; border: 1px solid #46525e; background: #11161b; color: #eef5fa; font: 11px 'SF Mono', monospace; }
 .property-row input[type="color"] { padding: 2px; }
+.property-row input[type="checkbox"] { justify-self: start; width: 16px; height: 16px; margin-left: 5px; padding: 0; accent-color: #168bd0; }
 .property-row output { padding: 0 6px; color: #7fcef5; font: 11px 'SF Mono', monospace; }
 .property-row.readonly { background: rgba(255,255,255,.018); }
 .layer-toggle:hover { background: rgba(255, 255, 255, 0.14); }

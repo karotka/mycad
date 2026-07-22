@@ -249,6 +249,7 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
   if (!value || typeof value !== 'object') return defaults;
   const raw = value as Partial<Record<keyof GcodeOptions, unknown>>;
   const positive = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
+  const finite = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : fallback;
   const command = (candidate: unknown, fallback: string): string => typeof candidate === 'string' && candidate.trim() ? candidate.trim() : fallback;
   return {
     feedRate: positive(raw.feedRate, defaults.feedRate),
@@ -256,6 +257,11 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
     penUpCode: command(raw.penUpCode, defaults.penUpCode),
     penDownCode: command(raw.penDownCode, defaults.penDownCode),
     homingCode: command(raw.homingCode, defaults.homingCode),
+    frameVisible: typeof raw.frameVisible === 'boolean' ? raw.frameVisible : defaults.frameVisible,
+    frameWidth: positive(raw.frameWidth, defaults.frameWidth),
+    frameHeight: positive(raw.frameHeight, defaults.frameHeight),
+    frameOriginX: finite(raw.frameOriginX, defaults.frameOriginX),
+    frameOriginY: finite(raw.frameOriginY, defaults.frameOriginY),
     segments: typeof raw.segments === 'number' && Number.isInteger(raw.segments) && raw.segments >= 3 ? raw.segments : defaults.segments,
   };
 }

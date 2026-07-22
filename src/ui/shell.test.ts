@@ -28,5 +28,6 @@ describe('drafting controls', () => {
 
     expect(document.querySelector<HTMLButtonElement>('#ducs-toggle')?.textContent).toContain('F6');
     expect(document.querySelector<HTMLButtonElement>('#ducs-save')?.hidden).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('#area-toggle')?.textContent).toContain('⇧F7');
   });
 });
