@@ -11,6 +11,15 @@ export interface SolidFeatureEdge {
   end: Vec3;
 }
 
+/** One planar round crease reconstructed from the straight segments of a mesh. */
+export interface SolidCircularEdge {
+  center: Vec3;
+  normal: Vec3;
+  radius: number;
+  vertexIndices: number[];
+  points: Vec3[];
+}
+
 interface IndexedEdge {
   a: number;
   b: number;
@@ -19,7 +28,7 @@ interface IndexedEdge {
 
 const DEFAULT_SMOOTH_DOT = 0.95;
 const featureEdgeCache = new WeakMap<SolidMesh, SolidFeatureEdge[]>();
-const circularCentreCache = new WeakMap<SolidMesh, Vec3[]>();
+const circularEdgeCache = new WeakMap<SolidMesh, SolidCircularEdge[]>();
 const planarFaceCache = new WeakMap<SolidMesh, PlanarFace[]>();
 
 /** One connected coplanar surface reconstructed from indexed mesh triangles. */
@@ -581,8 +590,8 @@ export function solidFeatureEdges(mesh: SolidMesh, smoothDot = DEFAULT_SMOOTH_DO
  * vertex of a candidate loop must have degree two, the loop must be planar,
  * and all of its vertices must lie on one radius.
  */
-export function solidCircularEdgeCenters(mesh: SolidMesh): Vec3[] {
-  const cached = circularCentreCache.get(mesh);
+export function solidCircularEdges(mesh: SolidMesh): SolidCircularEdge[] {
+  const cached = circularEdgeCache.get(mesh);
   if (cached) return cached;
   const edges = solidFeatureEdges(mesh);
   const incident = new Map<number, number[]>();
@@ -592,7 +601,7 @@ export function solidCircularEdgeCenters(mesh: SolidMesh): Vec3[] {
   });
 
   const visited = new Set<number>();
-  const centres: Vec3[] = [];
+  const circles: SolidCircularEdge[] = [];
   for (let seed = 0; seed < edges.length; seed++) {
     if (visited.has(seed)) continue;
     const componentEdges: number[] = [];
@@ -653,8 +662,20 @@ export function solidCircularEdgeCenters(mesh: SolidMesh): Vec3[] {
     const planar = points.every((point) => Math.abs((point.x - centre.x) * nx + (point.y - centre.y) * ny + (point.z - centre.z) * nz) <= planarTolerance);
     const round = radii.every((value) => Math.abs(value - radius) <= radiusTolerance);
     if (!planar || !round) continue;
-    if (!centres.some((other) => Math.hypot(other.x - centre.x, other.y - centre.y, other.z - centre.z) <= planarTolerance)) centres.push(centre);
+    if (!circles.some((other) => Math.hypot(other.center.x - centre.x, other.center.y - centre.y, other.center.z - centre.z) <= planarTolerance)) {
+      circles.push({
+        center: centre,
+        normal: { x: nx, y: ny, z: nz },
+        radius,
+        vertexIndices: ordered,
+        points,
+      });
+    }
   }
-  circularCentreCache.set(mesh, centres);
-  return centres;
+  circularEdgeCache.set(mesh, circles);
+  return circles;
+}
+
+export function solidCircularEdgeCenters(mesh: SolidMesh): Vec3[] {
+  return solidCircularEdges(mesh).map((circle) => circle.center);
 }

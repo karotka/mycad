@@ -1,5 +1,6 @@
 {
   "name": "mycad",
+  "productName": "MyCAD",
   "version": "1.0.0",
   "description": "AutoCAD-style 2D/3D CAD for macOS",
   "main": "dist-electron/main.js",
@@ -13,8 +14,9 @@
   },
   "build": {
     "appId": "com.mycad.app",
-    "productName": "MyCAD",
+    "executableName": "MyCAD",
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "target": [
         "dmg",

@@ -53,7 +53,9 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
     case 'edge-modification':
       return {
         label: feature.operation === 'fillet' ? 'Fillet' : 'Chamfer',
-        detail: `${Number(feature.amount.toFixed(2))} mm`,
+        detail: feature.operation === 'fillet'
+          ? `${Number(feature.amount.toFixed(2))} mm`
+          : `${Number(feature.amount.toFixed(2))} × ${Number((feature.amount2 ?? feature.amount).toFixed(2))} mm`,
       };
     case 'presspull-region':
       return {

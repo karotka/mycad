@@ -41,6 +41,18 @@ describe('PreviewController', () => {
     expect(previewOf(active('POLYLINE', 0, { vertices: [] }), { x: 4, y: 5 })).toBeUndefined();
   });
 
+  it('previews the radial base of every round primitive, including TORUS', () => {
+    for (const name of ['CYLINDER', 'SPHERE', 'CONE', 'PYRAMID', 'TORUS']) {
+      expect(previewOf(
+        active(name, 1, { center: { x: 2, y: 3 } }),
+        { x: 7, y: 3 },
+      )).toEqual({
+        type: 'circle',
+        data: { center: { x: 2, y: 3 }, cursor: { x: 7, y: 3 } },
+      });
+    }
+  });
+
   it('carries the moving objects in the move preview so they ride under the cursor', () => {
     const line = { id: 'l1', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: true, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } };
     const preview = previewOf(active('MOVE', 2, { basePoint: { x: 0, y: 0 }, entities: [line] }), { x: 5, y: 3 });
@@ -72,6 +84,80 @@ describe('PreviewController', () => {
     const data = preview?.data as { end: unknown; offset: unknown };
     expect(data.end).toEqual({ x: 10, y: 0 });
     expect(data.offset).toEqual({ x: 4, y: 9 });
+  });
+
+  it('moves the visible dimension text with the cursor in the final placement step', () => {
+    const preview = previewOf(
+      active('DIMALIGNED', 3, {
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 0 },
+        offset: { x: 5, y: 6 },
+      }),
+      { x: 13, y: 9 },
+    );
+    expect(preview).toMatchObject({
+      type: 'dimension',
+      data: {
+        kind: 'aligned',
+        offset: { x: 5, y: 6 },
+        textPosition: { x: 13, y: 9 },
+      },
+    });
+  });
+
+  it('previews a solid-edge radius dimension in the circular edge plane', () => {
+    const workPlane = {
+      origin: { x: 0, y: 0, z: 10 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 1, z: 0 },
+      zAxis: { x: 0, y: 0, z: 1 },
+    };
+    const preview = previewOf(
+      active('DIMRADIUS', 1, {
+        radialSource: { center: { x: 0, y: 0 }, radius: 3, workPlane },
+      }),
+      { x: 6, y: 0 },
+    );
+    expect(preview).toMatchObject({
+      type: 'dimension',
+      data: {
+        start: { x: 0, y: 0 },
+        end: { x: 3, y: 0 },
+        offset: { x: 6, y: 0 },
+        kind: 'radius',
+        workPlane,
+      },
+    });
+  });
+
+  it('keeps the angular arc fixed while its text follows the final cursor', () => {
+    const workPlane = {
+      origin: { x: 1, y: 2, z: 3 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 0, y: -1, z: 0 },
+    };
+    const preview = previewOf(
+      active('DIMANGULAR', 6, {
+        angularSource: {
+          workPlane,
+          vertex: { x: 0, y: 0 },
+          first: { x: 10, y: 0 },
+          second: { x: 0, y: 10 },
+        },
+        angularArcPoint: { x: 4, y: 4 },
+      }),
+      { x: 8, y: 7 },
+    );
+    expect(preview).toMatchObject({
+      type: 'dimension',
+      data: {
+        kind: 'angular',
+        arcPoint: { x: 4, y: 4 },
+        textPosition: { x: 8, y: 7 },
+        workPlane,
+      },
+    });
   });
 
   it('uses a projected 3D position for the snap marker', () => {

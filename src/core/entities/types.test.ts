@@ -73,4 +73,49 @@ describe('dimensionGeometry', () => {
     expect(dimensionGeometry(base).text).toBe('R5.00');
     expect(dimensionGeometry({ ...base, dimensionKind: 'diameter' }).text).toBe('Ø10.00');
   });
+
+  it('draws the angular dimension arc in the sector chosen by its placement point', () => {
+    const angular: DimensionEntity = {
+      id: 'angle', type: 'dimension', dimensionKind: 'angular', layer: 'dims', aci: 256, color: 0xffffff, selected: false,
+      start: { x: 0, y: 0 }, end: { x: 10, y: 0 }, offset: { x: 0, y: 10 }, arcPoint: { x: 4, y: 4 },
+      textHeight: 2.5, arrowSize: 2, arrowType: 'closed', extensionBeyond: 1, extensionOffset: 0.5, textOffset: 1, precision: 2, scale: 1,
+    };
+    const quarter = dimensionGeometry(angular);
+    expect(quarter.text).toBe('90.00°');
+    expect(quarter.dimensionLine.length).toBeGreaterThan(2);
+    expect(Math.hypot(quarter.dimensionLine[0].x, quarter.dimensionLine[0].y)).toBeCloseTo(Math.sqrt(32));
+    expect(quarter.extensionStart[0]).toEqual({ x: 0.5, y: 0 });
+    expect(quarter.extensionEnd[0]).toEqual({ x: 0, y: 0.5 });
+
+    const reflex = dimensionGeometry({ ...angular, arcPoint: { x: 4, y: -4 } });
+    expect(reflex.text).toBe('270.00°');
+  });
+
+  it('formats units, custom text, prefixes, suffixes, and tolerances', () => {
+    const base: DimensionEntity = {
+      id: 'formatted', type: 'dimension', dimensionKind: 'aligned', layer: 'dims', aci: 256, color: 0xffffff, selected: false,
+      start: { x: 0, y: 0 }, end: { x: 10, y: 0 }, offset: { x: 5, y: 4 },
+      textHeight: 2.5, arrowSize: 2, arrowType: 'closed', extensionBeyond: 1, extensionOffset: 0.5, textOffset: 1,
+      precision: 2, angularPrecision: 1, unitSuffix: 'mm', scale: 1,
+      textPrefix: '4× ', textSuffix: ' TYP', toleranceMode: 'symmetric', toleranceUpper: 0.1,
+    };
+    expect(dimensionGeometry(base).text).toBe('4× 10.00 ±0.10 mm TYP');
+    expect(dimensionGeometry({ ...base, textOverride: 'REFERENCE' }).text).toBe('4× REFERENCE TYP');
+    expect(dimensionGeometry({ ...base, textOverride: '[<>]' }).text).toBe('4× [10.00 ±0.10 mm] TYP');
+
+    const angular = {
+      ...base,
+      dimensionKind: 'angular' as const,
+      end: { x: 10, y: 0 },
+      offset: { x: 0, y: 10 },
+      arcPoint: { x: 4, y: 4 },
+      textPrefix: '',
+      textSuffix: '',
+      textOverride: '',
+      toleranceMode: 'deviation' as const,
+      toleranceUpper: 0.5,
+      toleranceLower: 0.2,
+    };
+    expect(dimensionGeometry(angular).text).toBe('90.0° +0.5°/-0.2°');
+  });
 });

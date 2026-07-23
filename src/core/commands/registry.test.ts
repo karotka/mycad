@@ -185,7 +185,7 @@ describe('steps that Ortho must leave alone', () => {
   // Counting them would only pin down how many things a dimension happens to
   // place today — the rule is that whatever it places, Ortho keeps out of.
   it('marks where a dimension is placed, which is not a direction either', () => {
-    for (const name of ['MEASURE', 'DIMALIGNED', 'DIMRADIUS', 'DIMDIAMETER'] as const) {
+    for (const name of ['MEASURE', 'DIMALIGNED', 'DIMANGULAR', 'DIMRADIUS', 'DIMDIAMETER'] as const) {
       const placements = (commandDef(name).steps ?? [])
         .filter((step) => step.kind === 'point' && step.label.toLowerCase().includes('location'));
       expect(placements.length, `${name} places nothing`).toBeGreaterThan(0);

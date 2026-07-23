@@ -79,7 +79,7 @@ describe('ProjectIO', () => {
     };
     const mesh = primitiveMesh(base);
     const feature: EdgeModificationFeature = {
-      kind: 'edge-modification', operation: 'chamfer', source: base, amount: 1,
+      kind: 'edge-modification', operation: 'chamfer', source: base, amount: 1, amount2: 2,
       edge: {
         solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
         normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
@@ -91,7 +91,7 @@ describe('ProjectIO', () => {
 
     loadProject(target, serializeProject(source));
 
-    expect(target.solids[0].feature).toMatchObject({ kind: 'edge-modification', amount: 1 });
+    expect(target.solids[0].feature).toMatchObject({ kind: 'edge-modification', amount: 1, amount2: 2 });
     if (target.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
     expect(target.solids[0].feature.sourceMesh.positions).toEqual(Array.from(mesh.positions));
     expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
@@ -164,7 +164,12 @@ describe('ProjectIO', () => {
     source.drafting.polarEnabled = true;
     source.drafting.polarAngles = [15, 30, 90];
     source.drafting.objectSnapModes = ['end', 'perpendicular'];
-    source.dimensionStyle = { textHeight: 3.5, arrowSize: 2, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.5, textOffset: 0.8, precision: 3, scale: 2, layer: 'dimensions' };
+    source.dimensionStyle = {
+      textHeight: 3.5, arrowSize: 2, arrowType: 'open',
+      extensionBeyond: 1.5, extensionOffset: 0.5, textOffset: 0.8,
+      precision: 3, angularPrecision: 1, unitSuffix: 'mm',
+      scale: 2, layer: 'dimensions',
+    };
     const target = new Document();
 
     loadProject(target, serializeProject(source));
@@ -304,18 +309,23 @@ describe('ProjectIO', () => {
     dimension.textPosition = { x: 8, y: 12 };
     source.addEntity(dimension);
     source.addEntity(source.createDimension({ x: 0, y: 0 }, { x: 3, y: 4 }, { x: 6, y: 2 }, 'aligned'));
+    const angular = source.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }, 'angular');
+    angular.arcPoint = { x: 4, y: 4 };
+    source.addEntity(angular);
     const target = new Document();
 
     loadProject(target, serializeProject(source));
 
     // Read back as 'aligned', a linear dimension would silently start measuring
     // the diagonal instead of the leg it was drawn to measure.
-    const [linear, aligned] = target.entities as Array<Extract<Document['entities'][number], { type: 'dimension' }>>;
+    const [linear, aligned, loadedAngular] = target.entities as Array<Extract<Document['entities'][number], { type: 'dimension' }>>;
     expect(linear.dimensionKind).toBe('linear');
     expect(linear.rotation).toBe(0);
     expect(linear.textPosition).toEqual({ x: 8, y: 12 });
     expect(aligned.dimensionKind).toBe('aligned');
     expect(aligned.textPosition).toBeUndefined();
+    expect(loadedAngular.dimensionKind).toBe('angular');
+    expect(loadedAngular.arcPoint).toEqual({ x: 4, y: 4 });
   });
 
   it('reads a dimension saved before the kinds were told apart as point-to-point', () => {

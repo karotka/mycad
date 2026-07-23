@@ -8,6 +8,12 @@ import { primitiveParams, setPrimitiveParam } from '../core/solids/featureParams
 import { translatedFeature } from '../core/solids/featureTransform';
 
 type ObjectValue = Entity | Solid;
+type PropertyField = {
+  key: string;
+  label: string;
+  value: string | number;
+  kind?: 'layer' | 'color' | 'readonly' | 'arrowType' | 'unitSuffix' | 'toleranceMode';
+};
 
 export class PropertiesController {
   constructor(
@@ -45,7 +51,7 @@ export class PropertiesController {
     this.content.querySelector<HTMLInputElement>('[data-field="color"]')?.addEventListener('change', (event) => this.updateMultiple(objects, 'color', Number.parseInt((event.target as HTMLInputElement).value.slice(1), 16)));
   }
 
-  private fields(object: ObjectValue): Array<{ key: string; label: string; value: string | number; kind?: 'layer' | 'color' | 'readonly' }> {
+  private fields(object: ObjectValue): PropertyField[] {
     const common = [
       { key: 'layer', label: 'Layer', value: object.layer, kind: 'layer' as const },
       { key: 'color', label: 'Color', value: object.color, kind: 'color' as const },
@@ -79,15 +85,65 @@ export class PropertiesController {
       case 'rectangle': return [...common, ...pointFields('first', 'First', object.first), ...pointFields('opposite', 'Opposite', object.opposite), { key: '_width', label: 'Width', value: Math.abs(object.opposite.x - object.first.x), kind: 'readonly' }, { key: '_height', label: 'Height', value: Math.abs(object.opposite.y - object.first.y), kind: 'readonly' }];
       case 'arc': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radius', label: 'Radius', value: object.radius }, { key: 'startAngle', label: 'Start angle °', value: object.startAngle * 180 / Math.PI }, { key: 'sweepAngle', label: 'Sweep angle °', value: object.sweepAngle * 180 / Math.PI }];
       case 'text': return [...common, ...pointFields('position', 'Position', object.position), { key: 'height', label: 'Text height', value: object.height }, { key: 'text', label: 'Text', value: object.text }];
-      case 'dimension': return [...common, ...pointFields('start', 'First point', object.start), ...pointFields('end', 'Second point', object.end), ...pointFields('offset', 'Dimension line', object.offset), { key: 'textHeight', label: 'Text height', value: object.textHeight }, { key: 'arrowSize', label: 'Arrow size', value: object.arrowSize }, { key: 'arrowType', label: 'Arrow type', value: object.arrowType }, { key: 'extensionBeyond', label: 'Extend beyond', value: object.extensionBeyond }, { key: 'extensionOffset', label: 'Object offset', value: object.extensionOffset }, { key: 'textOffset', label: 'Text offset', value: object.textOffset }, { key: 'precision', label: 'Precision', value: object.precision }, { key: 'scale', label: 'Scale', value: object.scale }];
+      case 'dimension': {
+        const points = object.dimensionKind === 'angular'
+          ? [
+            ...pointFields('start', 'Vertex', object.start),
+            ...pointFields('end', 'First ray', object.end),
+            ...pointFields('offset', 'Second ray', object.offset),
+            ...(object.arcPoint ? pointFields('arcPoint', 'Dimension arc', object.arcPoint) : []),
+          ]
+          : [
+            ...pointFields('start', 'First point', object.start),
+            ...pointFields('end', 'Second point', object.end),
+            ...pointFields('offset', 'Dimension line', object.offset),
+          ];
+        const toleranceMode = object.toleranceMode ?? 'none';
+        const annotation: PropertyField[] = [
+          { key: 'textOverride', label: 'Text override (<> = value)', value: object.textOverride ?? '' },
+          { key: 'textPrefix', label: 'Prefix', value: object.textPrefix ?? '' },
+          { key: 'textSuffix', label: 'Suffix', value: object.textSuffix ?? '' },
+          { key: 'toleranceMode', label: 'Tolerance', value: toleranceMode, kind: 'toleranceMode' },
+        ];
+        if (toleranceMode === 'symmetric') {
+          annotation.push({ key: 'toleranceUpper', label: 'Tolerance ±', value: object.toleranceUpper ?? 0 });
+        } else if (toleranceMode === 'deviation') {
+          annotation.push(
+            { key: 'toleranceUpper', label: 'Upper tolerance', value: object.toleranceUpper ?? 0 },
+            { key: 'toleranceLower', label: 'Lower tolerance', value: object.toleranceLower ?? 0 },
+          );
+        }
+        const numberFormat: PropertyField[] = object.dimensionKind === 'angular'
+          ? [{ key: 'angularPrecision', label: 'Angle precision', value: object.angularPrecision ?? object.precision }]
+          : [
+            { key: 'precision', label: 'Length precision', value: object.precision },
+            { key: 'unitSuffix', label: 'Length units', value: object.unitSuffix ?? 'none', kind: 'unitSuffix' },
+          ];
+        return [
+          ...common,
+          ...points,
+          ...annotation,
+          { key: 'textHeight', label: 'Text height', value: object.textHeight },
+          { key: 'arrowSize', label: 'Arrow size', value: object.arrowSize },
+          { key: 'arrowType', label: 'Arrow type', value: object.arrowType, kind: 'arrowType' },
+          { key: 'extensionBeyond', label: 'Extend beyond', value: object.extensionBeyond },
+          { key: 'extensionOffset', label: 'Object offset', value: object.extensionOffset },
+          { key: 'textOffset', label: 'Text offset', value: object.textOffset },
+          ...numberFormat,
+          { key: 'scale', label: 'Scale', value: object.scale },
+        ];
+      }
       default: return [...common, { key: '_vertices', label: 'Vertices', value: object.type === 'bezier' ? 4 : object.vertices.length, kind: 'readonly' }];
     }
   }
 
-  private fieldHtml(field: { key: string; label: string; value: string | number; kind?: string }): string {
+  private fieldHtml(field: PropertyField): string {
     if (field.kind === 'layer') return this.layerHtml(String(field.value));
     if (field.kind === 'color') return this.colorHtml(Number(field.value));
     if (field.kind === 'readonly') return `<div class="property-row readonly"><span>${field.label}</span><output>${format(field.value)}</output></div>`;
+    if (field.kind === 'arrowType') return selectHtml(field, [['closed', 'Closed filled'], ['open', 'Open'], ['tick', 'Architectural tick']]);
+    if (field.kind === 'unitSuffix') return selectHtml(field, [['none', 'No suffix'], ['mm', 'mm']]);
+    if (field.kind === 'toleranceMode') return selectHtml(field, [['none', 'None'], ['symmetric', 'Symmetric ±'], ['deviation', 'Upper / lower']]);
     const type = typeof field.value === 'number' ? 'number' : 'text';
     return `<label class="property-row"><span>${field.label}</span><input data-field="${field.key}" type="${type}" value="${format(field.value)}" ${type === 'number' ? 'step="any"' : ''}></label>`;
   }
@@ -129,6 +185,9 @@ export class PropertiesController {
 const pointFields = (key: string, label: string, point: { x: number; y: number }) => [{ key: `${key}.x`, label: `${label} X`, value: point.x }, { key: `${key}.y`, label: `${label} Y`, value: point.y }];
 const format = (value: string | number): string => typeof value === 'number' ? String(Number(value.toFixed(6))) : escapeHtml(value);
 const escapeHtml = (value: string): string => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const selectHtml = (field: PropertyField, options: Array<[string, string]>): string =>
+  `<label class="property-row"><span>${field.label}</span><select data-field="${field.key}">${options.map(([value, label]) =>
+    `<option value="${value}" ${field.value === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
 
 function updateEntity(entity: Entity, key: string, value: string | number): void {
   if (typeof value === 'number' && !Number.isFinite(value)) return;
@@ -140,7 +199,20 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
   else if (key === 'startAngle' && entity.type === 'arc') entity.startAngle = Number(value) * Math.PI / 180;
   else if (key === 'sweepAngle' && entity.type === 'arc') entity.sweepAngle = Number(value) * Math.PI / 180;
   else if (entity.type === 'dimension' && key === 'arrowType' && (value === 'closed' || value === 'open' || value === 'tick')) entity.arrowType = value;
-  else if (entity.type === 'dimension' && ['textHeight', 'arrowSize', 'extensionBeyond', 'extensionOffset', 'textOffset', 'precision', 'scale'].includes(key)) {
+  else if (entity.type === 'dimension' && key === 'unitSuffix' && (value === 'none' || value === 'mm')) entity.unitSuffix = value;
+  else if (entity.type === 'dimension' && key === 'toleranceMode' && (value === 'none' || value === 'symmetric' || value === 'deviation')) entity.toleranceMode = value;
+  else if (entity.type === 'dimension' && key === 'textOverride') entity.textOverride = String(value);
+  else if (entity.type === 'dimension' && key === 'textPrefix') entity.textPrefix = String(value);
+  else if (entity.type === 'dimension' && key === 'textSuffix') entity.textSuffix = String(value);
+  else if (entity.type === 'dimension' && (key === 'toleranceUpper' || key === 'toleranceLower')) {
+    const number = Number(value);
+    if (number >= 0) entity[key] = number;
+  }
+  else if (entity.type === 'dimension' && (key === 'precision' || key === 'angularPrecision')) {
+    const number = Number(value);
+    if (Number.isInteger(number) && number >= 0 && number <= 8) entity[key] = number;
+  }
+  else if (entity.type === 'dimension' && ['textHeight', 'arrowSize', 'extensionBeyond', 'extensionOffset', 'textOffset', 'scale'].includes(key)) {
     const number = Number(value);
     if (number >= 0 && (key !== 'textHeight' && key !== 'arrowSize' && key !== 'scale' || number > 0)) (entity as unknown as Record<string, number>)[key] = number;
   }

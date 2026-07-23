@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
+import { dimensionGeometry, type DimensionEntity } from '../core/entities/types';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { PropertiesController } from './PropertiesController';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
@@ -21,6 +22,30 @@ describe('PropertiesController', () => {
     expect(doc.getEntity(circle.id)).toMatchObject({ type: 'circle', radius: 8 });
     history.undo();
     expect(doc.getEntity(circle.id)).toMatchObject({ type: 'circle', radius: 4 });
+  });
+
+  it('edits dimension annotation and tolerance as undoable properties', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 4 }, 'aligned');
+    doc.addEntity(dimension);
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+    const update = (key: string, value: string | number): void => {
+      const current = doc.getEntity(dimension.id) as DimensionEntity;
+      (controller as unknown as { updateOne(object: DimensionEntity, key: string, value: string | number): void })
+        .updateOne(current, key, value);
+    };
+
+    update('unitSuffix', 'mm');
+    update('textPrefix', '4× ');
+    update('textSuffix', ' TYP');
+    update('toleranceMode', 'symmetric');
+    update('toleranceUpper', 0.1);
+
+    const formatted = doc.getEntity(dimension.id) as DimensionEntity;
+    expect(dimensionGeometry(formatted).text).toBe('4× 10.00 ±0.10 mm TYP');
+    history.undo();
+    expect(dimensionGeometry(doc.getEntity(dimension.id) as DimensionEntity).text).toBe('4× 10.00 ±0.00 mm TYP');
   });
 
   it('keeps an ellipsoid an ellipsoid when its radius is edited', () => {

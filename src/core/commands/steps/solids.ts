@@ -56,6 +56,48 @@ export function boxLikePrimitiveFeature(
   };
 }
 
+/** The one radial-base description shared by placement and its 3D height drag. */
+export function radialLikePrimitiveFeature(
+  primitive: 'cylinder' | 'cone' | 'pyramid',
+  center: Vec2,
+  radiusPoint: Vec2,
+  heightValue: number,
+  workPlane: WorkPlane,
+): PrimitiveFeature | null {
+  const radius = dist2(center, radiusPoint);
+  const height = Math.abs(heightValue);
+  if (radius < 1e-9 || height < 1e-9) return null;
+  return {
+    kind: 'primitive',
+    primitive,
+    center: { ...center },
+    radius,
+    height,
+    workPlane: cloneWorkPlane(workPlane),
+  };
+}
+
+/** A torus uses the same final 3D drag, but that value is its tube radius. */
+export function torusPrimitiveFeature(
+  center: Vec2,
+  radiusPoint: Vec2,
+  tubeRadiusValue: number,
+  workPlane: WorkPlane,
+): PrimitiveFeature | null {
+  const radius = dist2(center, radiusPoint);
+  const tubeRadius = Math.abs(tubeRadiusValue);
+  if (radius < 1e-9 || tubeRadius < 1e-9 || tubeRadius >= radius) return null;
+  return {
+    kind: 'primitive',
+    primitive: 'torus',
+    center: { ...center },
+    radius,
+    tubeRadius,
+    height: tubeRadius * 2,
+    workPlane: cloneWorkPlane(workPlane),
+  };
+}
+
 /** A box and a wedge are the same wizard: two corners, then a height. */
 function boxLike(run: CommandRun, name: 'Box' | 'Wedge', primitive: 'box' | 'wedge'): StepOutcome {
   const { active, data, value, ctx } = run;
@@ -90,18 +132,31 @@ export const createWedge = (run: CommandRun): StepOutcome => boxLike(run, 'Wedge
 function radialLike(run: CommandRun, name: 'Cylinder' | 'Cone' | 'Pyramid', primitive: 'cylinder' | 'cone' | 'pyramid'): StepOutcome {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.center = value; return 'advance'; }
-  if (active.stepIndex === 1) { data.radiusPoint = value; return 'advance'; }
+  if (active.stepIndex === 1) {
+    data.radiusPoint = value;
+    data.framePrimitiveBase = ctx.doc.viewMode === '2d';
+    ctx.doc.viewMode = '3d';
+    return 'advance';
+  }
 
   const center = data.center as Vec2;
-  const radius = dist2(center, data.radiusPoint as Vec2);
-  const height = Math.abs(value as number);
-  if (radius < 1e-9 || height < 1e-9) {
+  const feature = radialLikePrimitiveFeature(
+    primitive,
+    center,
+    data.radiusPoint as Vec2,
+    value as number,
+    ctx.doc.activeWorkPlane,
+  );
+  if (!feature) {
     ctx.log(`${name} radius and height must be greater than zero.`);
     return 'stay';
   }
-  return place(run, name,
-    { kind: 'primitive', primitive, center, radius, height, workPlane: cloneWorkPlane(ctx.doc.activeWorkPlane) },
-    `${name} created: R${round(radius)}, H${round(height)}`);
+  return place(
+    run,
+    name,
+    feature,
+    `${name} created: R${round(feature.radius!)}, H${round(feature.height)}`,
+  );
 }
 
 export const createCylinder = (run: CommandRun): StepOutcome => radialLike(run, 'Cylinder', 'cylinder');
@@ -128,7 +183,12 @@ export function createSphere(run: CommandRun): StepOutcome {
 export function createTorus(run: CommandRun): StepOutcome {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.center = value; return 'advance'; }
-  if (active.stepIndex === 1) { data.radiusPoint = value; return 'advance'; }
+  if (active.stepIndex === 1) {
+    data.radiusPoint = value;
+    data.framePrimitiveBase = ctx.doc.viewMode === '2d';
+    ctx.doc.viewMode = '3d';
+    return 'advance';
+  }
 
   const center = data.center as Vec2;
   const radius = dist2(center, data.radiusPoint as Vec2);
@@ -142,7 +202,9 @@ export function createTorus(run: CommandRun): StepOutcome {
     ctx.log('Tube radius must be smaller than the torus radius.');
     return 'stay';
   }
+  const feature = torusPrimitiveFeature(center, data.radiusPoint as Vec2, tubeRadius, ctx.doc.activeWorkPlane);
+  if (!feature) return 'stay';
   return place(run, 'Torus',
-    { kind: 'primitive', primitive: 'torus', center, radius, tubeRadius, height: tubeRadius * 2, workPlane: cloneWorkPlane(ctx.doc.activeWorkPlane) },
-    `Torus created: R${round(radius)}, tube R${round(tubeRadius)}`);
+    feature,
+    `Torus created: R${round(feature.radius!)}, tube R${round(feature.tubeRadius!)}`);
 }

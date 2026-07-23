@@ -3,7 +3,8 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, polygonSignedArea } from '../../math/geometry';
 import type { Entity, PrimitiveFeature, SolidEdgeSelection, SolidFaceRegion, SolidFeature, SolidMesh } from '../entities/types';
 import { curvePoints } from '../entities/types';
-import { localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, type WorkPlane } from '../../math/workplane';
+import { solidPlanarFaces, type PlanarFace } from './SolidTopology';
+import { localToWorld, workPlaneFromXAxis, workPlaneFromXYAxes, WORLD_WORK_PLANE, transformMeshByWorkPlane, transformMeshIndicesByWorkPlane, type WorkPlane } from '../../math/workplane';
 
 type ManifoldModule = Awaited<ReturnType<typeof ModuleFactory>>;
 
@@ -188,65 +189,549 @@ export async function extrudeProfile(entities: Entity[], height: number): Promis
   }
 }
 
+/**
+ * A recognised circular rim is one analytic edge, even though the render mesh
+ * stores it as many straight segments.  Revolve the same 2D corner profile
+ * used by the straight-edge operation so the cutter follows the complete rim.
+ */
+async function modifyCircularSolidEdge(
+  mesh: SolidMesh,
+  edge: SolidEdgeSelection,
+  amount: number,
+  rounded: boolean,
+  amount2: number,
+  adjacentNormals: Array<[number, number, number]>,
+): Promise<SolidMesh | null> {
+  const circular = edge.circular;
+  if (!circular || adjacentNormals.length !== 2) return null;
+  const normalize = (value: Vec3): Vec3 | null => {
+    const length = Math.hypot(value.x, value.y, value.z);
+    return length > 1e-9
+      ? { x: value.x / length, y: value.y / length, z: value.z / length }
+      : null;
+  };
+  const dot = (first: Vec3, second: Vec3): number =>
+    first.x * second.x + first.y * second.y + first.z * second.z;
+  const axis = normalize(circular.normal);
+  if (!axis) return null;
+  const fromCenter = {
+    x: edge.start.x - circular.center.x,
+    y: edge.start.y - circular.center.y,
+    z: edge.start.z - circular.center.z,
+  };
+  const alongAxis = dot(fromCenter, axis);
+  const radial = normalize({
+    x: fromCenter.x - axis.x * alongAxis,
+    y: fromCenter.y - axis.y * alongAxis,
+    z: fromCenter.z - axis.z * alongAxis,
+  });
+  if (!radial) return null;
+
+  const normals = adjacentNormals.map(([x, y, z]) => ({ x, y, z }));
+  const capIndex = Math.abs(dot(normals[0], axis)) >= Math.abs(dot(normals[1], axis)) ? 0 : 1;
+  const capNormal = normals[capIndex];
+  const sideNormal = normals[1 - capIndex];
+  const capAlignment = Math.abs(dot(capNormal, axis));
+  const sideRadialSign = Math.sign(dot(sideNormal, radial));
+  if (capAlignment < 0.95 || sideRadialSign === 0 || Math.abs(dot(sideNormal, axis)) > 0.2) return null;
+
+  // Use the analytic radial normal instead of a single polygon facet normal.
+  // This makes every angular copy of the profile identical and also handles
+  // inner circular rims, whose outward side normal points towards the axis.
+  const radialNormal = {
+    x: radial.x * sideRadialSign,
+    y: radial.y * sideRadialSign,
+    z: radial.z * sideRadialSign,
+  };
+  const corner = { ...edge.start };
+  const boundary: Vec3[] = [];
+  if (!rounded) {
+    boundary.push(
+      {
+        x: corner.x - radialNormal.x * amount,
+        y: corner.y - radialNormal.y * amount,
+        z: corner.z - radialNormal.z * amount,
+      },
+      {
+        x: corner.x - capNormal.x * amount2,
+        y: corner.y - capNormal.y * amount2,
+        z: corner.z - capNormal.z * amount2,
+      },
+    );
+  } else {
+    const center = {
+      x: corner.x - (radialNormal.x + capNormal.x) * amount,
+      y: corner.y - (radialNormal.y + capNormal.y) * amount,
+      z: corner.z - (radialNormal.z + capNormal.z) * amount,
+    };
+    const arcSegments = 12;
+    for (let index = 0; index <= arcSegments; index++) {
+      const angle = index / arcSegments * Math.PI / 2;
+      const capWeight = Math.cos(angle);
+      const radialWeight = Math.sin(angle);
+      boundary.push({
+        x: center.x + (capNormal.x * capWeight + radialNormal.x * radialWeight) * amount,
+        y: center.y + (capNormal.y * capWeight + radialNormal.y * radialWeight) * amount,
+        z: center.z + (capNormal.z * capWeight + radialNormal.z * radialWeight) * amount,
+      });
+    }
+  }
+
+  // Do not let the cutter merely touch the cap and side at the original rim.
+  // Coincident polygons can leave a few radius-R seam vertices behind. Extend
+  // only the outside of the tool; the chamfer line / fillet arc stays exact.
+  const extension = Math.max(1e-5, meshExtent(mesh) * 1e-5, Math.max(amount, amount2) * 1e-4);
+  const firstBoundary = boundary[0];
+  const lastBoundary = boundary.at(-1)!;
+  const section: Vec3[] = [
+    ...boundary,
+    {
+      x: lastBoundary.x + radialNormal.x * extension,
+      y: lastBoundary.y + radialNormal.y * extension,
+      z: lastBoundary.z + radialNormal.z * extension,
+    },
+    {
+      x: corner.x + (radialNormal.x + capNormal.x) * extension,
+      y: corner.y + (radialNormal.y + capNormal.y) * extension,
+      z: corner.z + (radialNormal.z + capNormal.z) * extension,
+    },
+    {
+      x: firstBoundary.x + capNormal.x * extension,
+      y: firstBoundary.y + capNormal.y * extension,
+      z: firstBoundary.z + capNormal.z * extension,
+    },
+  ];
+  const profile = section.map((point): Vec2 => {
+    const offset = {
+      x: point.x - circular.center.x,
+      y: point.y - circular.center.y,
+      z: point.z - circular.center.z,
+    };
+    return {
+      x: dot(offset, radial),
+      y: dot(offset, axis),
+    };
+  });
+  const tolerance = Math.max(1e-6, meshExtent(mesh) * 1e-6);
+  if (profile.some((point) => point.x <= tolerance)) return null;
+  const polygon = ensureCCW(profile).map((point): [number, number] => [point.x, point.y]);
+
+  const manifold = await initManifold();
+  const crossSection = new manifold.CrossSection([polygon]);
+  let localTool: InstanceType<typeof manifold.Manifold>;
+  try {
+    localTool = crossSection.revolve(Math.max(16, circular.segments ?? 64));
+  } finally {
+    crossSection.delete();
+  }
+  try {
+    const toolPlane = workPlaneFromXAxis(circular.center, edge.start, axis);
+    const localMesh = manifoldToMesh(manifold, localTool);
+    const cutter = outwardWoundMesh({
+      positions: transformMeshByWorkPlane(localMesh.positions, toolPlane),
+      indices: transformMeshIndicesByWorkPlane(localMesh.indices, toolPlane),
+    });
+    const result = await booleanSubtract(outwardWoundMesh(mesh), cutter);
+    if (!result || result.positions.length === 0 || result.indices.length === 0) return null;
+    return result;
+  } finally {
+    localTool.delete();
+  }
+}
+
 export async function modifySolidEdge(
   mesh: SolidMesh,
   edge: SolidEdgeSelection,
   amount: number,
   rounded: boolean,
+  amount2 = amount,
 ): Promise<SolidMesh | null> {
-  if (amount <= 0) return null;
-  const manifold = await initManifold();
-  const sourceMesh = new manifold.Mesh({ numProp: 3, vertProperties: mesh.positions, triVerts: mesh.indices });
-  let solid = manifold.Manifold.ofMesh(sourceMesh);
+  if (amount <= 0 || amount2 <= 0) return null;
   const normalize = (v: [number, number, number]): [number, number, number] => {
     const length = Math.hypot(...v);
     return [v[0] / length, v[1] / length, v[2] / length];
   };
-  const a = normalize([edge.normalA.x, edge.normalA.y, edge.normalA.z]);
-  const b = normalize([edge.normalB.x, edge.normalB.y, edge.normalB.z]);
+  const meshOrientation = signedMeshVolume(mesh) < 0 ? -1 : 1;
+  const edgeTolerance = Math.max(1e-6, meshExtent(mesh) * 1e-6);
+  const pointAt = (index: number): Vec3 => ({
+    x: mesh.positions[index * 3],
+    y: mesh.positions[index * 3 + 1],
+    z: mesh.positions[index * 3 + 2],
+  });
+  const pointDistance = (first: Vec3, second: Vec3): number => Math.hypot(
+    first.x - second.x,
+    first.y - second.y,
+    first.z - second.z,
+  );
+  type TopologyEdge = {
+    a: number;
+    b: number;
+    normals: Array<[number, number, number]>;
+  };
+  const topologyEdges = new Map<string, TopologyEdge>();
+  for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
+    const ids = [mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2]];
+    const point = (index: number): [number, number, number] => [
+      mesh.positions[index * 3],
+      mesh.positions[index * 3 + 1],
+      mesh.positions[index * 3 + 2],
+    ];
+    const first = point(ids[0]), second = point(ids[1]), third = point(ids[2]);
+    const u: [number, number, number] = [second[0] - first[0], second[1] - first[1], second[2] - first[2]];
+    const v: [number, number, number] = [third[0] - first[0], third[1] - first[1], third[2] - first[2]];
+    const normal = normalize([
+      (u[1] * v[2] - u[2] * v[1]) * meshOrientation,
+      (u[2] * v[0] - u[0] * v[2]) * meshOrientation,
+      (u[0] * v[1] - u[1] * v[0]) * meshOrientation,
+    ]);
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex++) {
+      const firstIndex = ids[edgeIndex], secondIndex = ids[(edgeIndex + 1) % 3];
+      const a = Math.min(firstIndex, secondIndex), b = Math.max(firstIndex, secondIndex);
+      const key = `${a}:${b}`;
+      const topologyEdge = topologyEdges.get(key) ?? { a, b, normals: [] };
+      topologyEdge.normals.push(normal);
+      topologyEdges.set(key, topologyEdge);
+    }
+  }
+
+  const pickedTopologyEdge = Array.from(topologyEdges.values()).find((candidate) => {
+    const first = pointAt(candidate.a), second = pointAt(candidate.b);
+    return (
+      pointDistance(first, edge.start) <= edgeTolerance
+      && pointDistance(second, edge.end) <= edgeTolerance
+    ) || (
+      pointDistance(first, edge.end) <= edgeTolerance
+      && pointDistance(second, edge.start) <= edgeTolerance
+    );
+  });
+  const adjacentNormals = pickedTopologyEdge?.normals ?? [];
+  if (edge.circular) {
+    return modifyCircularSolidEdge(mesh, edge, amount, rounded, amount2, adjacentNormals);
+  }
+
+  // Manifold may insert a vertex where a triangulation diagonal meets a design
+  // edge. The picker then returns just one of those collinear segments. Extend
+  // it through every connected segment between the same pair of support faces,
+  // otherwise FILLET ends early with a round cap and a triangular remnant.
+  let expandedStart = { ...edge.start };
+  let expandedEnd = { ...edge.end };
+  const pickedVector: [number, number, number] = [
+    edge.end.x - edge.start.x,
+    edge.end.y - edge.start.y,
+    edge.end.z - edge.start.z,
+  ];
+  const pickedLength = Math.hypot(...pickedVector);
+  if (pickedTopologyEdge && pickedTopologyEdge.normals.length === 2 && pickedLength > 1e-8) {
+    const pickedAlong = normalize(pickedVector);
+    // A short last segment magnifies Float32 endpoint noise when its direction
+    // is extrapolated over the full edge, so allow several mesh tolerances here.
+    const chainTolerance = Math.max(edgeTolerance * 64, pickedLength * 1e-5);
+    const normalAgreement = (
+      first: [number, number, number],
+      second: [number, number, number],
+    ): number => Math.abs(first[0] * second[0] + first[1] * second[1] + first[2] * second[2]);
+    const hasSameSupportFaces = (candidate: TopologyEdge): boolean => {
+      if (candidate.normals.length !== 2) return false;
+      const direct = normalAgreement(candidate.normals[0], adjacentNormals[0])
+        + normalAgreement(candidate.normals[1], adjacentNormals[1]);
+      const swapped = normalAgreement(candidate.normals[0], adjacentNormals[1])
+        + normalAgreement(candidate.normals[1], adjacentNormals[0]);
+      return Math.max(direct, swapped) > 1.998;
+    };
+    const distanceFromPickedLine = (point: Vec3): number => {
+      const dx = point.x - edge.start.x;
+      const dy = point.y - edge.start.y;
+      const dz = point.z - edge.start.z;
+      return Math.hypot(
+        dy * pickedAlong[2] - dz * pickedAlong[1],
+        dz * pickedAlong[0] - dx * pickedAlong[2],
+        dx * pickedAlong[1] - dy * pickedAlong[0],
+      );
+    };
+    const candidates = Array.from(topologyEdges.values()).filter((candidate) => {
+      if (!hasSameSupportFaces(candidate)) return false;
+      const first = pointAt(candidate.a), second = pointAt(candidate.b);
+      const dx = second.x - first.x, dy = second.y - first.y, dz = second.z - first.z;
+      const length = Math.hypot(dx, dy, dz);
+      if (length <= edgeTolerance) return false;
+      const parallel = Math.abs(
+        (dx * pickedAlong[0] + dy * pickedAlong[1] + dz * pickedAlong[2]) / length,
+      );
+      return parallel > 0.99999
+        && distanceFromPickedLine(first) <= chainTolerance
+        && distanceFromPickedLine(second) <= chainTolerance;
+    });
+    const connected: TopologyEdge[] = [pickedTopologyEdge];
+    const remaining = candidates.filter((candidate) => candidate !== pickedTopologyEdge);
+    const sharesEndpoint = (candidate: TopologyEdge): boolean => {
+      const endpoints = [pointAt(candidate.a), pointAt(candidate.b)];
+      return connected.some((member) => {
+        const memberEndpoints = [pointAt(member.a), pointAt(member.b)];
+        return endpoints.some((point) =>
+          memberEndpoints.some((memberPoint) => pointDistance(point, memberPoint) <= chainTolerance)
+        );
+      });
+    };
+    let added = true;
+    while (added) {
+      added = false;
+      for (let index = remaining.length - 1; index >= 0; index--) {
+        if (!sharesEndpoint(remaining[index])) continue;
+        connected.push(remaining[index]);
+        remaining.splice(index, 1);
+        added = true;
+      }
+    }
+
+    let minProjection = 0, maxProjection = pickedLength;
+    for (const candidate of connected) {
+      for (const point of [pointAt(candidate.a), pointAt(candidate.b)]) {
+        const projection = (
+          (point.x - edge.start.x) * pickedAlong[0]
+          + (point.y - edge.start.y) * pickedAlong[1]
+          + (point.z - edge.start.z) * pickedAlong[2]
+        );
+        if (projection < minProjection) {
+          minProjection = projection;
+          expandedStart = point;
+        }
+        if (projection > maxProjection) {
+          maxProjection = projection;
+          expandedEnd = point;
+        }
+      }
+    }
+  }
+  const p: [number, number, number] = [expandedStart.x, expandedStart.y, expandedStart.z];
+  // Use the actual triangles touching this exact edge. Looking at the body's
+  // global min/max worked for a plain box, but a face of a union can sit between
+  // larger parts and is not a global supporting plane — which sent the cutter
+  // through the model in the real UI even though synthetic box tests passed.
+  const outwardNormal = (input: [number, number, number]): [number, number, number] => {
+    let normal = normalize(input);
+    const matching = adjacentNormals
+      .map((candidate) => ({
+        candidate,
+        agreement: Math.abs(candidate[0] * normal[0] + candidate[1] * normal[1] + candidate[2] * normal[2]),
+      }))
+      .sort((first, second) => second.agreement - first.agreement)[0];
+    if (matching && matching.agreement > 0.8) return matching.candidate;
+
+    // Compatibility fallback for an old stored feature whose selected mesh was
+    // subsequently regenerated with different vertex indexing.
+    let min = Infinity, max = -Infinity;
+    for (let index = 0; index < mesh.positions.length; index += 3) {
+      const projection = normal[0] * mesh.positions[index]
+        + normal[1] * mesh.positions[index + 1]
+        + normal[2] * mesh.positions[index + 2];
+      min = Math.min(min, projection);
+      max = Math.max(max, projection);
+    }
+    const atEdge = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2];
+    if (Math.abs(atEdge - min) < Math.abs(atEdge - max)) normal = [-normal[0], -normal[1], -normal[2]];
+    return normal;
+  };
+  const a = outwardNormal([edge.normalA.x, edge.normalA.y, edge.normalA.z]);
+  const b = outwardNormal([edge.normalB.x, edge.normalB.y, edge.normalB.z]);
   const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
   const angle = Math.acos(dot);
-  if (angle < 1e-4 || angle > Math.PI - 1e-4) { solid.delete(); return null; }
+  if (angle < 1e-4 || angle > Math.PI - 1e-4) return null;
   const bisector = normalize([a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
-  const p: [number, number, number] = [edge.start.x, edge.start.y, edge.start.z];
-  const planes: Array<{ normal: [number, number, number]; offset: number }> = [];
+  const edgeVector: [number, number, number] = [
+    expandedEnd.x - expandedStart.x,
+    expandedEnd.y - expandedStart.y,
+    expandedEnd.z - expandedStart.z,
+  ];
+  const edgeLength = Math.hypot(...edgeVector);
+  if (edgeLength < 1e-8) return null;
+  const along: [number, number, number] = [
+    edgeVector[0] / edgeLength,
+    edgeVector[1] / edgeLength,
+    edgeVector[2] / edgeLength,
+  ];
+  const section: Array<[number, number, number]> = [p];
+  let filletCenter: [number, number, number] | null = null;
   if (!rounded) {
-    const threshold = bisector[0] * p[0] + bisector[1] * p[1] + bisector[2] * p[2]
-      - amount * Math.sin(angle / 2);
-    planes.push({ normal: bisector, offset: threshold });
+    const projectionLength = Math.sin(angle);
+    if (projectionLength < 1e-8) return null;
+    // `amount` runs along face A away from face B; `amount2` does the mirror
+    // image on face B. Their two endpoints plus the selected edge define the
+    // asymmetric chamfer plane exactly.
+    const directionA: [number, number, number] = [
+      (a[0] * dot - b[0]) / projectionLength,
+      (a[1] * dot - b[1]) / projectionLength,
+      (a[2] * dot - b[2]) / projectionLength,
+    ];
+    const directionB: [number, number, number] = [
+      (b[0] * dot - a[0]) / projectionLength,
+      (b[1] * dot - a[1]) / projectionLength,
+      (b[2] * dot - a[2]) / projectionLength,
+    ];
+    const onA: [number, number, number] = [
+      p[0] + directionA[0] * amount,
+      p[1] + directionA[1] * amount,
+      p[2] + directionA[2] * amount,
+    ];
+    const onB: [number, number, number] = [
+      p[0] + directionB[0] * amount2,
+      p[1] + directionB[1] * amount2,
+      p[2] + directionB[2] * amount2,
+    ];
+    section.push(onA, onB);
   } else {
-    const centerDistance = amount / Math.sin(angle / 2);
+    // The centre is `radius` behind both support planes. Its projection onto
+    // either outward normal is distance * cos(angle / 2); using sin happens to
+    // work at 90°, but sends a fillet on a 45° chamfer deep through the body.
+    const centerDistance = amount / Math.cos(angle / 2);
     const center: [number, number, number] = [
       p[0] - bisector[0] * centerDistance,
       p[1] - bisector[1] * centerDistance,
       p[2] - bisector[2] * centerDistance,
     ];
+    filletCenter = center;
     const segments = 12;
-    for (let i = 1; i < segments; i++) {
+    for (let i = 0; i <= segments; i++) {
       const t = i / segments;
       const sinAngle = Math.sin(angle);
       const wa = Math.sin((1 - t) * angle) / sinAngle;
       const wb = Math.sin(t * angle) / sinAngle;
       const normal = normalize([a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb]);
-      planes.push({
-        normal,
-        offset: normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] + amount,
-      });
+      section.push([
+        center[0] + normal[0] * amount,
+        center[1] + normal[1] * amount,
+        center[2] + normal[2] * amount,
+      ]);
     }
   }
-  try {
-    for (const plane of planes) {
-      const next = solid.trimByPlane(
-        [-plane.normal[0], -plane.normal[1], -plane.normal[2]],
-        -plane.offset,
-      );
+
+  // Orient the cutter section counter-clockwise when viewed along the edge.
+  // The prism then has ordinary outward winding and can be subtracted as one
+  // local tool instead of trimming the whole model with infinite planes.
+  const firstLeg = {
+    x: section[1][0] - p[0], y: section[1][1] - p[1], z: section[1][2] - p[2],
+  };
+  const lastLeg = {
+    x: section.at(-1)![0] - p[0], y: section.at(-1)![1] - p[1], z: section.at(-1)![2] - p[2],
+  };
+  const orientation = (
+    (firstLeg.y * lastLeg.z - firstLeg.z * lastLeg.y) * along[0]
+    + (firstLeg.z * lastLeg.x - firstLeg.x * lastLeg.z) * along[1]
+    + (firstLeg.x * lastLeg.y - firstLeg.y * lastLeg.x) * along[2]
+  );
+  if (orientation < 0) {
+    // Keep the selected corner as the fan anchor. A fillet section is concave
+    // (corner plus an inward arc); reversing the whole array moved that anchor
+    // onto the arc and made the end caps overlap themselves. Manifold could
+    // then preserve a long triangular remnant after the subtraction.
+    section.splice(1, section.length - 1, ...section.slice(1).reverse());
+  }
+
+  if (rounded && filletCenter && isConvexSolidMesh(mesh)) {
+    const manifold = await initManifold();
+    const source = outwardWoundMesh(mesh);
+    const sourceMesh = new manifold.Mesh({
+      numProp: 3,
+      vertProperties: source.positions,
+      triVerts: source.indices,
+    });
+    let solid = new manifold.Manifold(sourceMesh);
+    try {
+      const segments = 12;
+      const sinAngle = Math.sin(angle);
+      for (let index = 0; index < segments; index++) {
+        const t = (index + 0.5) / segments;
+        const wa = Math.sin((1 - t) * angle) / sinAngle;
+        const wb = Math.sin(t * angle) / sinAngle;
+        const normal = normalize([
+          a[0] * wa + b[0] * wb,
+          a[1] * wa + b[1] * wb,
+          a[2] * wa + b[2] * wb,
+        ]);
+        const tangentPoint: [number, number, number] = [
+          filletCenter[0] + normal[0] * amount,
+          filletCenter[1] + normal[1] * amount,
+          filletCenter[2] + normal[2] * amount,
+        ];
+        const offset = normal[0] * tangentPoint[0]
+          + normal[1] * tangentPoint[1]
+          + normal[2] * tangentPoint[2];
+        const next = solid.trimByPlane(
+          [-normal[0], -normal[1], -normal[2]],
+          -offset,
+        );
+        solid.delete();
+        solid = next;
+      }
+      if (solid.isEmpty()) return null;
+      return manifoldToMesh(manifold, solid);
+    } finally {
       solid.delete();
-      solid = next;
     }
-    if (solid.isEmpty()) return null;
-    return manifoldToMesh(manifold, solid);
+  }
+
+  const sectionExtent = Math.max(...section.map((point) => Math.hypot(
+    point[0] - p[0],
+    point[1] - p[1],
+    point[2] - p[2],
+  )));
+  // Extending only by a numeric epsilon leaves part of an oblique section
+  // inside the body at the edge vertex. Its end cap then becomes the visible
+  // triangular groove. Move the complete profile past both vertices.
+  const extension = Math.max(1e-5, meshExtent(mesh) * 1e-5, sectionExtent * 2.1);
+  const sectionX = normalize([
+    section[1][0] - p[0],
+    section[1][1] - p[1],
+    section[1][2] - p[2],
+  ]);
+  const sectionY: [number, number, number] = [
+    along[1] * sectionX[2] - along[2] * sectionX[1],
+    along[2] * sectionX[0] - along[0] * sectionX[2],
+    along[0] * sectionX[1] - along[1] * sectionX[0],
+  ];
+  const polygon = section.map((point): [number, number] => {
+    const delta: [number, number, number] = [
+      point[0] - p[0],
+      point[1] - p[1],
+      point[2] - p[2],
+    ];
+    return [
+      delta[0] * sectionX[0] + delta[1] * sectionX[1] + delta[2] * sectionX[2],
+      delta[0] * sectionY[0] + delta[1] * sectionY[1] + delta[2] * sectionY[2],
+    ];
+  });
+  const toolOrigin = {
+    x: p[0] - along[0] * extension,
+    y: p[1] - along[1] * extension,
+    z: p[2] - along[2] * extension,
+  };
+  const toolPlane = workPlaneFromXYAxes(
+    toolOrigin,
+    {
+      x: toolOrigin.x + sectionX[0],
+      y: toolOrigin.y + sectionX[1],
+      z: toolOrigin.z + sectionX[2],
+    },
+    {
+      x: toolOrigin.x + sectionY[0],
+      y: toolOrigin.y + sectionY[1],
+      z: toolOrigin.z + sectionY[2],
+    },
+  );
+  const manifold = await initManifold();
+  const crossSection = new manifold.CrossSection([polygon]);
+  const localTool = crossSection.extrude(edgeLength + extension * 2);
+  crossSection.delete();
+  try {
+    const localMesh = manifoldToMesh(manifold, localTool);
+    const cutter = outwardWoundMesh({
+      positions: transformMeshByWorkPlane(localMesh.positions, toolPlane),
+      indices: transformMeshIndicesByWorkPlane(localMesh.indices, toolPlane),
+    });
+    const result = await booleanSubtract(outwardWoundMesh(mesh), cutter);
+    if (!result || result.positions.length === 0 || result.indices.length === 0) return null;
+    return result;
   } finally {
-    solid.delete();
+    localTool.delete();
   }
 }
 
@@ -312,7 +797,13 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
       positions: new Float32Array(feature.sourceMesh.positions),
       indices: new Uint32Array(feature.sourceMesh.indices),
     };
-    return modifySolidEdge(source, feature.edge, feature.amount, feature.operation === 'fillet');
+    return modifySolidEdge(
+      source,
+      feature.edge,
+      feature.amount,
+      feature.operation === 'fillet',
+      feature.amount2 ?? feature.amount,
+    );
   }
   if (feature.kind === 'presspull-region') {
     const regenerated = await regenerateSolidFeature(feature.source);
@@ -383,6 +874,139 @@ export async function booleanSubtract(base: SolidMesh, tool: SolidMesh): Promise
     result.delete();
     baseManifold.delete();
     toolManifold.delete();
+  }
+}
+
+interface PlaneConstraint {
+  face: PlanarFace;
+  normal: Vec3;
+  offset: number;
+}
+
+const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
+const cross = (a: Vec3, b: Vec3): Vec3 => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x,
+});
+
+function sameVertexSet(first: readonly number[], second: readonly number[]): boolean {
+  if (first.length !== second.length) return false;
+  const expected = new Set(first);
+  return second.every((index) => expected.has(index));
+}
+
+function planeIntersection(a: PlaneConstraint, b: PlaneConstraint, c: PlaneConstraint): Vec3 | null {
+  const bc = cross(b.normal, c.normal);
+  const ca = cross(c.normal, a.normal);
+  const ab = cross(a.normal, b.normal);
+  const determinant = dot(a.normal, bc);
+  if (Math.abs(determinant) < 1e-9) return null;
+  return {
+    x: (a.offset * bc.x + b.offset * ca.x + c.offset * ab.x) / determinant,
+    y: (a.offset * bc.y + b.offset * ca.y + c.offset * ab.y) / determinant,
+    z: (a.offset * bc.z + b.offset * ca.z + c.offset * ab.z) / determinant,
+  };
+}
+
+/**
+ * Removes one plane from the half-space description of a convex body and heals
+ * the gap where the remaining planes meet. This is the exact operation needed
+ * to erase a baked chamfer: the two original side planes extend back to their
+ * sharp intersection. A box top has no such intersection and is rejected
+ * instead of being turned into an open or arbitrarily capped mesh.
+ */
+export async function deletePlanarSolidFace(
+  mesh: SolidMesh,
+  selectedVertexIndices: readonly number[],
+): Promise<SolidMesh | null> {
+  const faces = solidPlanarFaces(mesh);
+  const removed = faces.find((face) => sameVertexSet(face.vertexIndices, selectedVertexIndices));
+  if (!removed || removed.loops.length !== 1) return null;
+
+  // Triple-plane intersection is cubic in the number of faces. This operation
+  // is for planar mechanical bodies, not for treating every tessellated patch
+  // of a sphere as a design face.
+  if (faces.length < 5 || faces.length > 64) return null;
+  const extent = meshExtent(mesh);
+  const tolerance = Math.max(1e-6, extent * 1e-6);
+  const removedOffset = dot(removed.normal, removed.plane.origin);
+  const liesOnRemovedPlane = (face: PlanarFace): boolean =>
+    dot(face.normal, removed.normal) > 1 - 1e-6
+    && Math.abs(dot(removed.normal, face.plane.origin) - removedOffset) <= tolerance * 4;
+  // Boolean engines often return one vertex set per triangle. Coplanar pieces
+  // are nevertheless one design face, so selecting either half removes their
+  // shared support plane rather than leaving an invisible duplicate constraint.
+  const allConstraints: PlaneConstraint[] = faces.map((face) => ({
+    face,
+    normal: face.normal,
+    offset: dot(face.normal, face.plane.origin),
+  }));
+  const constraints = allConstraints.filter((constraint) => !liesOnRemovedPlane(constraint.face));
+
+  // A half-space reconstruction is valid only for a convex source. Concave
+  // bodies and bodies with holes need local surface continuation, not a global
+  // convex hull that would silently fill their missing material.
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    const point = {
+      x: mesh.positions[index],
+      y: mesh.positions[index + 1],
+      z: mesh.positions[index + 2],
+    };
+    if (allConstraints.some((plane) => dot(plane.normal, point) - plane.offset > tolerance)) return null;
+  }
+
+  const points: Vec3[] = [];
+  const addPoint = (point: Vec3): void => {
+    if (![point.x, point.y, point.z].every(Number.isFinite)) return;
+    if (constraints.some((plane) => dot(plane.normal, point) - plane.offset > tolerance * 4)) return;
+    if (points.some((candidate) => Math.hypot(
+      candidate.x - point.x,
+      candidate.y - point.y,
+      candidate.z - point.z,
+    ) <= tolerance * 4)) return;
+    points.push(point);
+  };
+
+  // Keeping the old vertices guarantees the healed body never cuts away any
+  // source material. New triple intersections are the extended corners that
+  // actually make the selected face disappear.
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    addPoint({
+      x: mesh.positions[index],
+      y: mesh.positions[index + 1],
+      z: mesh.positions[index + 2],
+    });
+  }
+  for (let first = 0; first < constraints.length - 2; first++) {
+    for (let second = first + 1; second < constraints.length - 1; second++) {
+      for (let third = second + 1; third < constraints.length; third++) {
+        const point = planeIntersection(constraints[first], constraints[second], constraints[third]);
+        if (point) addPoint(point);
+      }
+    }
+  }
+
+  if (!points.some((point) => dot(removed.normal, point) - removedOffset > tolerance * 4)) return null;
+  if (points.length < 4) return null;
+
+  const manifold = await initManifold();
+  let healed: InstanceType<typeof manifold.Manifold> | null = null;
+  try {
+    healed = manifold.Manifold.hull(points.map((point): [number, number, number] => [point.x, point.y, point.z]));
+    const result = manifoldToMesh(manifold, healed);
+    if (result.indices.length < 12) return null;
+    // If any part of the chosen support plane remains a hull face, this was not
+    // a complete heal. Returning null is safer than claiming partial deletion.
+    const stillPresent = solidPlanarFaces(result).some((face) => {
+      const parallel = dot(face.normal, removed.normal) > 1 - 1e-6;
+      return parallel && Math.abs(dot(removed.normal, face.plane.origin) - removedOffset) <= tolerance * 4;
+    });
+    return stillPresent ? null : result;
+  } catch {
+    return null;
+  } finally {
+    healed?.delete();
   }
 }
 
@@ -510,7 +1134,24 @@ function meshExtent(mesh: SolidMesh): number {
   return Math.max(1, maxX - minX, maxY - minY, maxZ - minZ);
 }
 
-function outwardWoundMesh(mesh: SolidMesh): SolidMesh {
+function isConvexSolidMesh(mesh: SolidMesh): boolean {
+  const tolerance = Math.max(1e-6, meshExtent(mesh) * 1e-5);
+  for (const face of solidPlanarFaces(mesh)) {
+    const offset = face.normal.x * face.plane.origin.x
+      + face.normal.y * face.plane.origin.y
+      + face.normal.z * face.plane.origin.z;
+    for (let index = 0; index < mesh.positions.length; index += 3) {
+      const distance = face.normal.x * mesh.positions[index]
+        + face.normal.y * mesh.positions[index + 1]
+        + face.normal.z * mesh.positions[index + 2]
+        - offset;
+      if (distance > tolerance) return false;
+    }
+  }
+  return true;
+}
+
+function signedMeshVolume(mesh: SolidMesh): number {
   let signedVolume = 0;
   for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
     const ai = mesh.indices[offset] * 3;
@@ -525,6 +1166,11 @@ function outwardWoundMesh(mesh: SolidMesh): SolidMesh {
       + az * (bx * cy - by * cx)
     ) / 6;
   }
+  return signedVolume;
+}
+
+function outwardWoundMesh(mesh: SolidMesh): SolidMesh {
+  const signedVolume = signedMeshVolume(mesh);
   if (signedVolume >= 0) return mesh;
   const indices = mesh.indices.slice();
   for (let offset = 0; offset + 2 < indices.length; offset += 3) {

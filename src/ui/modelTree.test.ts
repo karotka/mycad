@@ -101,7 +101,7 @@ describe('featureLabel', () => {
   });
 
   it('names reversible edge operations and their value', () => {
-    expect(featureLabel(chamfer())).toEqual({ label: 'Chamfer', detail: '1 mm' });
+    expect(featureLabel(chamfer())).toEqual({ label: 'Chamfer', detail: '1 × 1 mm' });
   });
 
   it('names a reversible bounded PressPull and its distance', () => {

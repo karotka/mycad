@@ -30,6 +30,8 @@ export class DimensionStyleController {
     this.set('dimension-extension-offset', style.extensionOffset);
     this.set('dimension-text-offset', style.textOffset);
     this.set('dimension-precision', style.precision);
+    this.set('dimension-angular-precision', style.angularPrecision);
+    this.set('dimension-unit-suffix', style.unitSuffix);
     this.set('dimension-scale', style.scale);
     const layer = this.get('dimension-layer') as HTMLSelectElement;
     layer.replaceChildren(...Array.from(new Set([...this.doc.layers, style.layer])).map((name) => {
@@ -53,11 +55,13 @@ export class DimensionStyleController {
       return Number.isFinite(value) && value > 0 ? value : fallback;
     };
     const precision = Number(this.get('dimension-precision').value);
+    const angularPrecision = Number(this.get('dimension-angular-precision').value);
     const nonNegative = (id: string, fallback: number): number => {
       const value = Number(this.get(id).value);
       return Number.isFinite(value) && value >= 0 ? value : fallback;
     };
     const arrowType = this.get('dimension-arrow-type').value;
+    const unitSuffix = this.get('dimension-unit-suffix').value;
     const layer = this.get('dimension-layer').value || 'dims';
     if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
     if (!(layer in this.doc.layerAci)) { this.doc.layerAci[layer] = ACI_WHITE; this.doc.layerColors[layer] = aciToRgb(ACI_WHITE)!; }
@@ -69,6 +73,10 @@ export class DimensionStyleController {
       extensionOffset: nonNegative('dimension-extension-offset', this.doc.dimensionStyle.extensionOffset),
       textOffset: nonNegative('dimension-text-offset', this.doc.dimensionStyle.textOffset),
       precision: Number.isInteger(precision) && precision >= 0 && precision <= 8 ? precision : this.doc.dimensionStyle.precision,
+      angularPrecision: Number.isInteger(angularPrecision) && angularPrecision >= 0 && angularPrecision <= 8
+        ? angularPrecision
+        : this.doc.dimensionStyle.angularPrecision,
+      unitSuffix: unitSuffix === 'mm' ? 'mm' : 'none',
       scale: positive('dimension-scale', this.doc.dimensionStyle.scale),
       layer,
     };
@@ -82,6 +90,8 @@ export class DimensionStyleController {
       entity.extensionOffset = style.extensionOffset;
       entity.textOffset = style.textOffset;
       entity.precision = style.precision;
+      entity.angularPrecision = style.angularPrecision;
+      entity.unitSuffix = style.unitSuffix;
       entity.scale = style.scale;
     }
     this.doc.notify();

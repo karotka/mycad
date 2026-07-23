@@ -13,9 +13,9 @@ import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, dra
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
-import { measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
+import { measureAngle, measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
+import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
@@ -153,12 +153,24 @@ export const COMMANDS = [
   { name: 'DIMALIGNED', aliases: ['DAL', 'DIMALIGNED'], execute: measureDistance, help: 'dimension the true distance between two points', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
+  { name: 'DIMANGULAR', aliases: ['DAN', 'DIMANGULAR'], execute: measureAngle, help: 'dimension the angle between two lines or three points', suggest: true, sticky: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select first line or straight solid edge (Enter for three points):', optional: true, accepts: ['entity', 'edge'] },
+      { kind: 'entity', label: 'Select second line or straight solid edge:', accepts: ['entity', 'edge'] },
+      { kind: 'point', label: 'Specify angle vertex:' },
+      { kind: 'point', label: 'Specify point on first ray:' },
+      { kind: 'point', label: 'Specify point on second ray:' },
+      { kind: 'point', label: 'Specify dimension arc location:', ignoresDirection: true },
+      DIMENSION_TEXT_STEP,
+      { kind: 'done' },
+    ],
+    data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
   { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
-    steps: [{ kind: 'entity', label: 'Select circle or arc for radius dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
+    steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for radius dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
   { name: 'DIMDIAMETER', aliases: ['DD', 'DDI', 'DIMDIAMETER'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
-    steps: [{ kind: 'entity', label: 'Select circle or arc for diameter dimension:' }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
+    steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for diameter dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
   { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
@@ -208,8 +220,15 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
-  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to chamfer:' }, { kind: 'number', label: 'Enter chamfer distance:', remember: true }, { kind: 'done' }] },
+  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge with two face distances', suggest: true,
+    steps: [
+      { kind: 'edge', label: 'Select solid edge to chamfer:' },
+      { kind: 'number-pair', label: 'Enter chamfer distance', remember: true, defaultValue: [1, 1] },
+      { kind: 'done' },
+    ] },
   { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:', remember: true }, { kind: 'done' }] },
+  { name: 'DELETEFACE', aliases: ['DF', 'DELETEFACE'], execute: deleteFaceStep, help: 'delete a planar solid face and heal the body', suggest: true,
+    steps: [{ kind: 'solid', label: 'Select planar solid face to delete:' }, { kind: 'done' }] },
   { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
   { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
   { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },

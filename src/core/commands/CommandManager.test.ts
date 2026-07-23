@@ -5,10 +5,10 @@ import { CommandManager, hitTestEntity } from './CommandManager';
 import { linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
-import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { createBoxMesh, primitiveMesh } from '../solids/ManifoldEngine';
-import { boxLikePrimitiveFeature } from './steps/solids';
-import { planarFaceRegionAt, solidPlanarFaces } from '../solids/SolidTopology';
+import { localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
+import { createBoxMesh, createCylinderMesh, primitiveMesh } from '../solids/ManifoldEngine';
+import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
+import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../solids/SolidTopology';
 
 function setup() {
   const doc = new Document();
@@ -659,6 +659,105 @@ describe('CommandManager history integration', () => {
     expect(doc.entities.at(-1)).toMatchObject({ type: 'dimension', dimensionKind: 'diameter', end: { x: 2, y: 8 } });
   });
 
+  it('creates an angular dimension from a vertex and two ray points', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('DIMANGULAR');
+    await manager.submitInput('');
+    expect(manager.active).toMatchObject({ name: 'DIMANGULAR', stepIndex: 2 });
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 4, y: 4 });
+    await manager.submitInput('');
+
+    const dimension = doc.entities[0];
+    expect(dimension).toMatchObject({
+      type: 'dimension',
+      dimensionKind: 'angular',
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 0 },
+      offset: { x: 0, y: 10 },
+      arcPoint: { x: 4, y: 4 },
+    });
+    if (dimension.type === 'dimension') expect(dimensionGeometry(dimension).text).toBe('90.0°');
+    expect(manager.active).toMatchObject({ name: 'DIMANGULAR', stepIndex: 0 });
+  });
+
+  it('creates an angular dimension from two selected lines', async () => {
+    const { doc, manager } = setup();
+    const horizontal = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const vertical = doc.createLine({ x: 0, y: 0 }, { x: 0, y: 10 });
+    doc.addEntity(horizontal); doc.addEntity(vertical);
+
+    manager.startCommand('DIMANGULAR');
+    await manager.handleClick({ x: 5, y: 0 }, horizontal);
+    await manager.handleClick({ x: 0, y: 5 }, vertical);
+    expect(manager.active).toMatchObject({ name: 'DIMANGULAR', stepIndex: 5 });
+    await manager.handleClick({ x: 3, y: 3 });
+    await manager.submitInput('');
+
+    const dimension = doc.entities.at(-1)!;
+    expect(dimension).toMatchObject({ type: 'dimension', dimensionKind: 'angular' });
+    if (dimension.type === 'dimension') expect(dimensionGeometry(dimension).text).toBe('90.0°');
+  });
+
+  it('builds a plane for angular dimensions between spatial solid edges', async () => {
+    const { doc, manager } = setup();
+    doc.viewMode = '3d';
+    const edgeX = {
+      solidId: 'solid', start: { x: 0, y: 2, z: 0 }, end: { x: 10, y: 2, z: 0 },
+      normalA: { x: 0, y: 1, z: 0 }, normalB: { x: 0, y: 0, z: 1 },
+    };
+    const edgeZ = {
+      solidId: 'solid', start: { x: 0, y: 2, z: 0 }, end: { x: 0, y: 2, z: 10 },
+      normalA: { x: 0, y: 1, z: 0 }, normalB: { x: 1, y: 0, z: 0 },
+    };
+
+    manager.startCommand('DIMANGULAR');
+    await manager.handleClick({ x: 5, y: 2, z: 0 }, undefined, undefined, undefined, edgeX);
+    await manager.handleClick({ x: 0, y: 2, z: 5 }, undefined, undefined, undefined, edgeZ);
+    await manager.handleClick({ x: 3, y: 3 });
+    await manager.submitInput('');
+
+    const dimension = doc.entities[0];
+    if (dimension.type !== 'dimension') throw new Error('expected angular dimension');
+    expect(dimensionGeometry(dimension).text).toBe('90.0°');
+    expect(localToWorld(dimension.workPlane!, dimension.start)).toMatchObject({ x: 0, y: 2, z: 0 });
+  });
+
+  it('creates radius and diameter dimensions from a circular 3D solid edge', async () => {
+    const { doc, manager } = setup();
+    const mesh = createCylinderMesh(3, 10);
+    const solid = doc.createSolid(mesh, 'Cylinder', 10, []);
+    doc.addSolid(solid);
+    const circle = solidCircularEdges(mesh).find((candidate) => Math.abs(candidate.center.z - 10) < 1e-5)!;
+    const edge = {
+      solidId: solid.id,
+      start: circle.points[0],
+      end: circle.points[1],
+      normalA: circle.normal,
+      normalB: circle.normal,
+      circular: { center: circle.center, normal: circle.normal, radius: circle.radius },
+    };
+
+    manager.startCommand('DIMRADIUS');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    expect(manager.active).toMatchObject({ name: 'DIMRADIUS', stepIndex: 1 });
+    await manager.handleClick({ x: 7, y: 2 });
+    const radius = doc.entities.at(-1)!;
+    if (radius.type !== 'dimension') throw new Error('expected radius dimension');
+    expect(dimensionGeometry(radius).text).toBe('R3.00');
+    expect(localToWorld(radius.workPlane!, radius.start)).toMatchObject({ x: 0, y: 0, z: 10 });
+
+    manager.startCommand('DIMDIAMETER');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    await manager.handleClick({ x: -6, y: 4 });
+    const diameter = doc.entities.at(-1)!;
+    if (diameter.type !== 'dimension') throw new Error('expected diameter dimension');
+    expect(dimensionGeometry(diameter).text).toBe('Ø6.00');
+    expect(diameter.workPlane).toEqual(radius.workPlane);
+  });
+
   it('saves every completed UCS as an active named coordinate system', async () => {
     const { doc, manager, log } = setup();
     const workPlaneChanged = vi.fn();
@@ -719,6 +818,68 @@ describe('CommandManager history integration', () => {
     });
     expect(feature?.workPlane).not.toBe(plane);
     expect(boxLikePrimitiveFeature('box', { x: 1, y: 1 }, { x: 1, y: 4 }, 3, WORLD_WORK_PLANE)).toBeNull();
+  });
+
+  it('uses normalized radial features for the same live preview and placement path', () => {
+    const plane = {
+      origin: { x: 2, y: 3, z: 4 },
+      xAxis: { x: 0, y: 1, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 1, y: 0, z: 0 },
+    };
+    const cylinder = radialLikePrimitiveFeature(
+      'cylinder',
+      { x: 5, y: 8 },
+      { x: 8, y: 12 },
+      -7,
+      plane,
+    );
+    const torus = torusPrimitiveFeature(
+      { x: 5, y: 8 },
+      { x: 8, y: 12 },
+      -2,
+      plane,
+    );
+
+    expect(cylinder).toMatchObject({
+      primitive: 'cylinder',
+      center: { x: 5, y: 8 },
+      radius: 5,
+      height: 7,
+      workPlane: plane,
+    });
+    expect(torus).toMatchObject({
+      primitive: 'torus',
+      center: { x: 5, y: 8 },
+      radius: 5,
+      tubeRadius: 2,
+      height: 4,
+      workPlane: plane,
+    });
+    expect(cylinder?.workPlane).not.toBe(plane);
+    expect(torus?.workPlane).not.toBe(plane);
+    expect(torusPrimitiveFeature({ x: 0, y: 0 }, { x: 5, y: 0 }, 5, plane)).toBeNull();
+  });
+
+  it('switches every primitive with a final 3D drag after its base is placed', async () => {
+    for (const name of ['BOX', 'WEDGE', 'CYLINDER', 'CONE', 'PYRAMID', 'TORUS'] as const) {
+      const { doc, manager } = setup();
+      doc.viewMode = '2d';
+      manager.startCommand(name);
+      await manager.handleClick({ x: 0, y: 0 });
+      await manager.handleClick(name === 'BOX' || name === 'WEDGE' ? { x: 6, y: 4 } : { x: 5, y: 0 });
+
+      expect(doc.viewMode, name).toBe('3d');
+      expect(manager.active, name).toMatchObject({
+        name,
+        stepIndex: 2,
+        data: { framePrimitiveBase: true },
+      });
+      expect(doc.solids, name).toHaveLength(0);
+
+      await manager.submitInput('2');
+      expect(doc.solids, name).toHaveLength(1);
+    }
   });
 
   it('creates wedge, sphere, cone and pyramid primitives', async () => {
@@ -1662,7 +1823,7 @@ describe('remembered command values', () => {
     expect(doc.entities[1]).toMatchObject({ type: 'circle', center: { x: 20, y: 10 }, radius: 5 });
   });
 
-  it.each(['CHAMFER', 'FILLET'] as const)('reuses the last successful %s amount', async (name) => {
+  it('reuses the last successful FILLET radius', async () => {
     const { doc, history, manager } = setup();
     const solid = doc.createSolid(primitiveMesh({
       kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
@@ -1674,24 +1835,95 @@ describe('remembered command values', () => {
       normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
     };
 
-    manager.startCommand(name);
+    manager.startCommand('FILLET');
     await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
     await manager.submitInput('1');
     expect(manager.active).toBeNull();
     expect(doc.solids[0].feature).toMatchObject({
-      kind: 'edge-modification', operation: name === 'FILLET' ? 'fillet' : 'chamfer', amount: 1,
+      kind: 'edge-modification', operation: 'fillet', amount: 1,
     });
     if (doc.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
     expect(Array.isArray(doc.solids[0].feature.sourceMesh.positions)).toBe(true);
     expect(history.undo()).toBe(true);
 
-    manager.startCommand(name);
+    manager.startCommand('FILLET');
     await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
     await manager.submitInput('');
     expect(manager.active).toBeNull();
     expect(doc.solids[0].mesh.indices.length).toBeGreaterThan(primitiveMesh({
       kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
     }).indices.length);
+  });
+
+  it('reuses both successful CHAMFER distances independently', async () => {
+    const { doc, history, manager } = setup();
+    const solid = doc.createSolid(primitiveMesh({
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    }), 'box', 4, []);
+    doc.addSolid(solid);
+    const edge = {
+      solidId: solid.id,
+      start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    };
+
+    manager.startCommand('CHAMFER');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    expect(manager.currentPrompt()).toBe('Enter chamfer distance (1, 1):');
+    await manager.submitInput('1, 2');
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].feature).toMatchObject({
+      kind: 'edge-modification', operation: 'chamfer', amount: 1, amount2: 2,
+    });
+    expect(history.undo()).toBe(true);
+
+    manager.startCommand('CHAMFER');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    expect(manager.currentPrompt()).toBe('Enter chamfer distance (1, 2):');
+    await manager.submitInput('');
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].feature).toMatchObject({
+      kind: 'edge-modification', operation: 'chamfer', amount: 1, amount2: 2,
+    });
+  });
+});
+
+describe('DELETEFACE', () => {
+  it('removes a picked face introduced by the latest chamfer and undo restores it', async () => {
+    const { doc, history, manager } = setup();
+    const source = createBoxMesh(10, 6, 4);
+    const solid = doc.createSolid(source, 'box', 4, []);
+    doc.addSolid(solid);
+    const edge = {
+      solidId: solid.id,
+      start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+      normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    };
+    manager.startCommand('CHAMFER');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    await manager.submitInput('1, 1');
+    const chamfered = doc.solids[0];
+    const generated = solidPlanarFaces(chamfered.mesh).find((face) =>
+      face.normal.x > 0.5 && face.normal.y > 0.5
+    )!;
+    const selection = {
+      solidId: solid.id,
+      vertexIndices: generated.vertexIndices,
+      normal: generated.normal,
+      hitPoint: generated.plane.origin,
+      region: { plane: generated.plane, loops: generated.loops },
+    };
+
+    manager.startCommand('DELETEFACE');
+    await manager.handleClick(generated.plane.origin, undefined, undefined, selection);
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].feature.kind).toBe('mesh');
+    expect(doc.solids[0].mesh.positions).toEqual(source.positions);
+    expect(doc.solids[0].mesh.indices).toEqual(source.indices);
+    expect(history.undo()).toBe(true);
+    expect(doc.solids[0].feature).toMatchObject({ kind: 'edge-modification', operation: 'chamfer' });
   });
 });
 
@@ -1754,6 +1986,46 @@ describe('linear and aligned dimensions', () => {
     const { dimension, text } = await measure('DIMALIGNED', { x: -4, y: 5 });
     expect(dimension).toMatchObject({ dimensionKind: 'aligned' });
     expect(text).toBe('5.00');
+  });
+
+  it('creates an aligned dimension for a truly spatial edge', async () => {
+    const kit = setup();
+    kit.manager.startCommand('DIMALIGNED');
+    await kit.manager.handleClick({ x: 2, y: 3, z: 0 });
+    await kit.manager.handleClick({ x: 2, y: 3, z: 12 });
+    await kit.manager.handleClick({ x: 8, y: 3, z: 4 });
+    await kit.manager.submitInput('');
+
+    const dimension = kit.doc.entities[0];
+    if (dimension.type !== 'dimension') throw new Error('expected a dimension');
+    expect(dimensionGeometry(dimension).text).toBe('12.00');
+    const startWorld = localToWorld(dimension.workPlane!, dimension.start);
+    const endWorld = localToWorld(dimension.workPlane!, dimension.end);
+    expect(startWorld).toMatchObject({ x: 2, y: 3, z: 0 });
+    expect(endWorld).toMatchObject({ x: 2, y: 3, z: 12 });
+  });
+
+  it('uses a vertical UCS plane for a linear Z dimension', async () => {
+    const kit = setup();
+    const sidePlane = {
+      origin: { x: 0, y: 4, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 0, y: -1, z: 0 },
+    };
+    kit.doc.activeWorkPlane = sidePlane;
+    kit.manager.startCommand('MEASURE');
+    await kit.manager.handleClick({ x: 2, y: 0 });
+    await kit.manager.handleClick({ x: 2, y: 12 });
+    await kit.manager.handleClick({ x: 8, y: 6 });
+    await kit.manager.submitInput('');
+
+    const dimension = kit.doc.entities[0];
+    if (dimension.type !== 'dimension') throw new Error('expected a dimension');
+    expect(dimensionGeometry(dimension).text).toBe('12.00');
+    expect(dimension.workPlane).toEqual(sidePlane);
+    expect(localToWorld(dimension.workPlane!, dimension.start)).toEqual({ x: 2, y: 4, z: 0 });
+    expect(localToWorld(dimension.workPlane!, dimension.end)).toEqual({ x: 2, y: 4, z: 12 });
   });
 
   it('is reachable as its own command', () => {

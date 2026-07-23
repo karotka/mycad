@@ -46,7 +46,7 @@ describe('what a click in the viewport does', () => {
       .toEqual({ kind: 'selectEntity' });
   });
 
-  it('drags a rectangle on empty space', () => {
+  it('drags a rectangle on empty space in either the 2D or 3D view', () => {
     expect(resolveViewportAction(click())).toEqual({ kind: 'windowSelect' });
   });
 

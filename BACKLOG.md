@@ -50,12 +50,11 @@ ordinary drawing geometry because native DXF dimensions require block records.
 | **HATCH** | Add a filled/boundary-path entity and renderer support. Reuse the existing face-region loop model where practical. | Large |
 | **POINT** | Add a bare point entity, picking, snaps, properties and rendering. | Small |
 | **3DFACE** | Needs a non-watertight surface object; importing it as a `Solid` would make booleans falsely appear supported. | Medium |
-| **Angular/ordinate dimensions** | Add dimension kinds and their geometry before mapping DXF types 2, 5 and 6. | Medium |
+| **Ordinate dimensions** | Add X/Y/Z ordinate geometry before mapping DXF type 6. Angular dimensions already exist; native DXF types 2 and 5 still need import mapping. | Medium |
 | **DIMSTYLE fidelity** | Read arrow size, text height, precision and other style data instead of applying the current document style. | Medium |
 
 Known import fidelity limits that remain:
 
-- overridden dimension text (DXF code 1, such as `25 TYP`) is dropped;
 - polyline bulge arcs are expanded into straight segments;
 - general NURBS splines are sampled; only one clamped cubic maps exactly to a
   Bezier entity;
@@ -77,12 +76,14 @@ with block support rather than creating an export-only block model.
 
 These can now build on the shared planar-face and boundary-loop representation.
 
-### Delete an arbitrary face and heal the body
+### Extend DELETEFACE beyond convex planar bodies
 
-Removing CHAMFER/FILLET features is already reversible. What remains is deleting
-a face from an imported or otherwise baked mesh. Adjacent analytic surfaces must
-be extended and intersected to close the body; deleting triangles is not enough.
-Start with planar faces and reuse the existing face representation.
+DELETEFACE removes a picked face introduced by the latest
+CHAMFER/FILLET/PRESSPULL feature, and heals a bounded face on an imported or
+otherwise baked convex planar body by extending its remaining support planes.
+What remains is local healing on concave bodies, faces around holes and curved
+analytic surfaces; these cannot use a global convex reconstruction without
+silently filling material.
 
 ### Persistent SLICE feature
 
@@ -194,9 +195,12 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ### Dimensions
 
-- add angular and ordinate dimension kinds;
+- automatically move dimension text or arrows outside when a short dimension
+  cannot fit them between its extension lines;
+- make dimensions associative, so references to entity points and solid edges
+  update after the measured geometry changes;
+- add ordinate dimension kinds;
 - import DIMSTYLE details;
-- preserve overridden dimension text.
 
 ---
 

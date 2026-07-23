@@ -128,7 +128,7 @@ export class GripController {
         return `R ${entity.radius.toFixed(2)} mm · Ø ${(entity.radius * 2).toFixed(2)} mm`;
       }
       if (entity?.type === 'dimension') {
-        return `Dimension: ${Math.hypot(entity.end.x - entity.start.x, entity.end.y - entity.start.y).toFixed(entity.precision)}`;
+        return `Dimension: ${dimensionGeometry(entity).text}`;
       }
       if (entity?.type === 'ellipse') {
         return `RX ${entity.radiusX.toFixed(2)} mm · RY ${entity.radiusY.toFixed(2)} mm`;
@@ -230,11 +230,27 @@ export class GripController {
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (entity?.type === 'dimension' && !this.mode) {
       const geometry = dimensionGeometry(entity);
-      return [
+      if (entity.dimensionKind === 'angular') {
+        return [
+          { point: entity.start, index: 0, shape: 'square' },
+          { point: entity.end, index: 1, shape: 'square' },
+          { point: entity.offset, index: 2, shape: 'square' },
+          { point: entity.arcPoint ?? geometry.dimensionLine[Math.floor(geometry.dimensionLine.length / 2)], index: 3, shape: 'edge' },
+          { point: geometry.textPoint, index: 4, shape: 'square' },
+        ];
+      }
+      const grips: Grip[] = [
         { point: entity.start, index: 0, shape: 'square' },
         { point: entity.end, index: 1, shape: 'square' },
         { point: entity.dimensionKind === 'aligned' ? midpoint2(geometry.dimensionLine[0], geometry.dimensionLine[1]) : entity.offset, index: 2, shape: 'edge' },
       ];
+      // A radial dimension already uses its leader endpoint as the text grip.
+      // Linear and aligned dimensions need a separate grip: moving the text
+      // must not also move the dimension line.
+      if (entity.dimensionKind === 'linear' || entity.dimensionKind === 'aligned') {
+        grips.push({ point: geometry.textPoint, index: 3, shape: 'square' });
+      }
+      return grips;
     }
     if (!entity && solid && !this.mode) {
       const b = solidBounds(solid);
@@ -422,7 +438,9 @@ export class GripController {
     else if (entity.type === 'dimension' && original.type === 'dimension') {
       if (this.drag.gripIndex === 0) entity.start = { ...cursor };
       else if (this.drag.gripIndex === 1) entity.end = { ...cursor };
-      else entity.offset = { ...cursor };
+      else if (this.drag.gripIndex === 2) entity.offset = { ...cursor };
+      else if (entity.dimensionKind === 'angular' && this.drag.gripIndex === 3) entity.arcPoint = { ...cursor };
+      else entity.textPosition = { ...cursor };
     }
     else if (entity.type === 'rectangle' && original.type === 'rectangle') {
       if (this.mode === 'center') {

@@ -1,7 +1,7 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, hitTestEntity, type ActiveCommand, type CommandName } from './core/commands/CommandManager';
-import { boxLikePrimitiveFeature } from './core/commands/steps/solids';
+import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './core/commands/steps/solids';
 import { extrusionFeature } from './core/solids/extrusion';
 import { takesPointInput, transformsObjects } from './core/commands/registry';
 import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidMesh } from './core/entities/types';
@@ -25,7 +25,7 @@ import { ProjectController } from './ui/ProjectController';
 import { SelectionController } from './interaction/SelectionController';
 import { GripInteractionController } from './interaction/GripInteractionController';
 import { DrawingInteractionController } from './interaction/DrawingInteractionController';
-import { DynamicUcsController } from './interaction/DynamicUcsController';
+import { DynamicUcsController, preferredDynamicFacePlane } from './interaction/DynamicUcsController';
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
@@ -66,6 +66,10 @@ const DYNAMIC_UCS_COMMANDS = new Set<CommandName>([
   'LINE', 'POLYLINE', 'RECTANGLE', 'CIRCLE', 'CIRCLE_DIAMETER', 'OCTAGON',
   'ELLIPSE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT',
   'BOX', 'WEDGE', 'SPHERE', 'CONE', 'CYLINDER', 'PYRAMID', 'TORUS',
+  // A linear dimension belongs to a plane. DUCS lets the first picked face
+  // supply that plane, then the ordinary first-point lock keeps every
+  // remaining dimension step in it. DIMALIGNED builds its own spatial plane.
+  'MEASURE', 'DIMANGULAR',
 ]);
 
 app.innerHTML = shellHtml({
@@ -315,27 +319,59 @@ function redraw(): void {
  */
 let chromeState = '';
 
+const FINAL_DRAG_PRIMITIVES = new Set<CommandName>([
+  'BOX', 'WEDGE', 'CYLINDER', 'CONE', 'PYRAMID', 'TORUS',
+]);
+
 function framePrimitiveBaseForHeight(): void {
   const active = commands.active;
-  if ((active?.name !== 'BOX' && active?.name !== 'WEDGE')
+  if (!active
+    || !FINAL_DRAG_PRIMITIVES.has(active.name)
     || active.stepIndex !== 2
     || !active.data.framePrimitiveBase) return;
-  const start = active.data.start as Vec2;
-  const end = active.data.end as Vec2;
   const plane = cadDocument.activeWorkPlane;
-  renderer3d.framePoints([
-    localToWorld(plane, start),
-    localToWorld(plane, { x: end.x, y: start.y }),
-    localToWorld(plane, end),
-    localToWorld(plane, { x: start.x, y: end.y }),
-  ]);
+  if (active.name === 'BOX' || active.name === 'WEDGE') {
+    const start = active.data.start as Vec2;
+    const end = active.data.end as Vec2;
+    renderer3d.framePoints([
+      localToWorld(plane, start),
+      localToWorld(plane, { x: end.x, y: start.y }),
+      localToWorld(plane, end),
+      localToWorld(plane, { x: start.x, y: end.y }),
+    ]);
+  } else {
+    const center = active.data.center as Vec2;
+    const radiusPoint = active.data.radiusPoint as Vec2;
+    const radius = Math.hypot(radiusPoint.x - center.x, radiusPoint.y - center.y);
+    renderer3d.framePoints(Array.from({ length: 32 }, (_value, index) => {
+      const angle = index / 32 * Math.PI * 2;
+      return localToWorld(plane, {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+      });
+    }));
+  }
   delete active.data.framePrimitiveBase;
+}
+
+function activePromptText(): string {
+  const active = commands.active;
+  if (
+    (active?.name === 'MEASURE' && active.stepIndex === 0
+      || active?.name === 'DIMANGULAR' && active.stepIndex === 2 && active.data.angularPointMode === true)
+    && active.data.dynamicUcsConfirmed === true
+  ) {
+    return active.name === 'DIMANGULAR'
+      ? 'DUCS plane locked. Specify angle vertex:'
+      : 'DUCS plane locked. Select first measurement point:';
+  }
+  return commands.currentPrompt();
 }
 
 function syncChrome(): void {
   const state = [
     commands.active?.name ?? '',
-    commands.currentPrompt(),
+    activePromptText(),
     cadDocument.viewMode,
     renderer3d.activeStandardView ?? '',
     cadDocument.snapEnabled, cadDocument.snapSize, cadDocument.gridSize, cadDocument.gridVisible,
@@ -412,7 +448,7 @@ function drawChrome(): void {
   get<HTMLButtonElement>('circle-main').classList.toggle('active', circleTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
-  prompt.textContent = commands.currentPrompt();
+  prompt.textContent = activePromptText();
 }
 
 function visibleGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge' }> {
@@ -528,13 +564,21 @@ function canAcquireDynamicUcs(): boolean {
   );
 }
 
+/** A boundary snap still belongs to the face whose interior acquired DUCS. */
+function snapKeepsDynamicUcs(event: Pick<PointerEvent, 'clientX' | 'clientY'>): boolean {
+  if (!dynamicUcsController.isTemporary) return false;
+  const snap = nearestMeasurementPoint(event);
+  return Boolean(snap && dynamicUcsController.containsPoint(snap));
+}
+
 function acquireDynamicUcs(face: SolidFaceSelection, event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
   if (!face.region) return;
+  const facePlane = preferredDynamicFacePlane(face.region);
   const snap = nearestMeasurementPoint(event);
-  const snapOnFacePlane = snap && Math.abs(worldToLocal(face.region.plane, snap).z) < 1e-5 ? snap : null;
+  const snapOnFacePlane = snap && Math.abs(worldToLocal(facePlane, snap).z) < 1e-5 ? snap : null;
   const origin = snapOnFacePlane ?? face.hitPoint ?? face.region.plane.origin;
   const key = `${face.solidId}:${[...face.vertexIndices].sort((a, b) => a - b).join(',')}`;
-  const temporary = dynamicUcsController.acquire(cadDocument.activeWorkPlane, face.region.plane, origin, key);
+  const temporary = dynamicUcsController.acquire(cadDocument.activeWorkPlane, facePlane, origin, key);
   if (!temporary) return;
   dynamicUcsCommand = commands.active;
   useWorkPlaneWithoutDocumentEvent(temporary);
@@ -711,6 +755,54 @@ function rawWorldPoint3d(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2
 function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 | null {
   activeTracking = null;
   const active = commands.active;
+  const angularPlane = active?.name === 'DIMANGULAR'
+    && active.stepIndex >= 5
+    ? active.data.angularSource as { workPlane?: typeof cadDocument.activeWorkPlane } | undefined
+    : undefined;
+  if (angularPlane?.workPlane) {
+    const targetedSnap = drawingInteraction.targetSnapMode
+      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
+      : nearestPersistentSnap(event);
+    if (targetedSnap) {
+      const local = worldToLocal(angularPlane.workPlane, targetedSnap.world);
+      return { x: local.x, y: local.y };
+    }
+    if (cadDocument.viewMode === '3d') {
+      return renderer3d.workPlanePoint(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        angularPlane.workPlane,
+      );
+    }
+    const world = localToWorld(cadDocument.activeWorkPlane, worldPoint(event));
+    const local = worldToLocal(angularPlane.workPlane, world);
+    return { x: local.x, y: local.y };
+  }
+  let radialPlane = cadDocument.viewMode === '3d'
+    && (active?.name === 'DIMRADIUS' || active?.name === 'DIMDIAMETER')
+    && active.stepIndex === 1
+    ? active.data.radialSource as { workPlane?: typeof cadDocument.activeWorkPlane } | undefined
+    : undefined;
+  const radialEntity = active?.data.entity as Entity | undefined;
+  if (!radialPlane && (radialEntity?.type === 'circle' || radialEntity?.type === 'arc')) {
+    radialPlane = { workPlane: radialEntity.workPlane ?? WORLD_WORK_PLANE };
+  }
+  if (radialPlane?.workPlane) {
+    const targetedSnap = drawingInteraction.targetSnapMode
+      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
+      : nearestPersistentSnap(event);
+    if (targetedSnap) {
+      const local = worldToLocal(radialPlane.workPlane, targetedSnap.world);
+      return { x: local.x, y: local.y };
+    }
+    return renderer3d.workPlanePoint(
+      renderer3d.renderer.domElement,
+      event.clientX,
+      event.clientY,
+      radialPlane.workPlane,
+    );
+  }
   // Tools that place new geometry: they snap, but have no object to track.
   const drawing = active && takesPointInput(active.name) && !transformsObjects(active.name)
     && (active.steps[active.stepIndex]?.kind === 'point' || active.steps[active.stepIndex]?.kind === 'plane');
@@ -973,57 +1065,87 @@ function extrudeHeightUnderCursor(event: PointerEvent): { height: number; profil
   return height !== null && Math.abs(height) > 1e-6 ? { height, profile } : null;
 }
 
-interface BoxLikeHeightDrag {
-  height: number;
+interface PrimitiveFinalDrag {
+  value: number;
   mesh: SolidMesh;
   snap: { x: number; y: number; z: number } | null;
+  label: string;
 }
 
 /**
- * Height of a BOX/WEDGE after its base has been placed. A nearby vertex wins;
- * elsewhere the cursor ray is measured along the current UCS Z axis.
+ * Final size of a primitive after its base has been placed. A nearby vertex
+ * wins; elsewhere the cursor ray is measured along the current UCS Z axis.
+ * For every height-based primitive this is its height; for TORUS it is the
+ * tube radius, giving its third input the same live 3D workflow.
  */
-function boxLikeHeightUnderCursor(event: PointerEvent): BoxLikeHeightDrag | null {
+function primitiveFinalUnderCursor(event: PointerEvent): PrimitiveFinalDrag | null {
   const active = commands.active;
   if (cadDocument.viewMode !== '3d'
-    || (active?.name !== 'BOX' && active?.name !== 'WEDGE')
+    || !active
+    || !FINAL_DRAG_PRIMITIVES.has(active.name)
     || active.stepIndex !== 2) return null;
-  const start = active.data.start as Vec2 | undefined;
-  const end = active.data.end as Vec2 | undefined;
-  if (!start || !end) return null;
 
   const plane = cadDocument.activeWorkPlane;
   const snap = nearestMeasurementPoint(event);
-  const centre = localToWorld(plane, {
-    x: (start.x + end.x) / 2,
-    y: (start.y + end.y) / 2,
-  });
-  let height: number | null;
+  let baseCenter: Vec2;
+  if (active.name === 'BOX' || active.name === 'WEDGE') {
+    const start = active.data.start as Vec2 | undefined;
+    const end = active.data.end as Vec2 | undefined;
+    if (!start || !end) return null;
+    baseCenter = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  } else {
+    const center = active.data.center as Vec2 | undefined;
+    if (!center || !active.data.radiusPoint) return null;
+    baseCenter = center;
+  }
+  const centre = localToWorld(plane, baseCenter);
+  let value: number | null;
   if (snap) {
-    height = worldToLocal(plane, snap).z;
+    value = worldToLocal(plane, snap).z;
   } else {
     const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
-    height = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
+    value = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
   }
-  if (height === null || Math.abs(height) < 1e-6) return null;
+  if (value === null || Math.abs(value) < 1e-6) return null;
 
-  const feature = boxLikePrimitiveFeature(
-    active.name === 'BOX' ? 'box' : 'wedge',
-    start,
-    end,
-    height,
-    plane,
-  );
+  const feature = active.name === 'BOX' || active.name === 'WEDGE'
+    ? boxLikePrimitiveFeature(
+      active.name === 'BOX' ? 'box' : 'wedge',
+      active.data.start as Vec2,
+      active.data.end as Vec2,
+      value,
+      plane,
+    )
+    : active.name === 'TORUS'
+      ? torusPrimitiveFeature(
+        active.data.center as Vec2,
+        active.data.radiusPoint as Vec2,
+        value,
+        plane,
+      )
+      : radialLikePrimitiveFeature(
+        active.name === 'CYLINDER' ? 'cylinder' : active.name === 'CONE' ? 'cone' : 'pyramid',
+        active.data.center as Vec2,
+        active.data.radiusPoint as Vec2,
+        value,
+        plane,
+      );
   if (!feature) return null;
-  return { height: feature.height, mesh: primitiveMesh(feature), snap };
+  const finalValue = active.name === 'TORUS' ? feature.tubeRadius! : feature.height;
+  const name = active.name[0] + active.name.slice(1).toLowerCase();
+  return {
+    value: finalValue,
+    mesh: primitiveMesh(feature),
+    snap,
+    label: `${name} ${active.name === 'TORUS' ? 'tube radius' : 'height'}`,
+  };
 }
 
-function updateBoxLikePreview(event: PointerEvent, sx: number, sy: number): BoxLikeHeightDrag | null {
-  const drag = boxLikeHeightUnderCursor(event);
+function updatePrimitiveFinalPreview(event: PointerEvent, sx: number, sy: number): PrimitiveFinalDrag | null {
+  const drag = primitiveFinalUnderCursor(event);
   if (!drag) return null;
-  const name = commands.active?.name === 'WEDGE' ? 'Wedge' : 'Box';
   previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: drag.mesh } });
-  showDimension(`${name} height ${drag.height.toFixed(2)} mm`, sx, sy);
+  showDimension(`${drag.label} ${drag.value.toFixed(2)} mm`, sx, sy);
   return drag;
 }
 
@@ -1213,15 +1335,45 @@ viewport.addEventListener('pointermove', (event) => {
   // (selection window, pan, etc.) returns before geometric hover processing.
   crosshair.style.left = `${sx}px`;
   crosshair.style.top = `${sy}px`;
-  if (cadDocument.viewMode === '3d' && (commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET')) {
-    renderer3d.pickSolidEdge(renderer3d.renderer.domElement, cadDocument.solids, event.clientX, event.clientY);
+  const choosingCircularDimensionEdge = cadDocument.viewMode === '3d'
+    && (commands.active?.name === 'DIMRADIUS' || commands.active?.name === 'DIMDIAMETER')
+    && commands.active.stepIndex === 0;
+  if (choosingCircularDimensionEdge) {
+    renderer3d.pickCircularSolidEdge(
+      renderer3d.renderer.domElement,
+      cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer)),
+      event.clientX,
+      event.clientY,
+    );
+  } else if (
+    cadDocument.viewMode === '3d'
+    && commands.active?.name === 'DIMANGULAR'
+    && commands.active.steps[commands.active.stepIndex]?.kind === 'entity'
+  ) {
+    renderer3d.pickSolidEdge(
+      renderer3d.renderer.domElement,
+      cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer)),
+      event.clientX,
+      event.clientY,
+    );
+  } else if (cadDocument.viewMode === '3d' && (commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET')) {
+    const circular = renderer3d.pickCircularSolidEdge(
+      renderer3d.renderer.domElement,
+      cadDocument.solids,
+      event.clientX,
+      event.clientY,
+    );
+    if (!circular) {
+      renderer3d.pickSolidEdge(renderer3d.renderer.domElement, cadDocument.solids, event.clientX, event.clientY);
+    }
   } else {
     renderer3d.clearEdgeHighlight();
   }
   // Highlighting follows the cursor only while a face is still being chosen.
   // Once one is picked the cursor is dragging it, and re-picking under the
   // cursor would light up whatever it happens to pass over instead.
-  const choosingPressPullFace = commands.active?.name === 'PRESSPULL' && commands.active.stepIndex === 0;
+  const choosingModellingFace = (commands.active?.name === 'PRESSPULL' || commands.active?.name === 'DELETEFACE')
+    && commands.active.stepIndex === 0;
   const choosingSlicePlane = commands.active?.name === 'SLICE'
     && commands.active.steps[commands.active.stepIndex]?.kind === 'plane';
   const choosingDynamicUcs = canAcquireDynamicUcs();
@@ -1232,19 +1384,22 @@ viewport.addEventListener('pointermove', (event) => {
     : null;
   let dynamicFace: SolidFaceSelection | null = null;
   if (choosingDynamicUcs) {
-    dynamicFace = renderer3d.pickSolidFace(
-      renderer3d.renderer.domElement,
-      event.clientX,
-      event.clientY,
-      cadDocument.solids,
-      cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
-    );
+    const keepCurrentFace = snapKeepsDynamicUcs(event);
+    if (!keepCurrentFace) {
+      dynamicFace = renderer3d.pickSolidFace(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        cadDocument.solids,
+        cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+      );
+    }
     if (dynamicFace) acquireDynamicUcs(dynamicFace, event);
-    else {
+    else if (!keepCurrentFace) {
       releaseDynamicUcs();
       renderer3d.clearFaceHighlight();
     }
-  } else if (cadDocument.viewMode === '3d' && (choosingPressPullFace || (choosingSlicePlane && !slicePlanePoint))) {
+  } else if (cadDocument.viewMode === '3d' && (choosingModellingFace || (choosingSlicePlane && !slicePlanePoint))) {
     renderer3d.pickSolidFace(
       renderer3d.renderer.domElement,
       event.clientX,
@@ -1252,7 +1407,7 @@ viewport.addEventListener('pointermove', (event) => {
       cadDocument.solids,
       cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
     );
-  } else if (commands.active?.name !== 'PRESSPULL' && !dynamicUcsController.isTemporary) {
+  } else if (commands.active?.name !== 'PRESSPULL' && commands.active?.name !== 'DELETEFACE' && !dynamicUcsController.isTemporary) {
     renderer3d.clearFaceHighlight();
   }
   if (windowDrag.active) {
@@ -1310,7 +1465,7 @@ viewport.addEventListener('pointermove', (event) => {
   const pressPull = pressPullDrag(event);
   if (pressPull) showDimension(`${pressPull.delta > 0 ? 'Pull' : 'Push'} ${Math.abs(pressPull.delta).toFixed(2)} mm`, sx, sy);
   updateExtrudePreview(event, sx, sy);
-  const boxLikeDrag = updateBoxLikePreview(event, sx, sy);
+  const primitiveFinalDrag = updatePrimitiveFinalPreview(event, sx, sy);
   const active = commands.active;
   if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
     const base = active.data.basePoint as Vec2;
@@ -1329,7 +1484,7 @@ viewport.addEventListener('pointermove', (event) => {
   const extrudeSnap = active?.name === 'EXTRUDE' && active.stepIndex === 1
     ? nearestMeasurementPoint(event)
     : null;
-  const boxLikeSnap = boxLikeDrag?.snap ?? null;
+  const primitiveFinalSnap = primitiveFinalDrag?.snap ?? null;
   const rotateSnap = active?.name === 'ROTATE' && active.steps[active.stepIndex]?.kind === 'point'
     ? nearestMeasurementPoint(event)
     : null;
@@ -1337,10 +1492,10 @@ viewport.addEventListener('pointermove', (event) => {
     && (active.steps[active.stepIndex]?.kind === 'plane' || active.steps[active.stepIndex]?.kind === 'point')
     ? nearestMeasurementPoint(event)
     : null;
-  if (drawingSnap || extrudeSnap || boxLikeSnap || rotateSnap || sliceVertexSnap) {
+  if (drawingSnap || extrudeSnap || primitiveFinalSnap || rotateSnap || sliceVertexSnap) {
     if (targetedDrawingSnap) positionSnapMarker(targetedDrawingSnap.world, sx, sy, targetedDrawingSnap.mode);
     else if (persistentDrawingSnap) positionSnapMarker(persistentDrawingSnap.world, sx, sy, persistentDrawingSnap.mode);
-    else if (boxLikeSnap) positionSnapMarker(boxLikeSnap, sx, sy);
+    else if (primitiveFinalSnap) positionSnapMarker(primitiveFinalSnap, sx, sy);
     else if (rotateSnap) positionSnapMarker(rotateSnap, sx, sy);
     else if (sliceVertexSnap) positionSnapMarker(sliceVertexSnap, sx, sy);
     else positionMeasureMarker(snapMarker, sx, sy);
@@ -1351,7 +1506,7 @@ viewport.addEventListener('pointermove', (event) => {
   } else if (!gripController.isDragging || !gripInteraction.targetSnapMode) {
     snapMarker.hidden = true;
   }
-  if (active?.name === 'MEASURE') {
+  if (active?.name === 'MEASURE' || active?.name === 'DIMALIGNED') {
     const snap = nearestMeasurementPoint(event);
     if (snap && active.stepIndex === 1 && active.data.start) {
       positionMeasureMarker(measureTarget, sx, sy);
@@ -1493,23 +1648,85 @@ viewport.addEventListener('pointerdown', async (event) => {
     event.preventDefault();
     return;
   }
-  const boxLikeDrag = boxLikeHeightUnderCursor(event);
-  if (boxLikeDrag) {
+  const primitiveFinalDrag = primitiveFinalUnderCursor(event);
+  if (primitiveFinalDrag) {
     previewController.clearPreview();
     const dynamicAnswer = beforeDynamicUcsAnswer();
-    await commands.submitInput(String(boxLikeDrag.height));
+    await commands.submitInput(String(primitiveFinalDrag.value));
     afterDynamicUcsAnswer(dynamicAnswer);
     snapMarker.hidden = true;
     input.focus();
     event.preventDefault();
     return;
   }
-  if (commands.active?.name === 'MEASURE') {
+  if (
+    commands.active?.name === 'DIMANGULAR'
+    && commands.active.data.angularPointMode === true
+    && commands.active.stepIndex === 2
+    && commands.active.data.dynamicUcsConfirmed !== true
+  ) {
+    if (canAcquireDynamicUcs()) {
+      if (!snapKeepsDynamicUcs(event)) {
+        const face = renderer3d.pickSolidFace(
+          renderer3d.renderer.domElement,
+          event.clientX,
+          event.clientY,
+          cadDocument.solids,
+          cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+        );
+        if (face) acquireDynamicUcs(face, event);
+        else releaseDynamicUcs();
+      }
+    }
+    if (dynamicUcsController.isTemporary && dynamicUcsCommand === commands.active) {
+      dynamicUcsController.lock();
+      commands.active.data.dynamicUcsConfirmed = true;
+      log('DUCS plane locked. Specify the angle vertex.');
+      redraw();
+      input.focus();
+      event.preventDefault();
+      return;
+    }
+  }
+  if (commands.active?.name === 'MEASURE' || commands.active?.name === 'DIMALIGNED') {
+    // Pointer move normally acquires the highlighted DUCS face. Repeat the
+    // pick on the first click so a quick toolbar-to-viewport click cannot miss
+    // the temporary plane merely because no move event arrived in between.
+    if (commands.active.name === 'MEASURE' && canAcquireDynamicUcs()) {
+      if (!snapKeepsDynamicUcs(event)) {
+        const face = renderer3d.pickSolidFace(
+          renderer3d.renderer.domElement,
+          event.clientX,
+          event.clientY,
+          cadDocument.solids,
+          cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+        );
+        if (face) acquireDynamicUcs(face, event);
+        else releaseDynamicUcs();
+      }
+    }
+    if (
+      commands.active.name === 'MEASURE'
+      && commands.active.stepIndex === 0
+      && commands.active.data.dynamicUcsConfirmed !== true
+      && dynamicUcsController.isTemporary
+      && dynamicUcsCommand === commands.active
+    ) {
+      dynamicUcsController.lock();
+      commands.active.data.dynamicUcsConfirmed = true;
+      log('DUCS plane locked. Select the first measurement point.');
+      redraw();
+      input.focus();
+      event.preventDefault();
+      return;
+    }
     // The first two steps measure, so they must land on real geometry. Where the
     // dimension line and its text then go is free: those steps take the cursor
     // wherever it is rather than refusing a click that snapped to nothing.
     const placingDimension = commands.active.stepIndex >= 2;
-    const point = interactionPoint(event) ?? (placingDimension ? worldPoint(event) : null);
+    const point = interactionPoint(event) ?? (placingDimension
+      ? (cadDocument.viewMode === '3d' ? worldPoint3d(event) : worldPoint(event))
+      : null);
     if (point) {
       const rect = viewport.getBoundingClientRect();
       const sx = event.clientX - rect.left;
@@ -1520,7 +1737,9 @@ viewport.addEventListener('pointerdown', async (event) => {
       } else if (!placingDimension) {
         positionMeasureMarker(measureTarget, sx, sy);
       }
+      const dynamicAnswer = beforeDynamicUcsAnswer();
       await commands.handleClick(point);
+      afterDynamicUcsAnswer(dynamicAnswer);
       input.focus();
     } else {
       log('Dimension: move the cursor closer to an endpoint or vertex.');
@@ -1577,8 +1796,78 @@ viewport.addEventListener('pointerdown', async (event) => {
     }
   } else {
     const activeStep = commands.active?.steps[commands.active.stepIndex];
+    if (commands.active?.name === 'DIMANGULAR' && activeStep?.kind === 'entity') {
+      const edge = renderer3d.pickSolidEdge(
+        renderer3d.renderer.domElement,
+        cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer)),
+        event.clientX,
+        event.clientY,
+      );
+      if (edge) {
+        const midpoint = {
+          x: (edge.start.x + edge.end.x) / 2,
+          y: (edge.start.y + edge.end.y) / 2,
+          z: (edge.start.z + edge.end.z) / 2,
+        };
+        const local = worldToLocal(cadDocument.activeWorkPlane, midpoint);
+        await commands.handleClick(local, undefined, undefined, undefined, edge);
+      } else {
+        const entity = renderer3d.pickEntity(
+          renderer3d.renderer.domElement,
+          cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+          event.clientX,
+          event.clientY,
+        );
+        if (entity?.type === 'line') {
+          await commands.handleClick(worldPoint3d(event) ?? { x: 0, y: 0 }, entity);
+        } else {
+          log('Angular dimension: select a straight line or solid edge, or press Enter for three points.');
+        }
+      }
+      renderer3d.clearEdgeHighlight();
+      input.focus();
+      event.preventDefault();
+      return;
+    }
+    if ((commands.active?.name === 'DIMRADIUS' || commands.active?.name === 'DIMDIAMETER') && activeStep?.kind === 'entity') {
+      const edge = renderer3d.pickCircularSolidEdge(
+        renderer3d.renderer.domElement,
+        cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer)),
+        event.clientX,
+        event.clientY,
+      );
+      if (edge) {
+        await commands.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+      } else {
+        const entity = renderer3d.pickEntity(
+          renderer3d.renderer.domElement,
+          cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+          event.clientX,
+          event.clientY,
+        );
+        if (entity?.type === 'circle' || entity?.type === 'arc') {
+          await commands.handleClick({ x: 0, y: 0 }, entity);
+        } else {
+          log('Dimension: select a circle, arc, or circular solid edge.');
+        }
+      }
+      renderer3d.clearEdgeHighlight();
+      input.focus();
+      event.preventDefault();
+      return;
+    }
     if ((commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET') && activeStep?.kind === 'edge') {
-      const edge = renderer3d.pickSolidEdge(renderer3d.renderer.domElement, cadDocument.solids, event.clientX, event.clientY);
+      const edge = renderer3d.pickCircularSolidEdge(
+        renderer3d.renderer.domElement,
+        cadDocument.solids,
+        event.clientX,
+        event.clientY,
+      ) ?? renderer3d.pickSolidEdge(
+        renderer3d.renderer.domElement,
+        cadDocument.solids,
+        event.clientX,
+        event.clientY,
+      );
       if (edge) {
         await commands.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
         renderer3d.clearEdgeHighlight();
@@ -1665,7 +1954,9 @@ viewport.addEventListener('pointerdown', async (event) => {
         ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
         : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event)
       : null;
-    const face = commands.active?.name === 'PRESSPULL' || (choosingSlicePlane && !slicePointSnap)
+    const face = commands.active?.name === 'PRESSPULL'
+      || commands.active?.name === 'DELETEFACE'
+      || (choosingSlicePlane && !slicePointSnap)
       ? renderer3d.pickSolidFace(
         renderer3d.renderer.domElement,
         event.clientX,
@@ -1684,6 +1975,16 @@ viewport.addEventListener('pointerdown', async (event) => {
       canWindowSelect: true,
     });
 
+    if (action.kind === 'windowSelect') {
+      // The 3D picker resolves an empty press to the same window-selection
+      // action as 2D. It still has to start the shared drag controller here;
+      // otherwise the resolved action is silently discarded and no rectangle
+      // appears while the pointer moves.
+      gripController.mode = null;
+      selectionController.beginWindow(event, 'select');
+      event.preventDefault();
+      return;
+    }
     if (action.kind === 'commandClick') {
       if ((activeStep?.kind === 'point' || activeStep?.kind === 'plane') && !point && !face) return;
       const dynamicAnswer = beforeDynamicUcsAnswer();

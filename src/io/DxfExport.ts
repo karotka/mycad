@@ -241,9 +241,12 @@ function writeDimension(pair: Pair, entity: DimensionEntity): void {
     point(pair, 10, 20, a);
     point(pair, 11, 21, b);
   };
+  const path = (points: Vec2[]): void => {
+    for (let index = 1; index < points.length; index++) line(points[index - 1], points[index]);
+  };
   line(geometry.extensionStart[0], geometry.extensionStart[1]);
   line(geometry.extensionEnd[0], geometry.extensionEnd[1]);
-  line(geometry.dimensionLine[0], geometry.dimensionLine[1]);
+  path(geometry.dimensionLine);
   for (const triangle of geometry.arrows) writePolyline(pair, carrier, triangle, true);
 
   start(pair, 'TEXT', carrier);

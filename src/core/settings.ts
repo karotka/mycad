@@ -17,7 +17,12 @@ export interface DimensionStyle {
   extensionBeyond: number;
   extensionOffset: number;
   textOffset: number;
+  /** Decimal places for linear, aligned, radius and diameter dimensions. */
   precision: number;
+  /** Angular dimensions normally need fewer decimals than lengths. */
+  angularPrecision: number;
+  /** Length unit printed after the value; the drawing itself remains in mm. */
+  unitSuffix: 'none' | 'mm';
   scale: number;
   layer: string;
 }
@@ -78,5 +83,17 @@ export function defaultDraftingSettings(): DraftingSettings {
 }
 
 export function defaultDimensionStyle(): DimensionStyle {
-  return { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed', extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
+  return {
+    textHeight: 2.5,
+    arrowSize: 2.5,
+    arrowType: 'closed',
+    extensionBeyond: 1.25,
+    extensionOffset: 0.625,
+    textOffset: 0.625,
+    precision: 2,
+    angularPrecision: 1,
+    unitSuffix: 'none',
+    scale: 1,
+    layer: 'dims',
+  };
 }

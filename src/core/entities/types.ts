@@ -75,7 +75,7 @@ export interface DimensionEntity extends EntityBase {
    * distance, which is what a drawing usually wants. `aligned` measures the true
    * point-to-point distance, which is the diagonal.
    */
-  dimensionKind: 'linear' | 'aligned' | 'radius' | 'diameter';
+  dimensionKind: 'linear' | 'aligned' | 'radius' | 'diameter' | 'angular';
   start: Vec2;
   end: Vec2;
   offset: Vec2;
@@ -85,10 +85,29 @@ export interface DimensionEntity extends EntityBase {
   extensionBeyond: number;
   extensionOffset: number;
   textOffset: number;
+  /** Decimal places for length values. */
   precision: number;
+  /** Decimal places for angular values; absent in projects created before it existed. */
+  angularPrecision?: number;
+  /** Whether a length value carries the drawing's millimetre suffix. */
+  unitSuffix?: 'none' | 'mm';
   scale: number;
   /** The direction a `linear` dimension measures along, in radians. Ignored by the rest. */
   rotation?: number;
+  /**
+   * A point on the dimension arc of an angular dimension. Its distance from
+   * `start` sets the arc radius and its side chooses the measured sector.
+   * Angular dimensions use start as the vertex, end as the first ray and
+   * offset as the second ray.
+   */
+  arcPoint?: Vec2;
+  /** Exact displayed text. `<>` inside it is replaced by the measured value. */
+  textOverride?: string;
+  textPrefix?: string;
+  textSuffix?: string;
+  toleranceMode?: 'none' | 'symmetric' | 'deviation';
+  toleranceUpper?: number;
+  toleranceLower?: number;
   /**
    * Where the text was dragged to. Left out, it sits centred and clear of the
    * dimension line, which is what a dimension with room for it wants. A short
@@ -102,7 +121,8 @@ export type Entity = LineEntity | CircleEntity | EllipseEntity | RectangleEntity
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
   extensionEnd: [Vec2, Vec2];
-  dimensionLine: [Vec2, Vec2];
+  /** Two points for a straight dimension line, sampled arc points for angular. */
+  dimensionLine: Vec2[];
   arrows: Array<[Vec2, Vec2, Vec2]>;
   textPoint: Vec2;
   textAngle: number;
@@ -110,6 +130,8 @@ export interface DimensionGeometry {
 }
 
 export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
+  if (entity.dimensionKind === 'angular') return angularDimensionGeometry(entity);
+
   const dx = entity.end.x - entity.start.x, dy = entity.end.y - entity.start.y;
   const span = Math.hypot(dx, dy);
   // Every kind is the same construction, differing only in which way the
@@ -166,7 +188,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     return {
       extensionStart: [entity.start, entity.start], extensionEnd: [entity.end, entity.end],
       dimensionLine: [entity.start, entity.offset], arrows: [triangle(entity.end, -1)],
-      textPoint: entity.offset, textAngle: 0, text: `R${span.toFixed(entity.precision)}`,
+      textPoint: entity.offset, textAngle: 0, text: formattedDimensionText(entity, span, 'R'),
     };
   }
   if (entity.dimensionKind === 'diameter') {
@@ -174,7 +196,7 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
     return {
       extensionStart: [opposite, opposite], extensionEnd: [entity.end, entity.end],
       dimensionLine: [opposite, entity.end], arrows: [triangle(opposite, 1), triangle(entity.end, -1)],
-      textPoint: entity.offset, textAngle: 0, text: `\u00d8${(span * 2).toFixed(entity.precision)}`,
+      textPoint: entity.offset, textAngle: 0, text: formattedDimensionText(entity, span * 2, '\u00d8'),
     };
   }
   return {
@@ -184,8 +206,127 @@ export function dimensionGeometry(entity: DimensionEntity): DimensionGeometry {
       x: (a.x + b.x) / 2 + nx * textSide * textClearance,
       y: (a.y + b.y) / 2 + ny * textSide * textClearance,
     },
-    textAngle, text: length.toFixed(entity.precision),
+    textAngle, text: formattedDimensionText(entity, length),
   };
+}
+
+function angularDimensionGeometry(entity: DimensionEntity): DimensionGeometry {
+  const center = entity.start;
+  const ray1 = { x: entity.end.x - center.x, y: entity.end.y - center.y };
+  const ray2 = { x: entity.offset.x - center.x, y: entity.offset.y - center.y };
+  const length1 = Math.hypot(ray1.x, ray1.y);
+  const length2 = Math.hypot(ray2.x, ray2.y);
+  const unit1 = length1 > 1e-9 ? { x: ray1.x / length1, y: ray1.y / length1 } : { x: 1, y: 0 };
+  const unit2 = length2 > 1e-9 ? { x: ray2.x / length2, y: ray2.y / length2 } : { x: 0, y: 1 };
+  const angle1 = Math.atan2(unit1.y, unit1.x);
+  const angle2 = Math.atan2(unit2.y, unit2.x);
+  const positive = (angle: number): number => {
+    let value = angle % (Math.PI * 2);
+    if (value < 0) value += Math.PI * 2;
+    return value;
+  };
+  const ccwSweep = positive(angle2 - angle1);
+  const fallbackAngle = angle1 + ccwSweep / 2;
+  const chosenPoint = entity.arcPoint ?? {
+    x: center.x + Math.cos(fallbackAngle) * Math.max(length1, length2, entity.arrowSize * entity.scale * 2),
+    y: center.y + Math.sin(fallbackAngle) * Math.max(length1, length2, entity.arrowSize * entity.scale * 2),
+  };
+  const chosenAngle = Math.atan2(chosenPoint.y - center.y, chosenPoint.x - center.x);
+  const chosenFromFirst = positive(chosenAngle - angle1);
+  // The cursor decides which of the two sectors is dimensioned. On a ray the
+  // smaller sector is the stable answer, avoiding a 360° jump at its boundary.
+  const sweep = chosenFromFirst <= ccwSweep + 1e-9
+    ? ccwSweep
+    : -(Math.PI * 2 - ccwSweep);
+  const radius = Math.max(
+    Math.hypot(chosenPoint.x - center.x, chosenPoint.y - center.y),
+    entity.arrowSize * entity.scale * 1.5,
+  );
+  const segments = Math.max(8, Math.ceil(Math.abs(sweep) / (Math.PI / 36)));
+  const dimensionLine: Vec2[] = [];
+  for (let index = 0; index <= segments; index++) {
+    const angle = angle1 + sweep * index / segments;
+    dimensionLine.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    });
+  }
+
+  const extension = (unit: Vec2): [Vec2, Vec2] => [
+    {
+      x: center.x + unit.x * entity.extensionOffset * entity.scale,
+      y: center.y + unit.y * entity.extensionOffset * entity.scale,
+    },
+    {
+      x: center.x + unit.x * (radius + entity.extensionBeyond * entity.scale),
+      y: center.y + unit.y * (radius + entity.extensionBeyond * entity.scale),
+    },
+  ];
+  const arrow = entity.arrowSize * entity.scale;
+  const wing = arrow * 0.36;
+  const arrowAt = (tip: Vec2, inward: Vec2): [Vec2, Vec2, Vec2] => {
+    const normal = { x: -inward.y, y: inward.x };
+    if (entity.arrowType === 'tick') return [
+      tip,
+      { x: tip.x - inward.x * arrow * 0.45 + normal.x * arrow * 0.45, y: tip.y - inward.y * arrow * 0.45 + normal.y * arrow * 0.45 },
+      { x: tip.x + inward.x * arrow * 0.45 - normal.x * arrow * 0.45, y: tip.y + inward.y * arrow * 0.45 - normal.y * arrow * 0.45 },
+    ];
+    return [
+      tip,
+      { x: tip.x + inward.x * arrow + normal.x * wing, y: tip.y + inward.y * arrow + normal.y * wing },
+      { x: tip.x + inward.x * arrow - normal.x * wing, y: tip.y + inward.y * arrow - normal.y * wing },
+    ];
+  };
+  const sign = sweep < 0 ? -1 : 1;
+  const startTangent = { x: -Math.sin(angle1) * sign, y: Math.cos(angle1) * sign };
+  const endAngle = angle1 + sweep;
+  const endTangent = { x: -Math.sin(endAngle) * sign, y: Math.cos(endAngle) * sign };
+  const middleAngle = angle1 + sweep / 2;
+  const textClearance = (entity.textOffset + entity.textHeight / 2) * entity.scale;
+  let textAngle = middleAngle + (sweep < 0 ? -Math.PI / 2 : Math.PI / 2);
+  while (textAngle >= Math.PI / 2) textAngle -= Math.PI;
+  while (textAngle < -Math.PI / 2) textAngle += Math.PI;
+
+  return {
+    extensionStart: extension(unit1),
+    extensionEnd: extension(unit2),
+    dimensionLine,
+    arrows: [
+      arrowAt(dimensionLine[0], startTangent),
+      arrowAt(dimensionLine[dimensionLine.length - 1], { x: -endTangent.x, y: -endTangent.y }),
+    ],
+    textPoint: entity.textPosition ?? {
+      x: center.x + Math.cos(middleAngle) * (radius + textClearance),
+      y: center.y + Math.sin(middleAngle) * (radius + textClearance),
+    },
+    textAngle,
+    text: formattedDimensionText(entity, Math.abs(sweep) * 180 / Math.PI, '', true),
+  };
+}
+
+function formattedDimensionText(
+  entity: DimensionEntity,
+  value: number,
+  symbol = '',
+  angular = false,
+): string {
+  const precision = angular ? entity.angularPrecision ?? entity.precision : entity.precision;
+  const upper = Math.max(0, entity.toleranceUpper ?? 0).toFixed(precision);
+  const lower = Math.max(0, entity.toleranceLower ?? 0).toFixed(precision);
+  const mode = entity.toleranceMode ?? 'none';
+  let measured = `${symbol}${value.toFixed(precision)}${angular ? '°' : ''}`;
+  if (mode === 'symmetric') {
+    measured += ` ±${upper}${angular ? '°' : ''}`;
+  } else if (mode === 'deviation') {
+    measured += ` +${upper}${angular ? '°' : ''}/-${lower}${angular ? '°' : ''}`;
+  }
+  if (!angular && entity.unitSuffix === 'mm') measured += ' mm';
+
+  const override = entity.textOverride ?? '';
+  const body = override
+    ? (override.includes('<>') ? override.replaceAll('<>', measured) : override)
+    : measured;
+  return `${entity.textPrefix ?? ''}${body}${entity.textSuffix ?? ''}`;
 }
 
 export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
@@ -268,6 +409,14 @@ export interface SolidEdgeSelection {
   end: Vec3;
   normalA: Vec3;
   normalB: Vec3;
+  /** Present when the selected mesh segment belongs to a recognised circular feature edge. */
+  circular?: {
+    center: Vec3;
+    normal: Vec3;
+    radius: number;
+    /** Tessellation used by the recognised source loop. */
+    segments?: number;
+  };
 }
 
 export interface ExtrusionFeature {
@@ -317,7 +466,10 @@ export interface EdgeModificationFeature {
   operation: 'chamfer' | 'fillet';
   source: SolidFeature;
   edge: SolidEdgeSelection;
+  /** Radius for FILLET, or distance on the face identified by `edge.normalA`. */
   amount: number;
+  /** CHAMFER distance on the face identified by `edge.normalB`; old projects use `amount`. */
+  amount2?: number;
   /** Geometry immediately before this operation, for a baked mesh source. */
   sourceMesh: SerializedSolidMesh;
 }
@@ -460,7 +612,7 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     }
     case 'dimension': {
       const geometry = dimensionGeometry(e);
-      const points = [e.start, e.end, ...geometry.dimensionLine, ...geometry.arrows.flat()];
+      const points = [e.start, e.end, geometry.textPoint, ...geometry.dimensionLine, ...geometry.arrows.flat()];
       return { min: { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) }, max: { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) } };
     }
   }
@@ -509,7 +661,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
     case 'arc': return [e.center, ...curvePoints(e, 2)];
     case 'bezier': return [e.start, e.control1, e.control2, e.end];
     case 'text': return [e.position];
-    case 'dimension': return [e.start, e.end, e.offset];
+    case 'dimension': return [e.start, e.end, e.offset, ...(e.arcPoint ? [e.arcPoint] : []), ...(e.textPosition ? [e.textPosition] : [])];
   }
 }
 
@@ -540,7 +692,7 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
     case 'text': copy.position = fn(copy.position); break;
     // A dragged text is an absolute point like the rest, so it has to travel
     // with them — left behind, it would drift off its own dimension on a move.
-    case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); if (copy.textPosition) copy.textPosition = fn(copy.textPosition); break;
+    case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); if (copy.arcPoint) copy.arcPoint = fn(copy.arcPoint); if (copy.textPosition) copy.textPosition = fn(copy.textPosition); break;
   }
   return copy;
 }

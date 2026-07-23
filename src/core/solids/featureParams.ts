@@ -24,12 +24,12 @@ export interface FeatureParam {
 export function featureParams(feature: SolidFeature): FeatureParam[] {
   if (feature.kind === 'primitive') return primitiveParams(feature);
   if (feature.kind === 'extrusion') return extrusionParams(feature);
-  if (feature.kind === 'edge-modification') return [{
-    key: 'amount',
-    label: feature.operation === 'fillet' ? 'Radius' : 'Distance',
-    value: feature.amount,
-    min: 1e-6,
-  }];
+  if (feature.kind === 'edge-modification') return feature.operation === 'fillet'
+    ? [{ key: 'amount', label: 'Radius', value: feature.amount, min: 1e-6 }]
+    : [
+      { key: 'amount', label: 'Distance 1', value: feature.amount, min: 1e-6 },
+      { key: 'amount2', label: 'Distance 2', value: feature.amount2 ?? feature.amount, min: 1e-6 },
+    ];
   if (feature.kind === 'presspull-region') return [{
     key: 'distance',
     label: 'Distance',
@@ -44,6 +44,11 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   if (feature.kind === 'extrusion') return setExtrusionParam(feature, key, value);
   if (feature.kind === 'edge-modification' && key === 'amount' && Number.isFinite(value) && value >= 1e-6) {
     feature.amount = value;
+    return true;
+  }
+  if (feature.kind === 'edge-modification' && feature.operation === 'chamfer'
+    && key === 'amount2' && Number.isFinite(value) && value >= 1e-6) {
+    feature.amount2 = value;
     return true;
   }
   if (feature.kind === 'presspull-region' && key === 'distance' && Number.isFinite(value) && Math.abs(value) >= 1e-6) {

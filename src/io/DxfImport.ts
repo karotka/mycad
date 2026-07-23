@@ -238,10 +238,13 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       const kind = number(fields, 70, 0) & 7;
       const point = (xCode: number, yCode: number) => ({ x: number(fields, xCode) * scale, y: number(fields, yCode) * scale });
       const textPoint = point(11, 21);
-      // Our dimension always renders its own measurement, so an overridden text
-      // ("25 TYP") cannot survive. '<>' just means "use the measurement".
       const override = fields.find((pair) => pair.code === 1)?.value ?? '';
-      if (override && override !== '<>') approximated++;
+      const preserveOverride = <T extends ReturnType<Document['createDimension']>>(dimension: T): T => {
+        // DXF uses <> as its measured-value placeholder too, so both exact text
+        // and decorations such as "<> TYP" now round-trip without approximation.
+        if (override && override !== '<>') dimension.textOverride = override;
+        return dimension;
+      };
 
       if (kind === 0 || kind === 1) {
         // 13/14 are the extension line origins and 10 sits on the dimension line.
@@ -249,9 +252,9 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
         // and measures point to point. Both map exactly now.
         const start = point(13, 23);
         const end = point(14, 24);
-        finish(kind === 1
+        finish(preserveOverride(kind === 1
           ? doc.createDimension(start, end, point(10, 20), 'aligned')
-          : doc.createDimension(start, end, point(10, 20), 'linear', number(fields, 50, 0) * Math.PI / 180),
+          : doc.createDimension(start, end, point(10, 20), 'linear', number(fields, 50, 0) * Math.PI / 180)),
           fields, layer);
       } else if (kind === 3) {
         // Diameter: 10 and 15 are opposite ends of the diameter, so the centre
@@ -259,10 +262,10 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
         const rim = point(10, 20);
         const opposite = point(15, 25);
         const centre = { x: (rim.x + opposite.x) / 2, y: (rim.y + opposite.y) / 2 };
-        finish(doc.createDimension(centre, rim, textPoint, 'diameter'), fields, layer);
+        finish(preserveOverride(doc.createDimension(centre, rim, textPoint, 'diameter')), fields, layer);
       } else if (kind === 4) {
         // Radius: 15 is the centre, 10 the point on the arc carrying the arrow.
-        finish(doc.createDimension(point(15, 25), point(10, 20), textPoint, 'radius'), fields, layer);
+        finish(preserveOverride(doc.createDimension(point(15, 25), point(10, 20), textPoint, 'radius')), fields, layer);
       } else skip(type); // angular and ordinate have no counterpart
     } else if (type === 'SPLINE') {
       noteFlattened(fields, 30);

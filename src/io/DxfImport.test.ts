@@ -222,12 +222,16 @@ describe('DXF DIMENSION', () => {
     expect(dimensionGeometry(dimension).text).toBe('5.00');
   });
 
-  it('reports an overridden dimension text as lost', () => {
+  it('preserves overridden dimension text and its measured-value placeholder', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf(
-      '0\nDIMENSION\n8\nDims\n70\n1\n1\n25 TYP\n10\n5\n20\n8\n13\n0\n23\n0\n14\n10\n24\n0\n42\n10\n',
+      '0\nDIMENSION\n8\nDims\n70\n1\n1\n<> TYP\n10\n5\n20\n8\n13\n0\n23\n0\n14\n10\n24\n0\n42\n10\n',
     ));
-    expect(result.approximated).toBe(1);
+    const dimension = result.entities[0];
+    expect(dimension).toMatchObject({ type: 'dimension', textOverride: '<> TYP' });
+    if (dimension.type !== 'dimension') return;
+    expect(dimensionGeometry(dimension).text).toBe('10.00 TYP');
+    expect(result.approximated).toBe(0);
   });
 
   it('skips angular and ordinate dimensions, which have no counterpart', () => {

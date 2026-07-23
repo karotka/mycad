@@ -59,8 +59,10 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
           feature.edge,
           (point) => scaledPoint(point, base, factor),
           (normal) => ({ x: normal.x * directionFactor, y: normal.y * directionFactor, z: normal.z * directionFactor }),
+          Math.abs(factor),
         ),
         amount: feature.amount * Math.abs(factor),
+        amount2: feature.amount2 === undefined ? undefined : feature.amount2 * Math.abs(factor),
       };
     }
     case 'boolean': {
@@ -304,6 +306,7 @@ function transformedEdge(
   edge: SolidEdgeSelection,
   point: (value: Vec3) => Vec3,
   direction: (value: Vec3) => Vec3,
+  radiusFactor = 1,
 ): SolidEdgeSelection {
   return {
     ...edge,
@@ -311,6 +314,14 @@ function transformedEdge(
     end: point(edge.end),
     normalA: direction(edge.normalA),
     normalB: direction(edge.normalB),
+    ...(edge.circular ? {
+      circular: {
+        ...edge.circular,
+        center: point(edge.circular.center),
+        normal: direction(edge.circular.normal),
+        radius: edge.circular.radius * radiusFactor,
+      },
+    } : {}),
   };
 }
 

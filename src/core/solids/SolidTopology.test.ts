@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
 import { booleanSubtract, createBoxMesh, createCylinderMesh } from './ManifoldEngine';
-import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
+import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
 import { localToWorld } from '../../math/workplane';
 
 describe('solid feature topology', () => {
@@ -11,7 +11,11 @@ describe('solid feature topology', () => {
 
   it('recognises both circular end loops without exposing cylinder facets', () => {
     const mesh = createCylinderMesh(3, 10);
+    const circles = solidCircularEdges(mesh);
     const centres = solidCircularEdgeCenters(mesh);
+    expect(circles).toHaveLength(2);
+    expect(circles.every((circle) => Math.abs(circle.radius - 3) < 1e-5)).toBe(true);
+    expect(circles.every((circle) => circle.points.length >= 8)).toBe(true);
     expect(centres).toHaveLength(2);
     expect(centres).toEqual(expect.arrayContaining([
       expect.objectContaining({ x: 0, y: 0, z: 0 }),

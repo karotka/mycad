@@ -57,7 +57,7 @@ export class CommandManager {
   /** What Enter at an empty prompt repeats, however that command was started. */
   private lastCommand: CommandName | null = null;
   /** Per-command defaults accepted by Enter, such as the last circle radius. */
-  private rememberedStepValues = new Map<string, number>();
+  private rememberedStepValues = new Map<string, number | [number, number]>();
 
   constructor(private ctx: CommandContext) {}
 
@@ -181,6 +181,11 @@ export class CommandManager {
     if (!this.active) return 'Command:';
     const step = this.active.steps[this.active.stepIndex];
     if (step.kind === 'done') return 'Command:';
+    if (step.kind === 'number-pair') {
+      const remembered = this.rememberedStepValues.get(`${this.active.name}:${this.active.stepIndex}`);
+      const pair = Array.isArray(remembered) ? remembered : step.defaultValue;
+      return pair ? `${step.label} (${pair[0]}, ${pair[1]}):` : `${step.label} (x, y):`;
+    }
     return step.label;
   }
 
@@ -283,23 +288,31 @@ export class CommandManager {
     } else if (step.kind === 'plane') {
       await this.advanceStep(pickFace ?? world);
     } else if (step.kind === 'entity' && pickEntity && this.stepAccepts('entity')) {
+      this.active.data.lastObjectPickPoint = { ...world };
       this.ctx.doc.selectEntity(pickEntity.id, this.isAdditiveStep);
       if (this.active.name === 'TRIM' && this.active.stepIndex === 1) this.active.data.targetPickPoint = world;
       await this.advanceStep(pickEntity);
     } else if (step.kind === 'edge' && pickEdge) {
       this.ctx.doc.selectSolid(pickEdge.solidId);
       await this.advanceStep(pickEdge);
+    } else if (step.kind === 'entity' && pickEdge && this.stepAccepts('edge')) {
+      this.active.data.lastObjectPickPoint = { ...world };
+      this.ctx.doc.selectSolid(pickEdge.solidId, this.isAdditiveStep);
+      await this.advanceStep(pickEdge);
     } else if (step.kind === 'entity' && pickSolidId && this.stepAccepts('solid')) {
       this.ctx.doc.selectSolid(pickSolidId, this.isAdditiveStep);
       await this.advanceStep(pickSolidId);
     } else if (step.kind === 'solid' && (pickSolidId || pickFace)) {
-      if (this.active.name === 'PRESSPULL' && !pickFace) {
-        this.ctx.log('PressPull requires a planar face or bounded face region.');
+      const faceCommand = this.active.name === 'PRESSPULL' || this.active.name === 'DELETEFACE';
+      if (faceCommand && !pickFace) {
+        this.ctx.log(this.active.name === 'DELETEFACE'
+          ? 'Delete Face requires a planar solid face.'
+          : 'PressPull requires a planar face or bounded face region.');
         return;
       }
       const solidId = pickFace?.solidId ?? pickSolidId!;
       this.ctx.doc.selectSolid(solidId, this.isAdditiveStep);
-      await this.advanceStep(this.active.name === 'PRESSPULL' && pickFace ? pickFace : pickSolidId);
+      await this.advanceStep(faceCommand && pickFace ? pickFace : pickSolidId);
     }
   }
 
@@ -437,6 +450,15 @@ export class CommandManager {
         this.ctx.log('Invalid number.');
         break;
       }
+      case 'number-pair': {
+        const match = input.match(/^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*[,;]\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/);
+        if (match) {
+          await this.advanceStep([Number(match[1]), Number(match[2])] as [number, number]);
+          return;
+        }
+        this.ctx.log('Invalid pair. Enter two values separated by a comma, for example 1, 2.');
+        break;
+      }
       case 'text': await this.advanceStep(input); return;
       case 'entity':
       case 'solid':
@@ -465,9 +487,11 @@ export class CommandManager {
     const key = this.stepMemoryKey();
     if (!key) return null;
     const remembered = this.rememberedStepValues.get(key);
+    if (remembered === undefined && step.kind === 'number-pair') return step.defaultValue ?? null;
     if (remembered === undefined) return null;
-    if (step.kind === 'number' && step.remember) return remembered;
-    if (step.kind === 'point' && step.rememberDistanceFrom && this.active) {
+    if (step.kind === 'number' && step.remember && typeof remembered === 'number') return remembered;
+    if (step.kind === 'number-pair' && step.remember && Array.isArray(remembered)) return [...remembered] as [number, number];
+    if (step.kind === 'point' && step.rememberDistanceFrom && this.active && typeof remembered === 'number') {
       const base = this.active.data[step.rememberDistanceFrom] as Vec2 | undefined;
       return base ? { x: base.x + remembered, y: base.y } : null;
     }
@@ -480,6 +504,9 @@ export class CommandManager {
     if (!key) return;
     if (step.kind === 'number' && step.remember && typeof value === 'number' && Number.isFinite(value)) {
       this.rememberedStepValues.set(key, value);
+    } else if (step.kind === 'number-pair' && step.remember && Array.isArray(value)
+      && value.length === 2 && value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+      this.rememberedStepValues.set(key, [value[0], value[1]]);
     } else if (step.kind === 'point' && step.rememberDistanceFrom && value && typeof value === 'object' && 'x' in value && 'y' in value) {
       const base = data[step.rememberDistanceFrom] as Vec2 | undefined;
       const point = value as Vec2;

@@ -242,20 +242,47 @@ describe('GripController', () => {
     expect(grips.changedDimension()).toBe('R 10.00 mm · Ø 20.00 mm');
   });
 
-  it('edits dimension definition points and dimension-line position with grips', () => {
+  it('edits dimension definition points, line position, and text independently with grips', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);
     const grips = new GripController(doc, history);
     const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 4 });
     doc.addEntity(dimension); doc.selectEntity(dimension.id);
 
-    expect(grips.activeGrips()).toHaveLength(3);
+    expect(grips.activeGrips()).toHaveLength(4);
     grips.begin(dimension, undefined, 1, { x: 10, y: 0 });
     grips.update({ x: 12, y: 0 }); grips.commit();
     expect(dimension.end).toEqual({ x: 12, y: 0 });
     grips.begin(dimension, undefined, 2, { x: 6, y: 4 });
     grips.update({ x: 6, y: 7 }); grips.commit();
     expect(dimension.offset).toEqual({ x: 6, y: 7 });
+    const offset = { ...dimension.offset };
+    const textGrip = grips.activeGrips().find((grip) => grip.index === 3);
+    expect(textGrip).toBeDefined();
+    grips.begin(dimension, undefined, 3, textGrip!.point);
+    grips.update({ x: 14, y: 11 }); grips.commit();
+    expect(dimension.textPosition).toEqual({ x: 14, y: 11 });
+    expect(dimension.offset).toEqual(offset);
+  });
+
+  it('moves an angular dimension arc and its text with separate grips', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }, 'angular');
+    dimension.arcPoint = { x: 4, y: 4 };
+    doc.addEntity(dimension); doc.selectEntity(dimension.id);
+
+    expect(grips.activeGrips()).toHaveLength(5);
+    grips.begin(dimension, undefined, 3, dimension.arcPoint);
+    grips.update({ x: 7, y: 7 }); grips.commit();
+    expect(dimension.arcPoint).toEqual({ x: 7, y: 7 });
+    expect(dimension.textPosition).toBeUndefined();
+
+    const textGrip = grips.activeGrips().find((grip) => grip.index === 4)!;
+    grips.begin(dimension, undefined, 4, textGrip.point);
+    grips.update({ x: 12, y: 8 }); grips.commit();
+    expect(dimension.textPosition).toEqual({ x: 12, y: 8 });
+    expect(dimension.arcPoint).toEqual({ x: 7, y: 7 });
   });
 });
 

@@ -13,14 +13,15 @@ describe('DimensionStyleController', () => {
       'dimension-text-height': { value: '4' }, 'dimension-arrow-size': { value: '3' },
       'dimension-arrow-type': { value: 'open' }, 'dimension-extension-beyond': { value: '1.5' },
       'dimension-extension-offset': { value: '0.75' }, 'dimension-text-offset': { value: '1.25' }, 'dimension-precision': { value: '3' },
+      'dimension-angular-precision': { value: '1' }, 'dimension-unit-suffix': { value: 'mm' },
       'dimension-scale': { value: '2' }, 'dimension-layer': { value: 'dims' },
     };
     const form = { addEventListener: vi.fn(), querySelector: vi.fn((selector: string) => values[selector.slice(1)]) } as unknown as HTMLFormElement;
     const controller = new DimensionStyleController(doc, form, vi.fn());
 
     (controller as unknown as { apply(): void }).apply();
-    expect(doc.dimensionStyle).toEqual({ textHeight: 4, arrowSize: 3, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.75, textOffset: 1.25, precision: 3, scale: 2, layer: 'dims' });
-    expect(updated).toMatchObject({ textHeight: 4, arrowSize: 3, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.75, textOffset: 1.25, precision: 3, scale: 2 });
+    expect(doc.dimensionStyle).toEqual({ textHeight: 4, arrowSize: 3, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.75, textOffset: 1.25, precision: 3, angularPrecision: 1, unitSuffix: 'mm', scale: 2, layer: 'dims' });
+    expect(updated).toMatchObject({ textHeight: 4, arrowSize: 3, arrowType: 'open', extensionBeyond: 1.5, extensionOffset: 0.75, textOffset: 1.25, precision: 3, angularPrecision: 1, unitSuffix: 'mm', scale: 2 });
     expect(untouched).toMatchObject({ textHeight: 2.5, arrowType: 'closed', layer: 'notes' });
   });
 });
@@ -30,7 +31,8 @@ describe('typing into an open dimension style panel', () => {
     const doc = new Document();
     const ids = [
       'dimension-text-height', 'dimension-arrow-size', 'dimension-arrow-type', 'dimension-extension-beyond',
-      'dimension-extension-offset', 'dimension-text-offset', 'dimension-precision', 'dimension-scale',
+      'dimension-extension-offset', 'dimension-text-offset', 'dimension-precision', 'dimension-angular-precision',
+      'dimension-unit-suffix', 'dimension-scale',
     ];
     const fields = new Map(ids.map((id) => [id, { value: '' } as HTMLInputElement]));
     // The layer field is a select the panel rebuilds when it renders.

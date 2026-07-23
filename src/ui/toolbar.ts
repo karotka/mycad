@@ -18,7 +18,7 @@ export const circleTools: Array<[string, string, CommandName]> = [
 export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
 export const solidTools: Array<[string, CommandName]> = [
   ['Union', 'UNION'], ['Subtract', 'SUBTRACT'], ['PressPull', 'PRESSPULL'],
-  ['Chamfer', 'CHAMFER'], ['Fillet', 'FILLET'], ['Slice', 'SLICE'],
+  ['Chamfer', 'CHAMFER'], ['Fillet', 'FILLET'], ['Delete Face', 'DELETEFACE'], ['Slice', 'SLICE'],
 ];
 export const primitiveTools: Array<[string, CommandName]> = [['Box', 'BOX'], ['Wedge', 'WEDGE'], ['Sphere', 'SPHERE'], ['Cone', 'CONE'], ['Cylinder', 'CYLINDER'], ['Pyramid', 'PYRAMID'], ['Torus', 'TORUS']];
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
@@ -26,6 +26,7 @@ export const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', '
 export const dimensionTools: Array<[string, string, CommandName]> = [
   ['Linear', 'Linear Dimension — horizontal or vertical', 'MEASURE'],
   ['Aligned', 'Aligned Dimension — the true distance', 'DIMALIGNED'],
+  ['Angular', 'Angular Dimension', 'DIMANGULAR'],
   ['Radius', 'Radius Dimension', 'DIMRADIUS'],
   ['Diameter', 'Diameter Dimension', 'DIMDIAMETER'],
 ];

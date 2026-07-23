@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
 import { primitiveMesh, regenerateSolidFeature } from './ManifoldEngine';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
-import { solidPlanarFaces } from './SolidTopology';
+import { solidCircularEdges, solidPlanarFaces } from './SolidTopology';
 
 const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
@@ -13,10 +13,35 @@ const edgeFeature = (): EdgeModificationFeature => {
   };
   const mesh = primitiveMesh(source);
   return {
-    kind: 'edge-modification', operation: 'chamfer', source, amount: 1,
+    kind: 'edge-modification', operation: 'chamfer', source, amount: 1, amount2: 1.5,
     edge: {
       solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
       normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+    },
+    sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+  };
+};
+
+const circularEdgeFeature = (): EdgeModificationFeature => {
+  const source: PrimitiveFeature = {
+    kind: 'primitive', primitive: 'cylinder', center: { x: 0, y: 0 }, radius: 5, height: 8,
+  };
+  const mesh = primitiveMesh(source);
+  const circle = solidCircularEdges(mesh).find((candidate) => Math.abs(candidate.center.z - 8) < 1e-5)!;
+  return {
+    kind: 'edge-modification', operation: 'fillet', source, amount: 1,
+    edge: {
+      solidId: 'cylinder',
+      start: circle.points[0],
+      end: circle.points[1],
+      normalA: circle.normal,
+      normalB: circle.normal,
+      circular: {
+        center: circle.center,
+        normal: circle.normal,
+        radius: circle.radius,
+        segments: circle.points.length,
+      },
     },
     sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
   };
@@ -114,7 +139,20 @@ describe('scaledFeature', () => {
 
   it('keeps a chamfer editable and scales its distance and saved source', async () => {
     const scaled = scaledFeature(edgeFeature(), { x: 0, y: 0, z: 0 }, 2)!;
-    expect(scaled).toMatchObject({ kind: 'edge-modification', amount: 2 });
+    expect(scaled).toMatchObject({ kind: 'edge-modification', amount: 2, amount2: 3 });
+    expect((await regenerateSolidFeature(scaled))?.indices.length).toBeGreaterThan(0);
+  });
+
+  it('scales a complete circular edge together with its editable operation', async () => {
+    const scaled = scaledFeature(circularEdgeFeature(), { x: 0, y: 0, z: 0 }, 2)!;
+
+    expect(scaled).toMatchObject({
+      kind: 'edge-modification',
+      amount: 2,
+      edge: { circular: { center: { x: 0, y: 0, z: 16 } } },
+    });
+    if (scaled.kind !== 'edge-modification') throw new Error('expected edge modification');
+    expect(scaled.edge.circular?.radius).toBeCloseTo(10, 5);
     expect((await regenerateSolidFeature(scaled))?.indices.length).toBeGreaterThan(0);
   });
 

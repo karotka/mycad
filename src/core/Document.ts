@@ -332,6 +332,8 @@ export class Document {
       arrowType: this.dimensionStyle.arrowType, extensionBeyond: this.dimensionStyle.extensionBeyond,
       extensionOffset: this.dimensionStyle.extensionOffset, textOffset: this.dimensionStyle.textOffset,
       precision: this.dimensionStyle.precision,
+      angularPrecision: this.dimensionStyle.angularPrecision,
+      unitSuffix: this.dimensionStyle.unitSuffix,
       scale: this.dimensionStyle.scale,
     };
   }

@@ -3,7 +3,7 @@ import type { Document } from '../core/Document';
 import type { GcodeOptions } from '../core/settings';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
-import type { Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
+import type { DimensionEntity, Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import { isStrokeFont, strokeText } from '../core/text/strokeFont';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
@@ -14,7 +14,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
-import { planarFaceRegionAt, solidPlanarFaces } from '../core/solids/SolidTopology';
+import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
@@ -310,11 +310,15 @@ export class Canvas2DRenderer {
       }
       case 'dimension': {
         const geometry = dimensionGeometry(entity);
-        const segment = ([start, end]: [Vec2, Vec2]): void => {
-          const a = worldToScreen(start, w, h, this.pan, this.zoom), b = worldToScreen(end, w, h, this.pan, this.zoom);
-          this.ctx.beginPath(); this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y); this.ctx.stroke();
+        const polyline = (points: Vec2[]): void => {
+          if (points.length < 2) return;
+          const screen = points.map(point => worldToScreen(point, w, h, this.pan, this.zoom));
+          this.ctx.beginPath();
+          this.ctx.moveTo(screen[0].x, screen[0].y);
+          for (const point of screen.slice(1)) this.ctx.lineTo(point.x, point.y);
+          this.ctx.stroke();
         };
-        segment(geometry.extensionStart); segment(geometry.extensionEnd); segment(geometry.dimensionLine);
+        polyline(geometry.extensionStart); polyline(geometry.extensionEnd); polyline(geometry.dimensionLine);
         for (const arrow of geometry.arrows) {
           const points = arrow.map(point => worldToScreen(point, w, h, this.pan, this.zoom));
           this.ctx.beginPath();
@@ -384,11 +388,11 @@ export class Canvas2DRenderer {
       label = `A = ${(Math.atan2(rotation.end.y - rotation.start.y, rotation.end.x - rotation.start.x) * 180 / Math.PI).toFixed(2)}°`;
       labelPoint = rotation.end;
     } else if (preview.type === 'dimension') {
-      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; textPosition?: Vec2; kind?: 'linear' | 'aligned' | 'radius' | 'diameter'; rotation?: number; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
+      const value = preview.data as { start: Vec2; end: Vec2; offset: Vec2; arcPoint?: Vec2; textPosition?: Vec2; kind?: DimensionEntity['dimensionKind']; rotation?: number; style?: { textHeight: number; arrowSize: number; arrowType: 'closed' | 'open' | 'tick'; extensionBeyond: number; extensionOffset: number; textOffset: number; precision: number; scale: number; layer: string } };
       const style = value.style ?? { textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed' as const, extensionBeyond: 1.25, extensionOffset: 0.625, textOffset: 0.625, precision: 2, scale: 1, layer: 'dims' };
       // No label beside it: a dimension is the one preview that already writes
       // its own measurement, so one here would print the number twice.
-      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, textPosition: value.textPosition, aci: 256, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
+      this.drawEntity({ id: 'preview-dimension', type: 'dimension', dimensionKind: value.kind ?? 'linear', rotation: value.rotation, arcPoint: value.arcPoint, textPosition: value.textPosition, aci: 256, color: 0x888888, selected: false, start: value.start, end: value.end, offset: value.offset, ...style }, w, h, false);
     } else if (preview.type === 'line' && d.start && d.end) {
       const a = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const b = worldToScreen(d.end, w, h, this.pan, this.zoom);
@@ -552,6 +556,10 @@ export class Canvas2DRenderer {
   }
 }
 
+// In the default isometric view this puts the WCS origin near the lower-left
+// of the viewport, matching the positive-quadrant bias of the 2D view.
+const DEFAULT_3D_ORBIT_TARGET = new THREE.Vector3(5, 0, -15);
+
 export class Viewport3D {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
@@ -580,7 +588,7 @@ export class Viewport3D {
   orbitTheta = Math.PI / 4;
   orbitPhi = Math.PI / 4;
   orbitRadius = 30;
-  orbitTarget = new THREE.Vector3(0, 0, 0);
+  orbitTarget = DEFAULT_3D_ORBIT_TARGET.clone();
   private readonly projection = new ViewportProjection(() => this.camera, () => this.orbitTarget);
   private readonly picking = new ViewportPicking(() => this.camera);
   activeStandardView: 'top' | 'front' | 'left' | 'right' | null = null;
@@ -625,7 +633,14 @@ export class Viewport3D {
     this.activeWorkPlane = cloneWorkPlane(plane);
     const matrix = new THREE.Matrix4().makeBasis(newX, newZ, newY);
     const origin = toThree(plane.origin);
-    matrix.setPosition(origin);
+    // GridHelper is centred on its object. Shift that square in the UCS plane
+    // so only a small margin remains below zero and most of the construction
+    // area lies in positive X/Y. The triad stays at the true UCS origin.
+    const gridOffset = 40; // 100 mm grid: -10 … +90 on both local axes.
+    const gridCenter = origin.clone()
+      .addScaledVector(newX, gridOffset)
+      .addScaledVector(newY, gridOffset);
+    matrix.setPosition(gridCenter);
     this.grid.matrixAutoUpdate = false;
     this.grid.matrix.copy(matrix);
     this.grid.updateMatrixWorld(true);
@@ -942,7 +957,7 @@ export class Viewport3D {
 
   frameEntities(entities: Entity[]): void {
     if (entities.length === 0) {
-      this.orbitTarget.set(0, 0, 0);
+      this.orbitTarget.copy(DEFAULT_3D_ORBIT_TARGET);
       this.orbitRadius = 30;
       this.updateCamera();
       return;
@@ -1164,6 +1179,74 @@ export class Viewport3D {
       this.previewHiddenSolid = null;
     }
     if (!preview) return;
+    if (preview.type === 'dimension') {
+      const value = preview.data as {
+        start: Vec2;
+        end: Vec2;
+        offset: Vec2;
+        arcPoint?: Vec2;
+        textPosition?: Vec2;
+        kind?: DimensionEntity['dimensionKind'];
+        rotation?: number;
+        workPlane?: WorkPlane;
+        style?: Pick<DimensionEntity,
+          'textHeight' | 'arrowSize' | 'arrowType' | 'extensionBeyond'
+          | 'extensionOffset' | 'textOffset' | 'precision' | 'scale' | 'layer'>;
+      };
+      const style = value.style ?? {
+        textHeight: 2.5,
+        arrowSize: 2.5,
+        arrowType: 'closed',
+        extensionBeyond: 1.25,
+        extensionOffset: 0.625,
+        textOffset: 0.625,
+        precision: 2,
+        scale: 1,
+        layer: 'dims',
+      };
+      const dimension: DimensionEntity = {
+        id: 'preview-dimension',
+        type: 'dimension',
+        dimensionKind: value.kind ?? 'linear',
+        start: value.start,
+        end: value.end,
+        offset: value.offset,
+        arcPoint: value.arcPoint,
+        textPosition: value.textPosition,
+        rotation: value.rotation,
+        workPlane: cloneWorkPlane(value.workPlane ?? (() => {
+          const startZ = localPointZ(value.start);
+          const endZ = localPointZ(value.end);
+          const plane = cloneWorkPlane(this.activeWorkPlane);
+          if (startZ !== undefined && endZ !== undefined && Math.abs(startZ - endZ) < 1e-8) {
+            const z = (startZ + endZ) / 2;
+            plane.origin.x += plane.zAxis.x * z;
+            plane.origin.y += plane.zAxis.y * z;
+            plane.origin.z += plane.zAxis.z * z;
+          }
+          return plane;
+        })()),
+        aci: 256,
+        color: 0xaaaaaa,
+        selected: false,
+        ...style,
+      };
+      const object = this.entityToObject(dimension);
+      object.traverse((child) => {
+        child.renderOrder = 20;
+        const renderable = child as THREE.Line | THREE.Mesh;
+        if (!renderable.material) return;
+        const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
+        materials.forEach((material) => {
+          material.transparent = true;
+          material.opacity = 0.82;
+          material.depthTest = false;
+        });
+      });
+      this.previewObject = object;
+      this.scene.add(object);
+      return;
+    }
     if (preview.type === 'presspull-region') {
       const data = preview.data as { region: SolidFaceRegion; distance: number };
       const geometry = this.faceRegionPrismGeometry(data.region, data.distance);
@@ -1500,6 +1583,11 @@ export class Viewport3D {
         case 'dimension': {
           const geometry = dimensionGeometry(entity);
           points = [geometry.extensionStart[0], geometry.extensionStart[1], geometry.dimensionLine[0], geometry.dimensionLine[1], geometry.extensionEnd[0], geometry.extensionEnd[1]];
+          const textPoint = project(entity, geometry.textPoint);
+          if (textPoint && Math.hypot(cursor.x - textPoint.x, cursor.y - textPoint.y) <= tolerance * 1.5) {
+            bestEdgeDistance = 0;
+            edgeResult = entity;
+          }
           break;
         }
       }
@@ -1855,6 +1943,66 @@ export class Viewport3D {
     if (result) {
       const points = [result.start, result.end].map((point) => new THREE.Vector3(point.x, point.z, -point.y));
       this.edgeHighlight = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0x32aaff, depthTest: false }),
+      );
+      this.edgeHighlight.renderOrder = 50;
+      this.scene.add(this.edgeHighlight);
+    }
+    return result;
+  }
+
+  /**
+   * Picks a complete round feature edge rather than one polygon segment of it.
+   * The returned start/end still name the segment under the pointer, while the
+   * circular metadata gives dimension tools the analytic circle it represents.
+   */
+  pickCircularSolidEdge(canvas: HTMLCanvasElement, solids: Solid[], sx: number, sy: number, tolerance = 11): SolidEdgeSelection | null {
+    const rect = canvas.getBoundingClientRect();
+    const project = (point: Vec3): { x: number; y: number; z: number } => {
+      const projected = new THREE.Vector3(point.x, point.z, -point.y).project(this.camera);
+      return {
+        x: rect.left + (projected.x + 1) * rect.width / 2,
+        y: rect.top + (1 - projected.y) * rect.height / 2,
+        z: projected.z,
+      };
+    };
+    let best = tolerance;
+    let result: SolidEdgeSelection | null = null;
+    let highlighted: Vec3[] | null = null;
+    for (const solid of solids) {
+      for (const circle of solidCircularEdges(solid.mesh)) {
+        for (let index = 0; index < circle.points.length; index++) {
+          const start = circle.points[index];
+          const end = circle.points[(index + 1) % circle.points.length];
+          const a = project(start), b = project(end);
+          if (a.z < -1 || a.z > 1 || b.z < -1 || b.z > 1) continue;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const t = Math.max(0, Math.min(1, ((sx - a.x) * dx + (sy - a.y) * dy) / (dx * dx + dy * dy || 1)));
+          const distance = Math.hypot(sx - (a.x + dx * t), sy - (a.y + dy * t));
+          if (distance > best) continue;
+          best = distance;
+          highlighted = circle.points;
+          result = {
+            solidId: solid.id,
+            start,
+            end,
+            normalA: circle.normal,
+            normalB: circle.normal,
+            circular: {
+              center: circle.center,
+              normal: circle.normal,
+              radius: circle.radius,
+              segments: circle.points.length,
+            },
+          };
+        }
+      }
+    }
+    this.clearEdgeHighlight();
+    if (result && highlighted) {
+      const points = highlighted.map((point) => new THREE.Vector3(point.x, point.z, -point.y));
+      this.edgeHighlight = new THREE.LineLoop(
         new THREE.BufferGeometry().setFromPoints(points),
         new THREE.LineBasicMaterial({ color: 0x32aaff, depthTest: false }),
       );

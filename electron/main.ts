@@ -3,9 +3,12 @@ import path from 'path';
 import fs from 'fs/promises';
 import { safeFileName } from './paths';
 
+const APP_NAME = 'MyCAD';
+
 // Names the application menu and the About box. Without it the menu reads
 // "Electron" in development, since the bundle name only exists once packaged.
-app.setName('MyCAD');
+process.title = APP_NAME;
+app.setName(APP_NAME);
 
 const writableFiles = new Set<string>();
 const MAX_TEXT_FILE_BYTES = 256 * 1024 * 1024;
@@ -106,7 +109,7 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: 'MyCAD',
+    title: APP_NAME,
     backgroundColor: '#1e1e1e',
     webPreferences: {
       nodeIntegration: false,
@@ -189,12 +192,17 @@ ipcMain.handle('quick-save', async (event, options: { filePath?: string; default
   return { filePath };
 });
 
-// In development `app.name` defaults to "Electron", which is what shows in the
-// macOS menu bar and the About box; force our name so the branding is ours.
-app.setName('MyCAD');
-
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  app.setAboutPanelOptions({
+    applicationName: APP_NAME,
+    applicationVersion: app.getVersion(),
+  });
+  // Packaged builds get the Dock/Finder icon from electron-builder. During
+  // development there is no app bundle, so set the same artwork explicitly.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(path.join(__dirname, '../build/icon.png'));
+  }
   createWindow();
 });
 

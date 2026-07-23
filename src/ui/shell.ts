@@ -152,7 +152,9 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Extend beyond</span><input id="dimension-extension-beyond" type="number" min="0" step="0.1"></label>
           <label class="property-row"><span>Offset from object</span><input id="dimension-extension-offset" type="number" min="0" step="0.1"></label>
           <label class="property-row"><span>Text offset</span><input id="dimension-text-offset" type="number" min="0" step="0.1"></label>
-          <label class="property-row"><span>Precision</span><input id="dimension-precision" type="number" min="0" max="8" step="1"></label>
+          <label class="property-row"><span>Length precision</span><input id="dimension-precision" type="number" min="0" max="8" step="1"></label>
+          <label class="property-row"><span>Angle precision</span><input id="dimension-angular-precision" type="number" min="0" max="8" step="1"></label>
+          <label class="property-row"><span>Length units</span><select id="dimension-unit-suffix"><option value="none">No suffix</option><option value="mm">mm</option></select></label>
           <label class="property-row"><span>Scale</span><input id="dimension-scale" type="number" min="0.01" step="0.1"></label>
           <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
         </form>

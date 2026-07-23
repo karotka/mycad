@@ -127,4 +127,25 @@ describe('featureParams', () => {
     expect(edgeFeature.amount).toBe(3.5);
     expect(setFeatureParam(edgeFeature, 'amount', 0)).toBe(false);
   });
+
+  it('edits both chamfer distances independently', () => {
+    const edgeFeature = {
+      kind: 'edge-modification' as const,
+      operation: 'chamfer' as const,
+      source: { kind: 'mesh' as const },
+      edge: {
+        solidId: 'box', start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: 1 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      amount: 2,
+      amount2: 3,
+      sourceMesh: { positions: [], indices: [] },
+    };
+    expect(featureParams(edgeFeature).map((parameter) => [parameter.key, parameter.value])).toEqual([
+      ['amount', 2],
+      ['amount2', 3],
+    ]);
+    expect(setFeatureParam(edgeFeature, 'amount2', 4.5)).toBe(true);
+    expect(edgeFeature.amount2).toBe(4.5);
+  });
 });

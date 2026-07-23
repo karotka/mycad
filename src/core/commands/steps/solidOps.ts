@@ -7,8 +7,9 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, isSweepProfileEntity, type Entity, type SolidFaceSelection, type SolidEdgeSelection } from '../../entities/types';
-import { modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
+import { cloneEntity, isSweepProfileEntity, type Entity, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
+import { deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
+import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { extrusionFeature } from '../../solids/extrusion';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
@@ -194,11 +195,15 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     return 'advance';
   }
 
-  const amount = Math.abs(value as number);
-  if (amount < 1e-6) {
+  const entered = rounded
+    ? [Math.abs(value as number), Math.abs(value as number)] as const
+    : (value as [number, number]).map(Math.abs) as [number, number];
+  if (entered.some((distance) => !Number.isFinite(distance) || distance < 1e-6)) {
     ctx.log('Edge modification size must be greater than zero.');
     return 'stay';
   }
+  const amount = entered[0];
+  const amount2 = entered[1];
   const edge = data.edge as SolidEdgeSelection;
   const solid = ctx.doc.getSolid(edge.solidId);
   if (!solid) {
@@ -206,7 +211,7 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     return 'stay';
   }
   const before = cloneSolid(solid);
-  const mesh = await modifySolidEdge(solid.mesh, edge, amount, rounded);
+  const mesh = await modifySolidEdge(solid.mesh, edge, amount, rounded, amount2);
   if (!mesh) {
     ctx.log(`${active.name} failed. Use a smaller value or select a convex edge.`);
     return 'stay';
@@ -218,6 +223,7 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     source: JSON.parse(JSON.stringify(solid.feature)),
     edge: JSON.parse(JSON.stringify(edge)),
     amount,
+    ...(rounded ? {} : { amount2 }),
     // Plain arrays are intentional: the feature tree is serialized to JSON.
     sourceMesh: {
       positions: Array.from(before.mesh.positions),
@@ -227,6 +233,120 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
   solid.revision++;
   ctx.history.recordApplied(new UpdateSolidEdit(rounded ? 'Fillet edge' : 'Chamfer edge', before, cloneSolid(solid)));
   ctx.doc.notify();
-  ctx.log(`${rounded ? 'Fillet' : 'Chamfer'} complete: ${amount.toFixed(3)} mm.`);
+  ctx.log(rounded
+    ? `Fillet complete: R${amount.toFixed(3)} mm.`
+    : `Chamfer complete: ${amount.toFixed(3)} × ${amount2.toFixed(3)} mm.`);
+  return 'advance';
+}
+
+const meshZSpan = (mesh: SolidMesh): number => {
+  let min = Infinity, max = -Infinity;
+  for (let index = 2; index < mesh.positions.length; index += 3) {
+    min = Math.min(min, mesh.positions[index]);
+    max = Math.max(max, mesh.positions[index]);
+  }
+  return Number.isFinite(min) && Number.isFinite(max) ? Math.max(0.01, max - min) : 0.01;
+};
+
+function savedSourceMesh(solid: Solid): SolidMesh | null {
+  const feature = solid.feature;
+  if (feature.kind !== 'edge-modification' && feature.kind !== 'presspull-region') return null;
+  return {
+    positions: new Float32Array(feature.sourceMesh.positions),
+    indices: new Uint32Array(feature.sourceMesh.indices),
+  };
+}
+
+async function withoutLatestFeature(solid: Solid): Promise<Solid | null> {
+  const feature = solid.feature;
+  if (feature.kind !== 'edge-modification' && feature.kind !== 'presspull-region') return null;
+  const after = cloneSolid(solid);
+  after.feature = JSON.parse(JSON.stringify(feature.source));
+  after.mesh = (await regenerateSolidFeature(after.feature)) ?? {
+    positions: new Float32Array(feature.sourceMesh.positions),
+    indices: new Uint32Array(feature.sourceMesh.indices),
+  };
+  after.height = after.feature.kind === 'primitive' || after.feature.kind === 'extrusion'
+    ? after.feature.height
+    : meshZSpan(after.mesh);
+  after.revision = solid.revision + 1;
+  return after;
+}
+
+/** Whether the selected support plane was already present before the latest feature. */
+function sourceHasFacePlane(source: SolidMesh, selected: SolidFaceSelection): boolean {
+  const normalLength = Math.hypot(selected.normal.x, selected.normal.y, selected.normal.z);
+  if (normalLength < 1e-9) return false;
+  const normal = {
+    x: selected.normal.x / normalLength,
+    y: selected.normal.y / normalLength,
+    z: selected.normal.z / normalLength,
+  };
+  const origin = selected.region?.plane.origin ?? selected.hitPoint;
+  if (!origin) return false;
+  const offset = normal.x * origin.x + normal.y * origin.y + normal.z * origin.z;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let index = 0; index < source.positions.length; index += 3) {
+    minX = Math.min(minX, source.positions[index]); maxX = Math.max(maxX, source.positions[index]);
+    minY = Math.min(minY, source.positions[index + 1]); maxY = Math.max(maxY, source.positions[index + 1]);
+    minZ = Math.min(minZ, source.positions[index + 2]); maxZ = Math.max(maxZ, source.positions[index + 2]);
+  }
+  const extent = Math.max(1, maxX - minX, maxY - minY, maxZ - minZ);
+  const tolerance = extent * 1e-5;
+  return solidPlanarFaces(source).some((face) => {
+    const parallel = face.normal.x * normal.x + face.normal.y * normal.y + face.normal.z * normal.z > 1 - 1e-6;
+    const faceOffset = normal.x * face.plane.origin.x + normal.y * face.plane.origin.y + normal.z * face.plane.origin.z;
+    return parallel && Math.abs(faceOffset - offset) <= tolerance;
+  });
+}
+
+/**
+ * Deletes a picked face. A face introduced by the latest reversible modelling
+ * feature removes that feature exactly; a baked convex body takes the geometric
+ * half-space healing path.
+ */
+export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
+  const face = run.value as SolidFaceSelection | undefined;
+  if (!face || !Array.isArray(face.vertexIndices)) {
+    run.ctx.log('Delete Face requires a planar solid face.');
+    return 'stay';
+  }
+  const solid = run.ctx.doc.getSolid(face.solidId);
+  if (!solid) {
+    run.ctx.log('Solid not found.');
+    return 'stay';
+  }
+
+  const before = cloneSolid(solid);
+  const source = savedSourceMesh(solid);
+  let after: Solid | null = null;
+  let removedLatestFeature = false;
+  if (source && !sourceHasFacePlane(source, face)) {
+    after = await withoutLatestFeature(solid);
+    removedLatestFeature = after !== null;
+  }
+  if (!after) {
+    run.ctx.log('Healing face…');
+    const mesh = await deletePlanarSolidFace(solid.mesh, face.vertexIndices);
+    if (mesh) {
+      after = cloneSolid(solid);
+      after.mesh = mesh;
+      after.feature = { kind: 'mesh' };
+      after.height = meshZSpan(mesh);
+      after.revision = solid.revision + 1;
+    }
+  }
+  if (!after) {
+    run.ctx.log('Delete Face cannot heal this face. Select a latest Chamfer/Fillet/PressPull face or a bounded face on a convex planar body.');
+    return 'stay';
+  }
+
+  run.ctx.history.execute(new UpdateSolidEdit('Delete face', before, after));
+  run.ctx.doc.clearSelection();
+  run.ctx.doc.selectSolid(after.id);
+  run.ctx.log(removedLatestFeature
+    ? 'Delete Face complete — the latest modelling feature was removed.'
+    : 'Delete Face complete — adjacent planes were extended and the body was healed.');
   return 'advance';
 }

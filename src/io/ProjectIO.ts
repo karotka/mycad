@@ -73,11 +73,22 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
         const kind = raw.dimensionKind;
         return {
           ...raw, selected: false, aci: legacyAci(raw),
-          dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' ? kind : 'aligned',
+          dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' || kind === 'angular' ? kind : 'aligned',
           arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
           extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
           extensionOffset: typeof raw.extensionOffset === 'number' ? raw.extensionOffset : defaults.extensionOffset,
           textOffset: typeof raw.textOffset === 'number' ? raw.textOffset : defaults.textOffset,
+          angularPrecision: typeof raw.angularPrecision === 'number' && Number.isInteger(raw.angularPrecision)
+            && raw.angularPrecision >= 0 && raw.angularPrecision <= 8
+            ? raw.angularPrecision
+            : defaults.angularPrecision,
+          unitSuffix: raw.unitSuffix === 'mm' ? 'mm' : 'none',
+          textOverride: typeof raw.textOverride === 'string' ? raw.textOverride : undefined,
+          textPrefix: typeof raw.textPrefix === 'string' ? raw.textPrefix : undefined,
+          textSuffix: typeof raw.textSuffix === 'string' ? raw.textSuffix : undefined,
+          toleranceMode: raw.toleranceMode === 'symmetric' || raw.toleranceMode === 'deviation' ? raw.toleranceMode : 'none',
+          toleranceUpper: typeof raw.toleranceUpper === 'number' && raw.toleranceUpper >= 0 ? raw.toleranceUpper : 0,
+          toleranceLower: typeof raw.toleranceLower === 'number' && raw.toleranceLower >= 0 ? raw.toleranceLower : 0,
         };
       }
       return { ...raw, selected: false, aci: legacyAci(raw) };
@@ -201,6 +212,11 @@ function loadDimensionStyle(value: unknown): DimensionStyle {
     extensionOffset: typeof raw.extensionOffset === 'number' && Number.isFinite(raw.extensionOffset) && raw.extensionOffset >= 0 ? raw.extensionOffset : defaults.extensionOffset,
     textOffset: typeof raw.textOffset === 'number' && Number.isFinite(raw.textOffset) && raw.textOffset >= 0 ? raw.textOffset : defaults.textOffset,
     precision: typeof raw.precision === 'number' && Number.isInteger(raw.precision) && raw.precision >= 0 && raw.precision <= 8 ? raw.precision : defaults.precision,
+    angularPrecision: typeof raw.angularPrecision === 'number' && Number.isInteger(raw.angularPrecision)
+      && raw.angularPrecision >= 0 && raw.angularPrecision <= 8
+      ? raw.angularPrecision
+      : defaults.angularPrecision,
+    unitSuffix: raw.unitSuffix === 'mm' ? 'mm' : defaults.unitSuffix,
     scale: positive(raw.scale, defaults.scale),
     layer: typeof raw.layer === 'string' && raw.layer.trim() ? raw.layer : defaults.layer,
   };

@@ -100,27 +100,49 @@ export class PreviewController {
       this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
       return;
     }
-    if (['CYLINDER', 'SPHERE', 'CONE', 'PYRAMID'].includes(active.name) && active.stepIndex === 1 && active.data.center) {
+    if (['CYLINDER', 'SPHERE', 'CONE', 'PYRAMID', 'TORUS'].includes(active.name) && active.stepIndex === 1 && active.data.center) {
       this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
       return;
     }
     if ((active.name === 'MEASURE' || active.name === 'DIMALIGNED') && active.data.start && active.stepIndex >= 1) {
-      const start = active.data.start as Vec2;
+      let start = active.data.start as Vec2;
       // Picking the second point, the cursor is that point and the dimension has
       // nowhere to sit yet, so it lies on the two points and simply reads them.
       // Placing the line, the points are settled and the cursor is the location.
       const placing = active.stepIndex >= 2 && Boolean(active.data.end);
-      const end = placing ? active.data.end as Vec2 : cursor;
+      let end = placing ? active.data.end as Vec2 : cursor;
       // Once the line is placed the cursor moves on to the text, so the offset
       // stops following it and the text starts.
       const settled = active.stepIndex >= 3 && Boolean(active.data.offset);
-      const offset = settled ? active.data.offset as Vec2 : cursor;
-      const textPosition = settled ? cursor : undefined;
+      let offset = settled ? active.data.offset as Vec2 : cursor;
+      let textPosition = settled ? cursor : undefined;
       const aligned = active.name === 'DIMALIGNED';
+      const placement = aligned && settled
+        ? active.data.dimensionPlacement as {
+          sourceWorkPlane: WorkPlane;
+          workPlane: WorkPlane;
+          start: Vec2;
+          end: Vec2;
+          offset: Vec2;
+        } | null | undefined
+        : null;
+      if (placement) {
+        start = placement.start;
+        end = placement.end;
+        offset = placement.offset;
+        const cursorWorld = localToWorld(
+          placement.sourceWorkPlane,
+          cursor,
+          (cursor as Vec2 & { z?: number }).z ?? 0,
+        );
+        const localText = worldToLocal(placement.workPlane, cursorWorld);
+        textPosition = { x: localText.x, y: localText.y };
+      }
       this.setPreview({
         type: 'dimension',
         data: {
           start, end, offset, textPosition,
+          workPlane: placement?.workPlane,
           kind: aligned ? 'aligned' : 'linear',
           // The same rule the command will apply, asked early. With the line not
           // yet pulled anywhere it can only answer from the points themselves,
@@ -132,22 +154,53 @@ export class PreviewController {
       });
       return;
     }
-    if ((active.name === 'DIMRADIUS' || active.name === 'DIMDIAMETER') && active.stepIndex === 1 && active.data.entity) {
-      const entity = active.data.entity as Entity;
-      if (entity.type === 'circle' || entity.type === 'arc') {
-        let dx = cursor.x - entity.center.x, dy = cursor.y - entity.center.y;
-        const distance = Math.hypot(dx, dy) || 1; dx /= distance; dy /= distance;
-        this.setPreview({
-          type: 'dimension',
-          data: {
-            start: entity.center,
-            end: { x: entity.center.x + dx * entity.radius, y: entity.center.y + dy * entity.radius },
-            offset: cursor,
-            kind: active.name === 'DIMRADIUS' ? 'radius' : 'diameter',
-            style: active.data.dimensionStyle,
-          },
-        });
-      }
+    if (active.name === 'DIMANGULAR' && active.data.angularSource && active.stepIndex >= 5) {
+      const source = active.data.angularSource as {
+        workPlane: WorkPlane;
+        vertex: Vec2;
+        first: Vec2;
+        second: Vec2;
+      };
+      const settled = active.stepIndex >= 6 && Boolean(active.data.angularArcPoint);
+      this.setPreview({
+        type: 'dimension',
+        data: {
+          start: source.vertex,
+          end: source.first,
+          offset: source.second,
+          arcPoint: settled ? active.data.angularArcPoint : cursor,
+          textPosition: settled ? cursor : undefined,
+          kind: 'angular',
+          workPlane: source.workPlane,
+          style: active.data.dimensionStyle,
+        },
+      });
+      return;
+    }
+    if ((active.name === 'DIMRADIUS' || active.name === 'DIMDIAMETER') && active.stepIndex === 1) {
+      const entity = active.data.entity as Entity | undefined;
+      const source = active.data.radialSource as { center: Vec2; radius: number; workPlane: WorkPlane } | undefined
+        ?? (entity?.type === 'circle' || entity?.type === 'arc'
+          ? {
+            center: entity.center,
+            radius: entity.radius,
+            workPlane: entity.workPlane ?? WORLD_WORK_PLANE,
+          }
+          : undefined);
+      if (!source) return;
+      let dx = cursor.x - source.center.x, dy = cursor.y - source.center.y;
+      const distance = Math.hypot(dx, dy) || 1; dx /= distance; dy /= distance;
+      this.setPreview({
+        type: 'dimension',
+        data: {
+          start: source.center,
+          end: { x: source.center.x + dx * source.radius, y: source.center.y + dy * source.radius },
+          offset: cursor,
+          kind: active.name === 'DIMRADIUS' ? 'radius' : 'diameter',
+          workPlane: source.workPlane,
+          style: active.data.dimensionStyle,
+        },
+      });
       return;
     }
     if (active.stepIndex !== 1) return;
@@ -251,4 +304,4 @@ import type { ActiveCommand } from '../core/commands/CommandManager';
 import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
-import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
+import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
