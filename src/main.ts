@@ -1,14 +1,10 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, hitTestEntity, type ActiveCommand, type CommandName } from './core/commands/CommandManager';
-import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './core/commands/steps/solids';
-import { extrusionFeature } from './core/solids/extrusion';
-import { takesPointInput, transformsObjects } from './core/commands/registry';
-import { cloneEntity, curvePoints, entityBounds, transformEntityPoints, type Entity, type Solid, type SolidFaceSelection, type SolidMesh } from './core/entities/types';
+import { cloneEntity, curvePoints, entityBounds, type Entity, type Solid, type SolidFaceSelection } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
-import { CompositeEdit, ReplaceObjectsEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from './core/history/edits';
-import type { DocumentEdit } from './core/history/CommandHistory';
-import { snapPoint2, worldToScreen, type Vec2 } from './math/geometry';
+import { ReplaceObjectsEdit, cloneSolid } from './core/history/edits';
+import { type Vec2 } from './math/geometry';
 import { cloneWorkPlane, isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
@@ -18,7 +14,7 @@ import { GripController, type GripMode } from './interaction/GripController';
 import type { ProjectViewState } from './io/ProjectIO';
 import { LayerController } from './ui/LayerController';
 import { WindowDragController } from './interaction/WindowDragController';
-import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, objectSnapCandidates, type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
+import { type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
 import { ViewportNavigationController } from './interaction/ViewportNavigationController';
 import { PreviewController } from './ui/PreviewController';
 import { ProjectController } from './ui/ProjectController';
@@ -32,9 +28,6 @@ import { ModelTreeController } from './ui/ModelTreeController';
 import { GcodeSettingsController } from './ui/GcodeSettingsController';
 import { SettingsController } from './ui/SettingsController';
 import { NamedUcsController } from './ui/NamedUcsController';
-import { primitiveMesh, regenerateSolidFeature } from './core/solids/ManifoldEngine';
-import { translatedFeature } from './core/solids/featureTransform';
-import { axisOffsetUnderRay } from './interaction/AxisDrag';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
   arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
@@ -43,9 +36,10 @@ import {
 import { toolIcon } from './ui/toolIcons';
 import { shellHtml } from './ui/shell';
 import { FlyoutTool } from './ui/FlyoutTool';
-import { resolveDraftingPoint } from './interaction/DraftingService';
 import { resolvePointerGesture } from './interaction/PointerGesture';
 import { grabsGrip, resolveViewportAction } from './interaction/ViewportAction';
+import { createPointResolver, type PointResolverState } from './interaction/PointResolver';
+import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPlaneWorldDelta } from './interaction/DragEditing';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -115,7 +109,7 @@ const previewController = new PreviewController(
   (point) => cadDocument.viewMode === '3d'
     ? renderer3d.projectCadPoint(renderer3d.renderer.domElement, point)
     : null,
-  (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(delta) : undefined,
+  (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
 );
 const navigation = new ViewportNavigationController(
   cadDocument,
@@ -125,6 +119,7 @@ const navigation = new ViewportNavigationController(
   { enter3dForOrbit, redraw },
 );
 const history = new CommandHistory(cadDocument);
+const { moveObjects } = createMoveEditing({ doc: cadDocument, history });
 const gripController = new GripController(cadDocument, history);
 const gripInteraction = new GripInteractionController(gripController, viewport);
 const windowDrag = new WindowDragController(viewport, selectionWindowElement);
@@ -211,8 +206,7 @@ let ucsHoverPoint: { x: number; y: number; z: number } | null = null;
 let menuOnStillRelease = false;
 let zoomWindowMode = false;
 let currentSuggestions: CommandName[] = [];
-let activeTracking: { base: Vec2; point: Vec2; angle: number } | null = null;
-let activeEndpointAnchor: Vec2 | null = null;
+const pointerState: PointResolverState = { activeTracking: null, activeEndpointAnchor: null };
 
 function enter3dForOrbit(): void {
   if (cadDocument.viewMode === '3d') return;
@@ -319,9 +313,6 @@ function redraw(): void {
  */
 let chromeState = '';
 
-const FINAL_DRAG_PRIMITIVES = new Set<CommandName>([
-  'BOX', 'WEDGE', 'CYLINDER', 'CONE', 'PYRAMID', 'TORUS',
-]);
 
 function framePrimitiveBaseForHeight(): void {
   const active = commands.active;
@@ -511,7 +502,7 @@ const commands = new CommandManager({
   doc: cadDocument,
   history,
   moveObjects,
-  copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(delta) : undefined,
+  copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
   workPlaneChanged: () => renderer3d.setWorkPlane(cadDocument.activeWorkPlane),
   log,
   prompt: (message) => {
@@ -525,6 +516,36 @@ const commands = new CommandManager({
   redraw,
 });
 const drawingInteraction = new DrawingInteractionController(commands);
+const pointResolver = createPointResolver({
+  doc: cadDocument,
+  commands,
+  gripController,
+  gripInteraction,
+  drawingInteraction,
+  renderer2d,
+  renderer3d,
+  viewport,
+  trackingLine,
+  size: () => ({ width, height }),
+  state: pointerState,
+});
+const {
+  worldPoint, rawWorldPoint, worldPoint3d, rawWorldPoint3d,
+  interactionPoint, constrainedPoint, resolvePoint,
+  endpointAnchorFromSnap, updateTrackingGuide,
+  nearestMeasurementPoint, nearestGripTargetSnap, nearestPersistentSnap,
+} = pointResolver;
+const {
+  pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor,
+  updatePrimitiveFinalPreview, updateExtrudePreview,
+} = createSolidDragPreview({
+  doc: cadDocument,
+  commands,
+  renderer3d,
+  previewController,
+  nearestMeasurementPoint,
+  redraw,
+});
 let dynamicUcsCommand: ActiveCommand | null = null;
 
 function useWorkPlaneWithoutDocumentEvent(plane: typeof WORLD_WORK_PLANE): void {
@@ -732,279 +753,8 @@ get<HTMLButtonElement>('text-options-continue').addEventListener('click', async 
   input.focus();
 });
 
-function worldPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 {
-  const raw = rawWorldPoint(event);
-  return cadDocument.snapEnabled ? snapPoint2(raw, cadDocument.snapSize) : raw;
-}
-
-function rawWorldPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 {
-  const rect = viewport.getBoundingClientRect();
-  return renderer2d.screenToWorld(event.clientX - rect.left, event.clientY - rect.top, width, height);
-}
-
-function worldPoint3d(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 | null {
-  const raw = rawWorldPoint3d(event);
-  if (!raw) return null;
-  return cadDocument.snapEnabled ? snapPoint2(raw, cadDocument.snapSize) : raw;
-}
-
-function rawWorldPoint3d(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 | null {
-  return renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
-}
-
-function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 | null {
-  activeTracking = null;
-  const active = commands.active;
-  const angularPlane = active?.name === 'DIMANGULAR'
-    && active.stepIndex >= 5
-    ? active.data.angularSource as { workPlane?: typeof cadDocument.activeWorkPlane } | undefined
-    : undefined;
-  if (angularPlane?.workPlane) {
-    const targetedSnap = drawingInteraction.targetSnapMode
-      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
-      : nearestPersistentSnap(event);
-    if (targetedSnap) {
-      const local = worldToLocal(angularPlane.workPlane, targetedSnap.world);
-      return { x: local.x, y: local.y };
-    }
-    if (cadDocument.viewMode === '3d') {
-      return renderer3d.workPlanePoint(
-        renderer3d.renderer.domElement,
-        event.clientX,
-        event.clientY,
-        angularPlane.workPlane,
-      );
-    }
-    const world = localToWorld(cadDocument.activeWorkPlane, worldPoint(event));
-    const local = worldToLocal(angularPlane.workPlane, world);
-    return { x: local.x, y: local.y };
-  }
-  let radialPlane = cadDocument.viewMode === '3d'
-    && (active?.name === 'DIMRADIUS' || active?.name === 'DIMDIAMETER')
-    && active.stepIndex === 1
-    ? active.data.radialSource as { workPlane?: typeof cadDocument.activeWorkPlane } | undefined
-    : undefined;
-  const radialEntity = active?.data.entity as Entity | undefined;
-  if (!radialPlane && (radialEntity?.type === 'circle' || radialEntity?.type === 'arc')) {
-    radialPlane = { workPlane: radialEntity.workPlane ?? WORLD_WORK_PLANE };
-  }
-  if (radialPlane?.workPlane) {
-    const targetedSnap = drawingInteraction.targetSnapMode
-      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
-      : nearestPersistentSnap(event);
-    if (targetedSnap) {
-      const local = worldToLocal(radialPlane.workPlane, targetedSnap.world);
-      return { x: local.x, y: local.y };
-    }
-    return renderer3d.workPlanePoint(
-      renderer3d.renderer.domElement,
-      event.clientX,
-      event.clientY,
-      radialPlane.workPlane,
-    );
-  }
-  // Tools that place new geometry: they snap, but have no object to track.
-  const drawing = active && takesPointInput(active.name) && !transformsObjects(active.name)
-    && (active.steps[active.stepIndex]?.kind === 'point' || active.steps[active.stepIndex]?.kind === 'plane');
-  if (drawing) {
-    const targetedSnap = drawingInteraction.targetSnapMode
-      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
-      : nearestPersistentSnap(event);
-    if (targetedSnap) {
-      // Resting on an endpoint acquires it, so moving off it can then track
-      // along its alignment path rather than losing it.
-      const acquired = endpointAnchorFromSnap(targetedSnap);
-      if (acquired) activeEndpointAnchor = acquired;
-      // Carry how far the snap sits off the active plane, not just its shadow on
-      // it, so a line drawn in 3D lands on the point it snapped to even when that
-      // point belongs to another UCS. The line keeps the active plane; only the
-      // endpoint's z rides along.
-      return { ...targetedSnap.point, z: worldToLocal(cadDocument.activeWorkPlane, targetedSnap.world).z } as Vec2;
-    }
-  }
-  // Defining a cutting plane by points must not depend on whether End happens
-  // to be enabled in persistent OSNAP. A nearby 3D vertex is an explicit plane
-  // point and therefore wins over the planar face underneath it.
-  const sliceStep = active?.name === 'SLICE' ? active.steps[active.stepIndex] : undefined;
-  if (sliceStep?.kind === 'plane' || sliceStep?.kind === 'point') {
-    const vertex = nearestMeasurementPoint(event);
-    if (vertex) {
-      const local = worldToLocal(cadDocument.activeWorkPlane, vertex);
-      return { x: local.x, y: local.y, z: local.z } as Vec2;
-    }
-  }
-  if (active && transformsObjects(active.name) && active.steps[active.stepIndex]?.kind === 'point') {
-    const targetedSnap = drawingInteraction.targetSnapMode
-      ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
-      : nearestPersistentSnap(event);
-    if (targetedSnap) {
-      // A snapped base-and-target is a full 3D hop: the world point rides along
-      // (via worldDeltaOf) so grabbing a corner and dropping it on another lands
-      // x, y and z. Otherwise the move stays in the UCS plane.
-      if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') active.data.pendingMoveWorldPoint = targetedSnap.world;
-      return targetedSnap.point;
-    }
-    if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') delete active.data.pendingMoveWorldPoint;
-  }
-  if (cadDocument.viewMode === '2d') return constrainedPoint(worldPoint(event));
-  // In 3D a transform with no snap slides along the active UCS plane: the ray
-  // meets that plane, so X and Y move and the height is kept. This is why moving
-  // a solid used to drift across the screen instead of across its own floor.
-  const point = worldPoint3d(event);
-  return point ? constrainedPoint(point) : null;
-}
-
-function draftingBasePoint(): Vec2 | null {
-  const active = commands.active;
-  const step = active?.steps[active.stepIndex];
-  if (!active || step?.kind !== 'point') return null;
-  // A placement has no direction to constrain; see `ignoresDirection`.
-  if (step.ignoresDirection) return null;
-  const value = active.name === 'BEZIER'
-    ? active.data.control2 ?? active.data.control1 ?? active.data.start
-    : active.data.basePoint ?? active.data.start ?? active.data.center;
-  return value && typeof value === 'object' && 'x' in value && 'y' in value ? value as Vec2 : null;
-}
-
-function constrainedPoint(point: Vec2, baseOverride: Vec2 | null = null): Vec2 {
-  return resolvePoint(point, baseOverride ?? draftingBasePoint(), activeEndpointAnchor, null);
-}
-
-/**
- * The single place a cursor turns into a placed point: object snap, then an
- * acquired point's alignment path, then Ortho/Polar. Also publishes the guide
- * to draw, so what is shown and where the point lands cannot disagree.
- */
-function resolvePoint(cursor: Vec2, base: Vec2 | null, anchor: Vec2 | null, snap: Vec2 | null): Vec2 {
-  const resolved = resolveDraftingPoint({
-    cursor,
-    base,
-    anchor,
-    snap,
-    settings: cadDocument.drafting,
-    captureDistance: 8 / renderer2d.zoom,
-  });
-  activeTracking = resolved.guide
-    ? { base: resolved.guide.start, point: resolved.guide.end, angle: resolved.guide.angle }
-    : null;
-  return resolved.point;
-}
-
-function samePoint3d(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, epsilon = 1e-9): boolean {
-  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon && Math.abs(a.z - b.z) <= epsilon;
-}
-
-/**
- * Hovering an endpoint acquires it, so its alignment path can catch the cursor
- * later (F11). Works while drawing as well as while dragging a grip — the
- * object being dragged is excluded so it cannot track against itself.
- */
-function endpointAnchorFromSnap(snap: GripSnapTarget | null): Vec2 | null {
-  if (!snap) return null;
-  const excluded = gripController.isDragging ? gripController.draggingObjectId : undefined;
-  const candidates = objectSnapCandidates(cadDocument, 'end', excluded);
-  return candidates.some((candidate) => samePoint3d(candidate.world, snap.world)) ? snap.point : null;
-}
-
-function updateTrackingGuide(): void {
-  if (!activeTracking) {
-    trackingLine.hidden = true;
-    return;
-  }
-  let start: Vec2 | null;
-  let end: Vec2 | null;
-  if (cadDocument.viewMode === '2d') {
-    start = worldToScreen(activeTracking.base, width, height, renderer2d.pan, renderer2d.zoom);
-    end = worldToScreen(activeTracking.point, width, height, renderer2d.pan, renderer2d.zoom);
-  } else {
-    start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(cadDocument.activeWorkPlane, activeTracking.base));
-    end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(cadDocument.activeWorkPlane, activeTracking.point));
-  }
-  if (!start || !end) { trackingLine.hidden = true; return; }
-  const dx = end.x - start.x, dy = end.y - start.y;
-  trackingLine.style.left = `${start.x}px`;
-  trackingLine.style.top = `${start.y}px`;
-  trackingLine.style.width = `${Math.hypot(dx, dy)}px`;
-  trackingLine.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
-  trackingLine.hidden = false;
-}
 
 /** The edit that moves one object, without running it — so many can share a step. */
-function moveObjectEdit(
-  object: Entity | string,
-  delta: { x: number; y: number; z: number },
-  snapped: boolean,
-): DocumentEdit | null {
-  if (typeof object !== 'string') {
-    const before = cloneEntity(object);
-    let after: Entity;
-    if (cadDocument.viewMode === '3d') {
-      after = cloneEntity(object);
-      const plane = cloneWorkPlane(after.workPlane ?? WORLD_WORK_PLANE);
-      plane.origin.x += delta.x;
-      plane.origin.y += delta.y;
-      plane.origin.z += delta.z;
-      after.workPlane = plane;
-    } else if (snapped) {
-      const plane = object.workPlane ?? WORLD_WORK_PLANE;
-      const localDelta = {
-        x: delta.x * plane.xAxis.x + delta.y * plane.xAxis.y + delta.z * plane.xAxis.z,
-        y: delta.x * plane.yAxis.x + delta.y * plane.yAxis.y + delta.z * plane.yAxis.z,
-      };
-      after = transformEntityPoints(object, (point) => ({ x: point.x + localDelta.x, y: point.y + localDelta.y }));
-    } else {
-      after = transformEntityPoints(object, (point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
-    }
-    return new UpdateEntityEdit('Move object', before, after);
-  }
-  const solid = cadDocument.getSolid(object);
-  if (!solid) return null;
-  const before = cloneSolid(solid);
-  const after = cloneSolid(solid);
-  for (let i = 0; i < after.mesh.positions.length; i += 3) {
-    after.mesh.positions[i] += delta.x;
-    after.mesh.positions[i + 1] += delta.y;
-    after.mesh.positions[i + 2] += delta.z;
-  }
-  after.feature = translatedFeature(after.feature, delta) ?? { kind: 'mesh' };
-  after.revision++;
-  return new UpdateSolidEdit('Move solid', before, after);
-}
-
-/**
- * A drag measured in the active UCS plane, turned into a world vector. Only X
- * and Y move; the UCS height is untouched — dragging a solid across the floor of
- * its coordinate system rather than across the screen, which is what "move it,
- * keep the same height" means. A snapped point-to-point hop overrides this with
- * its own full-3D delta.
- */
-function ucsPlaneWorldDelta(local: Vec2): { x: number; y: number; z: number } {
-  const plane = cadDocument.activeWorkPlane;
-  return {
-    x: plane.xAxis.x * local.x + plane.yAxis.x * local.y,
-    y: plane.xAxis.y * local.x + plane.yAxis.y * local.y,
-    z: plane.xAxis.z * local.x + plane.yAxis.z * local.y,
-  };
-}
-
-/**
- * Moves any number of objects as one step in the history: dragging three things
- * is one thing the user did, so one Undo has to put all three back.
- */
-function moveObjects(
-  objects: ReadonlyArray<Entity | string>,
-  screenDelta: Vec2,
-  snappedWorldDelta?: { x: number; y: number; z: number },
-): void {
-  const delta = snappedWorldDelta ?? (cadDocument.viewMode === '2d'
-    ? { x: screenDelta.x, y: screenDelta.y, z: 0 }
-    : ucsPlaneWorldDelta(screenDelta));
-  const edits = objects
-    .map((object) => moveObjectEdit(object, delta, Boolean(snappedWorldDelta)))
-    .filter((edit): edit is DocumentEdit => edit !== null);
-  if (edits.length === 0) return;
-  history.execute(edits.length === 1 ? edits[0] : new CompositeEdit('Move objects', edits));
-}
 
 function updatePreview(cursor: Vec2): void {
   previewController.update(commands.active, cursor, ucsHoverPoint);
@@ -1014,158 +764,6 @@ function showDimension(text: string | null, x: number, y: number): void {
   previewController.showDimension(text, x, y);
 }
 
-/**
- * A measurement of the preview that is being drawn — its length, its radius,
- * its angle. In 2D the canvas already writes one beside the geometry, so saying
- * it again in the toast only printed every number twice, one above the other,
- * and then made one of them fade away. The 3D view draws no such label, so
- * there the toast is the only one there is.
- */
-/**
- * PRESSPULL waiting for its distance, with the cursor dragging the face it was
- * given. Builds the solid as it would be, so the shape is what you steer by
- * rather than a number typed at a stationary picture — and returns the distance
- * so the click that ends it commits exactly what was on screen.
- */
-function pressPullDrag(event: PointerEvent): { delta: number } | null {
-  const active = commands.active;
-  if (cadDocument.viewMode !== '3d' || active?.name !== 'PRESSPULL' || active.stepIndex !== 1) return null;
-  const face = active.data.face as SolidFaceSelection | undefined;
-  const solid = cadDocument.getSolid(active.data.solidId as string);
-  if (!face?.region || !solid) return null;
-  const delta = renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
-  if (delta === null || Math.abs(delta) < 1e-6) return null;
-  previewController.setPreview({ type: 'presspull-region', data: { region: face.region, distance: delta } });
-  return { delta };
-}
-
-/** Which way the profile is being pulled, and how far. Null when it is neither. */
-function extrudeHeightUnderCursor(event: PointerEvent): { height: number; profile: Entity } | null {
-  const active = commands.active;
-  if (cadDocument.viewMode !== '3d' || active?.name !== 'EXTRUDE' || active.stepIndex !== 1) return null;
-  const profile = (active.data.entities as Entity[] | undefined)?.[0];
-  if (!profile) return null;
-  const plane = profile.workPlane ?? WORLD_WORK_PLANE;
-
-  // A vertex under the cursor wins, so an extrusion can be pulled to exactly
-  // the height of something already drawn rather than to a number that is
-  // nearly it.
-  const snap = nearestMeasurementPoint(event);
-  if (snap) {
-    const height = worldToLocal(plane, snap).z;
-    return Math.abs(height) > 1e-6 ? { height, profile } : null;
-  }
-  // Otherwise the profile only travels along its plane's normal, so the height
-  // is the point on that axis the pointer ray passes closest to — the same
-  // question press-pull asks of a face.
-  const bounds = entityBounds(profile);
-  const centre = localToWorld(plane, { x: (bounds.min.x + bounds.max.x) / 2, y: (bounds.min.y + bounds.max.y) / 2 }, 0);
-  const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
-  const height = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
-  return height !== null && Math.abs(height) > 1e-6 ? { height, profile } : null;
-}
-
-interface PrimitiveFinalDrag {
-  value: number;
-  mesh: SolidMesh;
-  snap: { x: number; y: number; z: number } | null;
-  label: string;
-}
-
-/**
- * Final size of a primitive after its base has been placed. A nearby vertex
- * wins; elsewhere the cursor ray is measured along the current UCS Z axis.
- * For every height-based primitive this is its height; for TORUS it is the
- * tube radius, giving its third input the same live 3D workflow.
- */
-function primitiveFinalUnderCursor(event: PointerEvent): PrimitiveFinalDrag | null {
-  const active = commands.active;
-  if (cadDocument.viewMode !== '3d'
-    || !active
-    || !FINAL_DRAG_PRIMITIVES.has(active.name)
-    || active.stepIndex !== 2) return null;
-
-  const plane = cadDocument.activeWorkPlane;
-  const snap = nearestMeasurementPoint(event);
-  let baseCenter: Vec2;
-  if (active.name === 'BOX' || active.name === 'WEDGE') {
-    const start = active.data.start as Vec2 | undefined;
-    const end = active.data.end as Vec2 | undefined;
-    if (!start || !end) return null;
-    baseCenter = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-  } else {
-    const center = active.data.center as Vec2 | undefined;
-    if (!center || !active.data.radiusPoint) return null;
-    baseCenter = center;
-  }
-  const centre = localToWorld(plane, baseCenter);
-  let value: number | null;
-  if (snap) {
-    value = worldToLocal(plane, snap).z;
-  } else {
-    const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
-    value = axisOffsetUnderRay(centre, plane.zAxis, ray.origin, ray.direction);
-  }
-  if (value === null || Math.abs(value) < 1e-6) return null;
-
-  const feature = active.name === 'BOX' || active.name === 'WEDGE'
-    ? boxLikePrimitiveFeature(
-      active.name === 'BOX' ? 'box' : 'wedge',
-      active.data.start as Vec2,
-      active.data.end as Vec2,
-      value,
-      plane,
-    )
-    : active.name === 'TORUS'
-      ? torusPrimitiveFeature(
-        active.data.center as Vec2,
-        active.data.radiusPoint as Vec2,
-        value,
-        plane,
-      )
-      : radialLikePrimitiveFeature(
-        active.name === 'CYLINDER' ? 'cylinder' : active.name === 'CONE' ? 'cone' : 'pyramid',
-        active.data.center as Vec2,
-        active.data.radiusPoint as Vec2,
-        value,
-        plane,
-      );
-  if (!feature) return null;
-  const finalValue = active.name === 'TORUS' ? feature.tubeRadius! : feature.height;
-  const name = active.name[0] + active.name.slice(1).toLowerCase();
-  return {
-    value: finalValue,
-    mesh: primitiveMesh(feature),
-    snap,
-    label: `${name} ${active.name === 'TORUS' ? 'tube radius' : 'height'}`,
-  };
-}
-
-function updatePrimitiveFinalPreview(event: PointerEvent, sx: number, sy: number): PrimitiveFinalDrag | null {
-  const drag = primitiveFinalUnderCursor(event);
-  if (!drag) return null;
-  previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: drag.mesh } });
-  showDimension(`${drag.label} ${drag.value.toFixed(2)} mm`, sx, sy);
-  return drag;
-}
-
-/** Guards against a slow frame's preview landing on top of a newer one. */
-let extrudePreviewToken = 0;
-
-function updateExtrudePreview(event: PointerEvent, sx: number, sy: number): void {
-  const drag = extrudeHeightUnderCursor(event);
-  if (!drag) return;
-  showDimension(`Extrude ${drag.height.toFixed(2)} mm`, sx, sy);
-  const token = ++extrudePreviewToken;
-  // Built by the engine that will build the real one, so the preview cannot
-  // promise a shape the command then declines to make. The await settles in a
-  // microtask, before anything is painted, so this does not flicker.
-  void regenerateSolidFeature(extrusionFeature(drag.profile, drag.height)).then((mesh) => {
-    if (!mesh || token !== extrudePreviewToken) return;
-    previewController.setPreview({ type: 'solid', data: { solidId: '', mesh } });
-    redraw();
-  });
-}
 
 function showPreviewLabel(text: string | null, x: number, y: number): void {
   if (cadDocument.viewMode === '2d') return;
@@ -1216,78 +814,8 @@ function profileContainingPoint(point: Vec2): Entity | undefined {
   return undefined;
 }
 
-function nearestMeasurementPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, pixelTolerance = 14): { x: number; y: number; z: number } | null {
-  const candidates = measurementCandidates(cadDocument).map((world) => ({ world }));
-  if (cadDocument.viewMode === '3d') {
-    const rect = viewport.getBoundingClientRect();
-    return nearestCandidateProjected(
-      candidates,
-      { x: event.clientX - rect.left, y: event.clientY - rect.top },
-      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-      pixelTolerance,
-      cadDocument.activeWorkPlane,
-    )?.world ?? null;
-  }
-  const cursor = rawWorldPoint(event);
-  return nearestCandidate2d(candidates, cursor, cadDocument.activeWorkPlane, pixelTolerance / renderer2d.zoom)?.world ?? null;
-}
-
 type GripSnapTarget = SnapTarget;
 
-function nearestGripTargetSnap(
-  event: Pick<PointerEvent, 'clientX' | 'clientY'>,
-  mode: ObjectSnapMode | null = gripInteraction.targetSnapMode,
-  pixelTolerance = 14,
-): GripSnapTarget | null {
-  if (!mode) return null;
-  const active = commands.active;
-  const referenceValue = active?.data.start ?? active?.data.basePoint ?? active?.data.center;
-  const reference = referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue
-    ? localToWorld(cadDocument.activeWorkPlane, referenceValue as Vec2)
-    : null;
-  const candidates = objectSnapCandidates(cadDocument, mode, gripController.draggingObjectId, reference);
-  if (cadDocument.viewMode === '3d') {
-    const rect = viewport.getBoundingClientRect();
-    return nearestCandidateProjected(
-      candidates,
-      { x: event.clientX - rect.left, y: event.clientY - rect.top },
-      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-      pixelTolerance,
-      cadDocument.activeWorkPlane,
-    );
-  }
-  return nearestCandidate2d(
-    candidates,
-    rawWorldPoint(event),
-    cadDocument.activeWorkPlane,
-    pixelTolerance / renderer2d.zoom,
-  );
-}
-
-function nearestPersistentSnap(
-  event: Pick<PointerEvent, 'clientX' | 'clientY'>,
-  pixelTolerance = 14,
-): GripSnapTarget | null {
-  if (!cadDocument.drafting.objectSnapEnabled || cadDocument.drafting.objectSnapModes.length === 0) return null;
-  const active = commands.active;
-  const referenceValue = active?.data.start ?? active?.data.basePoint ?? active?.data.center;
-  const reference = referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue
-    ? localToWorld(cadDocument.activeWorkPlane, referenceValue as Vec2)
-    : null;
-  const candidates = cadDocument.drafting.objectSnapModes.flatMap((mode) =>
-    objectSnapCandidates(cadDocument, mode, gripController.draggingObjectId, reference));
-  if (cadDocument.viewMode === '3d') {
-    const rect = viewport.getBoundingClientRect();
-    return nearestCandidateProjected(
-      candidates,
-      { x: event.clientX - rect.left, y: event.clientY - rect.top },
-      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-      pixelTolerance,
-      cadDocument.activeWorkPlane,
-    );
-  }
-  return nearestCandidate2d(candidates, rawWorldPoint(event), cadDocument.activeWorkPlane, pixelTolerance / renderer2d.zoom);
-}
 
 function solidSelectionExclusions(): Set<string> {
   return selectionExclusions(cadDocument, commands.active?.data);
@@ -1437,8 +965,8 @@ viewport.addEventListener('pointermove', (event) => {
     ?? (gripController.isDragging && cadDocument.viewMode === '2d'
       ? gripController.polylineEndpointAnchor(rawWorldPoint(event), 8 / renderer2d.zoom)
       : null);
-  if (endpointAnchor) activeEndpointAnchor = endpointAnchor;
-  const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, activeEndpointAnchor) : interactionPoint(event);
+  if (endpointAnchor) pointerState.activeEndpointAnchor = endpointAnchor;
+  const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
   if (!p) { trackingLine.hidden = true; return; }
   if (gripController.isDragging) {
     gripController.update(p);
@@ -1457,7 +985,7 @@ viewport.addEventListener('pointermove', (event) => {
   }
   coords.textContent = `X: ${p.x.toFixed(3)} mm Y: ${p.y.toFixed(3)} mm`;
   updateTrackingGuide();
-  if (activeTracking) showDimension(`∠ ${activeTracking.angle.toFixed(0)}°`, sx, sy);
+  if (pointerState.activeTracking) showDimension(`∠ ${pointerState.activeTracking.angle.toFixed(0)}°`, sx, sy);
   updatePreview(p);
   // After updatePreview, which clears the frame before deciding what to draw:
   // this one is steered by the pointer ray rather than by the work-plane point
@@ -2009,7 +1537,7 @@ window.addEventListener('pointerup', (event) => {
   navigation.endPan(event.pointerId);
   if (wasStillPress) openContextMenu(event);
   gripInteraction.commitIfNotLatched();
-  if (!gripController.isDragging) activeEndpointAnchor = null;
+  if (!gripController.isDragging) pointerState.activeEndpointAnchor = null;
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
 });
 
@@ -2039,8 +1567,8 @@ new InputController(input, commandForm, {
     document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
     commands.cancelActive();
     previewController.reset();
-    activeTracking = null;
-    activeEndpointAnchor = null;
+    pointerState.activeTracking = null;
+    pointerState.activeEndpointAnchor = null;
     trackingLine.hidden = true;
     gripController.mode = null;
     gripController.hoveredGrip = -1;
