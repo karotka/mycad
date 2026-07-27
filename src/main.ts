@@ -1,9 +1,8 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
-import { cloneEntity, curvePoints, entityBounds, type Entity, type Solid, type SolidFaceSelection } from './core/entities/types';
+import { CommandManager, type CommandName } from './core/commands/CommandManager';
+import { entityBounds, type Entity, type Solid, type SolidFaceSelection } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
-import { ReplaceObjectsEdit, cloneSolid } from './core/history/edits';
 import { type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
@@ -41,6 +40,7 @@ import { grabsGrip, resolveViewportAction } from './interaction/ViewportAction';
 import { createPointResolver, type PointResolverState } from './interaction/PointResolver';
 import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPlaneWorldDelta } from './interaction/DragEditing';
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
+import { createToolActions } from './interaction/ToolActions';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -553,6 +553,27 @@ const {
   log,
   redraw,
   state: ducsState,
+});
+const {
+  deleteSelectedObjects, toggleDraftingMode, toggleGridSnap,
+  toggleGridDisplay, toggleCutArea, openContextMenu,
+} = createToolActions({
+  doc: cadDocument,
+  history,
+  gripController,
+  gripInteraction,
+  drawingInteraction,
+  previewController,
+  renderer2d,
+  renderer3d,
+  rawWorldPoint,
+  rawWorldPoint3d,
+  gripMenu,
+  viewport,
+  trackingLine,
+  size: () => ({ width, height }),
+  log,
+  redraw,
 });
 
 const namedUcsController = new NamedUcsController(
@@ -1439,19 +1460,6 @@ window.addEventListener('pointerup', (event) => {
   if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
 });
 
-function deleteSelectedObjects(): boolean {
-  if (cadDocument.selectedEntityIds.size === 0 && cadDocument.selectedSolidIds.size === 0) return false;
-  gripInteraction.cancel();
-  const entities = cadDocument.getSelectedEntities().map(cloneEntity);
-  const solids = cadDocument.getSelectedSolids().map(cloneSolid);
-  history.execute(new ReplaceObjectsEdit('Delete selected objects', entities, solids, [], []));
-  gripController.mode = null;
-  gripController.hoveredGrip = -1;
-  previewController.clearPreview();
-  log(`Deleted objects: ${entities.length + solids.length}`);
-  redraw();
-  return true;
-}
 
 new InputController(input, commandForm, {
   escape: () => {
@@ -1512,47 +1520,6 @@ new InputController(input, commandForm, {
   },
 });
 
-function toggleDraftingMode(mode: 'objectSnapEnabled' | 'orthoEnabled' | 'polarEnabled' | 'objectSnapTrackingEnabled', label: string): void {
-  const enabled = !cadDocument.drafting[mode];
-  cadDocument.drafting[mode] = enabled;
-  if (enabled && mode === 'orthoEnabled') cadDocument.drafting.polarEnabled = false;
-  if (enabled && mode === 'polarEnabled') cadDocument.drafting.orthoEnabled = false;
-  if (!enabled && (mode === 'orthoEnabled' || mode === 'polarEnabled')) trackingLine.hidden = true;
-  log(`${label}: ${cadDocument.drafting[mode] ? 'ON' : 'OFF'}`);
-  cadDocument.notify();
-}
-
-/** Cursor stepping. It lives on the document rather than in drafting settings,
- *  so it cannot go through toggleDraftingMode with the other three. */
-function toggleGridSnap(): void {
-  cadDocument.snapEnabled = !cadDocument.snapEnabled;
-  log(`Snap: ${cadDocument.snapEnabled ? `ON, step ${cadDocument.snapSize} mm` : 'OFF'}`);
-  cadDocument.notify();
-}
-
-function toggleGridDisplay(): void {
-  cadDocument.gridVisible = !cadDocument.gridVisible;
-  log(`Grid: ${cadDocument.gridVisible ? 'ON' : 'OFF'}`);
-  cadDocument.notify();
-}
-
-function toggleCutArea(): void {
-  const options = cadDocument.gcode;
-  options.frameVisible = !options.frameVisible;
-  if (options.frameVisible) {
-    const first = { x: options.frameOriginX, y: options.frameOriginY };
-    const opposite = { x: first.x + options.frameWidth, y: first.y + options.frameHeight };
-    if (cadDocument.viewMode === '2d') renderer2d.zoomWindow(first, opposite, width, height);
-    else renderer3d.framePoints([
-      { ...first, z: 0 },
-      { x: opposite.x, y: first.y, z: 0 },
-      { ...opposite, z: 0 },
-      { x: first.x, y: opposite.y, z: 0 },
-    ]);
-  }
-  log(`Print/cut area: ${options.frameVisible ? `ON, ${options.frameWidth} × ${options.frameHeight} mm` : 'OFF'}`);
-  cadDocument.notify();
-}
 
 get('osnap-toggle').addEventListener('click', () => toggleDraftingMode('objectSnapEnabled', 'Object Snap'));
 get('ducs-toggle').addEventListener('click', () => toggleDynamicUcs());
@@ -1631,88 +1598,6 @@ input.addEventListener('input', () => {
  * Opens the object menu at the press. Called from the release of a right button
  * that never moved — a press that panned was a pan, and gets no menu.
  */
-function openContextMenu(event: PointerEvent): void {
-  const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
-  const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
-  const showPersistentSnaps = (): void => {
-    gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {
-      const mode = button.dataset.persistentSnap as ObjectSnapMode;
-      button.classList.toggle('active', cadDocument.drafting.objectSnapModes.includes(mode));
-      button.setAttribute('aria-pressed', String(cadDocument.drafting.objectSnapModes.includes(mode)));
-    });
-  };
-  const showMenu = (): void => {
-    gripMenu.style.left = `${event.clientX}px`;
-    gripMenu.style.top = `${event.clientY}px`;
-    gripMenu.hidden = false;
-    viewport.classList.add('context-menu-cursor-pending');
-  };
-  showPersistentSnaps();
-  if (gripController.isDragging && gripInteraction.isLatched) {
-    if (oneShotSection) oneShotSection.hidden = false;
-    if (menuTitle) menuTitle.textContent = 'Object snap';
-    gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
-      const mode = button.dataset.gripMode as ObjectSnapMode;
-      button.hidden = false;
-      button.classList.toggle('active', gripInteraction.targetSnapMode === mode);
-    });
-    showMenu();
-    return;
-  }
-  if (drawingInteraction.isPointStep) {
-    if (oneShotSection) oneShotSection.hidden = false;
-    if (menuTitle) menuTitle.textContent = 'Object snap';
-    gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
-      const mode = button.dataset.gripMode as ObjectSnapMode;
-      button.hidden = false;
-      button.classList.toggle('active', drawingInteraction.targetSnapMode === mode);
-    });
-    showMenu();
-    return;
-  }
-  if (menuTitle) menuTitle.textContent = 'Grip mode';
-  const point = cadDocument.viewMode === '2d' ? rawWorldPoint(event) : rawWorldPoint3d(event);
-  if (!point) return;
-  const tolerance = cadDocument.viewMode === '2d'
-    ? 8 / renderer2d.zoom
-    : Math.max(0.2, renderer3d.orbitRadius * 0.025);
-  const entity = hitTestEntity(cadDocument.entities, point, tolerance);
-  const solidId = cadDocument.viewMode === '3d'
-    ? renderer3d.pickSolid(renderer3d.renderer.domElement, event.clientX, event.clientY)
-    : null;
-  const solid = solidId ? cadDocument.getSolid(solidId) : hitTestSolid2d(cadDocument, point);
-  const validEntity = entity && cadDocument.selectedEntityIds.has(entity.id) ? entity : null;
-  const validSolid = solid && cadDocument.selectedSolidIds.has(solid.id) ? solid : null;
-  if (!validEntity && !validSolid) {
-    if (oneShotSection) oneShotSection.hidden = true;
-    showMenu();
-    return;
-  }
-  if (oneShotSection) oneShotSection.hidden = false;
-  const allowed = new Set<GripMode>();
-  if (validSolid) {
-    allowed.add('end');
-    allowed.add('center');
-    allowed.add('middle');
-  } else if (validEntity?.type === 'line') {
-    allowed.add('end');
-    allowed.add('middle');
-  } else if (validEntity?.type === 'circle') {
-    allowed.add('center');
-  } else if (validEntity?.type === 'polyline' && !validEntity.closed) {
-    allowed.add('end');
-  } else if (validEntity?.type === 'rectangle') {
-    allowed.add('end');
-    allowed.add('center');
-  }
-  gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
-    const mode = button.dataset.gripMode as ObjectSnapMode;
-    button.hidden = !allowed.has(mode as GripMode);
-    button.classList.toggle('active', gripController.mode === mode);
-  });
-  if (allowed.size === 0) return;
-  showMenu();
-}
 
 // The browser's own menu never appears; ours is opened from the release above.
 viewport.addEventListener('contextmenu', (event) => event.preventDefault());
