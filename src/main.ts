@@ -1,11 +1,11 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, hitTestEntity, type ActiveCommand, type CommandName } from './core/commands/CommandManager';
+import { CommandManager, hitTestEntity, type CommandName } from './core/commands/CommandManager';
 import { cloneEntity, curvePoints, entityBounds, type Entity, type Solid, type SolidFaceSelection } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from './core/history/edits';
 import { type Vec2 } from './math/geometry';
-import { cloneWorkPlane, isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
+import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
 import { hitTestSolid2d, pickEntityAt, selectionExclusions, solidBounds } from './interaction/PickingService';
@@ -21,7 +21,7 @@ import { ProjectController } from './ui/ProjectController';
 import { SelectionController } from './interaction/SelectionController';
 import { GripInteractionController } from './interaction/GripInteractionController';
 import { DrawingInteractionController } from './interaction/DrawingInteractionController';
-import { DynamicUcsController, preferredDynamicFacePlane } from './interaction/DynamicUcsController';
+import { DynamicUcsController } from './interaction/DynamicUcsController';
 import { PropertiesController } from './ui/PropertiesController';
 import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
@@ -40,6 +40,7 @@ import { resolvePointerGesture } from './interaction/PointerGesture';
 import { grabsGrip, resolveViewportAction } from './interaction/ViewportAction';
 import { createPointResolver, type PointResolverState } from './interaction/PointResolver';
 import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPlaneWorldDelta } from './interaction/DragEditing';
+import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -55,16 +56,6 @@ const initialDimension: CommandName = dimensionTools.some(([, , command]) => com
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
 const initialZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
 const dynamicUcsController = new DynamicUcsController(localStorage.getItem('mycad.dynamicUcs') !== 'off');
-
-const DYNAMIC_UCS_COMMANDS = new Set<CommandName>([
-  'LINE', 'POLYLINE', 'RECTANGLE', 'CIRCLE', 'CIRCLE_DIAMETER', 'OCTAGON',
-  'ELLIPSE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT',
-  'BOX', 'WEDGE', 'SPHERE', 'CONE', 'CYLINDER', 'PYRAMID', 'TORUS',
-  // A linear dimension belongs to a plane. DUCS lets the first picked face
-  // supply that plane, then the ordinary first-point lock keeps every
-  // remaining dimension step in it. DIMALIGNED builds its own spatial plane.
-  'MEASURE', 'DIMANGULAR',
-]);
 
 app.innerHTML = shellHtml({
   primitive: initialPrimitive,
@@ -546,115 +537,23 @@ const {
   nearestMeasurementPoint,
   redraw,
 });
-let dynamicUcsCommand: ActiveCommand | null = null;
 
-function useWorkPlaneWithoutDocumentEvent(plane: typeof WORLD_WORK_PLANE): void {
-  cadDocument.activeWorkPlane = cloneWorkPlane(plane);
-  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-}
-
-/** Restores the named/manual UCS that was active before a face was acquired. */
-function releaseDynamicUcs(restored = dynamicUcsController.release()): boolean {
-  dynamicUcsCommand = null;
-  if (!restored) return false;
-  useWorkPlaneWithoutDocumentEvent(restored);
-  renderer3d.clearFaceHighlight();
-  namedUcsController.render();
-  return true;
-}
-
-function syncDynamicUcsLifecycle(): void {
-  if (!dynamicUcsController.isTemporary) return;
-  if (cadDocument.viewMode !== '3d'
-    || commands.active !== dynamicUcsCommand
-    || !commands.active
-    || !DYNAMIC_UCS_COMMANDS.has(commands.active.name)) {
-    releaseDynamicUcs();
-  }
-}
-
-function canAcquireDynamicUcs(): boolean {
-  const active = commands.active;
-  return Boolean(
-    dynamicUcsController.enabled
-    && !dynamicUcsController.isLocked
-    && cadDocument.viewMode === '3d'
-    && active
-    && DYNAMIC_UCS_COMMANDS.has(active.name)
-    && active.steps[active.stepIndex]?.kind === 'point'
-  );
-}
-
-/** A boundary snap still belongs to the face whose interior acquired DUCS. */
-function snapKeepsDynamicUcs(event: Pick<PointerEvent, 'clientX' | 'clientY'>): boolean {
-  if (!dynamicUcsController.isTemporary) return false;
-  const snap = nearestMeasurementPoint(event);
-  return Boolean(snap && dynamicUcsController.containsPoint(snap));
-}
-
-function acquireDynamicUcs(face: SolidFaceSelection, event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
-  if (!face.region) return;
-  const facePlane = preferredDynamicFacePlane(face.region);
-  const snap = nearestMeasurementPoint(event);
-  const snapOnFacePlane = snap && Math.abs(worldToLocal(facePlane, snap).z) < 1e-5 ? snap : null;
-  const origin = snapOnFacePlane ?? face.hitPoint ?? face.region.plane.origin;
-  const key = `${face.solidId}:${[...face.vertexIndices].sort((a, b) => a - b).join(',')}`;
-  const temporary = dynamicUcsController.acquire(cadDocument.activeWorkPlane, facePlane, origin, key);
-  if (!temporary) return;
-  dynamicUcsCommand = commands.active;
-  useWorkPlaneWithoutDocumentEvent(temporary);
-  namedUcsController.render();
-}
-
-interface DynamicUcsAnswer {
-  command: ActiveCommand;
-  data: Record<string, unknown>;
-  stepIndex: number;
-  stepKind: string;
-}
-
-function beforeDynamicUcsAnswer(): DynamicUcsAnswer | null {
-  const active = commands.active;
-  if (!dynamicUcsController.isTemporary || !active || active !== dynamicUcsCommand) return null;
-  return {
-    command: active,
-    data: active.data,
-    stepIndex: active.stepIndex,
-    stepKind: active.steps[active.stepIndex]?.kind ?? '',
-  };
-}
-
-/** Locks after the first point, or restores after the object/command finishes. */
-function afterDynamicUcsAnswer(before: DynamicUcsAnswer | null): void {
-  if (!before || !dynamicUcsController.isTemporary) return;
-  const active = commands.active;
-  if (active !== before.command || active.data !== before.data) {
-    releaseDynamicUcs();
-    return;
-  }
-  if (before.stepKind === 'point' && active.stepIndex !== before.stepIndex) dynamicUcsController.lock();
-}
-
-function toggleDynamicUcs(): void {
-  const restored = dynamicUcsController.toggle();
-  if (restored) releaseDynamicUcs(restored);
-  localStorage.setItem('mycad.dynamicUcs', dynamicUcsController.enabled ? 'on' : 'off');
-  log(`Dynamic UCS: ${dynamicUcsController.enabled ? 'ON' : 'OFF'}`);
-  if (!dynamicUcsController.enabled) renderer3d.clearFaceHighlight();
-  redraw();
-}
-
-/** Promotes the live face plane to the same named-UCS list as manual UCS. */
-function saveDynamicUcs(): void {
-  if (!dynamicUcsController.isTemporary) return;
-  const plane = cloneWorkPlane(cadDocument.activeWorkPlane);
-  dynamicUcsController.release();
-  dynamicUcsCommand = null;
-  const named = cadDocument.addNamedWorkPlane(plane);
-  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-  log(`${named.name} saved from Dynamic UCS.`);
-  redraw();
-}
+const ducsState: DynamicUcsState = { command: null };
+const {
+  releaseDynamicUcs, syncDynamicUcsLifecycle, canAcquireDynamicUcs,
+  snapKeepsDynamicUcs, acquireDynamicUcs, beforeDynamicUcsAnswer,
+  afterDynamicUcsAnswer, toggleDynamicUcs, saveDynamicUcs, ownsActiveCommand,
+} = createDynamicUcsCoordinator({
+  doc: cadDocument,
+  commands,
+  renderer3d,
+  controller: dynamicUcsController,
+  nearestMeasurementPoint,
+  renderNamedUcs: () => namedUcsController.render(),
+  log,
+  redraw,
+  state: ducsState,
+});
 
 const namedUcsController = new NamedUcsController(
   cadDocument,
@@ -1206,7 +1105,7 @@ viewport.addEventListener('pointerdown', async (event) => {
         else releaseDynamicUcs();
       }
     }
-    if (dynamicUcsController.isTemporary && dynamicUcsCommand === commands.active) {
+    if (ownsActiveCommand()) {
       dynamicUcsController.lock();
       commands.active.data.dynamicUcsConfirmed = true;
       log('DUCS plane locked. Specify the angle vertex.');
@@ -1237,8 +1136,7 @@ viewport.addEventListener('pointerdown', async (event) => {
       commands.active.name === 'MEASURE'
       && commands.active.stepIndex === 0
       && commands.active.data.dynamicUcsConfirmed !== true
-      && dynamicUcsController.isTemporary
-      && dynamicUcsCommand === commands.active
+      && ownsActiveCommand()
     ) {
       dynamicUcsController.lock();
       commands.active.data.dynamicUcsConfirmed = true;
