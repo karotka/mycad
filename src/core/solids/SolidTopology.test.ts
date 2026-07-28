@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
-import { booleanSubtract, createBoxMesh, createCylinderMesh } from './ManifoldEngine';
+import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh } from './ManifoldEngine';
 import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
 import { localToWorld } from '../../math/workplane';
 
@@ -33,6 +33,28 @@ describe('solid feature topology', () => {
     const centres = solidCircularEdgeCenters(cut!);
     expect(centres.some((point) => Math.hypot(point.x, point.y) < 1e-5 && Math.abs(point.z) < 1e-5)).toBe(true);
     expect(centres.some((point) => Math.hypot(point.x, point.y) < 1e-5 && Math.abs(point.z - 6) < 1e-5)).toBe(true);
+  });
+
+  it('recognises both concentric base rims after subtracting one cone from another', async () => {
+    const cut = await booleanSubtract(
+      createConeMesh(6, 10),
+      createConeMesh(3, 10),
+    );
+    expect(cut).not.toBeNull();
+
+    const innerSegments = solidFeatureEdges(cut!).filter((edge) =>
+      [edge.start, edge.end].every((point) =>
+        Math.abs(point.z) < 1e-4 && Math.abs(Math.hypot(point.x, point.y) - 3) < 1e-3
+      )
+    );
+    expect(innerSegments.length, 'inner feature segments').toBe(64);
+    const circles = solidCircularEdges(cut!)
+      .filter((circle) => Math.abs(circle.center.z) < 1e-4)
+      .sort((first, second) => first.radius - second.radius);
+    expect(circles.map((circle) => circle.radius)).toEqual([
+      expect.closeTo(3, 3),
+      expect.closeTo(6, 3),
+    ]);
   });
 
   it('reconstructs six outward planar faces and four-corner loops on a box', () => {

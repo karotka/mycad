@@ -7,36 +7,7 @@ use it comfortably, then structural and interoperability work.
 
 ---
 
-## 1. Make pointer interaction testable outside `main.ts`
-
-`main.ts` is about 2,000 lines and remains the easiest place for interaction
-regressions to hide. Frame coalescing and several interaction services are
-already extracted; the next boundary is the remaining pointer-move orchestration.
-
-In order:
-
-- move pointer-move decisions into a controller with explicit inputs and
-  outcomes, leaving `main.ts` to execute them;
-- introduce a small `Panel { isOpen, render() }` contract for tree, properties,
-  layers and settings instead of hand-written subscriber branches;
-- centralise the repeated global "click outside" listeners;
-- remove the obsolete `data-view-action` handler and unused `curvePoints` and
-  `solidBounds` imports.
-
-Related command-runtime debt:
-
-- `ActiveCommand.data` is still `Record<string, unknown>`; a generic data type
-  would turn misspelled state keys into build errors;
-- repeating command steps are encoded indirectly instead of having an explicit
-  `repeat` property;
-- JOIN still needs its documented complete-on-start special case.
-
-The command registry itself is no longer an open refactor: commands already
-dispatch through their definitions and `advanceStep` is only a small guard.
-
----
-
-## 2. DXF interoperability
+## 1. DXF interoperability
 
 ASCII DXF import and export both exist. Export covers current 2D entities,
 layers, colours, line types and line weights; dimensions are decomposed into
@@ -46,9 +17,9 @@ ordinary drawing geometry because native DXF dimensions require block records.
 
 | Entity or fidelity item | Remaining work | Effort |
 |---|---|---|
+| **POINT** | Add a bare point entity, picking, snaps, properties and rendering. | Small |
 | **INSERT / blocks** | Add block definitions plus transformed references to `Document`. This is the largest real-world import gap. | Large |
 | **HATCH** | Add a filled/boundary-path entity and renderer support. Reuse the existing face-region loop model where practical. | Large |
-| **POINT** | Add a bare point entity, picking, snaps, properties and rendering. | Small |
 | **3DFACE** | Needs a non-watertight surface object; importing it as a `Solid` would make booleans falsely appear supported. | Medium |
 | **Ordinate dimensions** | Add X/Y/Z ordinate geometry before mapping DXF type 6. Angular dimensions already exist; native DXF types 2 and 5 still need import mapping. | Medium |
 | **DIMSTYLE fidelity** | Read arrow size, text height, precision and other style data instead of applying the current document style. | Medium |
@@ -72,7 +43,7 @@ with block support rather than creating an export-only block model.
 
 ---
 
-## 3. Further solid-modelling features
+## 2. Further solid-modelling features
 
 These can now build on the shared planar-face and boundary-loop representation.
 
@@ -108,7 +79,7 @@ cut with caps and section edges, not a modelling operation like SLICE.
 
 ---
 
-## 4. Entity extensibility and drafting workflow
+## 3. Entity extensibility and drafting workflow
 
 Adding an entity type still touches many switches and `if (entity.type === …)`
 chains. Exhaustive core switches catch some omissions, but grips, snaps and 3D
@@ -138,7 +109,7 @@ with a file-format migration.
 
 ---
 
-## 5. Performance — measure before changing architecture
+## 4. Performance — measure before changing architecture
 
 The reported orbit stutter remains unconfirmed. Establish first whether it is
 sphere/high-triangle specific or affects simple boxes too, using a three-second
@@ -160,7 +131,7 @@ until real models show longer blocking operations.
 
 ---
 
-## 6. Project format and robustness before release
+## 5. Project format and robustness before release
 
 Do this before the first release or as soon as drawings become worth preserving,
 whichever comes first. Parametric `Solid.feature` data is part of the native
@@ -175,7 +146,7 @@ model and must survive migrations.
 
 ---
 
-## 7. Output, text and dimensions
+## 6. Output, text and dimensions
 
 ### G-code
 
@@ -204,7 +175,7 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ---
 
-## 8. Manifold dependency and CSP
+## 7. Manifold dependency and CSP
 
 The browser CSP still needs `unsafe-eval` because manifold 2.5.1's Emscripten
 embind creates invokers with `new Function`. Tightening the policy without
@@ -217,11 +188,19 @@ job: newer releases have API differences and a smaller WASM payload.
 
 ---
 
-## 9. Housekeeping
+## 8. Housekeeping
 
 - no ESLint, Prettier or CI; tests and `tsc` are run manually;
 - `noUnusedLocals` and `noUnusedParameters` are disabled;
 - no README;
+- panel controllers still lack a shared `Panel { isOpen, render() }` contract;
+- global "click outside" listeners are not centralised;
+- the unused `data-view-action` listener remains after the zoom flyout replaced it;
+- `ActiveCommand.data` is still `Record<string, unknown>` instead of
+  command-specific typed state;
+- repeating command steps are encoded indirectly instead of having an explicit
+  `repeat` property;
+- JOIN still needs its documented complete-on-start special case;
 - `Document` exposes mutable public fields and can bypass command history;
 - `Document.getEntity` is a linear scan;
 - layers are parallel arrays/maps/sets maintained by convention;

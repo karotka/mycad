@@ -232,47 +232,79 @@ async function modifyCircularSolidEdge(
   const capNormal = normals[capIndex];
   const sideNormal = normals[1 - capIndex];
   const capAlignment = Math.abs(dot(capNormal, axis));
+  const sideAxial = dot(sideNormal, axis);
   const sideRadialSign = Math.sign(dot(sideNormal, radial));
-  if (capAlignment < 0.95 || sideRadialSign === 0 || Math.abs(dot(sideNormal, axis)) > 0.2) return null;
+  if (capAlignment < 0.95 || sideRadialSign === 0 || Math.abs(sideAxial) >= 0.9999) return null;
 
-  // Use the analytic radial normal instead of a single polygon facet normal.
-  // This makes every angular copy of the profile identical and also handles
-  // inner circular rims, whose outward side normal points towards the axis.
-  const radialNormal = {
-    x: radial.x * sideRadialSign,
-    y: radial.y * sideRadialSign,
-    z: radial.z * sideRadialSign,
+  // A mesh facet normal points through the middle of its polygon segment, not
+  // through the selected endpoint. Rebuild the analytic meridian normal from
+  // its axial component and radial sign. This preserves a cone's slope while
+  // making every revolved copy identical; a negative radial sign denotes the
+  // inner wall of a hole.
+  const sideRadial = Math.sqrt(Math.max(0, 1 - sideAxial * sideAxial));
+  const analyticSideNormal = {
+    x: radial.x * sideRadialSign * sideRadial + axis.x * sideAxial,
+    y: radial.y * sideRadialSign * sideRadial + axis.y * sideAxial,
+    z: radial.z * sideRadialSign * sideRadial + axis.z * sideAxial,
   };
+  const supportDot = Math.max(-1, Math.min(1, dot(capNormal, analyticSideNormal)));
+  const supportAngle = Math.acos(supportDot);
+  const supportSin = Math.sin(supportAngle);
+  if (supportAngle < 1e-4 || supportAngle > Math.PI - 1e-4 || supportSin < 1e-8) return null;
+
   const corner = { ...edge.start };
   const boundary: Vec3[] = [];
   if (!rounded) {
+    const directionOnCap = {
+      x: (capNormal.x * supportDot - analyticSideNormal.x) / supportSin,
+      y: (capNormal.y * supportDot - analyticSideNormal.y) / supportSin,
+      z: (capNormal.z * supportDot - analyticSideNormal.z) / supportSin,
+    };
+    const directionOnSide = {
+      x: (analyticSideNormal.x * supportDot - capNormal.x) / supportSin,
+      y: (analyticSideNormal.y * supportDot - capNormal.y) / supportSin,
+      z: (analyticSideNormal.z * supportDot - capNormal.z) / supportSin,
+    };
     boundary.push(
       {
-        x: corner.x - radialNormal.x * amount,
-        y: corner.y - radialNormal.y * amount,
-        z: corner.z - radialNormal.z * amount,
+        x: corner.x + directionOnCap.x * amount,
+        y: corner.y + directionOnCap.y * amount,
+        z: corner.z + directionOnCap.z * amount,
       },
       {
-        x: corner.x - capNormal.x * amount2,
-        y: corner.y - capNormal.y * amount2,
-        z: corner.z - capNormal.z * amount2,
+        x: corner.x + directionOnSide.x * amount2,
+        y: corner.y + directionOnSide.y * amount2,
+        z: corner.z + directionOnSide.z * amount2,
       },
     );
   } else {
+    const bisectorLength = Math.hypot(
+      capNormal.x + analyticSideNormal.x,
+      capNormal.y + analyticSideNormal.y,
+      capNormal.z + analyticSideNormal.z,
+    );
+    if (bisectorLength < 1e-8) return null;
+    const centerDistance = amount / Math.cos(supportAngle / 2);
     const center = {
-      x: corner.x - (radialNormal.x + capNormal.x) * amount,
-      y: corner.y - (radialNormal.y + capNormal.y) * amount,
-      z: corner.z - (radialNormal.z + capNormal.z) * amount,
+      x: corner.x - (capNormal.x + analyticSideNormal.x) / bisectorLength * centerDistance,
+      y: corner.y - (capNormal.y + analyticSideNormal.y) / bisectorLength * centerDistance,
+      z: corner.z - (capNormal.z + analyticSideNormal.z) / bisectorLength * centerDistance,
     };
     const arcSegments = 12;
     for (let index = 0; index <= arcSegments; index++) {
-      const angle = index / arcSegments * Math.PI / 2;
-      const capWeight = Math.cos(angle);
-      const radialWeight = Math.sin(angle);
+      const t = index / arcSegments;
+      const capWeight = Math.sin((1 - t) * supportAngle) / supportSin;
+      const sideWeight = Math.sin(t * supportAngle) / supportSin;
+      const normal = normalize({
+        x: capNormal.x * capWeight + analyticSideNormal.x * sideWeight,
+        y: capNormal.y * capWeight + analyticSideNormal.y * sideWeight,
+        z: capNormal.z * capWeight + analyticSideNormal.z * sideWeight,
+      });
+      if (!normal) return null;
       boundary.push({
-        x: center.x + (capNormal.x * capWeight + radialNormal.x * radialWeight) * amount,
-        y: center.y + (capNormal.y * capWeight + radialNormal.y * radialWeight) * amount,
-        z: center.z + (capNormal.z * capWeight + radialNormal.z * radialWeight) * amount,
+        x: center.x + normal.x * amount,
+        y: center.y + normal.y * amount,
+        z: center.z + normal.z * amount,
       });
     }
   }
@@ -286,14 +318,14 @@ async function modifyCircularSolidEdge(
   const section: Vec3[] = [
     ...boundary,
     {
-      x: lastBoundary.x + radialNormal.x * extension,
-      y: lastBoundary.y + radialNormal.y * extension,
-      z: lastBoundary.z + radialNormal.z * extension,
+      x: lastBoundary.x + analyticSideNormal.x * extension,
+      y: lastBoundary.y + analyticSideNormal.y * extension,
+      z: lastBoundary.z + analyticSideNormal.z * extension,
     },
     {
-      x: corner.x + (radialNormal.x + capNormal.x) * extension,
-      y: corner.y + (radialNormal.y + capNormal.y) * extension,
-      z: corner.z + (radialNormal.z + capNormal.z) * extension,
+      x: corner.x + (analyticSideNormal.x + capNormal.x) * extension,
+      y: corner.y + (analyticSideNormal.y + capNormal.y) * extension,
+      z: corner.z + (analyticSideNormal.z + capNormal.z) * extension,
     },
     {
       x: firstBoundary.x + capNormal.x * extension,

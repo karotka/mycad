@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../entities/types';
-import { createBoxMesh, createCylinderMesh, createTorusMesh, deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
+import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh, createTorusMesh, deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
 import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from './SolidTopology';
 import { Document } from '../Document';
 import { localToWorld } from '../../math/workplane';
@@ -366,6 +366,56 @@ describe('parametric solid regeneration', () => {
       // The analytic circular operation moves the complete rim to radius 4.
       expect(Math.max(...targetCapRadii)).toBeCloseTo(4, 3);
       expect(Math.max(...oppositeCapRadii)).toBeCloseTo(5, 3);
+    }
+  });
+
+  it('chamfers and fillets both complete concentric rims of a hollow cone', async () => {
+    const mesh = (await booleanSubtract(
+      createConeMesh(6, 10),
+      createConeMesh(3, 10),
+    ))!;
+    const circles = solidCircularEdges(mesh)
+      .filter((circle) => Math.abs(circle.center.z) < 1e-4)
+      .sort((first, second) => first.radius - second.radius);
+    expect(circles.map((circle) => circle.radius)).toEqual([
+      expect.closeTo(3, 3),
+      expect.closeTo(6, 3),
+    ]);
+
+    for (const circle of circles) {
+      const otherRadius = circles.find((candidate) => candidate !== circle)!.radius;
+      const edge = {
+        solidId: 'hollow-cone',
+        start: circle.points[0],
+        end: circle.points[1],
+        normalA: circle.normal,
+        normalB: circle.normal,
+        circular: {
+          center: circle.center,
+          normal: circle.normal,
+          radius: circle.radius,
+          segments: circle.points.length,
+        },
+      };
+      for (const rounded of [false, true]) {
+        const result = await modifySolidEdge(mesh, edge, 0.3, rounded, 0.3);
+        const label = `${rounded ? 'fillet' : 'chamfer'} R${circle.radius.toFixed(1)}`;
+
+        expect(result, label).not.toBeNull();
+        expect(Math.abs(signedVolume(result!)), label).toBeLessThan(Math.abs(signedVolume(mesh)));
+        let originalRimVertices = 0;
+        let untouchedOtherRimVertices = 0;
+        for (let index = 0; index < result!.positions.length; index += 3) {
+          const z = result!.positions[index + 2];
+          if (Math.abs(z) > 1e-4) continue;
+          const radius = Math.hypot(result!.positions[index], result!.positions[index + 1]);
+          if (Math.abs(radius - circle.radius) < 1e-3) originalRimVertices++;
+          if (Math.abs(radius - otherRadius) < 1e-3) untouchedOtherRimVertices++;
+        }
+        // A local one-segment cut leaves almost the complete original ring.
+        expect(originalRimVertices, label).toBe(0);
+        expect(untouchedOtherRimVertices, label).toBeGreaterThanOrEqual(60);
+      }
     }
   });
 

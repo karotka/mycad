@@ -662,7 +662,15 @@ export function solidCircularEdges(mesh: SolidMesh): SolidCircularEdge[] {
     const planar = points.every((point) => Math.abs((point.x - centre.x) * nx + (point.y - centre.y) * ny + (point.z - centre.z) * nz) <= planarTolerance);
     const round = radii.every((value) => Math.abs(value - radius) <= radiusTolerance);
     if (!planar || !round) continue;
-    if (!circles.some((other) => Math.hypot(other.center.x - centre.x, other.center.y - centre.y, other.center.z - centre.z) <= planarTolerance)) {
+    // Concentric loops are distinct feature edges: an annular cap has an outer
+    // rim and an inner hole rim with exactly the same centre. Comparing only
+    // centres discarded the inner one, so modelling commands fell back to a
+    // single tessellation segment. A duplicate must agree in radius as well.
+    if (!circles.some((other) => {
+      const duplicateTolerance = Math.max(1e-6, radius * 1e-5, other.radius * 1e-5);
+      return Math.hypot(other.center.x - centre.x, other.center.y - centre.y, other.center.z - centre.z) <= duplicateTolerance
+        && Math.abs(other.radius - radius) <= duplicateTolerance;
+    })) {
       circles.push({
         center: centre,
         normal: { x: nx, y: ny, z: nz },
