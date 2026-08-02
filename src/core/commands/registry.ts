@@ -7,7 +7,7 @@
  * itself is inferred from it, so adding an entry here is what makes a command
  * exist; forgetting to register one is a type error rather than a silent gap.
  */
-import { isLineLikeEntity, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
+import { isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
 import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
@@ -17,6 +17,7 @@ import { measureAngle, measureDistance, measureRadius, setWorkPlane } from './st
 import { explodeObjects } from './steps/explode';
 import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
+import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
 import { sliceSolids } from './steps/slice';
@@ -208,25 +209,30 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },
-  { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend a line to a boundary', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select boundary line or polyline:' }, { kind: 'entity', label: 'Select line or polyline to extend:' }, { kind: 'done' }],
-    data: () => ({ boundary: undefined }),
-    onStart: preselectOne('boundary', isLineLikeEntity, 'Boundary line or polyline preselected.') },
-  { name: 'TRIM', aliases: ['TR', 'TRIM'], execute: trimEntity, help: 'trim a line at a cutting edge', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select cutting line or polyline:' }, { kind: 'entity', label: 'Select line or polyline to trim:' }, { kind: 'done' }],
-    data: () => ({ boundary: undefined }),
-    onStart: preselectOne('boundary', isLineLikeEntity, 'Cutting line or polyline preselected.') },
+  { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend lines to boundaries', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select boundary edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to extend (Enter to finish):', optional: true }, { kind: 'done' }],
+    data: () => ({}) },
+  { name: 'TRIM', aliases: ['TR', 'TRIM'], execute: trimEntity, help: 'trim objects at cutting edges', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select cutting edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to trim (Enter to finish):', optional: true }, { kind: 'done' }],
+    data: () => ({}) },
   { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], execute: offsetEntity, help: 'create an equidistant parallel line', suggest: true,
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
-  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge with two face distances', suggest: true,
+  { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge, or the corner between two 2D lines', suggest: true,
     steps: [
-      { kind: 'edge', label: 'Select solid edge to chamfer:' },
+      { kind: 'entity', label: 'Select solid edge, or first 2D side (line/polyline) to chamfer:', accepts: ['entity', 'edge'] },
+      { kind: 'entity', label: 'Select second 2D side (line or polyline):' },
       { kind: 'number-pair', label: 'Enter chamfer distance', remember: true, defaultValue: [1, 1] },
       { kind: 'done' },
     ] },
-  { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge', suggest: true, steps: [{ kind: 'edge', label: 'Select solid edge to fillet:' }, { kind: 'number', label: 'Enter fillet radius:', remember: true }, { kind: 'done' }] },
+  { name: 'FILLET', aliases: ['F', 'FILLET'], execute: modifyEdgeStep, help: 'round a solid edge, or the corner between two 2D lines', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select solid edge, or first 2D side (line/polyline) to fillet:', accepts: ['entity', 'edge'] },
+      { kind: 'entity', label: 'Select second 2D side (line or polyline):' },
+      { kind: 'number', label: 'Enter fillet radius:', remember: true },
+      { kind: 'done' },
+    ] },
   { name: 'DELETEFACE', aliases: ['DF', 'DELETEFACE'], execute: deleteFaceStep, help: 'delete a planar solid face and heal the body', suggest: true,
     steps: [{ kind: 'solid', label: 'Select planar solid face to delete:' }, { kind: 'done' }] },
   { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
@@ -267,6 +273,13 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ solids: [] }) },
+  { name: 'THREAD', aliases: ['THR', 'THREAD'], execute: createThread, help: 'add a cosmetic thread to a hole or shaft', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select a hole or shaft edge (or a circle) to thread:', accepts: ['entity', 'edge'] },
+      { kind: 'text', label: 'Internal or external? I/E [I]:', optional: true },
+      { kind: 'text', label: 'Thread size, e.g. M6 (Enter = suggested):', optional: true },
+      { kind: 'done' },
+    ] },
   { name: 'SLICE', aliases: ['SL', 'SLICE'], execute: sliceSolids, help: 'split solids with a plane', suggest: true, pointInput: true,
     steps: [
       { kind: 'solid', label: 'Select solid(s) to slice, then press Enter:', multi: true },

@@ -147,7 +147,14 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     const face = active.data.face as SolidFaceSelection | undefined;
     const solid = doc.getSolid(active.data.solidId as string);
     if (!face?.region || !solid) return null;
-    const delta = renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
+    // A vertex under the cursor snaps the pull to exactly its depth along the
+    // face normal, so a face can be pushed to existing geometry rather than to a
+    // number that is nearly it — the same object snap EXTRUDE already honours. A
+    // vertex on the face itself reads as zero depth and is ignored below.
+    const snap = nearestMeasurementPoint(event);
+    const delta = snap
+      ? worldToLocal(face.region.plane, snap).z
+      : renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
     if (delta === null || Math.abs(delta) < 1e-6) return null;
     previewController.setPreview({ type: 'presspull-region', data: { region: face.region, distance: delta } });
     return { delta };

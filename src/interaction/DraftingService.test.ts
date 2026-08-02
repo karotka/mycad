@@ -22,8 +22,10 @@ describe('DraftingService', () => {
 });
 
 describe('resolveDraftingPoint', () => {
-  const ortho = () => { const s = defaultDraftingSettings(); s.orthoEnabled = true; return s; };
-  const free = () => defaultDraftingSettings();
+  // Object snap tracking is off by default now; these anchor-path cases opt in.
+  const tracked = (settings: ReturnType<typeof defaultDraftingSettings>) => { settings.objectSnapTrackingEnabled = true; return settings; };
+  const ortho = () => tracked((() => { const s = defaultDraftingSettings(); s.orthoEnabled = true; return s; })());
+  const free = () => tracked(defaultDraftingSettings());
   const base = { x: 0, y: 0 };
   const anchor = { x: 5, y: 40 };
 
@@ -105,8 +107,8 @@ describe('object snap tracking can be switched off (F11)', () => {
     return settings;
   };
 
-  it('is on by default, so an acquired point still lays its path', () => {
-    expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(true);
+  it('lays an acquired point\'s path when tracking is turned on', () => {
+    expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(false);
     const resolved = resolveDraftingPoint({
       cursor: { x: 20, y: 40.3 }, base, anchor, snap: null, settings: withTracking(true), captureDistance: 1,
     });

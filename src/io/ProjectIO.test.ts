@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { WORLD_WORK_PLANE } from '../math/workplane';
-import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature } from '../core/entities/types';
+import { resetIdCounter, type EdgeModificationFeature, type PressPullFeature, type PrimitiveFeature } from '../core/entities/types';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
@@ -21,6 +21,31 @@ describe('ProjectIO', () => {
     expect(saved.settings).toMatchObject({ gridSize: 1, gridVisible: true, snapSize: 0.5 });
     expect(saved.entities[0].type).toBe('rectangle');
     expect(saved.solids[0].mesh.positions).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 1]);
+  });
+
+  it('advances the id counter on load so a new solid cannot overwrite a loaded one', () => {
+    resetIdCounter();
+    const source = new Document();
+    const loaded = source.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'Loaded', 1, []
+    );
+    source.addSolid(loaded);
+    const json = serializeProject(source);
+
+    // A fresh session restarts the low counter, but the file's ids are spent.
+    resetIdCounter();
+    const target = new Document();
+    loadProject(target, json);
+    const fresh = target.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'Fresh', 1, []
+    );
+    target.addSolid(fresh);
+
+    expect(fresh.id).not.toBe(loaded.id);
+    expect(target.solids).toHaveLength(2);
+    expect(target.solids.map((solid) => solid.id)).toContain(loaded.id);
   });
 
   it('exports one STL facet for one indexed triangle', () => {
@@ -234,6 +259,7 @@ describe('ProjectIO', () => {
       frameOriginX: -10,
       frameOriginY: 20,
       segments: 128,
+      holeMode: 'drill',
     };
     const target = new Document();
 
@@ -262,6 +288,7 @@ describe('ProjectIO', () => {
       frameOriginX: 0,
       frameOriginY: 0,
       segments: 64,
+      holeMode: 'contour',
     });
   });
 
@@ -285,6 +312,7 @@ describe('ProjectIO', () => {
       frameOriginX: 0,
       frameOriginY: 0,
       segments: 32,
+      holeMode: 'contour',
     });
   });
 
@@ -299,7 +327,7 @@ describe('ProjectIO', () => {
     loadProject(target, JSON.stringify(saved));
 
     expect(target.drafting.orthoEnabled).toBe(false);
-    expect(target.drafting.objectSnapModes).toEqual(['end', 'center', 'intersection']);
+    expect(target.drafting.objectSnapModes).toEqual(['end', 'middle', 'center', 'intersection', 'nearest']);
     expect(target.dimensionStyle.precision).toBe(2);
   });
 

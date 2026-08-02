@@ -4,6 +4,7 @@ import { AddEntitiesEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
+import { importExcellon } from '../io/ExcellonImport';
 import { exportAsciiDxf } from '../io/DxfExport';
 import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
@@ -32,7 +33,9 @@ export class ProjectController {
     private readonly doc: Document,
     private readonly history: CommandHistory,
     private readonly callbacks: ProjectControllerCallbacks,
-  ) {}
+  ) {
+    this.updateTitle();
+  }
 
   async saveAs(): Promise<void> {
     try {
@@ -91,6 +94,7 @@ export class ProjectController {
     this.history.clear();
     this.currentPath = undefined;
     this.currentName = 'model.mycad';
+    this.updateTitle();
     this.callbacks.resetView();
     this.callbacks.clearLog();
     this.callbacks.log('New project created.');
@@ -152,13 +156,47 @@ export class ProjectController {
     } catch (error) { this.report('DXF import failed', error); }
   }
 
+  async importExcellon(): Promise<void> {
+    try {
+      const file = await this.pickFile('.drl,.exc,.txt,.nc,application/octet-stream', 'Excellon drill', 'drl');
+      if (!file) return;
+      if (!file.content) throw new Error('The file is empty.');
+      this.callbacks.cancelInteraction();
+      const result = importExcellon(this.doc, file.content);
+      if (result.entities.length === 0) throw new Error('No drill hits or slots were found.');
+      result.layers.forEach((layer) => {
+        if (!this.doc.layers.includes(layer)) this.doc.layers.push(layer);
+        this.doc.layerAci[layer] ??= result.layerAci[layer] ?? ACI_WHITE;
+      });
+      this.doc.viewMode = '2d';
+      this.doc.transaction(() => {
+        this.doc.clearSelection();
+        this.doc.recolour();
+        this.history.execute(new AddEntitiesEdit('Import Excellon', result.entities));
+      });
+      this.callbacks.zoomExtents();
+      this.callbacks.renderLayers();
+      const slotNote = result.slots > 0 ? `, ${result.slots} slot(s)` : '';
+      this.callbacks.log(`Imported Excellon: ${file.name} · ${result.holes} hole(s)${slotNote} · ${result.unit}, format ${result.format}.`);
+      // Name the drill sizes actually used, so a mis-decoded diameter is visible.
+      const sizes = Object.entries(result.hitsByTool)
+        .sort((a, b) => b[1] - a[1])
+        .map(([tool, count]) => `T${tool} ⌀${(result.tools[tool] ?? 0).toFixed(2)}mm ×${count}`)
+        .join(', ');
+      if (sizes) this.callbacks.log(`Tools: ${sizes}.`);
+      const skipped = Object.entries(result.skippedCommands).map(([code, count]) => `${code}×${count}`).join(', ');
+      if (skipped) this.callbacks.log(`Not imported: ${skipped}.`);
+      this.callbacks.redraw();
+    } catch (error) { this.report('Excellon import failed', error); }
+  }
+
   async exportStl(solids: readonly Solid[]): Promise<void> {
     if (solids.length === 0) {
       this.callbacks.log('STL export: no 3D solids were selected.');
       return;
     }
     this.callbacks.log(`STL: ${solids.length} selected solid(s).`);
-    await this.saveText(exportAsciiStl(solids), 'model.stl', 'STL model', 'stl');
+    await this.saveText(exportAsciiStl(solids), this.exportDefaultPath('stl'), 'STL model', 'stl');
   }
 
   async exportDxf(): Promise<void> {
@@ -171,7 +209,7 @@ export class ProjectController {
       ? ` (${result.dimensionsDecomposed} dimension(s) exploded to lines and text)`
       : '';
     this.callbacks.log(`DXF: ${result.entityCount} object(s)${note}.`);
-    await this.saveText(result.dxf, 'model.dxf', 'AutoCAD DXF', 'dxf');
+    await this.saveText(result.dxf, this.exportDefaultPath('dxf'), 'AutoCAD DXF', 'dxf');
   }
 
   async exportGcode(): Promise<void> {
@@ -188,7 +226,7 @@ export class ProjectController {
     if (result.offPlane > 0) {
       this.callbacks.log(`${result.offPlane} object(s) skipped: they do not lie on the world XY plane, and plotter output contains XY paths only.`);
     }
-    await this.saveText(result.gcode, 'model.gcode', 'G-code', 'gcode');
+    await this.saveText(result.gcode, this.exportDefaultPath('gcode'), 'G-code', 'gcode');
   }
 
   private async pickFile(accept: string, name: string, extension: string): Promise<{ content: string; name: string; path?: string } | undefined> {
@@ -225,12 +263,38 @@ export class ProjectController {
   private setCurrentFile(filePathOrName: string): void {
     this.currentPath = filePathOrName.includes('/') || filePathOrName.includes('\\') ? filePathOrName : undefined;
     this.currentName = this.basename(filePathOrName);
+    this.updateTitle();
   }
 
   private basename(filePathOrName: string): string {
     const normalized = filePathOrName.replaceAll('\\', '/');
     const name = normalized.split('/').filter(Boolean).pop();
     return name && name.trim() ? name : 'model.mycad';
+  }
+
+  /** The open file's name in the window title, so it is clear what is being edited. */
+  private updateTitle(): void {
+    const title = `${this.currentName} — MyCAD`;
+    if (typeof window !== 'undefined' && window.mycadAPI?.setTitle) {
+      void window.mycadAPI.setTitle(title);
+      return;
+    }
+    if (typeof document !== 'undefined') document.title = title;
+  }
+
+  /**
+   * An export defaults to the project's own name (and folder, when known) with
+   * the export's extension: saving a `bracket.mycad` offers `bracket.stl`, not a
+   * generic `model.stl` that buries every export under the same filename.
+   */
+  private exportDefaultPath(extension: string): string {
+    const source = (this.currentPath ?? this.currentName).replaceAll('\\', '/');
+    const slash = source.lastIndexOf('/');
+    const dir = slash >= 0 ? source.slice(0, slash + 1) : '';
+    const base = source.slice(slash + 1);
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    return `${dir}${stem || 'model'}.${extension}`;
   }
 
   private report(prefix: string, error: unknown): void {

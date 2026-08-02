@@ -39,7 +39,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -67,11 +67,17 @@ function buildMenu(win: BrowserWindow): void {
       submenu: [
         { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: send('new') },
         { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: send('open') },
-        { label: 'Import DXF…', click: send('import-dxf') },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
         { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: send('save-as') },
         { type: 'separator' },
+        {
+          label: 'Import',
+          submenu: [
+            { label: 'DXF…', click: send('import-dxf') },
+            { label: 'Excellon Drill…', click: send('import-excellon') },
+          ],
+        },
         {
           label: 'Export',
           submenu: [
@@ -151,6 +157,12 @@ ipcMain.handle('save-file', async (event, options: {
   await fs.writeFile(result.filePath, options.content, 'utf8');
   writableFiles.add(result.filePath);
   return { canceled: false, filePath: result.filePath };
+});
+
+ipcMain.handle('set-title', (event, title: unknown) => {
+  assertTrustedSender(event);
+  const window = BrowserWindow.fromWebContents(event.sender);
+  window?.setTitle(typeof title === 'string' && title.trim() ? title : APP_NAME);
 });
 
 ipcMain.handle('open-file', async (event, options: {

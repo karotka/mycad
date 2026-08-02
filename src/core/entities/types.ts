@@ -346,15 +346,21 @@ export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): n
   return outsideX > outsideY ? Math.PI / 2 : 0;
 }
 
+/** The Z a point carries off its work plane, if any. */
+const pointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
+/** Attaches Z only when there is one, so a plain 2D point stays plain. */
+const withZ = (point: Vec2, z: number | undefined): Vec2 => (z === undefined ? point : { ...point, z } as Vec2);
+
 /** Samples a rotated ellipse; `segments` points around it, first point repeated last. */
 export function ellipsePoints(e: EllipseEntity, segments = 64): Vec2[] {
   const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
+  const z = pointZ(e.center);
   const points: Vec2[] = [];
   for (let index = 0; index <= segments; index++) {
     const t = (Math.PI * 2 * index) / segments;
     const x = Math.cos(t) * e.radiusX;
     const y = Math.sin(t) * e.radiusY;
-    points.push({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos });
+    points.push(withZ({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos }, z));
   }
   return points;
 }
@@ -362,20 +368,30 @@ export function ellipsePoints(e: EllipseEntity, segments = 64): Vec2[] {
 /** The four axis endpoints, in world space — the ellipse's own quadrant points. */
 export function ellipseAxisPoints(e: EllipseEntity): Vec2[] {
   const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
-  const at = (x: number, y: number): Vec2 => ({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos });
+  const z = pointZ(e.center);
+  const at = (x: number, y: number): Vec2 => withZ({ x: e.center.x + x * cos - y * sin, y: e.center.y + x * sin + y * cos }, z);
   return [at(e.radiusX, 0), at(0, e.radiusY), at(-e.radiusX, 0), at(0, -e.radiusY)];
 }
 
 export function curvePoints(e: ArcEntity | BezierEntity, segments = 64): Vec2[] {
   const points: Vec2[] = [];
+  // The reference point may sit off the work plane (drawn in another UCS); carry
+  // its Z so the sampled curve keeps its depth for picking, grips and drawing.
+  const arcZ = e.type === 'arc' ? pointZ(e.center) : undefined;
+  const bz = e.type === 'bezier'
+    ? [pointZ(e.start), pointZ(e.control1), pointZ(e.control2), pointZ(e.end)]
+    : null;
+  const bezierHasZ = bz ? bz.some((z) => z !== undefined) : false;
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
     if (e.type === 'arc') {
       const a = e.startAngle + e.sweepAngle * t;
-      points.push({ x: e.center.x + Math.cos(a) * e.radius, y: e.center.y + Math.sin(a) * e.radius });
+      points.push(withZ({ x: e.center.x + Math.cos(a) * e.radius, y: e.center.y + Math.sin(a) * e.radius }, arcZ));
     } else {
       const u = 1 - t;
-      points.push({ x: u ** 3 * e.start.x + 3 * u ** 2 * t * e.control1.x + 3 * u * t ** 2 * e.control2.x + t ** 3 * e.end.x, y: u ** 3 * e.start.y + 3 * u ** 2 * t * e.control1.y + 3 * u * t ** 2 * e.control2.y + t ** 3 * e.end.y });
+      const point: Vec2 = { x: u ** 3 * e.start.x + 3 * u ** 2 * t * e.control1.x + 3 * u * t ** 2 * e.control2.x + t ** 3 * e.end.x, y: u ** 3 * e.start.y + 3 * u ** 2 * t * e.control1.y + 3 * u * t ** 2 * e.control2.y + t ** 3 * e.end.y };
+      if (bezierHasZ) (point as Vec2 & { z: number }).z = u ** 3 * (bz![0] ?? 0) + 3 * u ** 2 * t * (bz![1] ?? 0) + 3 * u * t ** 2 * (bz![2] ?? 0) + t ** 3 * (bz![3] ?? 0);
+      points.push(point);
     }
   }
   return points;
@@ -538,6 +554,21 @@ export function genId(prefix = 'e'): string {
 
 export function resetIdCounter(): void {
   nextId = 1;
+}
+
+/**
+ * Advance the shared counter past every `prefix_N` id in `ids`. Ids minted after
+ * a project loads must never collide with the ones that came from the file:
+ * `replaceSolid`/`replaceEntity` upsert by id, so a reused id silently overwrites
+ * a loaded object (a new solid could make a loaded one vanish).
+ */
+export function ensureIdAbove(ids: Iterable<string>): void {
+  for (const id of ids) {
+    const match = /_(\d+)$/.exec(id);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value >= nextId) nextId = value + 1;
+  }
 }
 
 export function cloneEntity(e: Entity): Entity {

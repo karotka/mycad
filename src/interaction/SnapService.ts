@@ -61,6 +61,9 @@ export function measurementCandidates(doc: Document): Vec3[] {
 
 export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, excludedId?: string | null, reference?: Vec3 | null): SnapCandidate[] {
   const tag = (points: Vec3[]): SnapCandidate[] => points.map((world) => ({ world, mode }));
+  // "Nearest" is not a set of discrete points but the point under the cursor on
+  // an edge, so it is resolved separately in nearestEdgeWorldPoint.
+  if (mode === 'nearest') return [];
   if (mode === 'intersection' || mode === 'apparent-intersection') return tag(intersectionCandidates(doc, excludedId));
   if (mode === 'perpendicular') return tag(perpendicularCandidates(doc, reference, excludedId));
   const candidates: Vec3[] = [];
@@ -96,6 +99,66 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
     }
   }
   return tag(candidates);
+}
+
+/** Closest point on segment [a,b] to the infinite ray (origin, direction). */
+function closestPointOnSegmentToRay(a: Vec3, b: Vec3, origin: Vec3, direction: Vec3): Vec3 {
+  const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+  const wx = a.x - origin.x, wy = a.y - origin.y, wz = a.z - origin.z;
+  const uu = ux * ux + uy * uy + uz * uz;
+  const uv = ux * direction.x + uy * direction.y + uz * direction.z;
+  const vv = direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
+  const uw = ux * wx + uy * wy + uz * wz;
+  const vw = direction.x * wx + direction.y * wy + direction.z * wz;
+  const denominator = uu * vv - uv * uv;
+  let s = Math.abs(denominator) < 1e-9 ? 0 : (uv * vw - vv * uw) / denominator;
+  s = Math.max(0, Math.min(1, s));
+  return { x: a.x + ux * s, y: a.y + uy * s, z: a.z + uz * s };
+}
+
+/**
+ * The point on the nearest edge under the cursor, in world space — the "Nearest"
+ * object snap. Edges come from solid feature creases and from 2D entities; the
+ * returned point keeps its true depth, so a line ended on it does not drop onto
+ * the UCS/WCS plane. The point is the closest one on the edge to the cursor ray
+ * (not a screen interpolation, which perspective would throw off), accepted only
+ * when its projection lands within the aperture of the cursor.
+ */
+export function nearestEdgeWorldPoint(
+  doc: Document,
+  cursor: Vec2,
+  ray: { origin: Vec3; direction: Vec3 },
+  project: (point: Vec3) => Vec2 | null,
+  pixelTolerance: number,
+  excludedId?: string | null,
+): Vec3 | null {
+  let bestWorld: Vec3 | null = null;
+  let bestDistance = Infinity;
+  const consider = (a: Vec3, b: Vec3): void => {
+    const point = closestPointOnSegmentToRay(a, b, ray.origin, ray.direction);
+    const projected = project(point);
+    if (!projected) return;
+    const distance = Math.hypot(projected.x - cursor.x, projected.y - cursor.y);
+    if (distance > pixelTolerance || distance >= bestDistance) return;
+    bestDistance = distance;
+    bestWorld = point;
+  };
+  for (const solid of doc.solids) {
+    if (solid.id === excludedId || doc.hiddenLayers.has(solid.layer)) continue;
+    for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);
+  }
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const offset = entityPlaneOffset(entity);
+    for (const [a, b] of entitySegments(entity)) {
+      consider(
+        localToWorld(plane, a, localPointZ(a) ?? offset),
+        localToWorld(plane, b, localPointZ(b) ?? offset),
+      );
+    }
+  }
+  return bestWorld;
 }
 
 function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {

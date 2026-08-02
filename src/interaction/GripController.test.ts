@@ -52,6 +52,30 @@ describe('GripController', () => {
     expect(doc.getEntity(line.id)).toMatchObject({ start: { x: 0, y: 0 }, end: { x: 2, y: 0 } });
   });
 
+  it('keeps Z on a 3D line midpoint grip so it stays on the line', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const line = doc.createLine({ x: 0, y: 0, z: 0 } as never, { x: 4, y: 0, z: 8 } as never);
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    const active = grips.activeGrips();
+    expect(active).toHaveLength(3);
+    expect(active.find((grip) => grip.index === 2)!.point).toMatchObject({ x: 2, y: 0, z: 4 });
+  });
+
+  it('keeps Z on a circle rim grips so they stay on a circle drawn off the plane', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const circle = doc.createCircle({ x: 0, y: 0, z: 5 } as never, 2);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+    const active = grips.activeGrips();
+    expect(active).toHaveLength(5);
+    for (const grip of active) expect((grip.point as { z?: number }).z).toBe(5);
+  });
+
   it('reshapes a closed polyline by dragging any vertex grip', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

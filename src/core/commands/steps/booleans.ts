@@ -84,7 +84,9 @@ export async function unionSolids({ ctx, active, data, value }: CommandRun): Pro
     return 'advance';
   }
   ctx.log('Joining solids…');
-  const mesh = await booleanUnion(sources.map((source) => source.mesh));
+  // Fuse touching shells: two solids that share a face but no volume would
+  // otherwise union into a zero-thickness internal wall.
+  const mesh = await booleanUnion(sources.map((source) => source.mesh), true);
   if (!mesh) {
     ctx.log('Union failed.');
     return 'advance';

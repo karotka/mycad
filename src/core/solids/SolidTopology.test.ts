@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
 import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh } from './ManifoldEngine';
 import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
-import { localToWorld } from '../../math/workplane';
+import { localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
 
 describe('solid feature topology', () => {
   it('keeps box creases and discards coplanar triangle diagonals', () => {
@@ -68,6 +68,34 @@ describe('solid feature topology', () => {
     ]));
   });
 
+  it('welds a CSG seam so one flat face is not shattered into coplanar fragments', () => {
+    // Two coplanar triangles forming a square, but the shared diagonal is two
+    // separate, minutely-offset vertex copies — exactly the seam a boolean cut
+    // leaves in a float32 mesh. Index-based adjacency would read this as two
+    // faces; PRESSPULL then pulls only one triangular sliver of a flat plate.
+    const eps = 3e-4;
+    const positions = new Float32Array([
+      0, 0, 0, 2, 0, 0, 2, 2, 0,
+      eps, 0, 0, 2, 2 - eps, 0, 0, 2, 0,
+    ]);
+    const faces = solidPlanarFaces({ positions, indices: new Uint32Array([0, 1, 2, 3, 4, 5]) });
+    expect(faces).toHaveLength(1);
+    expect(faces[0].loops[0].length).toBe(4);
+  });
+
+  it('still resolves a hit that sits a hair off a large face plane, but not one genuinely off it', () => {
+    // A big merged face's plane, fitted from one triangle, leaves far points a
+    // little off it — a real hit can be ~1e-4 out, which a fixed tolerance
+    // wrongly rejected, making the whole plate unselectable.
+    const size = 50;
+    const face = {
+      triangleIndices: [], vertexIndices: [], normal: { x: 0, y: 0, z: 1 }, plane: WORLD_WORK_PLANE,
+      loops: [[{ x: -size, y: -size }, { x: size, y: -size }, { x: size, y: size }, { x: -size, y: size }]],
+    };
+    expect(planarFaceRegionAt(face, [], { x: size - 1, y: size - 1, z: 2e-4 })).not.toBeNull();
+    expect(planarFaceRegionAt(face, [], { x: 0, y: 0, z: 1 })).toBeNull();
+  });
+
   it('splits a planar box face into the two regions made by a coplanar line', () => {
     const mesh = createBoxMesh(10, 6, 4);
     const top = solidPlanarFaces(mesh).find((face) => face.normal.z > 0.9)!;
@@ -86,6 +114,38 @@ describe('solid feature topology', () => {
     expect(planarFaceRegionAt(top, [divider], { x: 0, y: 2, z: 4 })).not.toEqual(
       planarFaceRegionAt(top, [divider], { x: 0, y: -2, z: 4 }),
     );
+  });
+
+  it('splits a face by a divider that sits a hair off the plane (float32 drift)', () => {
+    const mesh = createBoxMesh(10, 6, 4);
+    const top = solidPlanarFaces(mesh).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    // The divider's plane is a touch above the face — as a line drawn on a
+    // float32 face is. The old exact 1e-5 guard dropped it and PRESSPULL then
+    // grabbed the whole face instead of one half.
+    doc.activeWorkPlane.origin.z = 4 + 1e-4;
+    const divider = doc.createLine({ x: -5, y: 0 }, { x: 5, y: 0 });
+    expect(planarFaceRegions(top, [divider])).toHaveLength(2);
+  });
+
+  it('splits a face that has a hole and gives the bore to the side it sits on', async () => {
+    const cut = (await booleanSubtract(createBoxMesh(20, 20, 10, 0, 0, 0), createCylinderMesh(1.5, 20, 5, 0, 32)))!;
+    const top = solidPlanarFaces(cut).find((face) => face.normal.z > 0.9 && Math.abs(face.plane.origin.z - 10) < 1e-2)!;
+    const doc = new Document();
+    doc.activeWorkPlane.origin.z = 10;
+    const divider = doc.createLine({ x: 0, y: -10 }, { x: 0, y: 10 }); // cuts at x = 0; the bore sits at x = +5
+    expect(planarFaceRegions(top, [divider])).toHaveLength(2);
+    expect(planarFaceRegionAt(top, [divider], { x: -5, y: 0, z: 10 })?.loops.length).toBe(1);
+    expect(planarFaceRegionAt(top, [divider], { x: 5, y: 5, z: 10 })?.loops.length).toBe(2);
+  });
+
+  it('does not split a face by a divider that runs along its edge', () => {
+    const mesh = createBoxMesh(10, 6, 4);
+    const top = solidPlanarFaces(mesh).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    doc.activeWorkPlane.origin.z = 4;
+    const onEdge = doc.createLine({ x: 5, y: -3 }, { x: 5, y: 3 }); // the +X edge of the top face
+    expect(planarFaceRegions(top, [onEdge])).toHaveLength(1);
   });
 
   it('honours endpoint Z when a WCS line visibly crosses a vertical face', () => {

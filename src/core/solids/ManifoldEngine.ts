@@ -852,12 +852,25 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
     if (!mesh) return null;
     operands.push(mesh);
   }
-  if (feature.operation === 'union') return booleanUnion(operands);
+  // Fuse touching shells, matching the UNION command — otherwise regenerating a
+  // union feature (e.g. when a later fillet rebuilds the tree) reintroduces the
+  // zero-thickness internal wall the command had dissolved.
+  if (feature.operation === 'union') return booleanUnion(operands, true);
   if (operands.length !== 2) return null;
   return booleanSubtract(operands[0], operands[1]);
 }
 
-export async function booleanUnion(solids: SolidMesh[]): Promise<SolidMesh | null> {
+/**
+ * Unions meshes. `fuseTouching` inflates each later operand a hair about its own
+ * centroid so shells that only *touch* (a shared coplanar face, no shared volume)
+ * overlap and fuse, instead of leaving a zero-thickness internal wall. Inflating
+ * — rather than translating toward the base — pushes *every* face outward, so it
+ * dissolves a coincidence on any side; a profile drawn flush against a body on
+ * two faces at once (its base and a side) would defeat a one-direction nudge. It
+ * grows geometry by a few microns, so callers that already overlap their operands
+ * (press/pull) leave it off to keep exact dimensions; the UNION command turns it on.
+ */
+export async function booleanUnion(solids: SolidMesh[], fuseTouching = false): Promise<SolidMesh | null> {
   if (solids.length === 0) return null;
   const manifold = await initManifold();
 
@@ -870,18 +883,47 @@ export async function booleanUnion(solids: SolidMesh[]): Promise<SolidMesh | nul
     return new manifold.Manifold(m);
   };
 
+  // Comfortably above the boolean's coincidence threshold (~scale·1e-5).
+  const epsilon = fuseTouching ? Math.max(1e-3, meshExtent(solids[0]) * 1e-4) : 0;
+
   let result = toManifold(solids[0]);
   for (let i = 1; i < solids.length; i++) {
-    const operand = toManifold(solids[i]);
+    const operand = toManifold(fuseTouching ? inflatedFromCentroid(solids[i], epsilon) : solids[i]);
     const next = result.add(operand);
     result.delete();
     operand.delete();
     result = next;
   }
+  let raw: SolidMesh;
   try {
-    return manifoldToMesh(manifold, result);
+    raw = manifoldToMesh(manifold, result);
   } finally {
     result.delete();
+  }
+  if (!fuseTouching) return raw;
+  // Collapse Float32 slivers the boolean may leave where two features are
+  // coincident to within Float32's resolution (e.g. a rib drawn flush whose
+  // apex lands a few microns off the body it sits on), then re-run the mesh
+  // through Manifold so the output is guaranteed valid. If welding ever breaks
+  // the topology, Manifold reports an empty solid and we keep the raw one.
+  //
+  // The weld must stay *below* `epsilon` — the deliberate fuse inflation — or it
+  // re-collapses the very overlap that dissolved a touching wall. That leaves a
+  // window (sliver-size, epsilon): it is comfortable on large parts but narrows
+  // as the body shrinks, since the sliver comes from ~Float32-scale drawing
+  // error while epsilon scales with the body. On a part small enough that the
+  // two meet, the sliver is simply left un-welded (the fillet then rounds only
+  // part of that edge) rather than risking the wall coming back.
+  const welded = weldMesh(raw, epsilon * 0.95);
+  let cleaned: InstanceType<typeof manifold.Manifold> | null = null;
+  try {
+    cleaned = toManifold(welded);
+    if (cleaned.isEmpty()) return raw;
+    return manifoldToMesh(manifold, cleaned);
+  } catch {
+    return raw;
+  } finally {
+    cleaned?.delete();
   }
 }
 
@@ -1154,6 +1196,91 @@ export async function pressPullRegion(
   } finally {
     prism.delete();
   }
+}
+
+function meshCentroid(mesh: SolidMesh): { x: number; y: number; z: number } {
+  let x = 0, y = 0, z = 0;
+  const count = Math.max(1, mesh.positions.length / 3);
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    x += mesh.positions[index]; y += mesh.positions[index + 1]; z += mesh.positions[index + 2];
+  }
+  return { x: x / count, y: y / count, z: z / count };
+}
+
+/**
+ * A copy of `mesh` grown outward by `distance`: each vertex is pushed `distance`
+ * along the ray from the centroid through it, so every face moves out ~`distance`
+ * along its normal. Used to force a touching operand to overlap its neighbour on
+ * all sides. A vertex sitting on the centroid can't be given a direction, so it
+ * stays put — harmless, as the faces around it still move.
+ */
+function inflatedFromCentroid(mesh: SolidMesh, distance: number): SolidMesh {
+  const centre = meshCentroid(mesh);
+  const positions = mesh.positions.slice();
+  for (let index = 0; index < positions.length; index += 3) {
+    const dx = positions[index] - centre.x, dy = positions[index + 1] - centre.y, dz = positions[index + 2] - centre.z;
+    const length = Math.hypot(dx, dy, dz);
+    if (length < 1e-12) continue;
+    const scale = distance / length;
+    positions[index] += dx * scale; positions[index + 1] += dy * scale; positions[index + 2] += dz * scale;
+  }
+  return { positions, indices: mesh.indices };
+}
+
+/**
+ * Collapses vertices that fall within `tolerance` of each other onto a single
+ * representative and drops the triangles that degenerate as a result. A boolean
+ * on Float32 meshes can leave a razor-thin sliver where two features meant to be
+ * coincident land a few microns apart (Float32 can't resolve them any closer);
+ * welding fuses those into one clean edge so a later fillet rounds the whole
+ * edge instead of just one side. Uses a uniform grid so it stays near-linear.
+ */
+function weldMesh(mesh: SolidMesh, tolerance: number): SolidMesh {
+  const positions = mesh.positions;
+  const count = positions.length / 3;
+  const cell = Math.max(tolerance, 1e-9);
+  const inv = 1 / cell;
+  const toleranceSq = tolerance * tolerance;
+  const buckets = new Map<string, number[]>();
+  const repX: number[] = [], repY: number[] = [], repZ: number[] = [];
+  const remap = new Uint32Array(count);
+  const key = (ix: number, iy: number, iz: number) => `${ix},${iy},${iz}`;
+  for (let v = 0; v < count; v++) {
+    const x = positions[v * 3], y = positions[v * 3 + 1], z = positions[v * 3 + 2];
+    const cx = Math.floor(x * inv), cy = Math.floor(y * inv), cz = Math.floor(z * inv);
+    let found = -1;
+    for (let dx = -1; dx <= 1 && found < 0; dx++) {
+      for (let dy = -1; dy <= 1 && found < 0; dy++) {
+        for (let dz = -1; dz <= 1 && found < 0; dz++) {
+          const bucket = buckets.get(key(cx + dx, cy + dy, cz + dz));
+          if (!bucket) continue;
+          for (const r of bucket) {
+            const ex = repX[r] - x, ey = repY[r] - y, ez = repZ[r] - z;
+            if (ex * ex + ey * ey + ez * ez <= toleranceSq) { found = r; break; }
+          }
+        }
+      }
+    }
+    if (found < 0) {
+      found = repX.length;
+      repX.push(x); repY.push(y); repZ.push(z);
+      const bucketKey = key(cx, cy, cz);
+      const existing = buckets.get(bucketKey);
+      if (existing) existing.push(found); else buckets.set(bucketKey, [found]);
+    }
+    remap[v] = found;
+  }
+  const outIndices: number[] = [];
+  const source = mesh.indices;
+  for (let o = 0; o + 2 < source.length; o += 3) {
+    const a = remap[source[o]], b = remap[source[o + 1]], c = remap[source[o + 2]];
+    if (a !== b && b !== c && a !== c) outIndices.push(a, b, c);
+  }
+  const outPositions = new Float32Array(repX.length * 3);
+  for (let r = 0; r < repX.length; r++) {
+    outPositions[r * 3] = repX[r]; outPositions[r * 3 + 1] = repY[r]; outPositions[r * 3 + 2] = repZ[r];
+  }
+  return { positions: outPositions, indices: new Uint32Array(outIndices) };
 }
 
 function meshExtent(mesh: SolidMesh): number {

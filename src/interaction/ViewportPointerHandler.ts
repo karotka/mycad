@@ -266,6 +266,9 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     const extrudeSnap = active?.name === 'EXTRUDE' && active.stepIndex === 1
       ? nearestMeasurementPoint(event)
       : null;
+    const pressPullSnap = active?.name === 'PRESSPULL' && active.stepIndex === 1
+      ? nearestMeasurementPoint(event)
+      : null;
     const primitiveFinalSnap = primitiveFinalDrag?.snap ?? null;
     const rotateSnap = active?.name === 'ROTATE' && active.steps[active.stepIndex]?.kind === 'point'
       ? nearestMeasurementPoint(event)
@@ -274,12 +277,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       && (active.steps[active.stepIndex]?.kind === 'plane' || active.steps[active.stepIndex]?.kind === 'point')
       ? nearestMeasurementPoint(event)
       : null;
-    if (drawingSnap || extrudeSnap || primitiveFinalSnap || rotateSnap || sliceVertexSnap) {
+    if (drawingSnap || extrudeSnap || pressPullSnap || primitiveFinalSnap || rotateSnap || sliceVertexSnap) {
       if (targetedDrawingSnap) positionSnapMarker(targetedDrawingSnap.world, sx, sy, targetedDrawingSnap.mode);
       else if (persistentDrawingSnap) positionSnapMarker(persistentDrawingSnap.world, sx, sy, persistentDrawingSnap.mode);
       else if (primitiveFinalSnap) positionSnapMarker(primitiveFinalSnap, sx, sy);
       else if (rotateSnap) positionSnapMarker(rotateSnap, sx, sy);
       else if (sliceVertexSnap) positionSnapMarker(sliceVertexSnap, sx, sy);
+      // Extrude/press-pull snap the height to a vertex — an endpoint. Draw the
+      // endpoint square at it, not the stale symbol positionMeasureMarker left on
+      // the marker (which showed the previous Nearest hourglass).
+      else if (extrudeSnap) positionSnapMarker(extrudeSnap, sx, sy);
+      else if (pressPullSnap) positionSnapMarker(pressPullSnap, sx, sy);
       else positionMeasureMarker(snapMarker, sx, sy);
       if (extrudeSnap) {
         const height = worldToLocal(cadDocument.activeWorkPlane, extrudeSnap).z;
@@ -637,8 +645,38 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         event.preventDefault();
         return;
       }
-      if ((commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET') && activeStep?.kind === 'edge') {
+      if (commands.active?.name === 'THREAD' && activeStep?.kind === 'entity') {
         const edge = renderer3d.pickCircularSolidEdge(
+          renderer3d.renderer.domElement,
+          cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer)),
+          event.clientX,
+          event.clientY,
+        );
+        if (edge) {
+          await commands.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+        } else {
+          const entity = renderer3d.pickEntity(
+            renderer3d.renderer.domElement,
+            cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+            event.clientX,
+            event.clientY,
+          );
+          if (entity?.type === 'circle' || entity?.type === 'arc') {
+            await commands.handleClick(worldPoint3d(event) ?? { x: 0, y: 0 }, entity);
+          } else {
+            log('Thread: select a circular hole/shaft edge, or a circle.');
+          }
+        }
+        renderer3d.clearEdgeHighlight();
+        input.focus();
+        event.preventDefault();
+        return;
+      }
+      if ((commands.active?.name === 'CHAMFER' || commands.active?.name === 'FILLET') && activeStep?.kind === 'entity') {
+        // The first step takes either a solid edge (3D) or a 2D line/polyline
+        // side (corner chamfer/fillet); the second step takes only the other side.
+        const acceptsEdge = activeStep.accepts?.includes('edge');
+        const edge = acceptsEdge ? (renderer3d.pickCircularSolidEdge(
           renderer3d.renderer.domElement,
           cadDocument.solids,
           event.clientX,
@@ -648,12 +686,24 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           cadDocument.solids,
           event.clientX,
           event.clientY,
-        );
+        )) : null;
         if (edge) {
           await commands.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
-          renderer3d.clearEdgeHighlight();
-          input.focus();
-        } else log('Move closer to a solid edge.');
+        } else {
+          const entity = renderer3d.pickEntity(
+            renderer3d.renderer.domElement,
+            cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
+            event.clientX,
+            event.clientY,
+          );
+          if (entity?.type === 'line' || entity?.type === 'polyline') {
+            await commands.handleClick(worldPoint3d(event) ?? { x: 0, y: 0 }, entity);
+          } else {
+            log(acceptsEdge ? `${commands.active.name}: select a solid edge, a 2D line, or a polyline.` : 'Select a second 2D side.');
+          }
+        }
+        renderer3d.clearEdgeHighlight();
+        input.focus();
         event.preventDefault();
         return;
       }
@@ -735,7 +785,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
           : nearestPersistentSnap(event)) ?? nearestMeasurementPoint(event)
         : null;
-      const face = commands.active?.name === 'PRESSPULL'
+      let face = commands.active?.name === 'PRESSPULL'
         || commands.active?.name === 'DELETEFACE'
         || (choosingSlicePlane && !slicePointSnap)
         ? renderer3d.pickSolidFace(
@@ -746,6 +796,12 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
         )
         : null;
+      // Delete Face can also remove a hole or bump, whose face need not be
+      // planar. If no planar face was hit, still hand it the raw surface point.
+      if (!face && commands.active?.name === 'DELETEFACE') {
+        const hit = renderer3d.pickSolidSurfacePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
+        if (hit) face = { solidId: hit.solidId, vertexIndices: [], normal: { x: 0, y: 0, z: 0 }, hitPoint: hit.hitPoint };
+      }
       const action = resolveViewportAction({
         commandActive: Boolean(commands.active),
         multiObjectStep: commands.isMultiObjectStep,

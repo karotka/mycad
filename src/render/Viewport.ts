@@ -14,7 +14,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
-import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
+import { planarFaceRegionAt, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
@@ -174,22 +174,18 @@ export class Canvas2DRenderer {
   }
 
   private drawSolidProjection(solid: Solid, w: number, h: number): void {
-    const positions = solid.mesh.positions;
-    const indices = solid.mesh.indices;
+    // Draw only the design edges (outline, sharp creases, hole and fillet rims),
+    // not every triangle of the mesh — the raw triangulation reads as noise in a
+    // 2D view. `solidFeatureEdges` keeps boundary and crease edges and drops the
+    // smooth facets that tessellate curved surfaces.
     this.ctx.strokeStyle = solid.selected ? '#65c7ff' : '#ffffff';
     this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    for (let i = 0; i < indices.length; i += 3) {
-      const triangle = [indices[i], indices[i + 1], indices[i + 2], indices[i]];
-      for (let j = 0; j < triangle.length; j++) {
-        const index = triangle[j] * 3;
-        const point = worldToScreen(
-          { x: positions[index], y: positions[index + 1] },
-          w, h, this.pan, this.zoom
-        );
-        if (j === 0) this.ctx.moveTo(point.x, point.y);
-        else this.ctx.lineTo(point.x, point.y);
-      }
+    for (const edge of solidFeatureEdges(solid.mesh)) {
+      const start = worldToScreen({ x: edge.start.x, y: edge.start.y }, w, h, this.pan, this.zoom);
+      const end = worldToScreen({ x: edge.end.x, y: edge.end.y }, w, h, this.pan, this.zoom);
+      this.ctx.moveTo(start.x, start.y);
+      this.ctx.lineTo(end.x, end.y);
     }
     this.ctx.stroke();
   }
@@ -233,10 +229,20 @@ export class Canvas2DRenderer {
       this.ctx.shadowBlur = 4;
     }
 
+    // Entities store their points in their own work plane; the solids are already
+    // drawn at world coordinates, so an entity built on a non-world plane (drawn
+    // in a UCS) has to be lifted to world and flattened onto XY here too, or it
+    // lands at its raw local position and drifts away from everything else.
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const toScreen = (point: Vec2) => {
+      const world = localToWorld(plane, point);
+      return worldToScreen({ x: world.x, y: world.y }, w, h, this.pan, this.zoom);
+    };
+
     switch (entity.type) {
       case 'line': {
-        const a = worldToScreen(entity.start, w, h, this.pan, this.zoom);
-        const b = worldToScreen(entity.end, w, h, this.pan, this.zoom);
+        const a = toScreen(entity.start);
+        const b = toScreen(entity.end);
         this.ctx.beginPath();
         this.ctx.moveTo(a.x, a.y);
         this.ctx.lineTo(b.x, b.y);
@@ -244,7 +250,7 @@ export class Canvas2DRenderer {
         break;
       }
       case 'circle': {
-        const c = worldToScreen(entity.center, w, h, this.pan, this.zoom);
+        const c = toScreen(entity.center);
         const r = entity.radius * this.zoom;
         this.ctx.beginPath();
         this.ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
@@ -252,7 +258,7 @@ export class Canvas2DRenderer {
         break;
       }
       case 'ellipse': {
-        const c = worldToScreen(entity.center, w, h, this.pan, this.zoom);
+        const c = toScreen(entity.center);
         this.ctx.beginPath();
         // Screen Y grows downward, so the rotation flips with it.
         this.ctx.ellipse(c.x, c.y, entity.radiusX * this.zoom, entity.radiusY * this.zoom, -entity.rotation, 0, Math.PI * 2);
@@ -260,8 +266,8 @@ export class Canvas2DRenderer {
         break;
       }
       case 'rectangle': {
-        const first = worldToScreen(entity.first, w, h, this.pan, this.zoom);
-        const opposite = worldToScreen(entity.opposite, w, h, this.pan, this.zoom);
+        const first = toScreen(entity.first);
+        const opposite = toScreen(entity.opposite);
         this.ctx.strokeRect(first.x, first.y, opposite.x - first.x, opposite.y - first.y);
         break;
       }
@@ -270,10 +276,10 @@ export class Canvas2DRenderer {
         const verts = entity.type === 'octagon' ? entity.vertices : entity.vertices;
         if (verts.length < 2) break;
         this.ctx.beginPath();
-        const first = worldToScreen(verts[0], w, h, this.pan, this.zoom);
+        const first = toScreen(verts[0]);
         this.ctx.moveTo(first.x, first.y);
         for (let i = 1; i < verts.length; i++) {
-          const p = worldToScreen(verts[i], w, h, this.pan, this.zoom);
+          const p = toScreen(verts[i]);
           this.ctx.lineTo(p.x, p.y);
         }
         if (entity.type === 'octagon' || (entity.type === 'polyline' && entity.closed)) {
@@ -283,7 +289,7 @@ export class Canvas2DRenderer {
         break;
       }
       case 'arc':
-      case 'bezier': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=worldToScreen(v,w,h,this.pan,this.zoom); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
+      case 'bezier': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
       case 'text': {
         // The single-stroke font is drawn as the strokes it is, from the same
         // function the exporter uses — so what is on the screen is what the pen
@@ -292,14 +298,14 @@ export class Canvas2DRenderer {
           this.ctx.beginPath();
           for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })) {
             stroke.forEach((point, index) => {
-              const screen = worldToScreen(point, w, h, this.pan, this.zoom);
+              const screen = toScreen(point);
               if (index === 0) this.ctx.moveTo(screen.x, screen.y); else this.ctx.lineTo(screen.x, screen.y);
             });
           }
           this.ctx.stroke();
           break;
         }
-        const p=worldToScreen(entity.position,w,h,this.pan,this.zoom);
+        const p=toScreen(entity.position);
         this.ctx.save();
         this.ctx.translate(p.x, p.y);
         this.ctx.rotate(-(entity.rotation ?? 0));
@@ -312,7 +318,7 @@ export class Canvas2DRenderer {
         const geometry = dimensionGeometry(entity);
         const polyline = (points: Vec2[]): void => {
           if (points.length < 2) return;
-          const screen = points.map(point => worldToScreen(point, w, h, this.pan, this.zoom));
+          const screen = points.map(point => toScreen(point));
           this.ctx.beginPath();
           this.ctx.moveTo(screen[0].x, screen[0].y);
           for (const point of screen.slice(1)) this.ctx.lineTo(point.x, point.y);
@@ -320,7 +326,7 @@ export class Canvas2DRenderer {
         };
         polyline(geometry.extensionStart); polyline(geometry.extensionEnd); polyline(geometry.dimensionLine);
         for (const arrow of geometry.arrows) {
-          const points = arrow.map(point => worldToScreen(point, w, h, this.pan, this.zoom));
+          const points = arrow.map(point => toScreen(point));
           this.ctx.beginPath();
           if (entity.arrowType === 'tick') {
             this.ctx.moveTo(points[1].x, points[1].y); this.ctx.lineTo(points[2].x, points[2].y); this.ctx.stroke();
@@ -329,7 +335,7 @@ export class Canvas2DRenderer {
             if (entity.arrowType === 'closed') { this.ctx.lineTo(points[1].x, points[1].y); this.ctx.closePath(); this.ctx.fill(); } else this.ctx.stroke();
           }
         }
-        const text = worldToScreen(geometry.textPoint, w, h, this.pan, this.zoom);
+        const text = toScreen(geometry.textPoint);
         this.ctx.save(); this.ctx.translate(text.x, text.y); this.ctx.rotate(-geometry.textAngle);
         this.ctx.font = `${Math.max(8, entity.textHeight * entity.scale * this.zoom)}px Arial`;
         this.ctx.textAlign = 'center'; this.ctx.textBaseline = 'middle'; this.ctx.fillText(geometry.text, 0, 0); this.ctx.restore();
@@ -578,6 +584,7 @@ export class Viewport3D {
   private cutAreaFrame: THREE.Group | null = null;
   private cutAreaFrameKey = '';
   private grid: THREE.GridHelper;
+  private gridState = { size: 0, divisions: 0 };
   private axisTriad: THREE.Group;
   private isDragging = false;
   private lastX = 0;
@@ -628,27 +635,51 @@ export class Viewport3D {
 
     // Setting a UCS changes the construction plane, not the model or the view.
     // Rotating the camera here made stationary objects appear to turn as soon as
-    // the third UCS point was picked. The grid and triad adopt the new plane;
-    // subsequent orbiting already uses its Z axis in orbitByScreenDelta.
+    // the third UCS point was picked. The grid follows the plane in updateGrid();
+    // the triad stays pinned at the true UCS origin.
     this.activeWorkPlane = cloneWorkPlane(plane);
-    const matrix = new THREE.Matrix4().makeBasis(newX, newZ, newY);
-    const origin = toThree(plane.origin);
-    // GridHelper is centred on its object. Shift that square in the UCS plane
-    // so only a small margin remains below zero and most of the construction
-    // area lies in positive X/Y. The triad stays at the true UCS origin.
-    const gridOffset = 40; // 100 mm grid: -10 … +90 on both local axes.
-    const gridCenter = origin.clone()
-      .addScaledVector(newX, gridOffset)
-      .addScaledVector(newY, gridOffset);
-    matrix.setPosition(gridCenter);
-    this.grid.matrixAutoUpdate = false;
-    this.grid.matrix.copy(matrix);
-    this.grid.updateMatrixWorld(true);
     const triadBasis = new THREE.Matrix4().makeBasis(newX, newY, newZ);
-    this.axisTriad.position.copy(origin);
+    this.axisTriad.position.copy(toThree(plane.origin));
     this.axisTriad.quaternion.setFromRotationMatrix(triadBasis);
     this.axisTriad.updateMatrixWorld(true);
     this.render();
+  }
+
+  /**
+   * Lays the construction grid out to fill the view: the spacing snaps to a
+   * "nice" 1/2/5 step scaled to the zoom so line density stays roughly constant,
+   * and the square recentres under the view target so it reads as an endless
+   * plane instead of the small fixed patch it used to be.
+   */
+  private updateGrid(): void {
+    const plane = this.activeWorkPlane;
+    const raw = Math.max(this.orbitRadius / 8, 1e-6);
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    const spacing = [1, 2, 5, 10].map((step) => step * pow).find((step) => step >= raw) ?? 10 * pow;
+    const divisions = Math.max(2, Math.ceil((this.orbitRadius * 2.5) / spacing) * 2);
+    const size = divisions * spacing;
+    if (size !== this.gridState.size || divisions !== this.gridState.divisions) {
+      const wasVisible = this.grid.visible;
+      this.scene.remove(this.grid);
+      this.grid.geometry.dispose();
+      (this.grid.material as THREE.Material).dispose();
+      this.grid = new THREE.GridHelper(size, divisions, 0x334155, 0x1c2333);
+      this.grid.visible = wasVisible;
+      this.scene.add(this.grid);
+      this.gridState = { size, divisions };
+    }
+    // Centre under the view target, snapped to the spacing so lines never crawl.
+    const target = { x: this.orbitTarget.x, y: -this.orbitTarget.z, z: this.orbitTarget.y };
+    const local = worldToLocal(plane, target);
+    const snap = (value: number): number => Math.round(value / spacing) * spacing;
+    const centre = localToWorld(plane, { x: snap(local.x), y: snap(local.y) }, 0);
+    const toThree = (axis: { x: number; y: number; z: number }) => new THREE.Vector3(axis.x, axis.z, -axis.y);
+    const matrix = new THREE.Matrix4().makeBasis(
+      toThree(plane.xAxis).normalize(), toThree(plane.zAxis).normalize(), toThree(plane.yAxis).normalize());
+    matrix.setPosition(new THREE.Vector3(centre.x, centre.z, -centre.y));
+    this.grid.matrixAutoUpdate = false;
+    this.grid.matrix.copy(matrix);
+    this.grid.updateMatrixWorld(true);
   }
 
   setGridVisible(visible: boolean): void {
@@ -725,22 +756,34 @@ export class Viewport3D {
   private createAxisTriad(): THREE.Group {
     const group = new THREE.Group();
     group.name = 'ucs-axis-triad';
-    const length = 5;
-    const headLength = 0.65;
-    const headWidth = 0.36;
-    const axes: Array<{ name: string; direction: THREE.Vector3; color: number; labelPosition: THREE.Vector3 }> = [
-      { name: 'X', direction: new THREE.Vector3(1, 0, 0), color: 0xf05b5b, labelPosition: new THREE.Vector3(5.7, 0, 0) },
-      { name: 'Y', direction: new THREE.Vector3(0, 1, 0), color: 0x62d47a, labelPosition: new THREE.Vector3(0, 5.7, 0) },
-      { name: 'Z', direction: new THREE.Vector3(0, 0, 1), color: 0x58a6ff, labelPosition: new THREE.Vector3(0, 0, 5.7) },
+    // Solid tube shafts with cone heads, drawn unlit and always on top: a 1px
+    // ArrowHelper line read as faint over the model, so the UCS was easy to miss.
+    const length = 6;
+    const headLength = 1.3;
+    const headRadius = 0.4;
+    const shaftRadius = 0.13;
+    const up = new THREE.Vector3(0, 1, 0);
+    const axes: Array<{ name: string; direction: THREE.Vector3; color: number }> = [
+      { name: 'X', direction: new THREE.Vector3(1, 0, 0), color: 0xff4d4d },
+      { name: 'Y', direction: new THREE.Vector3(0, 1, 0), color: 0x35d94c },
+      { name: 'Z', direction: new THREE.Vector3(0, 0, 1), color: 0x4d9bff },
     ];
     for (const axis of axes) {
-      const arrow = new THREE.ArrowHelper(axis.direction, new THREE.Vector3(), length, axis.color, headLength, headWidth);
-      (arrow.line.material as THREE.Material).depthTest = false;
-      (arrow.cone.material as THREE.Material).depthTest = false;
-      arrow.renderOrder = 5;
-      group.add(arrow);
+      const material = new THREE.MeshBasicMaterial({ color: axis.color, depthTest: false, toneMapped: false });
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(up, axis.direction);
+      const shaftLength = length - headLength;
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12), material);
+      shaft.quaternion.copy(quaternion);
+      shaft.position.copy(axis.direction.clone().multiplyScalar(shaftLength / 2));
+      shaft.renderOrder = 5;
+      group.add(shaft);
+      const head = new THREE.Mesh(new THREE.ConeGeometry(headRadius, headLength, 16), material);
+      head.quaternion.copy(quaternion);
+      head.position.copy(axis.direction.clone().multiplyScalar(length - headLength / 2));
+      head.renderOrder = 5;
+      group.add(head);
       const label = this.createAxisLabel(axis.name, axis.color);
-      label.position.copy(axis.labelPosition);
+      label.position.copy(axis.direction.clone().multiplyScalar(length + 1));
       label.renderOrder = 6;
       group.add(label);
     }
@@ -764,7 +807,7 @@ export class Viewport3D {
     texture.colorSpace = THREE.SRGBColorSpace;
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(1.15, 1.15, 1.15);
+    sprite.scale.set(1.6, 1.6, 1.6);
     return sprite;
   }
 
@@ -783,29 +826,36 @@ export class Viewport3D {
   }
 
   private applySolidStyle(mesh: THREE.Mesh, selected: boolean): void {
+    const wire = this.visualStyle === 'wireframe';
+    const xray = this.visualStyle === 'xray';
     const material = mesh.material as THREE.MeshPhongMaterial;
-    material.wireframe = this.visualStyle === 'wireframe';
+    // Never draw the raw triangulation. `wireframe` now means a clean drawing of
+    // just the design edges with the faces hidden — a see-through wire model —
+    // rather than THREE's triangle wireframe.
+    material.wireframe = false;
+    material.visible = !wire;
     material.color.setHex(selected ? 0x65c7ff : (mesh.userData.baseColor as number ?? 0xffffff));
-    material.shininess = this.visualStyle === 'wireframe' ? 0 : 18;
-    material.transparent = this.visualStyle === 'xray';
-    material.opacity = this.visualStyle === 'xray' ? (selected ? 0.42 : 0.28) : 1;
-    material.depthWrite = this.visualStyle !== 'xray';
+    material.shininess = 18;
+    material.transparent = xray;
+    material.opacity = xray ? (selected ? 0.42 : 0.28) : 1;
+    material.depthWrite = !xray;
     material.side = THREE.DoubleSide;
     material.needsUpdate = true;
     this.disposeSolidEdges(mesh);
-    if (this.visualStyle === 'shaded' || this.visualStyle === 'xray') {
-      const edges = new THREE.LineSegments(
-        new THREE.EdgesGeometry(mesh.geometry, 24),
-        new THREE.LineBasicMaterial({
-          color: selected ? 0x9fe2ff : this.visualStyle === 'xray' ? 0x8fc8e8 : 0x27313a,
-          transparent: this.visualStyle === 'xray', opacity: this.visualStyle === 'xray' ? 0.9 : 1,
-          depthTest: this.visualStyle !== 'xray',
-        }),
-      );
-      edges.name = 'solid-edges';
-      edges.renderOrder = 2;
-      mesh.add(edges);
-    }
+    // All three styles show the same feature edges (outline, creases, hole and
+    // fillet rims). Wireframe and x-ray keep them see-through; shaded lets the
+    // opaque faces occlude the ones behind.
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(mesh.geometry, 24),
+      new THREE.LineBasicMaterial({
+        color: selected ? 0x9fe2ff : wire ? 0xcdd9e5 : xray ? 0x8fc8e8 : 0x27313a,
+        transparent: xray, opacity: xray ? 0.9 : 1,
+        depthTest: !xray && !wire,
+      }),
+    );
+    edges.name = 'solid-edges';
+    edges.renderOrder = 2;
+    mesh.add(edges);
     mesh.userData.styledVisualStyle = this.visualStyle;
     mesh.userData.styledSelected = selected;
     mesh.userData.styledRevision = mesh.userData.revision;
@@ -923,7 +973,18 @@ export class Viewport3D {
     offset.applyAxisAngle(horizontalAxis, -dy * 0.01);
     this.orbitRadius = offset.length();
     this.camera.position.copy(this.orbitTarget).add(offset);
-    this.camera.up.copy(ucsZ);
+    // The UCS Z is the natural up while orbiting, but at a pole — looking straight
+    // down (or up) that axis, as the plan view does — it lines up with the view
+    // and lookAt would flip the picture unpredictably. There, hand it a UCS
+    // in-plane axis so leaving the plan view starts cleanly instead of snapping.
+    const atPole = Math.abs(offset.clone().normalize().dot(ucsZ)) > 0.9999;
+    this.camera.up.copy(atPole
+      ? new THREE.Vector3(
+        this.activeWorkPlane.yAxis.x,
+        this.activeWorkPlane.yAxis.z,
+        -this.activeWorkPlane.yAxis.y,
+      ).normalize()
+      : ucsZ);
     this.camera.lookAt(this.orbitTarget);
     this.updateProjection();
   }
@@ -937,11 +998,20 @@ export class Viewport3D {
    */
   viewCubeAngles(): { azimuth: number; elevation: number } {
     const offset = this.camera.position.clone().sub(this.orbitTarget);
+    // Express the view direction in the active UCS basis, not the world, so the
+    // cube reflects the camera relative to the construction plane: looking
+    // straight down the UCS Z shows its top face, whatever the plane's tilt.
+    // Convert the three.js offset (x, z, -y) back to CAD world, then project it
+    // onto the plane axes. For the world plane this is the old world behaviour.
     const worldX = offset.x, worldY = -offset.z, worldZ = offset.y;
-    const radius = Math.hypot(worldX, worldY, worldZ) || 1;
+    const p = this.activeWorkPlane;
+    const ux = worldX * p.xAxis.x + worldY * p.xAxis.y + worldZ * p.xAxis.z;
+    const uy = worldX * p.yAxis.x + worldY * p.yAxis.y + worldZ * p.yAxis.z;
+    const uz = worldX * p.zAxis.x + worldY * p.zAxis.y + worldZ * p.zAxis.z;
+    const radius = Math.hypot(ux, uy, uz) || 1;
     return {
-      azimuth: Math.atan2(worldY, worldX),
-      elevation: Math.asin(Math.max(-1, Math.min(1, worldZ / radius))),
+      azimuth: Math.atan2(uy, ux),
+      elevation: Math.asin(Math.max(-1, Math.min(1, uz / radius))),
     };
   }
 
@@ -1785,17 +1855,35 @@ export class Viewport3D {
   }
 
   private faceRegionPrismGeometry(region: SolidFaceRegion, distance: number): THREE.BufferGeometry | null {
-    const outer = region.loops[0];
-    if (!outer || outer.length < 3 || !Number.isFinite(distance) || Math.abs(distance) < 1e-9) return null;
+    // The Shape triangulator is fragile: a repeated vertex extrudes into a
+    // zero-width side wall that shows as a stray triangle, and a clockwise outer
+    // contour inverts the fill. Drop coincident points and force the windings
+    // (outer CCW, holes CW) so the preview matches the real, correct result.
+    const clean = (loop: Vec2[]): Vec2[] => {
+      const out: Vec2[] = [];
+      for (const point of loop) {
+        const prev = out[out.length - 1];
+        if (!prev || Math.hypot(point.x - prev.x, point.y - prev.y) > 1e-6) out.push(point);
+      }
+      while (out.length > 1 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) <= 1e-6) out.pop();
+      return out;
+    };
+    const signedArea = (loop: Vec2[]): number =>
+      loop.reduce((sum, point, index) => sum + point.x * loop[(index + 1) % loop.length].y - loop[(index + 1) % loop.length].x * point.y, 0) / 2;
+    const outer = clean(region.loops[0] ?? []);
+    if (outer.length < 3 || !Number.isFinite(distance) || Math.abs(distance) < 1e-9) return null;
+    const outerCcw = signedArea(outer) < 0 ? [...outer].reverse() : outer;
     const shape = new THREE.Shape();
-    shape.moveTo(outer[0].x, outer[0].y);
-    outer.slice(1).forEach((point) => shape.lineTo(point.x, point.y));
+    shape.moveTo(outerCcw[0].x, outerCcw[0].y);
+    outerCcw.slice(1).forEach((point) => shape.lineTo(point.x, point.y));
     shape.closePath();
-    for (const loop of region.loops.slice(1)) {
+    for (const raw of region.loops.slice(1)) {
+      const loop = clean(raw);
       if (loop.length < 3) continue;
+      const holeCw = signedArea(loop) > 0 ? [...loop].reverse() : loop;
       const hole = new THREE.Path();
-      hole.moveTo(loop[0].x, loop[0].y);
-      loop.slice(1).forEach((point) => hole.lineTo(point.x, point.y));
+      hole.moveTo(holeCw[0].x, holeCw[0].y);
+      holeCw.slice(1).forEach((point) => hole.lineTo(point.x, point.y));
       hole.closePath();
       shape.holes.push(hole);
     }
@@ -1818,6 +1906,7 @@ export class Viewport3D {
   }
 
   render(): void {
+    this.updateGrid();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1848,6 +1937,19 @@ export class Viewport3D {
       hitPoint,
       region,
     };
+  }
+
+  /**
+   * The solid and exact surface point under the pointer, for any face — curved
+   * ones included, which `pickSolidFace` rejects because they are not planar.
+   * Used by Delete Face to reach a cylindrical hole wall.
+   */
+  pickSolidSurfacePoint(canvas: HTMLCanvasElement, sx: number, sy: number): { solidId: string; hitPoint: Vec3 } | null {
+    const hit = this.picking.firstIntersection(canvas, sx, sy, this.solidMeshes.values());
+    if (!hit) return null;
+    const entry = Array.from(this.solidMeshes.entries()).find(([, object]) => object === hit.object);
+    if (!entry) return null;
+    return { solidId: entry[0], hitPoint: { x: hit.point.x, y: -hit.point.z, z: hit.point.y } };
   }
 
   /**

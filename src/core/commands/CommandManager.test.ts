@@ -5,8 +5,8 @@ import { CommandManager, hitTestEntity } from './CommandManager';
 import { linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
-import { localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
-import { createBoxMesh, createCylinderMesh, primitiveMesh } from '../solids/ManifoldEngine';
+import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
+import { createBoxMesh, createCylinderMesh, primitiveMesh, regenerateSolidFeature } from '../solids/ManifoldEngine';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
 import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../solids/SolidTopology';
 
@@ -120,6 +120,37 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
   });
 
+  it('joins coplanar lines that carry different work-plane origins', () => {
+    const { doc, manager } = setup();
+    // Same world plane, but line2 stores a shifted work-plane origin — as lines
+    // drawn on a face in a UCS do. They meet at world (10, 0).
+    const line1 = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const line2 = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line2.workPlane = { ...cloneWorkPlane(WORLD_WORK_PLANE), origin: { x: 10, y: 0, z: 0 } };
+    doc.entities.push(line1, line2);
+    doc.selectEntity(line1.id, true);
+    doc.selectEntity(line2.id, true);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline' });
+    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }]);
+  });
+
+  it('joins a horizontal and a vertical line into a polyline in their shared plane', () => {
+    const { doc, manager } = setup();
+    // A flat leg on the world plane and a leg rising in Z meet at (10, 0, 0).
+    // They are coplanar (the X-Z plane), which is neither leg's own work plane.
+    const horizontal = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const vertical = doc.createLine({ x: 10, y: 0, z: 0 } as never, { x: 10, y: 0, z: 8 } as never);
+    doc.entities.push(horizontal, vertical);
+    doc.selectEntity(horizontal.id, true);
+    doc.selectEntity(vertical.id, true);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'polyline' });
+    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices).toHaveLength(3);
+  });
+
   it('joins a Bezier curve to a connected line', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
@@ -154,6 +185,7 @@ describe('CommandManager history integration', () => {
     doc.entities.push(boundary, target);
     manager.startCommand('EXTEND');
     await manager.handleClick({ x: 10, y: 0 }, boundary);
+    await manager.submitInput(''); // finish selecting boundary edges
     await manager.handleClick({ x: 5, y: 0 }, target);
     const extended = doc.getEntity(target.id);
     expect(extended).toMatchObject({ type: 'polyline' });
@@ -167,10 +199,263 @@ describe('CommandManager history integration', () => {
     doc.entities.push(cutter, target);
     manager.startCommand('TRIM');
     await manager.handleClick({ x: 5, y: 0 }, cutter);
+    await manager.submitInput(''); // finish selecting cutting edges
     await manager.handleClick({ x: 8, y: 0 }, target);
     const trimmed = doc.getEntity(target.id);
     expect(trimmed).toMatchObject({ type: 'polyline' });
     if (trimmed?.type === 'polyline') expect(trimmed.vertices[1]).toMatchObject({ x: 5, y: 0 });
+  });
+
+  it('trims a line where it crosses a circle cutting edge', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(circle, line);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 4, y: 4 }, circle);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: 8, y: 0 }, line); // clicked side is outside the circle
+    const trimmed = doc.getEntity(line.id);
+    expect(trimmed).toMatchObject({ type: 'line' });
+    if (trimmed?.type === 'line') {
+      const points = [trimmed.start, trimmed.end];
+      expect(points).toContainEqual({ x: 0, y: 0 });
+      expect(points).toContainEqual({ x: 5, y: 0 });
+    }
+  });
+
+  it('trims a circle into an arc, dropping the clicked span', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    const cutter = doc.createLine({ x: 0, y: -10 }, { x: 0, y: 10 });
+    doc.entities.push(circle, cutter);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 0, y: 0 }, cutter);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: 5, y: 0 }, circle); // remove the right half
+    // The circle is gone, replaced by an arc of the same radius.
+    expect(doc.getEntity(circle.id)).toBeUndefined();
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 5 });
+    // The kept span is the left half, so its midpoint sits at negative x.
+    if (arc?.type === 'arc') expect(Math.cos(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
+  });
+
+  it('trims a circle between two parallel cutting edges, keeping the clicked end cap', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    const left = doc.createLine({ x: -3, y: -10 }, { x: -3, y: 10 });
+    const right = doc.createLine({ x: 3, y: -10 }, { x: 3, y: 10 });
+    doc.entities.push(circle, left, right);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: -3, y: 6 }, left);
+    await manager.handleClick({ x: 3, y: 6 }, right);
+    await manager.submitInput(''); // finish selecting the two cutting edges
+    // Click the right cap (x > 3): it is bracketed by the right line's two
+    // crossings, so only that cap is removed — impossible with a single edge.
+    await manager.handleClick({ x: 5, y: 0 }, circle);
+    expect(doc.getEntity(circle.id)).toBeUndefined();
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 5 });
+    // The kept span runs the long way round (through the left cap), so its
+    // midpoint sits on negative x.
+    if (arc?.type === 'arc') expect(Math.cos(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
+  });
+
+  it('trims coplanar objects whose work planes carry a different origin (same face, different UCS)', async () => {
+    const { doc, manager } = setup();
+    const planeAt = (ox: number, oy: number) => ({
+      origin: { x: ox, y: oy, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+    });
+    // Circle centred at world (0,0), r=5, on a plane whose origin is shifted to (10,0).
+    const circle = doc.createCircle({ x: -10, y: 0 }, 5);
+    circle.workPlane = planeAt(10, 0);
+    // Vertical cutter at world x=0, on a DIFFERENT plane origin (4,1) — same face, other UCS.
+    const cutter = doc.createLine({ x: -4, y: -11 }, { x: -4, y: 9 });
+    cutter.workPlane = planeAt(4, 1);
+    doc.entities.push(circle, cutter);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 0, y: 6 }, cutter);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: 0 }, circle); // remove the right half, in world coords
+    // Previously this errored with "must be on the same work plane"; now it trims.
+    expect(doc.getEntity(circle.id)).toBeUndefined();
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 5 });
+    if (arc?.type === 'arc') expect(Math.cos(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
+  });
+
+  it('removes the span you click when the active work plane is shifted (no inversion)', async () => {
+    const { doc, manager } = setup();
+    // Draw and trim on a plane whose origin is offset from world — the click
+    // arrives in that plane's local frame, so a plain world reading would map it
+    // to the far side of the circle and trim the opposite span.
+    doc.activeWorkPlane.origin.x = 10;
+    const plane = () => ({
+      origin: { x: 10, y: 0, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+    });
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5); circle.workPlane = plane();
+    const cutter = doc.createLine({ x: 3, y: -10 }, { x: 3, y: 10 }); cutter.workPlane = plane();
+    doc.entities.push(circle, cutter);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 3, y: 8 }, cutter);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: 0 }, circle); // click the small right span (local coords)
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 5 });
+    // The clicked (right) span is removed, so the kept span's midpoint is on the left.
+    if (arc?.type === 'arc') expect(Math.cos(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
+  });
+
+  it('keeps the cutting edges active to trim several objects in one run', async () => {
+    const { doc, manager } = setup();
+    const cutter = doc.createLine({ x: 5, y: -20 }, { x: 5, y: 20 });
+    const a = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const b = doc.createLine({ x: 0, y: 2 }, { x: 10, y: 2 });
+    doc.entities.push(cutter, a, b);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 10 }, cutter);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: 8, y: 0 }, a); // trim first line's right end
+    await manager.handleClick({ x: 8, y: 2 }, b); // same edge still active — trim second line
+    await manager.submitInput(''); // Enter ends the command
+    const ta = doc.getEntity(a.id), tb = doc.getEntity(b.id);
+    if (ta?.type === 'line') expect(ta.end).toMatchObject({ x: 5, y: 0 });
+    if (tb?.type === 'line') expect(tb.end).toMatchObject({ x: 5, y: 2 });
+    expect(manager.active).toBeNull();
+  });
+
+  it('trims a closed polyline at a circle, dropping the clicked span and opening the loop', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    // An arrowhead: a far-left tip outside the circle, two vertices inside it.
+    const arrow = doc.createPolyline([{ x: -20, y: 0 }, { x: 3, y: 3 }, { x: 3, y: -3 }], true);
+    doc.entities.push(circle, arrow);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 2, y: 2 }, circle);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: -15, y: 0 }, arrow); // click the tip, outside the circle
+    const trimmed = doc.getEntity(arrow.id);
+    expect(trimmed).toMatchObject({ type: 'polyline', closed: false });
+    if (trimmed?.type === 'polyline') {
+      // The tip is gone; the two inner vertices remain, joined by the two crossings.
+      expect(trimmed.vertices).toHaveLength(4);
+      expect(trimmed.vertices).toContainEqual({ x: 3, y: 3 });
+      expect(trimmed.vertices).toContainEqual({ x: 3, y: -3 });
+      expect(trimmed.vertices).not.toContainEqual({ x: -20, y: 0 });
+    }
+  });
+
+  it('splits an open polyline in two when the trimmed span is in its middle', async () => {
+    const { doc, manager } = setup();
+    const cutter = doc.createCircle({ x: 10, y: 0 }, 3); // crosses the polyline at x=7 and x=13
+    const strip = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }], false);
+    doc.entities.push(cutter, strip);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 10, y: 3 }, cutter);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: 10, y: 0 }, strip); // click the middle, between the two crossings
+    expect(doc.getEntity(strip.id)).toBeUndefined();
+    const halves = doc.entities.filter((entity) => entity.type === 'polyline');
+    expect(halves).toHaveLength(2);
+    const vertexSets = halves.map((half) => (half as { vertices: { x: number; y: number }[] }).vertices);
+    expect(vertexSets).toContainEqual([{ x: 0, y: 0 }, { x: 7, y: 0 }]);
+    expect(vertexSets).toContainEqual([{ x: 13, y: 0 }, { x: 20, y: 0 }]);
+  });
+
+  it('chamfers the corner between two 2D lines', async () => {
+    const { doc, manager } = setup();
+    const horizontal = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const vertical = doc.createLine({ x: 0, y: 0 }, { x: 0, y: 10 });
+    doc.entities.push(horizontal, vertical);
+    manager.startCommand('CHAMFER');
+    await manager.handleClick({ x: 5, y: 0 }, horizontal);
+    await manager.handleClick({ x: 0, y: 5 }, vertical);
+    await manager.submitInput('2, 2');
+    // Each line is cut back to its chamfer point, the picked side kept.
+    const h = doc.getEntity(horizontal.id), v = doc.getEntity(vertical.id);
+    if (h?.type === 'line') expect([h.start, h.end]).toEqual(expect.arrayContaining([{ x: 2, y: 0 }, { x: 10, y: 0 }]));
+    if (v?.type === 'line') expect([v.start, v.end]).toEqual(expect.arrayContaining([{ x: 0, y: 2 }, { x: 0, y: 10 }]));
+    // A connector line bridges the two chamfer points.
+    const connector = doc.entities.find((entity) => entity.type === 'line' && entity.id !== horizontal.id && entity.id !== vertical.id);
+    expect(connector).toBeTruthy();
+    if (connector?.type === 'line') expect([connector.start, connector.end]).toEqual(expect.arrayContaining([{ x: 2, y: 0 }, { x: 0, y: 2 }]));
+  });
+
+  it('chamfers the shared corner of two sides of a closed polyline, keeping it one polyline', async () => {
+    const { doc, manager } = setup();
+    const square = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }], true);
+    doc.entities.push(square);
+    manager.startCommand('CHAMFER');
+    await manager.handleClick({ x: 5, y: 0 }, square);  // bottom side
+    await manager.handleClick({ x: 10, y: 5 }, square); // right side — they meet at (10,0)
+    await manager.submitInput('2, 2');
+    const result = doc.getEntity(square.id);
+    expect(result).toMatchObject({ type: 'polyline', closed: true });
+    if (result?.type === 'polyline') {
+      // The corner (10,0) is replaced by its two cut points; a closed polyline
+      // still repeats its first vertex at the end.
+      expect(result.vertices).toEqual([
+        { x: 0, y: 0 }, { x: 8, y: 0 }, { x: 10, y: 2 }, { x: 10, y: 10 }, { x: 0, y: 10 }, { x: 0, y: 0 },
+      ]);
+    }
+  });
+
+  it('fillets the shared corner of two sides of a closed polyline into a rounded corner', async () => {
+    const { doc, manager } = setup();
+    const square = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }], true);
+    doc.entities.push(square);
+    manager.startCommand('FILLET');
+    await manager.handleClick({ x: 5, y: 0 }, square);
+    await manager.handleClick({ x: 10, y: 5 }, square);
+    await manager.submitInput('2');
+    const result = doc.getEntity(square.id);
+    expect(result).toMatchObject({ type: 'polyline', closed: true });
+    if (result?.type === 'polyline') {
+      // The sharp corner is gone, replaced by an arc between the two tangent points.
+      expect(result.vertices.length).toBeGreaterThan(5);
+      expect(result.vertices.some((v) => Math.hypot(v.x - 8, v.y - 0) < 1e-6)).toBe(true);
+      expect(result.vertices.some((v) => Math.hypot(v.x - 10, v.y - 2) < 1e-6)).toBe(true);
+      expect(result.vertices.some((v) => Math.hypot(v.x - 10, v.y - 0) < 1e-6)).toBe(false);
+      // Every point that is not one of the three surviving corners lies on the
+      // fillet arc: radius 2 from its centre (8,2).
+      const corners = [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+      for (const v of result.vertices) {
+        if (!corners.some((c) => c.x === v.x && c.y === v.y)) expect(Math.hypot(v.x - 8, v.y - 2)).toBeCloseTo(2, 6);
+      }
+    }
+  });
+
+  it('fillets the corner between two 2D lines with a tangent arc', async () => {
+    const { doc, manager } = setup();
+    const horizontal = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const vertical = doc.createLine({ x: 0, y: 0 }, { x: 0, y: 10 });
+    doc.entities.push(horizontal, vertical);
+    manager.startCommand('FILLET');
+    await manager.handleClick({ x: 5, y: 0 }, horizontal);
+    await manager.handleClick({ x: 0, y: 5 }, vertical);
+    await manager.submitInput('2');
+    // Lines cut back to the tangent points (2,0) and (0,2); the picked far ends stay.
+    const h = doc.getEntity(horizontal.id), v = doc.getEntity(vertical.id);
+    if (h?.type === 'line') {
+      expect(h.start.x).toBeCloseTo(2, 6);
+      expect(h.start.y).toBeCloseTo(0, 6);
+      expect(h.end).toEqual({ x: 10, y: 0 });
+    }
+    if (v?.type === 'line') {
+      expect(v.start.x).toBeCloseTo(0, 6);
+      expect(v.start.y).toBeCloseTo(2, 6);
+      expect(v.end).toEqual({ x: 0, y: 10 });
+    }
+    // The rounding arc is centred at (2,2) with the chosen radius.
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 2 });
+    if (arc?.type === 'arc') {
+      expect(arc.center.x).toBeCloseTo(2, 6);
+      expect(arc.center.y).toBeCloseTo(2, 6);
+    }
   });
 
   it('creates an equal-length offset line on the clicked side', async () => {
@@ -375,6 +660,38 @@ describe('CommandManager history integration', () => {
     manager.active!.data.pendingMoveWorldPoint = { x: 12, y: 8, z: 14 };
     await manager.handleClick({ x: 5, y: 2 });
     expect(moveObjects).toHaveBeenCalledWith([rectangle], { x: 5, y: 2 }, { x: 10, y: 5, z: 4 });
+  });
+
+  it('moves a selection by a typed @distance<angle vector after the base point', async () => {
+    const { doc, manager, moveObjects } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+    doc.addEntity(line);
+    manager.startCommand('MOVE');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 2, y: 3 }); // base point
+    await manager.submitInput('@10<90'); // target as a polar vector in the active plane
+    const [objects, delta, worldDelta] = moveObjects.mock.calls.at(-1)!;
+    expect(objects).toEqual([line]);
+    expect(delta.x).toBeCloseTo(0, 6);
+    expect(delta.y).toBeCloseTo(10, 6);
+    expect(worldDelta).toBeUndefined();
+  });
+
+  it('adds a cosmetic M-thread from a picked circle, guessing the size from its diameter', async () => {
+    const { doc, manager } = setup();
+    const hole = doc.createCircle({ x: 0, y: 0 }, 1.65); // ⌀3.30 ≈ the M4 tapping drill
+    doc.addEntity(hole);
+    manager.startCommand('THREAD');
+    await manager.handleClick({ x: 0, y: 0 }, hole);
+    await manager.submitInput(''); // internal (default)
+    await manager.submitInput(''); // accept the suggested size
+    // Original circle + major ring + minor ring + label.
+    expect(doc.entities).toHaveLength(4);
+    const radii = doc.entities.filter((entity) => entity.type === 'circle')
+      .map((entity) => entity.type === 'circle' ? entity.radius : 0);
+    expect(radii).toContain(2); // M4 major diameter is 4 mm
+    expect(doc.entities.some((entity) => entity.type === 'text' && entity.text === 'M4')).toBe(true);
   });
 
   it('copies preselected entities repeatedly from one base point', async () => {
@@ -1011,11 +1328,17 @@ describe('object selection steps', () => {
   });
 
   it('keeps single-object steps free of window select', () => {
-    for (const name of ['OFFSET', 'TRIM', 'EXTEND'] as const) {
+    const { manager } = setup();
+    manager.startCommand('OFFSET');
+    expect(manager.isMultiObjectStep).toBe(false);
+    expect(manager.syncWindowSelection()).toBe(false);
+  });
+
+  it('gathers cutting edges as a multi-object step for TRIM and EXTEND', () => {
+    for (const name of ['TRIM', 'EXTEND'] as const) {
       const { manager } = setup();
       manager.startCommand(name);
-      expect(manager.isMultiObjectStep).toBe(false);
-      expect(manager.syncWindowSelection()).toBe(false);
+      expect(manager.isMultiObjectStep).toBe(true);
     }
   });
 
@@ -1924,6 +2247,29 @@ describe('DELETEFACE', () => {
     expect(doc.solids[0].mesh.indices).toEqual(source.indices);
     expect(history.undo()).toBe(true);
     expect(doc.solids[0].feature).toMatchObject({ kind: 'edge-modification', operation: 'chamfer' });
+  });
+
+  it('deletes a hole by clicking its wall, filling it back to the base', async () => {
+    const { doc, history, manager } = setup();
+    const feature = {
+      kind: 'boolean', operation: 'subtract', operands: [
+        { kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 20, depth: 20, height: 20 },
+        { kind: 'primitive', primitive: 'cylinder', center: { x: 0, y: 0 }, radius: 3, height: 30 },
+      ],
+    } as never;
+    const mesh = (await regenerateSolidFeature(feature))!;
+    const solid = doc.createSolid(mesh, 'holed block', 20, [], undefined, feature);
+    doc.addSolid(solid);
+    // A curved hole wall gives no planar face — the pointer handler hands Delete
+    // Face the raw surface point instead (empty vertexIndices + a hitPoint).
+    const selection = { solidId: solid.id, vertexIndices: [], normal: { x: 1, y: 0, z: 0 }, hitPoint: { x: 3, y: 0, z: 10 } };
+    manager.startCommand('DELETEFACE');
+    await manager.handleClick({ x: 3, y: 0, z: 10 }, undefined, undefined, selection);
+
+    expect(manager.active).toBeNull();
+    expect(doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(history.undo()).toBe(true);
+    expect(doc.solids[0].feature).toMatchObject({ kind: 'boolean', operation: 'subtract' });
   });
 });
 

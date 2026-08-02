@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('mycadAPI', {
     ipcRenderer.invoke('write-file', options),
   quickSave: (options: { filePath?: string; defaultPath?: string; content: string }) =>
     ipcRenderer.invoke('quick-save', options),
+  setTitle: (title: string) => ipcRenderer.invoke('set-title', title),
 });
 
 contextBridge.exposeInMainWorld('mycadEvents', {

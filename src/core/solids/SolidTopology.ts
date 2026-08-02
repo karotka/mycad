@@ -62,6 +62,7 @@ interface TriangleData {
   ids: [number, number, number];
   normal: Vec3;
   offset: number;
+  area: number;
 }
 
 const edgeKey = (a: number, b: number): string => a < b ? `${a}:${b}` : `${b}:${a}`;
@@ -76,18 +77,36 @@ export function solidPlanarFaces(mesh: SolidMesh): PlanarFace[] {
   const cached = planarFaceCache.get(mesh);
   if (cached) return cached;
 
+  // A boolean can emit several vertex indices at one position; index-based edge
+  // adjacency then misses those shared edges and shatters a single flat face
+  // into many coplanar fragments — which PRESSPULL reads as spurious dividers
+  // and pulls one sliver of. Weld coincident vertices to a canonical index so
+  // triangles that share a geometric edge are recognised as neighbours whatever
+  // their indices, both when merging triangles and when tracing the boundary.
+  const scale = meshScale(mesh);
+  // Loose enough to swallow the float32 drift a CSG seam leaves between vertices
+  // that should coincide, but far below any real feature gap (cylinder facets,
+  // chamfers) so distinct vertices are never merged.
+  const weld = weldVertexMap(mesh, Math.max(1e-3, scale * 1e-4));
+  const weldedEdgeKey = (a: number, b: number): string => edgeKey(weld[a], weld[b]);
+
   const triangles: TriangleData[] = [];
   const incident = new Map<string, number[]>();
   for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
     const ids: [number, number, number] = [mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2]];
     const first = pointAt(mesh, ids[0]);
-    const normal = triangleNormal(first, pointAt(mesh, ids[1]), pointAt(mesh, ids[2]));
+    const b = pointAt(mesh, ids[1]);
+    const c = pointAt(mesh, ids[2]);
+    const normal = triangleNormal(first, b, c);
     if (!normal) continue;
-    const triangle: TriangleData = { index: offset / 3, ids, normal, offset: dot3(normal, first) };
+    const cx = (b.y - first.y) * (c.z - first.z) - (b.z - first.z) * (c.y - first.y);
+    const cy = (b.z - first.z) * (c.x - first.x) - (b.x - first.x) * (c.z - first.z);
+    const cz = (b.x - first.x) * (c.y - first.y) - (b.y - first.y) * (c.x - first.x);
+    const triangle: TriangleData = { index: offset / 3, ids, normal, offset: dot3(normal, first), area: Math.hypot(cx, cy, cz) / 2 };
     const storedIndex = triangles.length;
     triangles.push(triangle);
     for (let edge = 0; edge < 3; edge++) {
-      const key = edgeKey(ids[edge], ids[(edge + 1) % 3]);
+      const key = weldedEdgeKey(ids[edge], ids[(edge + 1) % 3]);
       incident.set(key, [...(incident.get(key) ?? []), storedIndex]);
     }
   }
@@ -99,22 +118,32 @@ export function solidPlanarFaces(mesh: SolidMesh): PlanarFace[] {
   const orientation = signedMeshVolume(mesh) < 0 ? -1 : 1;
   const visited = new Set<number>();
   const faces: PlanarFace[] = [];
-  for (let seed = 0; seed < triangles.length; seed++) {
+  // A face's plane is defined by its largest triangle, whose normal is the least
+  // float-noisy; seeding smallest-first would let a sliver's wobbly normal drive
+  // the whole plane fit.
+  const seedOrder = triangles.map((_, index) => index).sort((a, b) => triangles[b].area - triangles[a].area);
+  // Float32 meshes make a flat face's triangle normals wobble, and measuring a
+  // triangle's plane offset with its *own* wobbly normal amplifies far in-plane
+  // coordinates into a large error — that split one flat face into slivers.
+  // Compare each vertex to the seed's plane instead, and keep the tolerance far
+  // tighter than the ~7° between cylinder facets or any real step.
+  const planeTolerance = Math.max(1e-3, scale * 1e-4);
+  for (const seed of seedOrder) {
     if (visited.has(seed)) continue;
     const group: number[] = [];
     const queue = [seed];
     const basis = triangles[seed];
-    const scale = meshScale(mesh);
-    const planeTolerance = Math.max(1e-6, scale * 1e-6);
     while (queue.length > 0) {
       const current = queue.pop()!;
       if (visited.has(current)) continue;
       const triangle = triangles[current];
-      if (dot3(triangle.normal, basis.normal) < 0.999999 || Math.abs(triangle.offset - basis.offset) > planeTolerance) continue;
+      const coplanar = dot3(triangle.normal, basis.normal) >= 0.99
+        && triangle.ids.every((id) => Math.abs(dot3(basis.normal, pointAt(mesh, id)) - basis.offset) <= planeTolerance);
+      if (!coplanar) continue;
       visited.add(current);
       group.push(current);
       for (let edge = 0; edge < 3; edge++) {
-        for (const next of incident.get(edgeKey(triangle.ids[edge], triangle.ids[(edge + 1) % 3])) ?? []) {
+        for (const next of incident.get(weldedEdgeKey(triangle.ids[edge], triangle.ids[(edge + 1) % 3])) ?? []) {
           if (!visited.has(next)) queue.push(next);
         }
       }
@@ -127,7 +156,7 @@ export function solidPlanarFaces(mesh: SolidMesh): PlanarFace[] {
       const triangle = triangles[triangleIndex];
       triangle.ids.forEach((id) => vertices.add(id));
       for (let edge = 0; edge < 3; edge++) {
-        const a = triangle.ids[edge], b = triangle.ids[(edge + 1) % 3];
+        const a = weld[triangle.ids[edge]], b = weld[triangle.ids[(edge + 1) % 3]];
         const key = edgeKey(a, b);
         const stored = boundary.get(key);
         if (stored) stored.count++;
@@ -179,6 +208,21 @@ function signedMeshVolume(mesh: SolidMesh): number {
     ) / 6;
   }
   return volume;
+}
+
+/** Maps each vertex index to a canonical index shared by every vertex at its position. */
+function weldVertexMap(mesh: SolidMesh, tolerance: number): number[] {
+  const lookup = new Map<string, number>();
+  const count = Math.floor(mesh.positions.length / 3);
+  const canonical = new Array<number>(count);
+  const quant = (value: number): number => Math.round(value / tolerance);
+  for (let index = 0; index < count; index++) {
+    const key = `${quant(mesh.positions[index * 3])}:${quant(mesh.positions[index * 3 + 1])}:${quant(mesh.positions[index * 3 + 2])}`;
+    const existing = lookup.get(key);
+    if (existing === undefined) { lookup.set(key, index); canonical[index] = index; }
+    else canonical[index] = existing;
+  }
+  return canonical;
 }
 
 function meshScale(mesh: SolidMesh): number {
@@ -239,16 +283,30 @@ export function planarFaceRegions(face: PlanarFace, entities: readonly Entity[])
     // that face for PRESSPULL.
     const start = worldToLocal(face.plane, localToWorld(entityPlane, entity.start, localPointZ(entity.start)));
     const end = worldToLocal(face.plane, localToWorld(entityPlane, entity.end, localPointZ(entity.end)));
-    if (Math.abs(start.z) > 1e-5 || Math.abs(end.z) > 1e-5) continue;
+    // "On the face" has to tolerate float32: a line drawn on a plane fitted from
+    // one triangle's normal can sit ~1e-4 off it, and the old 1e-5 then refused
+    // to let a clearly-coplanar divider split the face. Scale with how far the
+    // point is from the plane origin, since that is what amplifies the error.
+    if (!onFacePlane(start) || !onFacePlane(end)) continue;
     const splitter = [{ x: start.x, y: start.y }, { x: end.x, y: end.y }] as const;
     const next: SolidFaceRegion[] = [];
     for (const region of regions) {
-      // Cutting a polygon with holes needs a full planar arrangement. Until
-      // that generalisation, preserve such a region intact rather than lose
-      // its holes and accidentally fill material that is not there.
-      if (region.loops.length !== 1) { next.push(region); continue; }
       const split = splitPolygonBySegment(region.loops[0], splitter[0], splitter[1]);
-      next.push(...(split?.map((outer) => ({ plane: face.plane, loops: [outer] })) ?? [region]));
+      if (!split) { next.push(region); continue; }
+      // A divider that runs along a face edge shaves off a zero-area sliver; keep
+      // only the halves with real area, and if that leaves one, the line grazed
+      // the boundary and did not really split anything.
+      const minArea = Math.max(1e-4, Math.abs(polygonSignedArea(region.loops[0])) * 1e-5);
+      const halves = split.filter((half) => Math.abs(polygonSignedArea(half)) > minArea);
+      if (halves.length < 2) { next.push(region); continue; }
+      const holes = region.loops.slice(1);
+      // A hole the divider passes through would need splitting too — that wants a
+      // full planar arrangement, so keep such a region whole rather than emit bad
+      // geometry. Otherwise each hole simply goes to the side it sits on.
+      if (holes.some((hole) => straddles(hole, splitter[0], splitter[1]))) { next.push(region); continue; }
+      const withHoles = (half: Vec2[]): SolidFaceRegion =>
+        ({ plane: face.plane, loops: [half, ...holes.filter((hole) => pointInPolygon(loopCentroid(hole), half))] });
+      next.push(...halves.map(withHoles));
     }
     regions = next;
   }
@@ -282,7 +340,13 @@ export function planarFaceRegions(face: PlanarFace, entities: readonly Entity[])
 /** The region under a world-space hit point, or null outside the face/inside a hole. */
 export function planarFaceRegionAt(face: PlanarFace, entities: readonly Entity[], point: Vec3): SolidFaceRegion | null {
   const local = worldToLocal(face.plane, point);
-  if (Math.abs(local.z) > 1e-4) return null;
+  // The face plane is fitted from one triangle's normal, so a big merged face's
+  // far points sit slightly off it — a hit there can be ~1e-4 out. Scale the
+  // out-of-plane tolerance with the face's size so a click on a large plate is
+  // still recognised, while a point genuinely off the plane is still rejected.
+  let extent = 1;
+  for (const loop of face.loops) for (const vertex of loop) extent = Math.max(extent, Math.abs(vertex.x), Math.abs(vertex.y));
+  if (Math.abs(local.z) > Math.max(1e-3, extent * 1e-4)) return null;
   const candidates = planarFaceRegions(face, entities)
     .filter((region) => pointInRegion({ x: local.x, y: local.y }, region.loops));
   // A click exactly on a shared divider belongs geometrically to both sides.
@@ -301,6 +365,25 @@ const regionArea = (loops: Vec2[][]): number => loops.reduce(
 function cloneLoop(loop: Vec2[]): Vec2[] { return loop.map((point) => ({ ...point })); }
 
 const localPointZ = (point: Vec2): number => (point as Vec2 & { z?: number }).z ?? 0;
+
+/** Whether a face-local point lies on the face plane, tolerant of float32 drift
+ *  that scales with the point's distance from the plane origin. */
+const onFacePlane = (point: { x: number; y: number; z: number }): boolean =>
+  Math.abs(point.z) <= Math.max(1e-3, Math.max(Math.abs(point.x), Math.abs(point.y)) * 1e-4);
+
+/** Average of a loop's vertices — inside it for the convex holes a bore leaves. */
+const loopCentroid = (loop: Vec2[]): Vec2 =>
+  loop.reduce((sum, point) => ({ x: sum.x + point.x / loop.length, y: sum.y + point.y / loop.length }), { x: 0, y: 0 });
+
+/** Whether a loop has vertices on both sides of the infinite line through a, b. */
+const straddles = (loop: Vec2[], a: Vec2, b: Vec2): boolean => {
+  let positive = false, negative = false;
+  for (const point of loop) {
+    const side = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+    if (side > 1e-7) positive = true; else if (side < -1e-7) negative = true;
+  }
+  return positive && negative;
+};
 
 function closedEntityLoopOnFace(entity: Entity, facePlane: WorkPlane): Vec2[] | null {
   let defaultZ = 0;
@@ -334,7 +417,7 @@ function closedEntityLoopOnFace(entity: Entity, facePlane: WorkPlane): Vec2[] | 
   for (const sample of samples) {
     const explicitZ = (sample as Vec2 & { z?: number }).z;
     const local = worldToLocal(facePlane, localToWorld(entityPlane, sample, explicitZ ?? defaultZ));
-    if (Math.abs(local.z) > 1e-5) return null;
+    if (!onFacePlane(local)) return null;
     projected.push({ x: local.x, y: local.y });
   }
   const loop = dedupeLoop(projected);

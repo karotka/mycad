@@ -13,6 +13,7 @@ declare global {
       }): Promise<{ canceled: boolean; filePath?: string; content?: string }>;
       writeFile(options: { filePath: string; content: string }): Promise<{ filePath: string }>;
       quickSave(options: { filePath?: string; defaultPath?: string; content: string }): Promise<{ filePath: string }>;
+      setTitle(title: string): Promise<void>;
     };
     mycadEvents?: {
       /** Fires when a native menu item is chosen. Returns an unsubscribe function. */

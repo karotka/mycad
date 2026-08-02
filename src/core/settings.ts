@@ -1,4 +1,4 @@
-export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular';
+export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'nearest';
 
 export interface DraftingSettings {
   orthoEnabled: boolean;
@@ -53,6 +53,12 @@ export interface GcodeOptions {
   frameOriginY: number;
   /** How finely curves are broken into straight moves. */
   segments: number;
+  /**
+   * What a circle means to the target machine. 'contour' traces the outline —
+   * right for a plotter, laser or router. 'drill' plunges once at the centre —
+   * right for a drilling machine, where a hole is a point, not a path.
+   */
+  holeMode: 'contour' | 'drill';
 }
 
 export function defaultGcodeOptions(): GcodeOptions {
@@ -68,6 +74,7 @@ export function defaultGcodeOptions(): GcodeOptions {
     frameOriginX: 0,
     frameOriginY: 0,
     segments: 64,
+    holeMode: 'contour',
   };
 }
 
@@ -77,8 +84,8 @@ export function defaultDraftingSettings(): DraftingSettings {
     polarEnabled: false,
     polarAngles: [30, 45, 90],
     objectSnapEnabled: true,
-    objectSnapTrackingEnabled: true,
-    objectSnapModes: ['end', 'center', 'intersection'],
+    objectSnapTrackingEnabled: false,
+    objectSnapModes: ['end', 'middle', 'center', 'intersection', 'nearest'],
   };
 }
 

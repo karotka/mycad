@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import type { Solid } from '../core/entities/types';
+import { ensureIdAbove, type Solid } from '../core/entities/types';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
@@ -140,6 +140,13 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
         ? cloneWorkPlane(settings.activeWorkPlane)
         : cloneWorkPlane(WORLD_WORK_PLANE);
     doc.viewMode = view?.mode ?? (activeNamed ? '3d' : '2d');
+    // Bump the id counter past everything the file brought in, so the next new
+    // object cannot reuse a loaded id and overwrite it.
+    ensureIdAbove([
+      ...doc.entities.map((entity) => entity.id),
+      ...doc.solids.map((solid) => solid.id),
+      ...doc.namedWorkPlanes.map((plane) => plane.id),
+    ]);
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
     // The RGB every object and layer draws in is a cache of the indices just
@@ -279,6 +286,7 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
     frameOriginX: finite(raw.frameOriginX, defaults.frameOriginX),
     frameOriginY: finite(raw.frameOriginY, defaults.frameOriginY),
     segments: typeof raw.segments === 'number' && Number.isInteger(raw.segments) && raw.segments >= 3 ? raw.segments : defaults.segments,
+    holeMode: raw.holeMode === 'drill' || raw.holeMode === 'contour' ? raw.holeMode : defaults.holeMode,
   };
 }
 

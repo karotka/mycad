@@ -146,4 +146,28 @@ describe('exportGcode', () => {
     const gcode = exportGcode(doc).gcode;
     expect(gcode.endsWith('M5\nM2 ; end\n')).toBe(true);
   });
+
+  it('traces a circle outline by default (plotter mode)', () => {
+    const doc = setup();
+    doc.addEntity(doc.createCircle({ x: 5, y: 5 }, 2));
+    const result = exportGcode(doc);
+    // A followed outline is many small G1 moves around the rim.
+    expect(result.moveCount).toBeGreaterThan(10);
+    expect(result.gcode).toContain('G1 X');
+  });
+
+  it('plunges once at the centre when hole mode is drill', () => {
+    const doc = setup();
+    doc.addEntity(doc.createCircle({ x: 5, y: 5 }, 2));
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    const result = exportGcode(doc, { ...defaultGcodeOptions(), holeMode: 'drill' });
+    // The circle becomes a single tap at its centre: travel there, pen down, pen up,
+    // and no G1 rim moves for it.
+    expect(result.gcode).toContain('G0 X5 Y5 F6000\nM3 S19\nM5');
+    // The line still cuts normally, so drill mode only changes circles.
+    expect(result.gcode).toContain('G1 X10 Y0 F4000');
+    // One drill tap, no circle-outline segments.
+    const rimMoves = result.gcode.split('\n').filter((l) => l.startsWith('G1 X') && !l.includes('Y0')).length;
+    expect(rimMoves).toBe(0);
+  });
 });

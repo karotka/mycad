@@ -92,18 +92,29 @@ function polygonIntersectsBox(polygon: readonly Vec2[], box: WindowBounds, close
 function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
   switch (entity.type) {
     case 'line': return { points: [entity.start, entity.end], closed: false };
-    case 'circle': return {
-      points: Array.from({ length: 64 }, (_, index) => {
-        const angle = index * Math.PI * 2 / 64;
-        return { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
-      }),
-      closed: true,
-    };
+    case 'circle': {
+      // The centre may sit off the work plane (drawn in another UCS); its Z has
+      // to ride along or the outline projects at the wrong depth and window
+      // selection misses the circle.
+      const z = (entity.center as Vec2 & { z?: number }).z;
+      return {
+        points: Array.from({ length: 64 }, (_, index) => {
+          const angle = index * Math.PI * 2 / 64;
+          const point: Vec2 = { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
+          return z === undefined ? point : { ...point, z } as Vec2;
+        }),
+        closed: true,
+      };
+    }
     case 'ellipse': return { points: ellipsePoints(entity, 64).slice(0, -1), closed: true };
-    case 'rectangle': return {
-      points: [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }],
-      closed: true,
-    };
+    case 'rectangle': {
+      const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
+      const corner = (x: number, y: number): Vec2 => (z === undefined ? { x, y } : { x, y, z } as Vec2);
+      return {
+        points: [corner(entity.first.x, entity.first.y), corner(entity.opposite.x, entity.first.y), corner(entity.opposite.x, entity.opposite.y), corner(entity.first.x, entity.opposite.y)],
+        closed: true,
+      };
+    }
     case 'octagon': return { points: entity.vertices, closed: true };
     case 'polyline': return { points: entity.vertices, closed: entity.closed };
     case 'arc':
@@ -111,8 +122,12 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
     case 'text':
     case 'dimension': {
       const bounds = entityBounds(entity);
+      // Off-plane text/dimension keeps its reference Z so the box outline projects
+      // at the right depth for window selection.
+      const z = (((entity.type === 'text' ? entity.position : entity.start) as Vec2 & { z?: number }).z);
+      const corner = (point: Vec2): Vec2 => (z === undefined ? point : { ...point, z } as Vec2);
       return {
-        points: [bounds.min, { x: bounds.max.x, y: bounds.min.y }, bounds.max, { x: bounds.min.x, y: bounds.max.y }],
+        points: [corner(bounds.min), corner({ x: bounds.max.x, y: bounds.min.y }), corner(bounds.max), corner({ x: bounds.min.x, y: bounds.max.y })],
         closed: true,
       };
     }

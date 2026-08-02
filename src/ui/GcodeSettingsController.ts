@@ -36,6 +36,7 @@ export class GcodeSettingsController {
     this.set('gcode-frame-origin-x', this.doc.gcode.frameOriginX);
     this.set('gcode-frame-origin-y', this.doc.gcode.frameOriginY);
     this.set('gcode-segments', this.doc.gcode.segments);
+    this.get('gcode-hole-mode').value = this.doc.gcode.holeMode;
   }
 
   private apply(): void {
@@ -72,6 +73,7 @@ export class GcodeSettingsController {
     // Below three there is no curve left to draw, whatever the field says.
     const segments = Number(this.get('gcode-segments').value);
     if (Number.isInteger(segments) && segments >= 3) this.doc.gcode.segments = segments;
+    this.doc.gcode.holeMode = this.get('gcode-hole-mode').value === 'drill' ? 'drill' : 'contour';
     this.doc.notify();
     this.changed();
   }

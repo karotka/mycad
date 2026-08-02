@@ -263,6 +263,27 @@ html, body, #app {
   border-bottom: 11px solid #65ff9a;
 }
 
+/* Nearest: an hourglass (⋈) — two triangles meeting at a point. */
+.snap-marker[data-snap='nearest'] {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  width: 12px;
+  height: 12px;
+}
+.snap-marker[data-snap='nearest']::before,
+.snap-marker[data-snap='nearest']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+}
+.snap-marker[data-snap='nearest']::before { top: 0; border-top: 6px solid #65ff9a; }
+.snap-marker[data-snap='nearest']::after { bottom: 0; border-bottom: 6px solid #65ff9a; }
+
 /* Intersection: an X. */
 .snap-marker[data-snap='intersection'],
 .snap-marker[data-snap='apparent-intersection'] {

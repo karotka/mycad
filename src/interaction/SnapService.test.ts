@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { measurementCandidates, nearestCandidate2d, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
+import { measurementCandidates, nearestCandidate2d, nearestEdgeWorldPoint, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/solids/ManifoldEngine';
 
@@ -90,6 +90,26 @@ describe('SnapService', () => {
     const candidates = measurementCandidates(doc);
     expect(candidates).toContainEqual({ x: -5, y: -3, z: 0 });
     expect(candidates).toContainEqual({ x: 5, y: 3, z: 4 });
+  });
+
+  it('nearest edge snap returns the point on the edge closest to the cursor ray', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 })); // world (0,0,0)-(10,0,0)
+    const ray = { origin: { x: 5, y: 10, z: 0 }, direction: { x: 0, y: -1, z: 0 } };
+    const project = (point: { x: number; y: number; z: number }) => ({ x: point.x, y: point.z });
+    const world = nearestEdgeWorldPoint(doc, { x: 5, y: 0 }, ray, project, 14);
+    expect(world).not.toBeNull();
+    expect(world!.x).toBeCloseTo(5, 6);
+    expect(world!.y).toBeCloseTo(0, 6);
+    expect(world!.z).toBeCloseTo(0, 6);
+  });
+
+  it('nearest edge snap rejects an edge that projects outside the aperture', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    const ray = { origin: { x: 5, y: 10, z: 0 }, direction: { x: 0, y: -1, z: 0 } };
+    const project = (point: { x: number; y: number; z: number }) => ({ x: point.x, y: point.z });
+    expect(nearestEdgeWorldPoint(doc, { x: 100, y: 100 }, ray, project, 14)).toBeNull();
   });
 });
 

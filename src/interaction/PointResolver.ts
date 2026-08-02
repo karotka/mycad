@@ -11,6 +11,7 @@ import {
   measurementCandidates,
   nearestCandidate2d,
   nearestCandidateProjected,
+  nearestEdgeWorldPoint,
   objectSnapCandidates,
   type ObjectSnapMode,
   type SnapTarget,
@@ -138,8 +139,10 @@ export function createPointResolver(ctx: PointResolverContext) {
         : nearestPersistentSnap(event);
       if (targetedSnap) {
         // Resting on an endpoint acquires it, so moving off it can then track
-        // along its alignment path rather than losing it.
-        const acquired = endpointAnchorFromSnap(targetedSnap);
+        // along its alignment path rather than losing it. A "Nearest" snap slides
+        // along an edge and is never a tracking anchor — acquiring one drew a
+        // guide line to an arbitrary point on the edge.
+        const acquired = targetedSnap.mode === 'nearest' ? null : endpointAnchorFromSnap(targetedSnap);
         if (acquired) state.activeEndpointAnchor = acquired;
         // Carry how far the snap sits off the active plane, not just its shadow on
         // it, so a line drawn in 3D lands on the point it snapped to even when that
@@ -160,6 +163,7 @@ export function createPointResolver(ctx: PointResolverContext) {
       }
     }
     if (active && transformsObjects(active.name) && active.steps[active.stepIndex]?.kind === 'point') {
+      const ridesAlong = active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE';
       const targetedSnap = drawingInteraction.targetSnapMode
         ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
         : nearestPersistentSnap(event);
@@ -167,10 +171,28 @@ export function createPointResolver(ctx: PointResolverContext) {
         // A snapped base-and-target is a full 3D hop: the world point rides along
         // (via worldDeltaOf) so grabbing a corner and dropping it on another lands
         // x, y and z. Otherwise the move stays in the UCS plane.
-        if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') active.data.pendingMoveWorldPoint = targetedSnap.world;
+        if (ridesAlong) active.data.pendingMoveWorldPoint = targetedSnap.world;
         return targetedSnap.point;
       }
-      if (active.name === 'MOVE' || active.name === 'COPY' || active.name === 'SCALE') delete active.data.pendingMoveWorldPoint;
+      // Grabbing a corner is the natural base point for a transform, so a nearby
+      // vertex wins even when persistent OSNAP is off — the same courtesy SLICE
+      // gives its plane points. Its world point rides along as an exact 3D hop.
+      const vertex = nearestMeasurementPoint(event);
+      if (vertex) {
+        if (ridesAlong) active.data.pendingMoveWorldPoint = vertex;
+        const local = worldToLocal(doc.activeWorkPlane, vertex);
+        return { x: local.x, y: local.y };
+      }
+      if (ridesAlong) delete active.data.pendingMoveWorldPoint;
+      if (doc.viewMode === '3d') {
+        const planar = worldPoint3d(event);
+        if (planar) return constrainedPoint(planar);
+        // A steeply tilted UCS can sit edge-on to the camera: its plane ray then
+        // misses and the base point could never be placed, so the click silently
+        // did nothing. Fall back to the view plane so a point always lands — a
+        // typed @dist<angle drives the move within the UCS wherever the base sits.
+        return renderer3d.viewPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
+      }
     }
     if (doc.viewMode === '2d') return constrainedPoint(worldPoint(event));
     // In 3D a transform with no snap slides along the active UCS plane: the ray
@@ -314,17 +336,33 @@ export function createPointResolver(ctx: PointResolverContext) {
       : null;
     const candidates = doc.drafting.objectSnapModes.flatMap((mode) =>
       objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference));
-    if (doc.viewMode === '3d') {
-      const rect = viewport.getBoundingClientRect();
-      return nearestCandidateProjected(
+    const rect = viewport.getBoundingClientRect();
+    const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const discrete = doc.viewMode === '3d'
+      ? nearestCandidateProjected(
         candidates,
-        { x: event.clientX - rect.left, y: event.clientY - rect.top },
+        cursor,
         (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
         pixelTolerance,
         doc.activeWorkPlane,
-      );
-    }
-    return nearestCandidate2d(candidates, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom);
+      )
+      : nearestCandidate2d(candidates, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom);
+    // Discrete snaps (end, mid, centre…) win; the "Nearest" edge snap only fills
+    // in when none of them is under the cursor, so ending a line on an edge keeps
+    // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
+    // takes a tighter aperture so a nearby endpoint or midpoint clearly wins.
+    if (discrete || doc.viewMode !== '3d' || !doc.drafting.objectSnapModes.includes('nearest')) return discrete;
+    const world = nearestEdgeWorldPoint(
+      doc,
+      cursor,
+      renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
+      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+      pixelTolerance * 0.6,
+      gripController.draggingObjectId,
+    );
+    if (!world) return null;
+    const local = worldToLocal(doc.activeWorkPlane, world);
+    return { point: { x: local.x, y: local.y }, world, mode: 'nearest' };
   }
 
   return {

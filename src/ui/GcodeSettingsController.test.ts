@@ -19,6 +19,7 @@ function setup() {
       <input id="gcode-frame-origin-x" type="number">
       <input id="gcode-frame-origin-y" type="number">
       <input id="gcode-segments" type="number">
+      <select id="gcode-hole-mode"><option value="contour"></option><option value="drill"></option></select>
     </form>
     <button id="toggle"></button>
     <button id="close"></button>`;

@@ -53,6 +53,17 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
 
     const passes: string[] = [];
     for (const entity of entities) {
+      // On a drilling machine a circle is a hole to plunge, not an outline to
+      // follow: one tap at the centre instead of a lap around the rim.
+      if (options.holeMode === 'drill' && entity.type === 'circle') {
+        const centre = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, entity.center, 0);
+        if (Math.abs(centre.z) > 1e-6) { offPlane++; continue; }
+        passes.push(`G0 X${format(centre.x)} Y${format(centre.y)} F${format(options.travelRate)}`);
+        passes.push(...codeLines(options.penDownCode));
+        passes.push(...codeLines(options.penUpCode));
+        moveCount++;
+        continue;
+      }
       const paths = entityToPaths(entity, options.segments);
       if (paths.length === 0) {
         skipped[entity.type] = (skipped[entity.type] ?? 0) + 1;

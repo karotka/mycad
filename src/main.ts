@@ -488,12 +488,33 @@ function updateViewCubeOrientation(): void {
   get<HTMLElement>('cube3d').style.transform = `rotateX(${tilt}deg) rotateY(${spin}deg)`;
 }
 
+/**
+ * UCSFOLLOW: adopting an explicit UCS reorients the view to look straight down
+ * the new construction plane — a plan view of the UCS — so the nav cube, the
+ * standard views and picking all line up with the plane just defined. Resetting
+ * to the world plane keeps the current view. Dynamic (temporary) UCS changes
+ * flow through their own path and never reach here, so hovering never spins the
+ * camera; only committing a UCS does.
+ */
+function followWorkPlaneView(): void {
+  renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
+  if (!isWorldWorkPlane(cadDocument.activeWorkPlane)) {
+    cadDocument.viewMode = '3d';
+    // Frame first: setStandardView reuses orbitTarget/orbitRadius, so without a
+    // fresh frame the plan view keeps the old centre and zoom and the content
+    // lands off-screen at the wrong scale (the "TOP looks broken" report).
+    renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
+    renderer3d.setStandardView('top');
+  }
+  redraw();
+}
+
 const commands = new CommandManager({
   doc: cadDocument,
   history,
   moveObjects,
   copyWorldDelta: (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
-  workPlaneChanged: () => renderer3d.setWorkPlane(cadDocument.activeWorkPlane),
+  workPlaneChanged: followWorkPlaneView,
   log,
   prompt: (message) => {
     prompt.textContent = message;
@@ -589,10 +610,7 @@ const namedUcsController = new NamedUcsController(
       previewController.hideSnap();
     },
     isTemporaryWorkPlane: () => dynamicUcsController.isTemporary,
-    workPlaneChanged: () => {
-      renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-      redraw();
-    },
+    workPlaneChanged: followWorkPlaneView,
     log,
   },
 );
@@ -642,6 +660,7 @@ const menuActions: Record<string, () => void> = {
   new: () => projectController.newProject(),
   open: () => { void projectController.open(); },
   'import-dxf': () => { void projectController.importDxf(); },
+  'import-excellon': () => { void projectController.importExcellon(); },
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': startStlExport,
@@ -822,8 +841,6 @@ attachViewportPointerHandlers({
   redraw,
   log,
 });
-
-
 
 new InputController(input, commandForm, {
   escape: () => {
@@ -1127,10 +1144,14 @@ document.querySelectorAll<HTMLButtonElement>('[data-standard-view]').forEach((bu
     // identical but silently disables window selection and grid snap — that was
     // the "clicking TOP stopped the selection window from working" report.
     if (view === 'top') {
-      renderer3d.setStandardView('top');
       // Under the WCS the plan view is the flat 2D drawing plane — where window
       // selection and grid snap live. A custom UCS has no 2D plane of its own,
-      // so TOP there means looking straight down that UCS's Z, still in 3D.
+      // so TOP there means looking straight down that UCS's Z, still in 3D — and
+      // it must reframe the content, or it inherits a stale centre and scale.
+      if (!isWorldWorkPlane(cadDocument.activeWorkPlane)) {
+        renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
+      }
+      renderer3d.setStandardView('top');
       cadDocument.viewMode = isWorldWorkPlane(cadDocument.activeWorkPlane) ? '2d' : '3d';
       cadDocument.notify();
       redraw();
@@ -1147,7 +1168,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach((but
     const style = button.dataset.visualStyle as 'wireframe' | 'shaded' | 'xray';
     renderer3d.setVisualStyle(style);
     document.querySelectorAll('[data-visual-style]').forEach((item) => item.classList.toggle('active', item === button));
-    log(`Visual style: ${style === 'wireframe' ? 'Wireframe' : style === 'xray' ? 'X-Ray with Edges' : 'Shaded with Edges'}.`);
+    log(`Visual style: ${style === 'wireframe' ? 'Wireframe (design edges only)' : style === 'xray' ? 'X-Ray with Edges' : 'Shaded with Edges'}.`);
     redraw();
   });
 });

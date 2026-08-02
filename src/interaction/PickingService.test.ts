@@ -42,6 +42,31 @@ describe('window selection', () => {
     expect([...doc.selectedEntityIds]).toEqual([inside.id, crossing.id]);
     expect([...doc.selectedSolidIds]).toEqual([solid.id]);
   });
+
+  it('window-selects a circle whose centre carries a Z (drawn off the UCS plane)', () => {
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const circle = doc.createCircle({ x: 0, y: 0, z: 5 } as never, 2);
+    doc.addEntity(circle);
+    // Projection where world Z shifts screen Y, so a dropped centre.z would put
+    // the outline in the wrong place and the window would miss it.
+    const project = (point: { x: number; y: number; z: number }) => ({ x: point.x, y: point.y + point.z });
+    applyProjectedWindowSelection(doc, { minX: -3, maxX: 3, minY: 2, maxY: 8 }, false, false, project);
+    expect(doc.selectedEntityIds.has(circle.id)).toBe(true);
+  });
+
+  it('window-selects an ellipse and an arc whose reference sits off the plane', () => {
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const ellipse = doc.createEllipse({ x: 0, y: 0, z: 5 } as never, 2, 1);
+    const arc = doc.createArc({ x: 0, y: 0, z: 5 } as never, 2, 0, Math.PI);
+    doc.addEntity(ellipse);
+    doc.addEntity(arc);
+    const project = (point: { x: number; y: number; z: number }) => ({ x: point.x, y: point.y + point.z });
+    applyProjectedWindowSelection(doc, { minX: -3, maxX: 3, minY: 2, maxY: 8 }, true, false, project);
+    expect(doc.selectedEntityIds.has(ellipse.id)).toBe(true);
+    expect(doc.selectedEntityIds.has(arc.id)).toBe(true);
+  });
 });
 
 describe('picking a line along its length', () => {

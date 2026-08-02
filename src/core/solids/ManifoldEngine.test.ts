@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../entities/types';
-import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh, createTorusMesh, deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
+import { booleanSubtract, booleanUnion, createBoxMesh, createConeMesh, createCylinderMesh, createTorusMesh, deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, regenerateSolidFeature, splitSolidByPlane } from './ManifoldEngine';
 import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from './SolidTopology';
 import { Document } from '../Document';
 import { localToWorld } from '../../math/workplane';
@@ -205,6 +205,23 @@ describe('parametric solid regeneration', () => {
     // A torus leaves a hole of radius - tubeRadius; a cylinder reaches its axis.
     expect(minDistance).toBeCloseTo(8, 5);
   });
+  it('fuses two touching solids only when asked, dissolving the internal wall', async () => {
+    const a = createBoxMesh(10, 10, 10, 5, 5, 0);
+    const b = createBoxMesh(10, 10, 10, 15, 5, 0); // shares the face at x = 10, no shared volume
+    const wallsAtX10 = (mesh: { positions: Float32Array; indices: Uint32Array }) =>
+      solidPlanarFaces(mesh).filter((f) => Math.abs(f.normal.x) > 0.9 && Math.abs(f.plane.origin.x - 10) < 0.1).length;
+    expect(wallsAtX10((await booleanUnion([a, b]))!)).toBe(2); // default keeps the coincident wall
+    expect(wallsAtX10((await booleanUnion([a, b], true))!)).toBe(0); // fuseTouching dissolves it
+  });
+
+  it('regenerating a union feature fuses touching operands, so a later fillet keeps it clean', async () => {
+    const box = (cx: number) => ({ kind: 'primitive', primitive: 'box', center: { x: cx, y: 0 }, width: 10, depth: 10, height: 10 });
+    const feature = { kind: 'boolean', operation: 'union', operands: [box(0), box(10)] } as never; // touch at x = 5
+    const mesh = (await regenerateSolidFeature(feature))!;
+    const walls = solidPlanarFaces(mesh).filter((f) => Math.abs(f.normal.x) > 0.9 && Math.abs(f.plane.origin.x - 5) < 0.1).length;
+    expect(walls).toBe(0);
+  });
+
   it('moves a selected side face along its normal', () => {
     const mesh = createBoxMesh(10, 6, 4);
     const changed = pressPullFace(mesh, [1, 2, 5, 6], { x: 1, y: 0, z: 0 }, 3);

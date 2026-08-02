@@ -9,10 +9,12 @@
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, isSweepProfileEntity, type Entity, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
 import { deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
+import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { extrusionFeature } from '../../solids/extrusion';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
+import { apply2dCornerModification, sameWorkPlane } from './edit2d';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -183,17 +185,52 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
   return 'advance';
 }
 
+/** A picked solid edge arrives as a selection object; a 2D line arrives as an entity. */
+const isEntityValue = (value: unknown): value is Entity =>
+  !!value && typeof value === 'object' && 'type' in value && 'id' in value;
+
 export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   const rounded = active.name === 'FILLET';
 
   if (active.stepIndex === 0) {
+    // Auto-detect: two 2D sides (each a line or a polyline) chamfer/fillet the
+    // corner they meet at; a solid edge is the 3D operation and skips the
+    // second-side step.
+    if (isEntityValue(value)) {
+      if (value.type === 'line' || value.type === 'polyline') {
+        data.mode2d = true;
+        data.first = { entity: value, pick: data.lastObjectPickPoint };
+        ctx.doc.selectEntity(value.id);
+        ctx.log('First side selected. Select the second side.');
+        return 'advance'; // → second-side step
+      }
+      ctx.log(`${active.name} needs a 2D line, a polyline, or a solid edge.`);
+      return 'stay';
+    }
     const edge = value as SolidEdgeSelection;
+    data.mode2d = false;
     data.edge = edge;
     ctx.doc.selectSolid(edge.solidId);
     ctx.log('Edge selected.');
+    active.stepIndex = 1; // skip the 2D second-side step; finishStep lands on the size step
     return 'advance';
   }
+
+  if (active.stepIndex === 1) {
+    // Reached only in 2D mode: the second side (a line, or a side of the same polyline).
+    if (!isEntityValue(value) || (value.type !== 'line' && value.type !== 'polyline')) {
+      ctx.log('Select a second 2D side (line or polyline).');
+      return 'stay';
+    }
+    const first = data.first as { entity: Entity };
+    if (!sameWorkPlane(first.entity, value)) { ctx.log('Both sides must be on the same work plane.'); return 'stay'; }
+    data.second = { entity: value, pick: data.lastObjectPickPoint };
+    ctx.doc.selectEntity(value.id, true);
+    return 'advance'; // → size step
+  }
+
+  if (data.mode2d) return apply2dCornerModification(run, rounded);
 
   const entered = rounded
     ? [Math.abs(value as number), Math.abs(value as number)] as const
@@ -308,8 +345,8 @@ function sourceHasFacePlane(source: SolidMesh, selected: SolidFaceSelection): bo
  */
 export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
   const face = run.value as SolidFaceSelection | undefined;
-  if (!face || !Array.isArray(face.vertexIndices)) {
-    run.ctx.log('Delete Face requires a planar solid face.');
+  if (!face || typeof face.solidId !== 'string') {
+    run.ctx.log('Delete Face requires a solid face.');
     return 'stay';
   }
   const solid = run.ctx.doc.getSolid(face.solidId);
@@ -319,6 +356,36 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
   }
 
   const before = cloneSolid(solid);
+
+  // First, try to remove whatever recorded feature made the surface under the
+  // cursor — a hole's cutter, a bump's operand, a rounded edge. This is the only
+  // path that can reach a curved face (a cylindrical hole wall), which the
+  // planar heal below cannot select at all.
+  if (face.hitPoint) {
+    run.ctx.log('Finding the feature under the cursor…');
+    const removal = await featureRemovalForPoint(solid, face.hitPoint);
+    if (removal) {
+      const after = cloneSolid(solid);
+      after.feature = removal.feature;
+      after.mesh = removal.mesh;
+      after.revision = solid.revision + 1;
+      after.height = removal.feature.kind === 'extrusion' || removal.feature.kind === 'primitive'
+        ? removal.feature.height
+        : meshZSpan(removal.mesh);
+      run.ctx.history.execute(new UpdateSolidEdit('Delete face', before, after));
+      run.ctx.doc.clearSelection();
+      run.ctx.doc.selectSolid(after.id);
+      run.ctx.log('Delete Face complete — removed the feature under the cursor.');
+      return 'advance';
+    }
+  }
+
+  // Fallback: heal a planar face by extending its neighbours. Needs a real
+  // planar face, so a curved hit that found no feature to remove ends here.
+  if (!Array.isArray(face.vertexIndices) || face.vertexIndices.length === 0) {
+    run.ctx.log('Delete Face: nothing removable here. Click a hole, a rounded edge, or a planar face.');
+    return 'stay';
+  }
   const source = savedSourceMesh(solid);
   let after: Solid | null = null;
   let removedLatestFeature = false;

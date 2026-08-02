@@ -165,33 +165,48 @@ export class GripController {
     return Math.atan2(b.y - a.y, b.x - a.x);
   }
 
+  /**
+   * Midpoint that keeps the endpoints' Z. `midpoint2` drops it, so on a line
+   * whose ends sit at different depths the mid grip landed back on the UCS plane
+   * (z = 0) and floated off the line — the stray third grip.
+   */
+  private static edgeMidpoint(a: Vec2, b: Vec2): Vec2 {
+    const az = (a as Vec2 & { z?: number }).z;
+    const bz = (b as Vec2 & { z?: number }).z;
+    const mid = midpoint2(a, b);
+    return az === undefined && bz === undefined ? mid : { ...mid, z: ((az ?? 0) + (bz ?? 0)) / 2 } as Vec2;
+  }
+
   activeGrips(): Grip[] {
     const entity = this.doc.getSelectedEntities()[0];
     const solid = this.doc.getSelectedSolids()[0];
     // Lines and rectangles expose their ordinary AutoCAD-like edit grips as
     // soon as they are selected; no context-menu mode is required.
     if (entity?.type === 'line' && this.mode === 'middle') {
-      return [{ point: midpoint2(entity.start, entity.end), index: 0, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) }];
+      return [{ point: GripController.edgeMidpoint(entity.start, entity.end), index: 0, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) }];
     }
     if (entity?.type === 'line') return [
       { point: entity.start, index: 0, shape: 'square' },
       { point: entity.end, index: 1, shape: 'square' },
-      { point: midpoint2(entity.start, entity.end), index: 2, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) },
+      { point: GripController.edgeMidpoint(entity.start, entity.end), index: 2, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) },
     ];
     if (entity?.type === 'rectangle' && this.mode === 'center') {
-      return [{ point: midpoint2(entity.first, entity.opposite), index: 0, shape: 'square' }];
+      return [{ point: GripController.edgeMidpoint(entity.first, entity.opposite), index: 0, shape: 'square' }];
     }
     if (entity?.type === 'rectangle') {
+      // Keep the corners' Z so a rectangle drawn off the work plane grips in place.
+      const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
+      const corner = (x: number, y: number): Vec2 => (z === undefined ? { x, y } : { x, y, z } as Vec2);
       const corners = [
-        entity.first,
-        { x: entity.opposite.x, y: entity.first.y },
-        entity.opposite,
-        { x: entity.first.x, y: entity.opposite.y },
+        corner(entity.first.x, entity.first.y),
+        corner(entity.opposite.x, entity.first.y),
+        corner(entity.opposite.x, entity.opposite.y),
+        corner(entity.first.x, entity.opposite.y),
       ];
       return [
         ...corners.map((point, index) => ({ point, index, shape: 'square' as const })),
         ...corners.map((point, index) => ({
-          point: midpoint2(point, corners[(index + 1) % 4]),
+          point: GripController.edgeMidpoint(point, corners[(index + 1) % 4]),
           index: index + 4,
           shape: 'edge' as const,
           angle: GripController.edgeAngle(point, corners[(index + 1) % 4]),
@@ -205,17 +220,14 @@ export class GripController {
       ];
     }
     if (entity?.type === 'circle' && !this.mode) {
+      // The quadrant grips must keep the centre's Z, or a circle drawn off the
+      // work plane (in another UCS) shows its rim grips floating on the plane.
+      const z = (entity.center as Vec2 & { z?: number }).z;
       const result: Grip[] = [{ point: entity.center, index: 0, shape: 'square' }];
       for (let i = 0; i < 4; i++) {
         const angle = i * Math.PI / 2;
-        result.push({
-          point: {
-            x: entity.center.x + Math.cos(angle) * entity.radius,
-            y: entity.center.y + Math.sin(angle) * entity.radius,
-          },
-          index: i + 1,
-          shape: 'square',
-        });
+        const point: Vec2 = { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
+        result.push({ point: z === undefined ? point : { ...point, z } as Vec2, index: i + 1, shape: 'square' });
       }
       return result;
     }
@@ -226,7 +238,7 @@ export class GripController {
       return vertices.map((point, index) => ({ point, index, shape: 'square' }));
     }
     if (entity?.type === 'bezier' && !this.mode) return [entity.start,entity.control1,entity.control2,entity.end].map((point,index)=>({point,index,shape:'square'}));
-    if (entity?.type === 'arc' && !this.mode) { const point=(a:number)=>({x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}); return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
+    if (entity?.type === 'arc' && !this.mode) { const z=(entity.center as Vec2 & {z?:number}).z; const point=(a:number):Vec2=>{const p:Vec2={x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}; return z===undefined?p:{...p,z} as Vec2;}; return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (entity?.type === 'dimension' && !this.mode) {
       const geometry = dimensionGeometry(entity);

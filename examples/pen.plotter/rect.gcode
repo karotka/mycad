@@ -1,0 +1,15 @@
+; MyCAD G-code
+G21 ; mm
+G90 ; absolute
+G28 ; home
+G0 Z5 F2400
+; --- layer: 0 ---
+G0 X4.5 Y3
+G1 Z0 F800
+G1 X36.5 Y3 F800
+G1 X36.5 Y26.5 F800
+G1 X4.5 Y26.5 F800
+G1 X4.5 Y3 F800
+G0 Z5 F2400
+G0 Z5
+M2 ; end

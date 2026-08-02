@@ -108,13 +108,13 @@ export function shellHtml(tools: ShellTools): string {
         <button id="otrack-toggle" title="Object Snap Tracking (F11)" aria-label="Object Snap Tracking (F11)">OTRACK <kbd>F11</kbd></button>
       </div>
       <div class="visual-style" role="group" aria-label="Visual style">
-        <button data-visual-style="wireframe" title="Wireframe" aria-label="Wireframe">
+        <button data-visual-style="wireframe" title="Wireframe — see-through, design edges only (no faces)" aria-label="Wireframe — design edges only, no faces">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm0 0v9m8-4.5L12 12 4 7.5M12 12v9"/></svg>
         </button>
-        <button class="active" data-visual-style="xray" title="X-Ray with Edges" aria-label="X-Ray with Edges">
+        <button class="active" data-visual-style="xray" title="X-Ray — translucent faces with edges (see through the model)" aria-label="X-Ray — translucent faces with edges">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path class="xray-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="xray-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="xray-right" d="M20 7.5L12 12v9l8-4.5v-9z"/><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"/></svg>
         </button>
-        <button data-visual-style="shaded" title="Shaded with Edges" aria-label="Shaded with Edges">
+        <button data-visual-style="shaded" title="Shaded — solid opaque faces with edges (hidden edges occluded)" aria-label="Shaded — solid faces with edges">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path class="shade-top" d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"/><path class="shade-left" d="M4 7.5l8 4.5v9l-8-4.5v-9z"/><path class="shade-right" d="M20 7.5L12 12v9l8-4.5v-9z"/></svg>
         </button>
       </div>
@@ -170,6 +170,10 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Frame origin X</span><input id="gcode-frame-origin-x" type="number" step="1" title="Lower-left corner X in world coordinates"></label>
           <label class="property-row"><span>Frame origin Y</span><input id="gcode-frame-origin-y" type="number" step="1" title="Lower-left corner Y in world coordinates"></label>
           <label class="property-row"><span>Curve steps</span><input id="gcode-segments" type="number" min="3" max="512" step="1" title="Straight moves per full circle"></label>
+          <label class="property-row"><span>Circles as</span><select id="gcode-hole-mode" title="How circles are cut: a traced outline for a plotter, or a single plunge at the centre for a drilling machine">
+            <option value="contour">Outline (plotter/laser)</option>
+            <option value="drill">Drill point (drilling machine)</option>
+          </select></label>
         </form>
       </section>
     </footer>
@@ -192,6 +196,7 @@ export function shellHtml(tools: ShellTools): string {
       <button data-persistent-snap="intersection">Intersection</button>
       <button data-persistent-snap="apparent-intersection">Apparent intersection</button>
       <button data-persistent-snap="perpendicular">Perpendicular</button>
+      <button data-persistent-snap="nearest">Nearest</button>
     </section>
   </div>
   <section class="text-options" id="text-options" hidden>
