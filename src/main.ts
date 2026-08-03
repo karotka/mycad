@@ -40,6 +40,7 @@ import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPl
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 import { createToolActions } from './interaction/ToolActions';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
+import { CadModelApi, type LineSegmentInput, type PrimitiveInput, type SelectionMode } from './mcp/CadModelApi';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -615,15 +616,17 @@ const namedUcsController = new NamedUcsController(
   },
 );
 
+function cancelCurrentInteraction(): void {
+  releaseDynamicUcs();
+  commands.cancelActive();
+  gripInteraction.cancel();
+  gripController.clear();
+  previewController.reset();
+}
+
 const projectController = new ProjectController(cadDocument, history, {
   captureView: captureProjectView,
-  cancelInteraction: () => {
-    releaseDynamicUcs();
-    commands.cancelActive();
-    gripInteraction.cancel();
-    gripController.clear();
-    previewController.reset();
-  },
+  cancelInteraction: cancelCurrentInteraction,
   resetView: () => {
     applyDefaultTwoDView();
     renderer3d.clearFaceHighlight();
@@ -646,6 +649,116 @@ const projectController = new ProjectController(cadDocument, history, {
   focusInput: () => input.focus(),
 });
 commands.updateContext({ exportStl: (solids) => projectController.exportStl(solids) });
+
+const cadMcp = new CadModelApi(cadDocument, history, () => projectController.currentFilePath ?? null);
+
+const mcpMutations = new Set([
+  'new_document', 'open_project', 'select_objects', 'create_primitive', 'create_lines', 'boolean_solids',
+  'delete_feature', 'delete_objects', 'undo', 'redo',
+]);
+
+const stringArray = (value: unknown, label: string): string[] => {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new Error(`${label} must be an array of object IDs.`);
+  return value;
+};
+
+async function dispatchMcpRequest(request: { id: string; method: string; params: Record<string, unknown> }): Promise<void> {
+  const api = window.mycadAPI;
+  if (!api) return;
+  try {
+    if (mcpMutations.has(request.method)) cancelCurrentInteraction();
+    const params = request.params;
+    let result: unknown;
+    switch (request.method) {
+      case 'new_document':
+        projectController.newProject(false);
+        result = cadMcp.summary();
+        break;
+      case 'open_project': {
+        if (typeof params.path !== 'string') throw new Error('A .mycad project path is required.');
+        const file = await api.mcpReadProject(request.id, params.path);
+        projectController.openProjectContent(file.content, file.filePath);
+        result = cadMcp.summary();
+        break;
+      }
+      case 'get_document': result = cadMcp.summary(); break;
+      case 'list_objects': result = cadMcp.listObjects(params.selectedOnly === true); break;
+      case 'get_object':
+        if (typeof params.id !== 'string') throw new Error('An object ID is required.');
+        result = cadMcp.getObject(params.id);
+        break;
+      case 'select_objects':
+        result = cadMcp.selectObjects(
+          stringArray(params.ids, 'ids'),
+          (params.mode ?? 'replace') as SelectionMode,
+        );
+        break;
+      case 'create_primitive': result = cadMcp.createPrimitive(params as unknown as PrimitiveInput); break;
+      case 'create_lines':
+        if (!Array.isArray(params.segments)) throw new Error('Line segments are required.');
+        result = cadMcp.createLines(params.segments as LineSegmentInput[]);
+        break;
+      case 'boolean_solids':
+        if (params.operation !== 'union' && params.operation !== 'subtract') throw new Error('Boolean operation must be union or subtract.');
+        result = await cadMcp.booleanOperation(
+          params.operation,
+          stringArray(params.solidIds, 'solidIds'),
+          typeof params.name === 'string' ? params.name : undefined,
+        );
+        break;
+      case 'delete_feature':
+        if (typeof params.solidId !== 'string') throw new Error('A solid ID is required.');
+        result = await cadMcp.deleteFeature(
+          params.solidId,
+          params.point as { x: number; y: number; z: number },
+          params.normal as { x: number; y: number; z: number },
+        );
+        break;
+      case 'delete_objects': result = cadMcp.deleteObjects(stringArray(params.ids, 'ids')); break;
+      case 'undo': result = cadMcp.undo(); break;
+      case 'redo': result = cadMcp.redo(); break;
+      case 'save_project': {
+        const requestedPath = typeof params.path === 'string' ? params.path : undefined;
+        const filePath = requestedPath ?? projectController.currentFilePath;
+        if (!filePath) throw new Error('Pass a .mycad path because the open document has not been saved yet.');
+        const content = projectController.serializeCurrentProject();
+        if (requestedPath) await api.mcpWriteFile(request.id, filePath, content);
+        else await api.writeFile({ filePath, content });
+        projectController.markProjectSaved(filePath);
+        result = { path: filePath, summary: cadMcp.summary() };
+        break;
+      }
+      case 'export_stl': {
+        if (typeof params.path !== 'string') throw new Error('A .stl output path is required.');
+        const output = cadMcp.exportStlContent(
+          params.solidIds === undefined ? undefined : stringArray(params.solidIds, 'solidIds'),
+        );
+        await api.mcpWriteFile(request.id, params.path, output.content);
+        result = { path: params.path, solidIds: output.solidIds };
+        break;
+      }
+      default: throw new Error(`Unsupported MCP operation: ${request.method}.`);
+    }
+    if (mcpMutations.has(request.method)) log(`MCP: ${request.method} complete.`);
+    await api.mcpRespond({ id: request.id, ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`MCP failed: ${message}`);
+    try {
+      await api.mcpRespond({ id: request.id, ok: false, error: message });
+    } catch (responseError) {
+      log(`MCP bridge response failed: ${responseError instanceof Error ? responseError.message : String(responseError)}`);
+    }
+  }
+}
+
+let mcpRequestQueue = Promise.resolve();
+const removeMcpListener = window.mycadEvents?.onMcpRequest((request) => {
+  // Booleans and feature healing are asynchronous. Serialising requests keeps
+  // a later edit from reading the document halfway through an earlier one.
+  mcpRequestQueue = mcpRequestQueue.then(() => dispatchMcpRequest(request));
+});
+if (removeMcpListener) void window.mycadAPI?.mcpReady();
 
 function startStlExport(): void {
   if (cadDocument.solids.length === 0) {
@@ -1174,6 +1287,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach((but
 });
 window.addEventListener('beforeunload', () => {
   removeMenuListener?.();
+  removeMcpListener?.();
 });
 log('MyCAD ready. Enter HELP for a list of commands.');
 resize();

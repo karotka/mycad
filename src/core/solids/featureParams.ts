@@ -65,8 +65,14 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
  * dead end.
  */
 export function extrusionParams(feature: ExtrusionFeature): FeatureParam[] {
+  if (feature.direction) return [
+    { key: 'directionX', label: 'Direction X', value: feature.direction.x, min: -Infinity },
+    { key: 'directionY', label: 'Direction Y', value: feature.direction.y, min: -Infinity },
+    { key: 'directionZ', label: 'Direction Z', value: feature.direction.z, min: -Infinity },
+  ];
   return [
     { key: 'height', label: 'Height', value: feature.height, min: 1e-6 },
+    { key: 'taperAngle', label: 'Taper angle', value: feature.taperAngle ?? 0, min: -89.9 },
     { key: 'scaleX', label: 'Scale X', value: feature.transform.scaleX, min: -Infinity },
     { key: 'scaleY', label: 'Scale Y', value: feature.transform.scaleY, min: -Infinity },
     { key: 'translateX', label: 'Move X', value: feature.transform.translateX, min: -Infinity },
@@ -77,6 +83,19 @@ export function extrusionParams(feature: ExtrusionFeature): FeatureParam[] {
 
 export function setExtrusionParam(feature: ExtrusionFeature, key: string, value: number): boolean {
   if (!Number.isFinite(value)) return false;
+  if ((key === 'directionX' || key === 'directionY' || key === 'directionZ') && feature.direction) {
+    const axis = key.slice(-1).toLowerCase() as 'x' | 'y' | 'z';
+    const next = { ...feature.direction, [axis]: value };
+    if (Math.abs(next.z) < 1e-9 || Math.hypot(next.x, next.y, next.z) < 1e-9) return false;
+    feature.direction = next;
+    feature.height = Math.hypot(next.x, next.y, next.z);
+    return true;
+  }
+  if (key === 'taperAngle') {
+    if (Math.abs(value) >= 89.9) return false;
+    feature.taperAngle = value;
+    return true;
+  }
   if (key === 'height') {
     if (value < 1e-6) return false;
     feature.height = value;

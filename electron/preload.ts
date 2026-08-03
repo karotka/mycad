@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('mycadAPI', {
   quickSave: (options: { filePath?: string; defaultPath?: string; content: string }) =>
     ipcRenderer.invoke('quick-save', options),
   setTitle: (title: string) => ipcRenderer.invoke('set-title', title),
+  mcpReady: () => ipcRenderer.invoke('mycad-mcp-ready'),
+  mcpReadProject: (requestId: string, filePath: string) =>
+    ipcRenderer.invoke('mycad-mcp-read-project', { requestId, filePath }),
+  mcpWriteFile: (requestId: string, filePath: string, content: string) =>
+    ipcRenderer.invoke('mycad-mcp-write-file', { requestId, filePath, content }),
+  mcpRespond: (response: { id: string; ok: boolean; result?: unknown; error?: string }) =>
+    ipcRenderer.invoke('mycad-mcp-response', response),
 });
 
 contextBridge.exposeInMainWorld('mycadEvents', {
@@ -17,5 +24,10 @@ contextBridge.exposeInMainWorld('mycadEvents', {
     const listener = (_event: unknown, action: string) => callback(action);
     ipcRenderer.on('mycad-menu', listener);
     return () => ipcRenderer.removeListener('mycad-menu', listener);
+  },
+  onMcpRequest: (callback: (request: { id: string; method: string; params: Record<string, unknown> }) => void) => {
+    const listener = (_event: unknown, request: { id: string; method: string; params: Record<string, unknown> }) => callback(request);
+    ipcRenderer.on('mycad-mcp-request', listener);
+    return () => ipcRenderer.removeListener('mycad-mcp-request', listener);
   },
 });

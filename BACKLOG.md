@@ -91,6 +91,17 @@ window outlines can silently miss a new type.
 - Extend object-snap tracking to follow configured polar angles, not only
   horizontal and vertical paths.
 
+### Native editing shortcuts
+
+- **Delete selection:** pressing Delete removes every selected entity and solid
+  as one undoable edit. The shortcut must be ignored while an input, textarea or
+  editable text is focused.
+- **System clipboard:** Cmd/Ctrl+C copies the selected entities and solids in a
+  versioned MyCAD clipboard format, Cmd/Ctrl+X copies and removes them as one
+  undoable edit, and Cmd/Ctrl+V inserts independent copies with new IDs. Preserve
+  layers, work planes and parametric solid feature trees; repeated paste should
+  apply a small visible offset.
+
 Remaining F-key workflow:
 
 | Key | Open work |

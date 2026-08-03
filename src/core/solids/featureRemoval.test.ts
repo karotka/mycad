@@ -38,11 +38,48 @@ describe('featureRemovalForPoint', () => {
     const feature: SolidFeature = { kind: 'boolean', operation: 'subtract', operands: [box(0, 0, 20, 20, 20), cylinder(0, 0, 3, 30)] } as SolidFeature;
     const solid = await asSolid(feature);
     const holeVolume = volume(solid.mesh);
-    const result = await featureRemovalForPoint(solid, { x: 3, y: 0, z: 10 }); // on the cylinder wall
+    const result = await featureRemovalForPoint(
+      solid,
+      { x: 3, y: 0, z: 10 }, // on the cylinder wall
+      { x: -1, y: 0, z: 0 }, // outward from the resulting solid, into the bore
+    );
     expect(result).not.toBeNull();
     expect(result!.candidate).toEqual({ path: [1], mode: 'splice' });
     // Hole gone → solid gained back the bore's volume.
     expect(volume(result!.mesh)).toBeGreaterThan(holeVolume + 100);
+  });
+
+  it('does not cross the hole rim when the click is on the adjacent top face', async () => {
+    const feature: SolidFeature = { kind: 'boolean', operation: 'subtract', operands: [box(0, 0, 20, 20, 20), cylinder(0, 0, 3, 30)] } as SolidFeature;
+    const solid = await asSolid(feature);
+
+    // The point lies on the box top, just outside the bore. It is deliberately
+    // within the numeric weld tolerance of the wall: the face normal, not an
+    // arbitrary distance halo, must keep the two sides of the rim separate.
+    const result = await featureRemovalForPoint(solid, { x: 3.005, y: 0, z: 20 }, { x: 0, y: 0, z: 1 });
+
+    expect(result).toBeNull();
+  });
+
+  it('removes the innermost matching feature instead of its whole boolean ancestor', async () => {
+    const holedBase: SolidFeature = {
+      kind: 'boolean', operation: 'subtract',
+      operands: [box(0, 0, 20, 20, 20), cylinder(0, 0, 3, 30)],
+    } as SolidFeature;
+    const feature: SolidFeature = {
+      kind: 'boolean', operation: 'union',
+      operands: [holedBase, box(8, 0, 4, 4, 25)],
+    } as SolidFeature;
+    const solid = await asSolid(feature);
+
+    const result = await featureRemovalForPoint(
+      solid,
+      { x: 3, y: 0, z: 10 },
+      { x: -1, y: 0, z: 0 },
+    );
+
+    expect(result?.candidate).toEqual({ path: [0, 1], mode: 'splice' });
+    expect(result?.feature.kind).toBe('boolean');
   });
 
   it('a click on a bump removes the unioned operand, not the whole body', async () => {
@@ -53,6 +90,20 @@ describe('featureRemovalForPoint', () => {
     expect(result!.candidate).toEqual({ path: [1], mode: 'splice' });
     // The base survives (bump removed, not the body).
     expect(volume(result!.mesh)).toBeGreaterThan(3500); // base 20*20*10 = 4000
+  });
+
+  it('does not cross a bump edge when the click belongs to the base face', async () => {
+    const feature: SolidFeature = {
+      kind: 'boolean', operation: 'union',
+      operands: [box(0, 0, 20, 20, 10), box(7, 0, 6, 6, 15)],
+    } as SolidFeature;
+    const solid = await asSolid(feature);
+
+    // This is still the horizontal base face, within weld tolerance of the
+    // bump's vertical wall. Distance alone must not claim the bump was clicked.
+    const result = await featureRemovalForPoint(solid, { x: 3.995, y: 0, z: 10 }, { x: 0, y: 0, z: 1 });
+
+    expect(result).toBeNull();
   });
 
   it('returns null for a bare primitive (no feature to remove)', async () => {

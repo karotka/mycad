@@ -5,7 +5,7 @@ import { CommandManager, hitTestEntity } from './CommandManager';
 import { linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
-import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, createCylinderMesh, primitiveMesh, regenerateSolidFeature } from '../solids/ManifoldEngine';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
 import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../solids/SolidTopology';
@@ -633,7 +633,7 @@ describe('CommandManager history integration', () => {
     doc.selectEntity(profile.id);
     manager.startCommand('EXTRUDE');
     expect(manager.active).toMatchObject({ name: 'EXTRUDE', stepIndex: 1 });
-    expect(manager.currentPrompt()).toBe('Enter extrusion height:');
+    expect(manager.currentPrompt()).toBe('Specify extrusion height or [Direction/Path/Taper angle]:');
   });
 
   it('moves a selected object by the two picked view-plane points', async () => {
@@ -2053,6 +2053,7 @@ describe('EXTRUDE', () => {
     // Manifold only extrudes along +Z, so downwards is the same prism dropped
     // by its own height — which regeneration already knew how to honour.
     expect(solid.feature.height).toBe(10);
+    expect(solid.feature.reverse).toBe(true);
     expect(solid.feature.transform.translateZ).toBe(-10);
   });
 
@@ -2089,6 +2090,115 @@ describe('EXTRUDE', () => {
     expect(kit.history.undo()).toBe(true);
     expect(kit.doc.entities).toHaveLength(2);
     expect(kit.doc.solids).toHaveLength(0);
+  });
+
+  it('uses AutoCAD-style Path after the profile selection', async () => {
+    const kit = setup();
+    const profile = kit.doc.createRectangle({ x: -1, y: -1 }, { x: 1, y: 1 });
+    const path = kit.doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    kit.doc.addEntity(profile); kit.doc.addEntity(path);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('Path');
+    expect(kit.manager.currentPrompt()).toBe('Select extrusion path:');
+    await kit.manager.handleClick({ x: 5, y: 0 }, path);
+
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'sweep', createdBy: 'extrude' });
+    if (kit.doc.solids[0].feature.kind !== 'sweep') throw new Error('expected a path extrusion');
+    expect(kit.doc.solids[0].feature.profile.id).toBe(profile.id);
+    expect(kit.doc.solids[0].feature.path.id).toBe(path.id);
+    expect(kit.doc.entities.map((entity) => entity.id)).toEqual([path.id]);
+  });
+
+  it('respects the work plane of a spatial LINE path', async () => {
+    const kit = setup();
+    const profile = kit.doc.createCircle({ x: 0, y: 0 }, 1);
+    const path = kit.doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    path.workPlane = workPlaneFromXAxis(
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 10 },
+      { x: 0, y: 1, z: 0 },
+    );
+    kit.doc.addEntity(profile); kit.doc.addEntity(path);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('P');
+    await kit.manager.handleClick({ x: 0, y: 0, z: 5 }, path);
+
+    const positions = kit.doc.solids[0].mesh.positions;
+    const zs = Array.from(positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.min(...zs)).toBeCloseTo(0, 4);
+    expect(Math.max(...zs)).toBeCloseTo(10, 4);
+  });
+
+  it('extrudes in the 3D vector specified by two Direction points', async () => {
+    const kit = setup();
+    const profile = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 2, y: 2 });
+    kit.doc.addEntity(profile);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 1, y: 1 }, profile);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('D');
+    await kit.manager.handleClick({ x: 0, y: 0, z: 0 });
+    await kit.manager.handleClick({ x: 5, y: 0, z: 10 });
+
+    const solid = kit.doc.solids[0];
+    expect(solid?.feature).toMatchObject({ kind: 'extrusion', direction: { x: 5, y: 0, z: 10 } });
+    const xs = Array.from(solid.mesh.positions).filter((_value, index) => index % 3 === 0);
+    const zs = Array.from(solid.mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...xs)).toBeCloseTo(7, 4);
+    expect(Math.max(...zs)).toBeCloseTo(10, 4);
+  });
+
+  it('stores and regenerates the Taper angle option', async () => {
+    const kit = setup();
+    const profile = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 10 });
+    kit.doc.addEntity(profile);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 5 }, profile);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('Taper angle');
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('10');
+
+    const solid = kit.doc.solids[0];
+    expect(solid?.feature).toMatchObject({ kind: 'extrusion', height: 10, taperAngle: 5 });
+    const topX: number[] = [];
+    for (let i = 0; i < solid.mesh.positions.length; i += 3) {
+      if (Math.abs(solid.mesh.positions[i + 2] - 10) < 1e-5) topX.push(solid.mesh.positions[i]);
+    }
+    expect(Math.max(...topX) - Math.min(...topX)).toBeLessThan(10);
+  });
+
+  it('keeps the original profile at zero when a tapered extrusion goes down', async () => {
+    const kit = setup();
+    const profile = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 10 });
+    kit.doc.addEntity(profile);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 5 }, profile);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('T');
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('-10');
+
+    const mesh = kit.doc.solids[0].mesh;
+    const widthAt = (z: number) => {
+      const xs: number[] = [];
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        if (Math.abs(mesh.positions[i + 2] - z) < 1e-5) xs.push(mesh.positions[i]);
+      }
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    expect(widthAt(0)).toBeCloseTo(10, 4);
+    expect(widthAt(-10)).toBeLessThan(10);
   });
 });
 
@@ -2262,7 +2372,7 @@ describe('DELETEFACE', () => {
     doc.addSolid(solid);
     // A curved hole wall gives no planar face — the pointer handler hands Delete
     // Face the raw surface point instead (empty vertexIndices + a hitPoint).
-    const selection = { solidId: solid.id, vertexIndices: [], normal: { x: 1, y: 0, z: 0 }, hitPoint: { x: 3, y: 0, z: 10 } };
+    const selection = { solidId: solid.id, vertexIndices: [], normal: { x: -1, y: 0, z: 0 }, hitPoint: { x: 3, y: 0, z: 10 } };
     manager.startCommand('DELETEFACE');
     await manager.handleClick({ x: 3, y: 0, z: 10 }, undefined, undefined, selection);
 

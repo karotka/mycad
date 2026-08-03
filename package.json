@@ -6,6 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "mcp": "tsx src/mcp/server.ts",
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
     "test": "vitest run",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && tsc -p tsconfig.electron.json && VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
@@ -32,8 +33,10 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "manifold-3d": "^2.5.1",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/three": "^0.170.0",
@@ -41,6 +44,7 @@
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
     "jsdom": "^27.0.1",
+    "tsx": "^4.23.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vitest": "^3.2.4",

@@ -47,9 +47,14 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       return { label: name, detail: size + scale };
     }
     case 'extrusion':
-      return { label: 'Extrusion', detail: `${Number(feature.height.toFixed(2))} high` };
+      return {
+        label: 'Extrusion',
+        detail: feature.direction
+          ? `direction ${Number(feature.direction.x.toFixed(2))}, ${Number(feature.direction.y.toFixed(2))}, ${Number(feature.direction.z.toFixed(2))}`
+          : `${feature.reverse ? '-' : ''}${Number(feature.height.toFixed(2))} high${feature.taperAngle ? ` · ${Number(feature.taperAngle.toFixed(2))}° taper` : ''}`,
+      };
     case 'sweep':
-      return { label: 'Sweep', detail: 'profile along path' };
+      return { label: feature.createdBy === 'extrude' ? 'Extrusion' : 'Sweep', detail: 'profile along path' };
     case 'edge-modification':
       return {
         label: feature.operation === 'fillet' ? 'Fillet' : 'Chamfer',

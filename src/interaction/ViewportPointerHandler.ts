@@ -800,7 +800,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       // planar. If no planar face was hit, still hand it the raw surface point.
       if (!face && commands.active?.name === 'DELETEFACE') {
         const hit = renderer3d.pickSolidSurfacePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
-        if (hit) face = { solidId: hit.solidId, vertexIndices: [], normal: { x: 0, y: 0, z: 0 }, hitPoint: hit.hitPoint };
+        if (hit) face = { solidId: hit.solidId, vertexIndices: [], normal: hit.normal, hitPoint: hit.hitPoint };
       }
       const action = resolveViewportAction({
         commandActive: Boolean(commands.active),

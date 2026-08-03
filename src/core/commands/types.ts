@@ -95,6 +95,8 @@ export type CommandStep =
   /** First point of a plane, or a planar solid face that defines it outright. */
   | { kind: 'plane'; label: string; optional?: boolean }
   | { kind: 'number'; label: string; optional?: boolean; remember?: boolean }
+  /** A numeric default with command-line keywords, e.g. EXTRUDE height or Path. */
+  | { kind: 'number-or-option'; label: string; optional?: boolean; remember?: boolean }
   | { kind: 'number-pair'; label: string; optional?: boolean; remember?: boolean; defaultValue?: [number, number] }
   | { kind: 'entity'; label: string; optional?: boolean; multi?: boolean; additive?: boolean; accepts?: PickTarget[] }
   | { kind: 'solid'; label: string; optional?: boolean; multi?: boolean; additive?: boolean }

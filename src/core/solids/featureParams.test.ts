@@ -80,7 +80,7 @@ describe('extrusions', () => {
     // Asking only about primitives made an extrusion — as parametric as
     // anything in the file — look like a dead end with a name.
     expect(featureParams(extrusion()).map((param) => param.key))
-      .toEqual(['height', 'scaleX', 'scaleY', 'translateX', 'translateY', 'translateZ']);
+      .toEqual(['height', 'taperAngle', 'scaleX', 'scaleY', 'translateX', 'translateY', 'translateZ']);
   });
 
   it('reads a missing Z offset as no offset', () => {

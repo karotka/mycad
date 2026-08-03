@@ -438,6 +438,12 @@ export interface SolidEdgeSelection {
 export interface ExtrusionFeature {
   kind: 'extrusion';
   profile: Entity;
+  /** Local vector in the feature work plane. Absent means its positive Z axis. */
+  direction?: Vec3;
+  /** Degrees. Positive angles narrow the profile towards the far cap. */
+  taperAngle?: number;
+  /** The original signed height pointed below the profile plane. */
+  reverse?: boolean;
   height: number;
   workPlane?: WorkPlane;
   transform: {
@@ -457,6 +463,8 @@ export interface BooleanFeature {
 
 export interface SweepFeature {
   kind: 'sweep';
+  /** EXTRUDE Path reuses the sweep engine but keeps EXTRUDE terminology in UI. */
+  createdBy?: 'extrude';
   profile: Entity;
   path: Entity;
   workPlane?: WorkPlane;

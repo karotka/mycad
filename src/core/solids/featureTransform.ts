@@ -84,6 +84,11 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
       return {
         ...feature,
         height: feature.height * factor,
+        direction: feature.direction ? {
+          x: feature.direction.x * factor,
+          y: feature.direction.y * factor,
+          z: feature.direction.z * factor,
+        } : undefined,
         transform: {
           translateX: feature.transform.translateX * factor,
           translateY: feature.transform.translateY * factor,

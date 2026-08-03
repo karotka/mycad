@@ -251,14 +251,18 @@ export const COMMANDS = [
     data: () => ({ entities: [], solids: [], totalAngle: 360 }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter polar array settings.`) },
   { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], execute: extrudeProfileStep, help: 'extrude closed profile', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select closed 2D profile(s), then press Enter:', multi: true }, { kind: 'number', label: 'Enter extrusion height:' }, { kind: 'done' }],
+    steps: [
+      { kind: 'entity', label: 'Select closed 2D profile(s), then press Enter:', multi: true },
+      { kind: 'number-or-option', label: 'Specify extrusion height or [Direction/Path/Taper angle]:', remember: true },
+      { kind: 'done' },
+    ],
     data: () => ({ entities: [] }),
     onStart: (active, ctx) => {
       const profiles = ctx.doc.getSelectedEntities().filter(isSweepProfileEntity);
       if (profiles.length === 0) return;
       active.data.entities = profiles;
       active.stepIndex = 1;
-      ctx.log(`${profiles.length} profile(s) preselected. Enter extrusion height.`);
+      ctx.log(`${profiles.length} profile(s) preselected. Specify height or [Direction/Path/Taper angle].`);
     } },
   { name: 'SWEEP', aliases: ['SW', 'SWEEP'], execute: sweepProfileStep, help: 'sweep profile along path', suggest: true,
     steps: [{ kind: 'entity', label: 'Select closed 2D profile:' }, { kind: 'entity', label: 'Select path:' }, { kind: 'done' }],

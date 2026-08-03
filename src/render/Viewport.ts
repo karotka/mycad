@@ -1944,12 +1944,17 @@ export class Viewport3D {
    * ones included, which `pickSolidFace` rejects because they are not planar.
    * Used by Delete Face to reach a cylindrical hole wall.
    */
-  pickSolidSurfacePoint(canvas: HTMLCanvasElement, sx: number, sy: number): { solidId: string; hitPoint: Vec3 } | null {
+  pickSolidSurfacePoint(canvas: HTMLCanvasElement, sx: number, sy: number): { solidId: string; hitPoint: Vec3; normal: Vec3 } | null {
     const hit = this.picking.firstIntersection(canvas, sx, sy, this.solidMeshes.values());
-    if (!hit) return null;
+    if (!hit || !hit.face) return null;
     const entry = Array.from(this.solidMeshes.entries()).find(([, object]) => object === hit.object);
     if (!entry) return null;
-    return { solidId: entry[0], hitPoint: { x: hit.point.x, y: -hit.point.z, z: hit.point.y } };
+    const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    return {
+      solidId: entry[0],
+      hitPoint: { x: hit.point.x, y: -hit.point.z, z: hit.point.y },
+      normal: { x: worldNormal.x, y: -worldNormal.z, z: worldNormal.y },
+    };
   }
 
   /**

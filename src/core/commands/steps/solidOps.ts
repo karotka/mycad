@@ -11,8 +11,9 @@ import { cloneEntity, isSweepProfileEntity, type Entity, type Solid, type SolidF
 import { deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
-import { extrusionFeature } from '../../solids/extrusion';
-import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
+import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
+import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../../../math/workplane';
+import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
 
@@ -23,7 +24,7 @@ const isSweepPath = (entity: Entity): boolean =>
 
 export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> {
   const { active, data, value, step, ctx } = run;
-  if (step.kind === 'entity') {
+  if (step.kind === 'entity' && active.stepIndex === 0) {
     if (!value) return 'advance';
     const profile = value as Entity;
     if (!isSweepProfileEntity(profile)) {
@@ -34,19 +35,97 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
     return 'stay';
   }
 
-  const entered = value as number;
   const entities = (data.entities as Entity[]).filter(isSweepProfileEntity);
   if (entities.length === 0) {
     ctx.log('No profile selected.');
     return 'advance';
   }
+
+  if (step.kind === 'number-or-option') {
+    if (typeof value === 'number') return completeLinearExtrude(run, entities, value);
+    const option = String(value).trim().toUpperCase().replace(/[\s_-]+/g, '');
+    if (option === 'P' || option === 'PATH') {
+      data.extrudeMode = 'path';
+      active.steps.splice(active.stepIndex + 1, 0, { kind: 'entity', label: 'Select extrusion path:' });
+      return 'advance';
+    }
+    if (option === 'D' || option === 'DIRECTION') {
+      data.extrudeMode = 'direction';
+      active.steps.splice(active.stepIndex + 1, 0,
+        { kind: 'point', label: 'Specify first direction point:' },
+        { kind: 'point', label: 'Specify second direction point:' },
+      );
+      return 'advance';
+    }
+    if (option === 'T' || option === 'TAPER' || option === 'TAPERANGLE') {
+      data.extrudeMode = 'taper';
+      active.steps.splice(active.stepIndex + 1, 0,
+        { kind: 'number', label: 'Specify taper angle:', remember: true },
+        { kind: 'number', label: 'Specify extrusion height:', remember: true },
+      );
+      return 'advance';
+    }
+    ctx.log('Unknown EXTRUDE option. Enter a height, Direction, Path, or Taper angle.');
+    return 'stay';
+  }
+
+  if (data.extrudeMode === 'path' && step.kind === 'entity') {
+    const path = value as Entity;
+    if (!isSweepPath(path)) {
+      ctx.log('Extrusion path must be a line, polyline, arc, circle or bezier.');
+      return 'stay';
+    }
+    return completePathExtrude(run, entities, path);
+  }
+
+  if (data.extrudeMode === 'direction' && step.kind === 'point') {
+    const profilePlane = entities[0].workPlane ?? WORLD_WORK_PLANE;
+    const point = extrusionWorldPoint(value as Vec2 | Vec3, profilePlane);
+    if (!data.directionStart) {
+      data.directionStart = point;
+      return 'advance';
+    }
+    const start = data.directionStart as Vec3;
+    if (Math.hypot(point.x - start.x, point.y - start.y, point.z - start.z) < 1e-9) {
+      ctx.log('Direction points must be different.');
+      return 'stay';
+    }
+    return completeDirectionalExtrude(run, entities, start, point);
+  }
+
+  if (data.extrudeMode === 'taper' && step.kind === 'number') {
+    const entered = value as number;
+    if (data.taperAngle === undefined) {
+      if (!Number.isFinite(entered) || Math.abs(entered) >= 89.9) {
+        ctx.log('Taper angle must be between -89.9 and 89.9 degrees.');
+        return 'stay';
+      }
+      data.taperAngle = entered;
+      return 'advance';
+    }
+    return completeLinearExtrude(run, entities, entered, data.taperAngle as number);
+  }
+
+  return 'stay';
+}
+
+const extrusionWorldPoint = (point: Vec2 | Vec3, plane: WorkPlane): Vec3 =>
+  'z' in point ? { x: point.x, y: point.y, z: point.z } : localToWorld(plane, point);
+
+async function completeLinearExtrude(
+  run: CommandRun,
+  profiles: Entity[],
+  entered: number,
+  taperAngle = 0,
+): Promise<StepOutcome> {
+  const { ctx } = run;
   if (Math.abs(entered) < 1e-9) {
     ctx.log('Extrusion height cannot be zero.');
     return 'stay';
   }
   ctx.log('Extruding…');
-  const results = await Promise.all(entities.map(async (profile) => {
-    const feature = extrusionFeature(profile, entered);
+  const results = await Promise.all(profiles.map(async (profile) => {
+    const feature = extrusionFeature(profile, entered, taperAngle);
     // Built from the feature, not beside it: the mesh and its editable recipe
     // stay the same answer for every selected profile.
     const mesh = await regenerateSolidFeature(feature);
@@ -54,7 +133,9 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
-    ctx.log('Extrusion failed — select one or more closed profiles.');
+    ctx.log(taperAngle
+      ? 'Extrusion failed — the taper is too large for this profile and height.'
+      : 'Extrusion failed — select one or more closed profiles.');
     return 'advance';
   }
   const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
@@ -62,7 +143,72 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
   ));
   ctx.history.execute(new ReplaceObjectsEdit('Extrude', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
-  ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}`);
+  ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}${taperAngle ? `, taper=${taperAngle}°` : ''}`);
+  return 'advance';
+}
+
+async function completeDirectionalExtrude(
+  run: CommandRun,
+  profiles: Entity[],
+  start: Vec3,
+  end: Vec3,
+): Promise<StepOutcome> {
+  const { ctx } = run;
+  ctx.log('Extruding in direction…');
+  const results = await Promise.all(profiles.map(async (profile) => {
+    const plane = profile.workPlane ?? WORLD_WORK_PLANE;
+    const localStart = worldToLocal(plane, start);
+    const localEnd = worldToLocal(plane, end);
+    const direction = {
+      x: localEnd.x - localStart.x,
+      y: localEnd.y - localStart.y,
+      z: localEnd.z - localStart.z,
+    };
+    if (Math.abs(direction.z) < 1e-9) return null;
+    const feature = directionalExtrusionFeature(profile, direction);
+    const mesh = await regenerateSolidFeature(feature);
+    return mesh ? { profile, feature, mesh } : null;
+  }));
+  const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
+  if (completed.length === 0) {
+    ctx.log('Extrusion failed — Direction must cross the profile plane.');
+    return 'advance';
+  }
+  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
+    mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature,
+  ));
+  ctx.history.execute(new ReplaceObjectsEdit('Extrude Direction', completed.map(({ profile }) => profile), [], [], solids));
+  ctx.doc.viewMode = '3d';
+  ctx.log(`Directional extrusion complete: ${solids.length} solid(s).`);
+  return 'advance';
+}
+
+async function completePathExtrude(run: CommandRun, profiles: Entity[], path: Entity): Promise<StepOutcome> {
+  const { ctx } = run;
+  ctx.log('Extruding along path…');
+  const results = await Promise.all(profiles.map(async (profile) => {
+    const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
+    const mesh = await sweepProfile(profile, path, plane);
+    const feature = {
+      kind: 'sweep' as const,
+      createdBy: 'extrude' as const,
+      profile: cloneEntity(profile),
+      path: cloneEntity(path),
+      workPlane: cloneWorkPlane(plane),
+    };
+    return mesh ? { profile, feature, mesh } : null;
+  }));
+  const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
+  if (completed.length === 0) {
+    ctx.log('Extrusion failed — select a valid path that starts at the profile.');
+    return 'advance';
+  }
+  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
+    mesh, `Extrusion_${profile.id}_along_${path.id}`, 0, [profile.id, path.id], undefined, feature,
+  ));
+  ctx.history.execute(new ReplaceObjectsEdit('Extrude Path', completed.map(({ profile }) => profile), [], [], solids));
+  ctx.doc.viewMode = '3d';
+  ctx.log(`Path extrusion complete: ${solids.length} solid(s).`);
   return 'advance';
 }
 
@@ -363,7 +509,7 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
   // planar heal below cannot select at all.
   if (face.hitPoint) {
     run.ctx.log('Finding the feature under the cursor…');
-    const removal = await featureRemovalForPoint(solid, face.hitPoint);
+    const removal = await featureRemovalForPoint(solid, face.hitPoint, face.normal);
     if (removal) {
       const after = cloneSolid(solid);
       after.feature = removal.feature;

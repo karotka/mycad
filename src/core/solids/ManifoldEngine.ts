@@ -126,6 +126,11 @@ export async function sweepProfile(profile: Entity, path: Entity, plane: WorkPla
 
   const segmentMeshes: SolidMesh[] = [];
   const segments = pathInfo.closed ? pathInfo.points.length : pathInfo.points.length - 1;
+  // A spatial LINE stores its 3D direction in its own work plane (its local X
+  // axis). Using the profile plane here silently flattened that path back into
+  // 2D. Planar arcs/circles and polylines likewise own the plane their points
+  // are expressed in, so it is the path plane that must place every segment.
+  const pathPlane = path.workPlane ?? plane;
 
   for (let index = 0; index < segments; index++) {
     const a = pathInfo.points[index];
@@ -136,9 +141,9 @@ export async function sweepProfile(profile: Entity, path: Entity, plane: WorkPla
     if (length < 1e-9) continue;
     const tangent = tangentAt(pathInfo.points, index, pathInfo.closed);
     const normal = { x: -tangent.y, y: tangent.x };
-    const origin = localToWorld(plane, a);
-    const xPoint = localToWorld(plane, { x: a.x + normal.x, y: a.y + normal.y });
-    const yPoint = localToWorld(plane, a, 1);
+    const origin = localToWorld(pathPlane, a);
+    const xPoint = localToWorld(pathPlane, { x: a.x + normal.x, y: a.y + normal.y });
+    const yPoint = localToWorld(pathPlane, a, 1);
     const segmentPlane = workPlaneFromXYAxes(origin, xPoint, yPoint);
     const localMesh = await extrudeProfile([profile], length);
     if (!localMesh) return null;
@@ -800,11 +805,52 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
       x: point.x * feature.transform.scaleX + feature.transform.translateX,
       y: point.y * feature.transform.scaleY + feature.transform.translateY,
     }));
+    const direction = feature.direction;
+    const extrusionDepth = direction ? Math.abs(direction.z) : feature.height;
+    if (extrusionDepth < 1e-9) return null;
+    const taperAngle = feature.taperAngle ?? 0;
+    const taperOffset = extrusionDepth * Math.tan(Math.abs(taperAngle) * Math.PI / 180);
+    let centerX = 0;
+    let centerY = 0;
+    let scaleTop: [number, number] = [1, 1];
+    let section = transformed;
+    if (Math.abs(taperAngle) > 1e-12) {
+      const xs = transformed.map((point) => point.x);
+      const ys = transformed.map((point) => point.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const halfX = (maxX - minX) / 2;
+      const halfY = (maxY - minY) / 2;
+      const sign = taperAngle > 0 ? -1 : 1;
+      scaleTop = [1 + sign * taperOffset / halfX, 1 + sign * taperOffset / halfY];
+      if (!Number.isFinite(scaleTop[0]) || !Number.isFinite(scaleTop[1]) || scaleTop[0] <= 0 || scaleTop[1] <= 0) return null;
+      centerX = (minX + maxX) / 2;
+      centerY = (minY + maxY) / 2;
+      section = transformed.map((point) => ({ x: point.x - centerX, y: point.y - centerY }));
+    }
     const manifold = await initManifold();
-    const crossSection = vec2ToManifoldPoly(manifold, transformed);
-    const solid = manifold.Manifold.extrude(crossSection, feature.height);
+    const crossSection = vec2ToManifoldPoly(manifold, section);
+    const solid = manifold.Manifold.extrude(crossSection, extrusionDepth, 0, 0, scaleTop);
     try {
       const mesh = manifoldToMesh(manifold, solid);
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        const t = mesh.positions[i + 2] / extrusionDepth;
+        mesh.positions[i] += centerX + (direction?.x ?? 0) * t;
+        mesh.positions[i + 1] += centerY + (direction?.y ?? 0) * t;
+        if (direction) mesh.positions[i + 2] = direction.z * t;
+      }
+      if (!direction && feature.reverse) {
+        for (let i = 2; i < mesh.positions.length; i += 3) {
+          mesh.positions[i] = extrusionDepth - mesh.positions[i];
+        }
+      }
+      if ((direction && direction.z < 0) || (!direction && feature.reverse)) {
+        for (let i = 0; i < mesh.indices.length; i += 3) {
+          const swap = mesh.indices[i + 1];
+          mesh.indices[i + 1] = mesh.indices[i + 2];
+          mesh.indices[i + 2] = swap;
+        }
+      }
       const translateZ = feature.transform.translateZ ?? 0;
       if (translateZ !== 0) {
         for (let i = 2; i < mesh.positions.length; i += 3) mesh.positions[i] += translateZ;

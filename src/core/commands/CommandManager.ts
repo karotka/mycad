@@ -450,6 +450,11 @@ export class CommandManager {
         this.ctx.log('Invalid number.');
         break;
       }
+      case 'number-or-option': {
+        const n = Number(input);
+        await this.advanceStep(Number.isFinite(n) ? n : input);
+        return;
+      }
       case 'number-pair': {
         const match = input.match(/^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*[,;]\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/);
         if (match) {
@@ -489,7 +494,8 @@ export class CommandManager {
     const remembered = this.rememberedStepValues.get(key);
     if (remembered === undefined && step.kind === 'number-pair') return step.defaultValue ?? null;
     if (remembered === undefined) return null;
-    if (step.kind === 'number' && step.remember && typeof remembered === 'number') return remembered;
+    if ((step.kind === 'number' || step.kind === 'number-or-option')
+      && step.remember && typeof remembered === 'number') return remembered;
     if (step.kind === 'number-pair' && step.remember && Array.isArray(remembered)) return [...remembered] as [number, number];
     if (step.kind === 'point' && step.rememberDistanceFrom && this.active && typeof remembered === 'number') {
       const base = this.active.data[step.rememberDistanceFrom] as Vec2 | undefined;
@@ -502,7 +508,8 @@ export class CommandManager {
   private rememberAcceptedAnswer(step: CommandStep, value: unknown, data: Record<string, unknown>): void {
     const key = this.stepMemoryKey();
     if (!key) return;
-    if (step.kind === 'number' && step.remember && typeof value === 'number' && Number.isFinite(value)) {
+    if ((step.kind === 'number' || step.kind === 'number-or-option')
+      && step.remember && typeof value === 'number' && Number.isFinite(value)) {
       this.rememberedStepValues.set(key, value);
     } else if (step.kind === 'number-pair' && step.remember && Array.isArray(value)
       && value.length === 2 && value.every((item) => typeof item === 'number' && Number.isFinite(item))) {

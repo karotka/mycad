@@ -81,7 +81,7 @@ describe('ModelTreeController', () => {
 
     rowLabelled('Extrusion').click();
 
-    expect(fields().map((input) => input.value)).toEqual(['10', '1', '1', '0', '0', '0']);
+    expect(fields().map((input) => input.value)).toEqual(['10', '0', '1', '1', '0', '0', '0']);
   });
 
   it('rebuilds the solid when a value is typed', async () => {

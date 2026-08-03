@@ -37,6 +37,29 @@ export class ProjectController {
     this.updateTitle();
   }
 
+  get currentFilePath(): string | undefined { return this.currentPath; }
+
+  serializeCurrentProject(): string {
+    return serializeProject(this.doc, this.callbacks.captureView());
+  }
+
+  openProjectContent(content: string, filePath: string): void {
+    if (!content) throw new Error('The file is empty.');
+    this.callbacks.cancelInteraction();
+    const savedView = loadProject(this.doc, content);
+    this.setCurrentFile(filePath);
+    this.callbacks.applyView(savedView);
+    this.history.clear();
+    if (!savedView) this.callbacks.zoomExtents();
+    this.callbacks.log(`Opened: ${filePath}`);
+    this.callbacks.redraw();
+  }
+
+  markProjectSaved(filePath: string): void {
+    this.setCurrentFile(filePath);
+    this.callbacks.log(`Saved: ${filePath}`);
+  }
+
   async saveAs(): Promise<void> {
     try {
       const content = serializeProject(this.doc, this.callbacks.captureView());
@@ -107,15 +130,7 @@ export class ProjectController {
     try {
       const file = await this.pickFile('.mycad,application/json', 'MyCAD project', 'mycad');
       if (!file) return;
-      if (!file.content) throw new Error('The file is empty.');
-      this.callbacks.cancelInteraction();
-      const savedView = loadProject(this.doc, file.content);
-      this.setCurrentFile(file.path ?? file.name);
-      this.callbacks.applyView(savedView);
-      this.history.clear();
-      if (!savedView) this.callbacks.zoomExtents();
-      this.callbacks.log(`Opened: ${file.name}`);
-      this.callbacks.redraw();
+      this.openProjectContent(file.content, file.path ?? file.name);
     } catch (error) { this.report('Open failed', error); }
   }
 

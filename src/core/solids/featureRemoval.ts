@@ -109,6 +109,10 @@ function meshExtent(mesh: SolidMesh): number {
 const dot3 = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len3 = (a: number[]) => Math.hypot(a[0], a[1], a[2]);
+const normalized3 = (value: number[]): number[] | null => {
+  const length = len3(value);
+  return length > 1e-9 ? value.map((component) => component / length) : null;
+};
 
 /** Shortest distance from a point to a triangle (Ericson, Real-Time Collision Detection). */
 function pointTriangleDistance(p: number[], a: number[], b: number[], c: number[]): number {
@@ -184,14 +188,54 @@ function clickedFaceGone(point: number[], normal: number[], mesh: SolidMesh, tol
   return true;
 }
 
-function distanceToSurface(point: number[], mesh: SolidMesh): number {
-  let best = Infinity;
-  for (let o = 0; o + 2 < mesh.indices.length; o += 3) {
-    const [a, b, c] = triAt(mesh, o);
-    const d = pointTriangleDistance(point, a, b, c);
-    if (d < best) { best = d; if (best === 0) return 0; }
+/**
+ * Orientation of an operand boundary after it has travelled through the
+ * boolean tree to the final solid. A cutter's outward normal becomes the
+ * inward-facing wall of a subtraction; another nested subtraction flips it
+ * again. Union preserves the orientation.
+ */
+function boundaryOrientationAt(root: SolidFeature, path: readonly number[]): number {
+  let feature: SolidFeature = root;
+  let orientation = 1;
+  for (const index of path) {
+    if (feature.kind === 'boolean') {
+      if (feature.operation === 'subtract' && index > 0) orientation *= -1;
+      const next = feature.operands[index];
+      if (!next) break;
+      feature = next;
+      continue;
+    }
+    if ((feature.kind === 'edge-modification' || feature.kind === 'presspull-region') && index === 0) {
+      feature = feature.source;
+      continue;
+    }
+    break;
   }
-  return best;
+  return orientation;
+}
+
+/**
+ * The clicked boundary has to be part of this operand, not merely close to one
+ * of its edges. Position alone leaked across hole and bump rims; checking the
+ * oriented surface normal keeps the two sides of a design edge distinct.
+ */
+function surfaceMatches(
+  point: number[],
+  normal: number[],
+  mesh: SolidMesh,
+  tolerance: number,
+  orientation: number,
+): { distance: number } | null {
+  let best = Infinity;
+  for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
+    const [a, b, c] = triAt(mesh, offset);
+    const distance = pointTriangleDistance(point, a, b, c);
+    if (distance > tolerance || distance >= best) continue;
+    const candidateNormal = triNormal(a, b, c);
+    if (dot3(candidateNormal, normal) * orientation <= 0.9) continue;
+    best = distance;
+  }
+  return Number.isFinite(best) ? { distance: best } : null;
 }
 
 /** The base a subtract cuts from is its operand 0; removing it would strand the cutters. */
@@ -217,12 +261,17 @@ export interface FeatureRemovalResult {
  * feature whose removal happens to collapse the tree. Fillet/press-pull wrappers
  * have no separable shape, so they fall back to "does the clicked face vanish".
  */
-export async function featureRemovalForPoint(solid: Solid, worldPoint: Vec3): Promise<FeatureRemovalResult | null> {
+export async function featureRemovalForPoint(solid: Solid, worldPoint: Vec3, worldNormal?: Vec3): Promise<FeatureRemovalResult | null> {
   const root = solid.feature;
   if (root.kind === 'mesh' || root.kind === 'primitive') return null;
   const original = solid.mesh;
   const point = [worldPoint.x, worldPoint.y, worldPoint.z];
-  const tolerance = Math.max(0.1, meshExtent(original) * 2e-3);
+  const extent = meshExtent(original);
+  // Ray picking supplies a point on the rendered triangle, so this is a
+  // geometry tolerance, not a screen-space picking tolerance. Keep enough room
+  // for the tiny UNION fuse inflation, but never the old 0.1-unit halo that
+  // crossed visible feature edges.
+  const tolerance = Math.max(2e-3, extent * 5e-4);
   const candidates = candidateRemovals(root);
 
   const build = async (candidate: RemovalCandidate): Promise<FeatureRemovalResult | null> => {
@@ -233,36 +282,48 @@ export async function featureRemovalForPoint(solid: Solid, worldPoint: Vec3): Pr
     return { candidate, feature, mesh };
   };
 
-  // Tier 1: the boolean operand whose own surface lies under the click. The
-  // dominant operand is the base the others were added to — removing it would
-  // delete the whole body, and its face is shared with everything flush against
-  // it, so it is never a "part" to delete.
-  const originalVolumeForBase = meshVolume(original);
-  let nearest: { candidate: RemovalCandidate; distance: number } | null = null;
+  const clickedNormal = normalized3(worldNormal
+    ? [worldNormal.x, worldNormal.y, worldNormal.z]
+    : nearestFaceNormal(point, original) ?? []);
+  if (!clickedNormal) return null;
+
+  // Tier 1: find the boolean operand whose *oriented boundary* is under the
+  // click and whose removal makes that boundary disappear. Ranking by the
+  // resulting volume change favours the most local nested feature instead of
+  // discarding a whole ancestor merely because it contains the same surface.
+  const originalVolume = meshVolume(original);
+  let bestSplice: (FeatureRemovalResult & { distance: number; volumeDelta: number }) | null = null;
   for (const candidate of candidates) {
     if (candidate.mode !== 'splice' || isSubtractBase(root, candidate)) continue;
     const operand = featureAt(root, candidate.path);
     if (!operand) continue;
     const operandMesh = await regenerateSolidFeature(operand);
     if (!operandMesh || operandMesh.indices.length === 0) continue;
-    if (meshVolume(operandMesh) > 0.5 * originalVolumeForBase) continue;
-    const distance = distanceToSurface(point, operandMesh);
-    if (distance <= tolerance && (!nearest || distance < nearest.distance)) nearest = { candidate, distance };
+    const match = surfaceMatches(
+      point,
+      clickedNormal,
+      operandMesh,
+      tolerance,
+      boundaryOrientationAt(root, candidate.path),
+    );
+    if (!match) continue;
+    const result = await build(candidate);
+    if (!result || !clickedFaceGone(point, clickedNormal, result.mesh, tolerance)) continue;
+    const volumeDelta = Math.abs(meshVolume(result.mesh) - originalVolume);
+    if (!bestSplice
+      || volumeDelta < bestSplice.volumeDelta - tolerance ** 3
+      || (Math.abs(volumeDelta - bestSplice.volumeDelta) <= tolerance ** 3 && match.distance < bestSplice.distance)) {
+      bestSplice = { ...result, distance: match.distance, volumeDelta };
+    }
   }
-  if (nearest) {
-    const result = await build(nearest.candidate);
-    if (result) return result;
-  }
+  if (bestSplice) return { candidate: bestSplice.candidate, feature: bestSplice.feature, mesh: bestSplice.mesh };
 
   // Tier 2: a fillet/chamfer/press-pull whose removal makes the clicked face vanish.
-  const normal = nearestFaceNormal(point, original);
-  if (!normal) return null;
-  const originalVolume = meshVolume(original);
   let best: (FeatureRemovalResult & { volumeDelta: number }) | null = null;
   for (const candidate of candidates) {
     if (candidate.mode !== 'unwrap') continue;
     const result = await build(candidate);
-    if (!result || !clickedFaceGone(point, normal, result.mesh, tolerance)) continue;
+    if (!result || !clickedFaceGone(point, clickedNormal, result.mesh, tolerance)) continue;
     const volumeDelta = Math.abs(meshVolume(result.mesh) - originalVolume);
     if (!best || volumeDelta < best.volumeDelta) best = { ...result, volumeDelta };
   }

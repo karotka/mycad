@@ -1,5 +1,6 @@
 import { cloneEntity, type Entity, type ExtrusionFeature } from '../entities/types';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
+import type { Vec3 } from '../../math/geometry';
 
 /**
  * Which way a linear dimension measures, from where its line was pulled: drag it
@@ -19,14 +20,28 @@ import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../math/workplane';
  * and dropped by its own height. `transform.translateZ` already existed for
  * exactly this kind of thing, and regeneration already honours it.
  */
-export function extrusionFeature(profile: Entity, height: number): ExtrusionFeature {
+export function extrusionFeature(profile: Entity, height: number, taperAngle = 0): ExtrusionFeature {
   return {
     kind: 'extrusion',
     profile: cloneEntity(profile),
     height: Math.abs(height),
+    ...(Math.abs(taperAngle) > 1e-12 ? { taperAngle } : {}),
+    ...(height < 0 ? { reverse: true } : {}),
     // Cloned: the fallback is a shared constant, and a feature holding it would
     // hand every extrusion in the document the same work plane object.
     workPlane: cloneWorkPlane(profile.workPlane ?? WORLD_WORK_PLANE),
     transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, translateZ: height < 0 ? height : 0 },
+  };
+}
+
+/** A profile extruded by the vector specified by two Direction points. */
+export function directionalExtrusionFeature(profile: Entity, direction: Vec3): ExtrusionFeature {
+  return {
+    kind: 'extrusion',
+    profile: cloneEntity(profile),
+    direction: { ...direction },
+    height: Math.hypot(direction.x, direction.y, direction.z),
+    workPlane: cloneWorkPlane(profile.workPlane ?? WORLD_WORK_PLANE),
+    transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, translateZ: 0 },
   };
 }

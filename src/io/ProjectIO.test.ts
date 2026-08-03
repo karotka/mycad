@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { WORLD_WORK_PLANE } from '../math/workplane';
-import { resetIdCounter, type EdgeModificationFeature, type PressPullFeature, type PrimitiveFeature } from '../core/entities/types';
+import { resetIdCounter, type EdgeModificationFeature, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type SweepFeature } from '../core/entities/types';
 import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
@@ -143,6 +143,28 @@ describe('ProjectIO', () => {
     if (target.solids[0].feature.kind !== 'presspull-region') throw new Error('expected a PressPull feature');
     expect(target.solids[0].feature.region.loops).toEqual(JSON.parse(JSON.stringify(face.loops)));
     expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
+  });
+
+  it('round-trips EXTRUDE direction, taper and path recipes', () => {
+    const source = new Document();
+    const profile = source.createRectangle({ x: 0, y: 0 }, { x: 5, y: 4 });
+    const path = source.createLine({ x: 0, y: 0 }, { x: 12, y: 0 });
+    const placeholder = { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) };
+    const directed: ExtrusionFeature = {
+      kind: 'extrusion', profile, height: Math.hypot(3, 8), direction: { x: 3, y: 0, z: 8 }, taperAngle: 4,
+      transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1 },
+    };
+    const alongPath: SweepFeature = { kind: 'sweep', createdBy: 'extrude', profile, path };
+    source.solids.push(
+      source.createSolid(placeholder, 'Direction', directed.height, [profile.id], undefined, directed),
+      source.createSolid(placeholder, 'Path', 0, [profile.id, path.id], undefined, alongPath),
+    );
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.solids[0].feature).toMatchObject({ kind: 'extrusion', direction: { x: 3, y: 0, z: 8 }, taperAngle: 4 });
+    expect(target.solids[1].feature).toMatchObject({ kind: 'sweep', createdBy: 'extrude', profile: { id: profile.id }, path: { id: path.id } });
   });
 
   it('round-trips named UCS shortcuts and restores the active origin and axes', () => {
