@@ -95,4 +95,34 @@ describe('ProjectController', () => {
     expect(callbacks.log).toHaveBeenCalledWith('STL: 1 selected solid(s).');
     vi.unstubAllGlobals();
   });
+
+  it('imports DXF block definitions and references as one undoable operation', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const dxf = '0\nSECTION\n2\nBLOCKS\n'
+      + '0\nBLOCK\n2\nPart\n10\n0\n20\n0\n'
+      + '0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n0\n0\nENDBLK\n0\nENDSEC\n'
+      + '0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nPart\n10\n20\n20\n30\n0\nENDSEC\n0\nEOF\n';
+    vi.stubGlobal('window', { mycadAPI: {
+      openFile: vi.fn(async () => ({ canceled: false, filePath: '/tmp/part.dxf', content: dxf })),
+    } });
+    const callbacks = {
+      captureView: vi.fn(), cancelInteraction: vi.fn(), resetView: vi.fn(), applyView: vi.fn(),
+      zoomExtents: vi.fn(), renderLayers: vi.fn(), log: vi.fn(), clearLog: vi.fn(),
+      redraw: vi.fn(), focusInput: vi.fn(),
+    } as unknown as ProjectControllerCallbacks;
+    const controller = new ProjectController(doc, history, callbacks);
+
+    await controller.importDxf();
+    expect(doc.blockDefinitions).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'insert', blockName: 'Part' });
+
+    history.undo();
+    expect(doc.blockDefinitions).toEqual([]);
+    expect(doc.entities).toEqual([]);
+    history.redo();
+    expect(doc.blockDefinitions[0].name).toBe('Part');
+    expect(doc.entities[0].type).toBe('insert');
+    vi.unstubAllGlobals();
+  });
 });

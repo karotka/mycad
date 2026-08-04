@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
-import type { Entity } from '../core/entities/types';
-import { ACI_BYLAYER, ACI_WHITE, aciToRgb } from './DxfAci';
+import type { BlockDefinition, Entity, InsertEntity } from '../core/entities/types';
+import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { expandBulges, type BulgeVertex } from './DxfBulge';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
 
@@ -8,6 +8,7 @@ type Pair = { code: number; value: string };
 
 export interface DxfImportResult {
   entities: Entity[];
+  blockDefinitions: BlockDefinition[];
   layers: string[];
   /** Layer colours read from the TABLES section, so a drawing keeps its look. */
   layerAci: Record<string, number>;
@@ -42,6 +43,14 @@ function millimetreScale(pairs: Pair[]): number {
   return units[Number(unitPair?.value)] ?? 1;
 }
 
+function insertionUnitCode(pairs: Pair[]): number {
+  const marker = pairs.findIndex((pair) => pair.code === 9 && pair.value === '$INSUNITS');
+  if (marker < 0) return 0;
+  const unitPair = pairs.slice(marker + 1, marker + 6).find((pair) => pair.code === 70);
+  const value = Number(unitPair?.value);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function sectionStart(pairs: Pair[], name: string): number {
   return pairs.findIndex((pair, index) =>
     pair.code === 2 && pair.value === name && pairs[index - 1]?.code === 0 && pairs[index - 1]?.value === 'SECTION');
@@ -50,6 +59,56 @@ function sectionStart(pairs: Pair[], name: string): number {
 function number(fields: Pair[], code: number, fallback = 0): number {
   const value = Number(fields.find((pair) => pair.code === code)?.value);
   return Number.isFinite(value) ? value : fallback;
+}
+
+interface RawBlock {
+  name: string;
+  basePoint: { x: number; y: number; z?: number };
+  entityPairs: Pair[];
+}
+
+function readRawBlocks(pairs: Pair[], scale: number): Map<string, RawBlock> {
+  const blocks = new Map<string, RawBlock>();
+  const section = sectionStart(pairs, 'BLOCKS');
+  if (section < 0) return blocks;
+  for (let index = section + 1; index < pairs.length;) {
+    if (pairs[index].code === 0 && pairs[index].value.toUpperCase() === 'ENDSEC') break;
+    if (pairs[index].code !== 0 || pairs[index].value.toUpperCase() !== 'BLOCK') { index++; continue; }
+    let headerEnd = index + 1;
+    while (headerEnd < pairs.length && pairs[headerEnd].code !== 0) headerEnd++;
+    const fields = pairs.slice(index + 1, headerEnd);
+    const name = fields.find((pair) => pair.code === 2)?.value
+      ?? fields.find((pair) => pair.code === 3)?.value;
+    let blockEnd = headerEnd;
+    while (blockEnd < pairs.length && !(pairs[blockEnd].code === 0 && pairs[blockEnd].value.toUpperCase() === 'ENDBLK')) blockEnd++;
+    if (name) blocks.set(name.toUpperCase(), {
+      name,
+      basePoint: {
+        x: number(fields, 10) * scale,
+        y: number(fields, 20) * scale,
+        ...(Math.abs(number(fields, 30)) > 1e-12 ? { z: number(fields, 30) * scale } : {}),
+      },
+      entityPairs: pairs.slice(headerEnd, blockEnd),
+    });
+    index = Math.min(pairs.length, blockEnd + 1);
+  }
+  return blocks;
+}
+
+function entityRecords(pairs: Pair[]): Array<{ type: string; fields: Pair[]; pairs: Pair[] }> {
+  const records: Array<{ type: string; fields: Pair[]; pairs: Pair[] }> = [];
+  for (let index = 0; index < pairs.length;) {
+    if (pairs[index].code !== 0) { index++; continue; }
+    let end = index + 1;
+    while (end < pairs.length && pairs[end].code !== 0) end++;
+    records.push({ type: pairs[index].value.toUpperCase(), fields: pairs.slice(index + 1, end), pairs: pairs.slice(index, end) });
+    index = end;
+  }
+  return records;
+}
+
+function asciiFromPairs(pairs: Pair[]): string {
+  return pairs.flatMap((pair) => [String(pair.code), pair.value]).join('\n');
 }
 
 interface LayerTable {
@@ -103,6 +162,8 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   const pairs = pairsFromText(text);
   if (pairs.length === 0) throw new Error('The DXF file is empty or not an ASCII DXF file.');
   const scale = millimetreScale(pairs);
+  const unitCode = insertionUnitCode(pairs);
+  const rawBlocks = readRawBlocks(pairs, scale);
   const layerTable = readLayerTable(pairs);
   const layerAci = layerTable.aci;
   const section = sectionStart(pairs, 'ENTITIES');
@@ -130,13 +191,18 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     return own ?? aciToRgb(layerAci[layer] ?? ACI_WHITE) ?? doc.layerColorFor(layer);
   };
 
-  const finish = (entity: Entity, fields: Pair[], layer: string): void => {
+  const style = <T extends Entity>(entity: T, fields: Pair[], layer: string): T => {
     entity.layer = layer;
     // The DXF colour is already an index; keep it as one. The RGB is resolved
     // here too, since the importer hands back entities without touching the
     // document, so nothing else will recompute it.
     entity.aci = number(fields, 62, ACI_BYLAYER);
     entity.color = colorOf(fields, layer);
+    return entity;
+  };
+
+  const finish = (entity: Entity, fields: Pair[], layer: string): void => {
+    style(entity, fields, layer);
     entities.push(entity);
     layers.add(layer);
   };
@@ -186,6 +252,75 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     finish(entity, fields, layer);
   };
 
+  const configureInsert = (entity: InsertEntity, fields: Pair[]): InsertEntity => {
+    entity.scaleX = number(fields, 41, 1);
+    entity.scaleY = number(fields, 42, 1);
+    entity.scaleZ = number(fields, 43, 1);
+    entity.rotation = number(fields, 50, 0) * Math.PI / 180;
+    entity.columns = Math.max(1, Math.floor(number(fields, 70, 1)));
+    entity.rows = Math.max(1, Math.floor(number(fields, 71, 1)));
+    entity.columnSpacing = number(fields, 44, 0) * scale;
+    entity.rowSpacing = number(fields, 45, 0) * scale;
+    return entity;
+  };
+
+  const definitions = new Map<string, BlockDefinition>();
+  const resolving = new Set<string>();
+  const resolveBlock = (key: string): BlockDefinition | null => {
+    const normalized = key.toUpperCase();
+    if (resolving.has(normalized)) return null;
+    const cached = definitions.get(normalized);
+    if (cached) return cached;
+    const raw = rawBlocks.get(normalized);
+    if (!raw) return null;
+    resolving.add(normalized);
+
+    const records = entityRecords(raw.entityPairs);
+    const ordinary: Pair[] = [];
+    const nestedRecords: typeof records = [];
+    let attributesFollow = false;
+    for (const record of records) {
+      if (record.type === 'INSERT') {
+        nestedRecords.push(record);
+        attributesFollow = number(record.fields, 66, 0) === 1;
+      } else if (attributesFollow && record.type === 'SEQEND') attributesFollow = false;
+      else if (!attributesFollow) ordinary.push(...record.pairs);
+    }
+    const synthetic = `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n${unitCode}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${asciiFromPairs(ordinary)}${ordinary.length ? '\n' : ''}0\nENDSEC\n0\nEOF\n`;
+    const parsed = importAsciiDxf(doc, synthetic);
+    // The synthetic sub-import intentionally has no TABLES section. Resolve its
+    // BYLAYER colours against the real file's layer table before the definition
+    // is cloned into INSERT snapshots.
+    parsed.entities.forEach((entity) => {
+      entity.color = resolveAci(entity.aci, layerAci[entity.layer] ?? ACI_WHITE);
+    });
+    approximated += parsed.approximated;
+    ignored += parsed.ignored;
+    for (const [type, count] of Object.entries(parsed.ignoredTypes)) ignoredTypes[type] = (ignoredTypes[type] ?? 0) + count;
+    parsed.layers.forEach((layer) => layers.add(layer));
+
+    const definition: BlockDefinition = { name: raw.name, basePoint: raw.basePoint, entities: parsed.entities };
+    // Cache before resolving nested references so a malformed circular block is
+    // stopped by `resolving` instead of recursing forever.
+    definitions.set(normalized, definition);
+    for (const record of nestedRecords) {
+      const childName = record.fields.find((pair) => pair.code === 2)?.value;
+      const childDefinition = childName ? resolveBlock(childName) : null;
+      if (!childDefinition) { skip('INSERT'); continue; }
+      const layer = layerOf(record.fields);
+      const nested = configureInsert(doc.createInsert(childDefinition, {
+        x: number(record.fields, 10) * scale,
+        y: number(record.fields, 20) * scale,
+        ...(Math.abs(number(record.fields, 30)) > 1e-12 ? { z: number(record.fields, 30) * scale } : {}),
+      }), record.fields);
+      definition.entities.push(style(nested, record.fields, layer));
+      layers.add(layer);
+    }
+    resolving.delete(normalized);
+    return definition;
+  };
+  for (const key of rawBlocks.keys()) resolveBlock(key);
+
   for (let index = section + 1; index < pairs.length;) {
     if (pairs[index].code !== 0) { index++; continue; }
     const type = pairs[index].value.toUpperCase();
@@ -195,7 +330,16 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     const fields = pairs.slice(index + 1, end);
     const layer = layerOf(fields);
 
-    if (type === 'POINT') {
+    if (type === 'INSERT') {
+      const name = fields.find((pair) => pair.code === 2)?.value;
+      const definition = name ? resolveBlock(name) : null;
+      if (!definition) skip(type);
+      else finish(configureInsert(doc.createInsert(definition, {
+        x: number(fields, 10) * scale,
+        y: number(fields, 20) * scale,
+        ...(Math.abs(number(fields, 30)) > 1e-12 ? { z: number(fields, 30) * scale } : {}),
+      }), fields), fields, layer);
+    } else if (type === 'POINT') {
       noteFlattened(fields, 30);
       finish(doc.createPoint(
         { x: number(fields, 10) * scale, y: number(fields, 20) * scale },
@@ -318,5 +462,5 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   doc.layers = layersBefore;
   doc.layerAci = layerAciBefore;
   doc.layerColors = layerColorsBefore;
-  return { entities, layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale };
+  return { entities, blockDefinitions: [...definitions.values()], layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale };
 }

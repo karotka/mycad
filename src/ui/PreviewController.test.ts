@@ -66,6 +66,20 @@ describe('PreviewController', () => {
     expect(data.entities[0].selected).toBe(false);
   });
 
+  it('shows the saved block geometry at the pending INSERT point', () => {
+    const line = { id: 'line-1', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false, start: { x: 0, y: 0 }, end: { x: 10, y: 0 } };
+    const definition = { name: 'Part', basePoint: { x: 0, y: 0 }, entities: [line] };
+    const template = {
+      id: 'insert-1', type: 'insert', layer: '0', aci: 256, color: 0xffffff, selected: false,
+      blockName: 'Part', position: { x: 0, y: 0 }, scaleX: 1, scaleY: 1, rotation: 0,
+      columns: 1, rows: 1, columnSpacing: 0, rowSpacing: 0, definition,
+    };
+    const preview = previewOf(active('INSERT', 1, { previewInsert: template }), { x: 30, y: 40 });
+
+    expect(preview).toMatchObject({ type: 'insert', data: { entities: [{ type: 'insert', position: { x: 30, y: 40 } }] } });
+    expect(template.position).toEqual({ x: 0, y: 0 });
+  });
+
   it('draws the dimension while the second point is still being picked', () => {
     const preview = previewOf(active('MEASURE', 1, { start: { x: 0, y: 0 } }), { x: 10, y: 0 });
     const data = preview?.data as { start: unknown; end: unknown; offset: unknown; rotation: number };

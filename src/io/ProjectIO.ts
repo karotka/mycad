@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { ensureIdAbove, type Solid } from '../core/entities/types';
+import { ensureIdAbove, type BlockDefinition, type Entity, type Solid } from '../core/entities/types';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
@@ -42,6 +42,7 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       gcode: doc.gcode,
       view,
     },
+    blockDefinitions: doc.blockDefinitions,
     entities: doc.entities,
     solids: doc.solids.map((solid) => ({
       ...solid,
@@ -51,7 +52,73 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
         indices: Array.from(solid.mesh.indices),
       },
     })),
-  }, null, 2);
+  }, (_key, item) => item instanceof Float32Array || item instanceof Uint32Array ? Array.from(item) : item, 2);
+}
+
+function loadSolidValue(value: unknown): Solid {
+  const solid = value as Record<string, unknown>;
+  const mesh = solid?.mesh as { positions?: unknown; indices?: unknown } | undefined;
+  if (!mesh || !Array.isArray(mesh.positions) || !Array.isArray(mesh.indices)) {
+    throw new Error('The project contains an invalid 3D solid.');
+  }
+  return {
+    ...solid,
+    selected: false,
+    aci: legacyAci(solid),
+    layer: typeof solid.layer === 'string' ? solid.layer : '0',
+    mesh: {
+      positions: new Float32Array(mesh.positions as number[]),
+      indices: new Uint32Array(mesh.indices as number[]),
+    },
+  } as Solid;
+}
+
+function loadBlockDefinition(value: unknown): BlockDefinition {
+  const raw = value as Record<string, unknown>;
+  if (!raw || typeof raw.name !== 'string' || !raw.basePoint || !Array.isArray(raw.entities)) {
+    throw new Error('The project contains an invalid block definition.');
+  }
+  return {
+    name: raw.name,
+    basePoint: { ...(raw.basePoint as BlockDefinition['basePoint']) },
+    workPlane: validWorkPlane(raw.workPlane) ? cloneWorkPlane(raw.workPlane) : undefined,
+    entities: raw.entities.map(loadEntityValue),
+    solids: Array.isArray(raw.solids) ? raw.solids.map(loadSolidValue) : [],
+  };
+}
+
+function loadEntityValue(value: unknown): Entity {
+  const raw = value as Record<string, unknown>;
+  let result: Record<string, unknown> = { ...raw, selected: false, aci: legacyAci(raw) };
+  if (raw.type === 'insert') {
+    result = {
+      ...result,
+      scaleZ: typeof raw.scaleZ === 'number' && Math.abs(raw.scaleZ) > 1e-12 ? raw.scaleZ : 1,
+      definition: loadBlockDefinition(raw.definition),
+    };
+  }
+  if (raw.type === 'dimension') {
+    const defaults = defaultDimensionStyle();
+    const kind = raw.dimensionKind;
+    result = {
+      ...result,
+      dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' || kind === 'angular' ? kind : 'aligned',
+      arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
+      extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
+      extensionOffset: typeof raw.extensionOffset === 'number' ? raw.extensionOffset : defaults.extensionOffset,
+      textOffset: typeof raw.textOffset === 'number' ? raw.textOffset : defaults.textOffset,
+      angularPrecision: typeof raw.angularPrecision === 'number' && Number.isInteger(raw.angularPrecision)
+        && raw.angularPrecision >= 0 && raw.angularPrecision <= 8 ? raw.angularPrecision : defaults.angularPrecision,
+      unitSuffix: raw.unitSuffix === 'mm' ? 'mm' : 'none',
+      textOverride: typeof raw.textOverride === 'string' ? raw.textOverride : undefined,
+      textPrefix: typeof raw.textPrefix === 'string' ? raw.textPrefix : undefined,
+      textSuffix: typeof raw.textSuffix === 'string' ? raw.textSuffix : undefined,
+      toleranceMode: raw.toleranceMode === 'symmetric' || raw.toleranceMode === 'deviation' ? raw.toleranceMode : 'none',
+      toleranceUpper: typeof raw.toleranceUpper === 'number' && raw.toleranceUpper >= 0 ? raw.toleranceUpper : 0,
+      toleranceLower: typeof raw.toleranceLower === 'number' && raw.toleranceLower >= 0 ? raw.toleranceLower : 0,
+    };
+  }
+  return result as unknown as Entity;
 }
 
 export function loadProject(doc: Document, content: string): ProjectViewState | undefined {
@@ -60,51 +127,13 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
   if (!Array.isArray(value.entities) || !Array.isArray(value.solids)) throw new Error('The project does not contain valid CAD data.');
   const entities = value.entities as unknown[];
   const solids = value.solids as unknown[];
+  const blockDefinitions = Array.isArray(value.blockDefinitions) ? value.blockDefinitions as Document['blockDefinitions'] : [];
   const settings = (value.settings ?? {}) as Record<string, unknown>;
   const view = validViewState(settings.view) ? settings.view : undefined;
   doc.transaction(() => {
-    doc.entities = entities.map((entity: unknown) => {
-      const raw = entity as Record<string, unknown>;
-      if (raw.type === 'dimension') {
-        const defaults = defaultDimensionStyle();
-        // Every kind it may have been saved as is honoured. A file with none at
-        // all predates the distinction, and back then every dimension measured
-        // point to point, which is what `aligned` is now called.
-        const kind = raw.dimensionKind;
-        return {
-          ...raw, selected: false, aci: legacyAci(raw),
-          dimensionKind: kind === 'radius' || kind === 'diameter' || kind === 'linear' || kind === 'aligned' || kind === 'angular' ? kind : 'aligned',
-          arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' ? raw.arrowType : 'closed',
-          extensionBeyond: typeof raw.extensionBeyond === 'number' ? raw.extensionBeyond : defaults.extensionBeyond,
-          extensionOffset: typeof raw.extensionOffset === 'number' ? raw.extensionOffset : defaults.extensionOffset,
-          textOffset: typeof raw.textOffset === 'number' ? raw.textOffset : defaults.textOffset,
-          angularPrecision: typeof raw.angularPrecision === 'number' && Number.isInteger(raw.angularPrecision)
-            && raw.angularPrecision >= 0 && raw.angularPrecision <= 8
-            ? raw.angularPrecision
-            : defaults.angularPrecision,
-          unitSuffix: raw.unitSuffix === 'mm' ? 'mm' : 'none',
-          textOverride: typeof raw.textOverride === 'string' ? raw.textOverride : undefined,
-          textPrefix: typeof raw.textPrefix === 'string' ? raw.textPrefix : undefined,
-          textSuffix: typeof raw.textSuffix === 'string' ? raw.textSuffix : undefined,
-          toleranceMode: raw.toleranceMode === 'symmetric' || raw.toleranceMode === 'deviation' ? raw.toleranceMode : 'none',
-          toleranceUpper: typeof raw.toleranceUpper === 'number' && raw.toleranceUpper >= 0 ? raw.toleranceUpper : 0,
-          toleranceLower: typeof raw.toleranceLower === 'number' && raw.toleranceLower >= 0 ? raw.toleranceLower : 0,
-        };
-      }
-      return { ...raw, selected: false, aci: legacyAci(raw) };
-    }) as Document['entities'];
-    doc.solids = solids.map((raw: unknown) => {
-      const solid = raw as Record<string, unknown>;
-      const mesh = solid.mesh as { positions?: unknown; indices?: unknown };
-      if (!mesh || !Array.isArray(mesh.positions) || !Array.isArray(mesh.indices)) throw new Error('The project contains an invalid 3D solid.');
-      return {
-        ...solid,
-        selected: false,
-        aci: legacyAci(solid),
-        layer: typeof solid.layer === 'string' ? solid.layer : '0',
-        mesh: { positions: new Float32Array(mesh.positions as number[]), indices: new Uint32Array(mesh.indices as number[]) },
-      };
-    }) as Document['solids'];
+    doc.blockDefinitions = blockDefinitions.map(loadBlockDefinition);
+    doc.entities = entities.map(loadEntityValue);
+    doc.solids = solids.map(loadSolidValue);
     doc.currentLayer = typeof settings.currentLayer === 'string' ? settings.currentLayer : '0';
     doc.layers = Array.isArray(settings.layers)
       ? Array.from(new Set(['0', ...(settings.layers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer.length > 0)]))

@@ -9,6 +9,36 @@ const points = (doc: CadDocument, mode: ObjectSnapMode, excluded?: string | null
   objectSnapCandidates(doc, mode, excluded, reference).map((candidate) => candidate.world);
 
 describe('SnapService', () => {
+  it('offers transformed endpoints and centres from inside one INSERT', () => {
+    const doc = new Document();
+    const definition = {
+      name: 'Part', basePoint: { x: 0, y: 0 },
+      entities: [doc.createLine({ x: 0, y: 0 }, { x: 4, y: 0 }), doc.createCircle({ x: 2, y: 3 }, 1)],
+    };
+    const insert = doc.createInsert(definition, { x: 10, y: 20 });
+    insert.rotation = Math.PI / 2;
+    doc.entities.push(insert);
+
+    expect(points(doc, 'end')).toEqual(expect.arrayContaining([
+      { x: 10, y: 20, z: 0 }, { x: 10, y: 24, z: 0 },
+    ]));
+    expect(points(doc, 'center')).toContainEqual({ x: 7, y: 22, z: 0 });
+  });
+
+  it('offers 3D endpoints and centres from a solid owned by one INSERT', () => {
+    const doc = new Document();
+    const solid = doc.createSolid(createBoxMesh(4, 6, 8), 'Box', 8, []);
+    const definition = { name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] };
+    const insert = doc.createInsert(definition, { x: 10, y: 20 });
+    insert.scaleZ = 2;
+    doc.entities.push(insert);
+
+    expect(points(doc, 'end')).toContainEqual({ x: 8, y: 17, z: 0 });
+    expect(points(doc, 'end')).toContainEqual({ x: 12, y: 23, z: 16 });
+    expect(points(doc, 'center')).toContainEqual({ x: 10, y: 20, z: 8 });
+    expect(points(doc, 'end', insert.id)).not.toContainEqual({ x: 8, y: 17, z: 0 });
+  });
+
   it('offers a POINT only through the Node object snap', () => {
     const doc = new Document();
     const point = doc.createPoint({ x: 3, y: 8 });

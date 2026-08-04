@@ -1,11 +1,61 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { importAsciiDxf } from './DxfImport';
-import { dimensionGeometry } from '../core/entities/types';
+import { dimensionGeometry, entityBounds, expandedInsertEntities } from '../core/entities/types';
 
 const dxf = (entities: string, units = 4) => `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n${units}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`;
+const dxfWithBlocks = (blocks: string, entities: string, units = 4) =>
+  `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n${units}\n0\nENDSEC\n`
+  + `0\nSECTION\n2\nBLOCKS\n${blocks}0\nENDSEC\n`
+  + `0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`;
 
 describe('DXF import', () => {
+  it('keeps a transformed BLOCK reference as one INSERT object', () => {
+    const result = importAsciiDxf(new Document(), dxfWithBlocks(
+      '0\nBLOCK\n8\n0\n2\nBracket\n10\n1\n20\n2\n'
+      + '0\nLINE\n8\n0\n10\n1\n20\n2\n11\n6\n21\n2\n'
+      + '0\nENDBLK\n8\n0\n',
+      '0\nINSERT\n8\nParts\n2\nBracket\n10\n10\n20\n20\n30\n7\n41\n2\n42\n3\n43\n4\n50\n90\n',
+    ));
+    expect(result.ignored).toBe(0);
+    expect(result.blockDefinitions).toHaveLength(1);
+    expect(result.entities).toHaveLength(1);
+    const insert = result.entities[0];
+    expect(insert).toMatchObject({ type: 'insert', blockName: 'Bracket', layer: 'Parts', position: { x: 10, y: 20, z: 7 }, scaleX: 2, scaleY: 3, scaleZ: 4 });
+    if (insert.type !== 'insert') return;
+    const [line] = expandedInsertEntities(insert);
+    expect(line).toMatchObject({ type: 'line', start: { x: 10, y: 20, z: 7 }, end: { x: 10, y: 30, z: 7 } });
+    expect(entityBounds(insert)).toEqual({ min: { x: 10, y: 20 }, max: { x: 10, y: 30 } });
+  });
+
+  it('expands INSERT row/column arrays and nested block references', () => {
+    const result = importAsciiDxf(new Document(), dxfWithBlocks(
+      '0\nBLOCK\n2\nChild\n10\n0\n20\n0\n'
+      + '0\nLINE\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDBLK\n'
+      + '0\nBLOCK\n2\nParent\n10\n0\n20\n0\n'
+      + '0\nINSERT\n2\nChild\n10\n5\n20\n0\n0\nENDBLK\n',
+      '0\nINSERT\n2\nParent\n10\n10\n20\n20\n70\n2\n71\n2\n44\n10\n45\n5\n',
+    ));
+    const insert = result.entities[0];
+    if (insert.type !== 'insert') throw new Error('not an insert');
+    const lines = expandedInsertEntities(insert);
+    expect(lines).toHaveLength(4);
+    expect(lines.map((line) => entityBounds(line).min)).toEqual(expect.arrayContaining([
+      { x: 15, y: 20 }, { x: 25, y: 20 }, { x: 15, y: 25 }, { x: 25, y: 25 },
+    ]));
+  });
+
+  it('resolves a block child BYLAYER colour from the real DXF layer table', () => {
+    const source = `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n`
+      + '0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n0\nLAYER\n2\nRed\n62\n1\n0\nENDTAB\n0\nENDSEC\n'
+      + '0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nPart\n10\n0\n20\n0\n0\nLINE\n8\nRed\n10\n0\n20\n0\n11\n5\n21\n0\n0\nENDBLK\n0\nENDSEC\n'
+      + '0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nPart\n10\n0\n20\n0\n0\nENDSEC\n0\nEOF\n';
+    const result = importAsciiDxf(new Document(), source);
+    const insert = result.entities[0];
+    if (insert.type !== 'insert') throw new Error('not an insert');
+    expect(expandedInsertEntities(insert)[0].color).toBe(0xff0000);
+  });
+
   it('imports a native POINT and reports a dropped Z coordinate', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf('0\nPOINT\n8\nNodes\n10\n12.5\n20\n-3\n30\n7\n'));

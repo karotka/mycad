@@ -6,7 +6,7 @@ import { entityRenderKey } from './entityRenderKey';
 import type { DimensionEntity, Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import { isStrokeFont, strokeText } from '../core/text/strokeFont';
-import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -20,6 +20,7 @@ const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: 
 
 /** Height shared by points generated from a planar entity's defining anchor. */
 const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'insert') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'point') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
     return localPointZ(entity.center) ?? 0;
@@ -241,6 +242,10 @@ export class Canvas2DRenderer {
     };
 
     switch (entity.type) {
+      case 'insert':
+        expandedInsertEntities(entity).forEach((child) => this.drawEntity(child, w, h, selected, joinMode));
+        expandedInsertSolids(entity).forEach((solid) => this.drawSolidProjection(solid, w, h));
+        break;
       case 'point': {
         const p = toScreen(entity.position);
         const arm = 4;
@@ -371,7 +376,14 @@ export class Canvas2DRenderer {
     let label = '';
     let labelPoint: Vec2 | undefined;
 
-    if (preview.type === 'copy' || preview.type === 'scale') {
+    if (preview.type === 'insert') {
+      const inserted = preview.data as { entities: Entity[] };
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.9;
+      this.ctx.setLineDash([5, 4]);
+      inserted.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
+      this.ctx.restore();
+    } else if (preview.type === 'copy' || preview.type === 'scale') {
       const copy = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       this.ctx.save();
       this.ctx.globalAlpha = 0.9;
@@ -830,6 +842,11 @@ export class Viewport3D {
   setVisualStyle(style: 'wireframe' | 'shaded' | 'xray'): void {
     this.visualStyle = style;
     for (const mesh of this.solidMeshes.values()) this.applySolidStyle(mesh, Boolean(mesh.userData.selected));
+    for (const object of this.entityObjects.values()) object.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.userData.blockSolid) {
+        this.applySolidStyle(child, Boolean(child.userData.selected));
+      }
+    });
     this.render();
   }
 
@@ -1082,7 +1099,9 @@ export class Viewport3D {
   }
 
   frameContent(entities: Entity[], solids: Solid[]): void {
-    if (solids.length === 0) {
+    const blockSolids = entities.flatMap((entity) => entity.type === 'insert' ? expandedInsertSolids(entity) : []);
+    const allSolids = [...solids, ...blockSolids];
+    if (allSolids.length === 0) {
       this.frameEntities(entities);
       return;
     }
@@ -1094,7 +1113,7 @@ export class Viewport3D {
       minY = Math.min(minY, bounds.min.y); maxY = Math.max(maxY, bounds.max.y);
       minZ = Math.min(minZ, 0); maxZ = Math.max(maxZ, 0);
     }
-    for (const solid of solids) {
+    for (const solid of allSolids) {
       const positions = solid.mesh.positions;
       for (let i = 0; i < positions.length; i += 3) {
         minX = Math.min(minX, positions[i]); maxX = Math.max(maxX, positions[i]);
@@ -1188,18 +1207,7 @@ export class Viewport3D {
     for (const solid of solids) {
       let mesh = this.solidMeshes.get(solid.id);
       if (!mesh) {
-        const geom = this.solidToGeometry(solid.mesh);
-        const mat = new THREE.MeshPhongMaterial({
-          color: solid.selected ? 0x65c7ff : 0xffffff,
-          side: THREE.DoubleSide,
-          flatShading: false,
-          wireframe: true,
-        });
-        mesh = new THREE.Mesh(geom, mat);
-        mesh.userData.revision = solid.revision;
-        mesh.userData.selected = solid.selected;
-        mesh.userData.baseColor = solid.color;
-        this.applySolidStyle(mesh, solid.selected);
+        mesh = this.solidToObject(solid);
         this.solidMeshes.set(solid.id, mesh);
         this.scene.add(mesh);
       } else {
@@ -1428,7 +1436,7 @@ export class Viewport3D {
       this.scene.add(group);
       return;
     }
-    if (preview.type === 'copy' || preview.type === 'scale') {
+    if (preview.type === 'insert' || preview.type === 'copy' || preview.type === 'scale') {
       const copy = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       const group = new THREE.Group();
       for (const entity of copy.entities) {
@@ -1606,6 +1614,9 @@ export class Viewport3D {
   }
 
   pickEntity(canvas: HTMLCanvasElement, entities: Entity[], sx: number, sy: number, tolerance = 12): Entity | null {
+    const objectId = this.picking.pickObjectId(canvas, sx, sy, this.entityObjects);
+    const objectHit = objectId ? entities.find((entity) => entity.id === objectId) : undefined;
+    if (objectHit?.type === 'insert' && expandedInsertSolids(objectHit).length > 0) return objectHit;
     const rect = canvas.getBoundingClientRect();
     const project = (entity: Entity, point: Vec2): Vec2 | null => {
       const world = localToWorld(
@@ -1646,8 +1657,13 @@ export class Viewport3D {
     let edgeResult: Entity | null = null;
     let bestInsideArea = Number.POSITIVE_INFINITY;
     let insideResult: Entity | null = null;
-    for (let entityIndex = entities.length - 1; entityIndex >= 0; entityIndex--) {
-      const entity = entities[entityIndex];
+    const candidates: Array<{ entity: Entity; owner: Entity }> = [];
+    for (const owner of entities) {
+      if (owner.type === 'insert') expandedInsertEntities(owner).forEach((entity) => candidates.push({ entity, owner }));
+      else candidates.push({ entity: owner, owner });
+    }
+    for (let entityIndex = candidates.length - 1; entityIndex >= 0; entityIndex--) {
+      const { entity, owner } = candidates[entityIndex];
       let points: Vec2[] = [];
       let closed = false;
       switch (entity.type) {
@@ -1658,6 +1674,10 @@ export class Viewport3D {
             const angle = index * Math.PI * 2 / 72;
             points.push({ x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius });
           }
+          closed = true;
+          break;
+        case 'ellipse':
+          points = ellipsePoints(entity, 72).slice(0, -1);
           closed = true;
           break;
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
@@ -1677,7 +1697,7 @@ export class Viewport3D {
           const textPoint = project(entity, geometry.textPoint);
           if (textPoint && Math.hypot(cursor.x - textPoint.x, cursor.y - textPoint.y) <= tolerance * 1.5) {
             bestEdgeDistance = 0;
-            edgeResult = entity;
+            edgeResult = owner;
           }
           break;
         }
@@ -1685,7 +1705,7 @@ export class Viewport3D {
       const projected = points.map((point) => project(entity, point));
       if (projected.length === 1 && projected[0]) {
         const distance = Math.hypot(cursor.x - projected[0].x, cursor.y - projected[0].y);
-        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = entity; }
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
         continue;
       }
       const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
@@ -1693,7 +1713,7 @@ export class Viewport3D {
         const area = polygonArea(projectedPolygon);
         if (area < bestInsideArea) {
           bestInsideArea = area;
-          insideResult = entity;
+          insideResult = owner;
         }
       }
       const segmentCount = closed ? projected.length : projected.length - 1;
@@ -1701,13 +1721,23 @@ export class Viewport3D {
         const start = projected[index], end = projected[(index + 1) % projected.length];
         if (!start || !end) continue;
         const distance = distanceToSegment(cursor, start, end);
-        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = entity; }
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
       }
     }
     return edgeResult ?? insideResult;
   }
 
   private entityToObject(entity: Entity): THREE.Object3D {
+    if (entity.type === 'insert') {
+      const group = new THREE.Group();
+      expandedInsertEntities(entity).forEach((child) => group.add(this.entityToObject(child)));
+      expandedInsertSolids(entity).forEach((solid) => {
+        const mesh = this.solidToObject(solid);
+        mesh.userData.blockSolid = true;
+        group.add(mesh);
+      });
+      return group;
+    }
     if (entity.type === 'point') {
       const world = localToWorld(
         entity.workPlane ?? WORLD_WORK_PLANE,
@@ -1897,6 +1927,20 @@ export class Viewport3D {
     geom.setIndex(Array.from(mesh.indices));
     geom.computeVertexNormals();
     return geom;
+  }
+
+  private solidToObject(solid: Solid): THREE.Mesh {
+    const mesh = new THREE.Mesh(this.solidToGeometry(solid.mesh), new THREE.MeshPhongMaterial({
+      color: solid.selected ? 0x65c7ff : 0xffffff,
+      side: THREE.DoubleSide,
+      flatShading: false,
+      wireframe: false,
+    }));
+    mesh.userData.revision = solid.revision;
+    mesh.userData.selected = solid.selected;
+    mesh.userData.baseColor = solid.color;
+    this.applySolidStyle(mesh, solid.selected);
+    return mesh;
   }
 
   private faceRegionPrismGeometry(region: SolidFaceRegion, distance: number): THREE.BufferGeometry | null {

@@ -1,18 +1,10 @@
 import type { Document } from '../Document';
-import { cloneEntity, type Entity, type Solid } from '../entities/types';
+import { cloneBlockDefinition, cloneEntity, cloneSolidValue, type BlockDefinition, type Entity, type Solid } from '../entities/types';
 import type { DocumentEdit } from './CommandHistory';
 import { ACI_WHITE, aciToRgb } from '../../io/DxfAci';
 
 export function cloneSolid(solid: Solid): Solid {
-  return {
-    ...solid,
-    mesh: {
-      positions: solid.mesh.positions.slice(),
-      indices: solid.mesh.indices.slice(),
-    },
-    sourceEntityIds: [...solid.sourceEntityIds],
-    feature: JSON.parse(JSON.stringify(solid.feature)),
-  };
+  return cloneSolidValue(solid);
 }
 
 function replaceEntity(doc: Document, value: Entity): void {
@@ -45,6 +37,34 @@ export class CompositeEdit implements DocumentEdit {
   revert(doc: Document): void {
     // Backwards: a later edit may rest on what an earlier one did.
     for (let index = this.edits.length - 1; index >= 0; index--) this.edits[index].revert(doc);
+  }
+}
+
+function cloneBlockDefinitions(definitions: readonly BlockDefinition[]): BlockDefinition[] {
+  return definitions.map(cloneBlockDefinition);
+}
+
+/**
+ * Replaces the named block library as one undoable document edit. INSERTs carry
+ * their own geometry snapshot, so commands that rename an already placed block
+ * combine this with ReplaceObjectsEdit for the affected references.
+ */
+export class SetBlockDefinitionsEdit implements DocumentEdit {
+  private readonly before: BlockDefinition[];
+  private readonly after: BlockDefinition[];
+
+  constructor(readonly label: string, before: readonly BlockDefinition[], after: readonly BlockDefinition[]) {
+    this.before = cloneBlockDefinitions(before);
+    this.after = cloneBlockDefinitions(after);
+  }
+
+  apply(doc: Document): void { this.replace(doc, this.after); }
+  revert(doc: Document): void { this.replace(doc, this.before); }
+
+  private replace(doc: Document, definitions: readonly BlockDefinition[]): void {
+    doc.blockDefinitions = cloneBlockDefinitions(definitions);
+    doc.recolour();
+    doc.notify();
   }
 }
 

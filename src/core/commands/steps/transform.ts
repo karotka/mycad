@@ -23,6 +23,7 @@ export function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity 
   if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
   if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
   if (scaled.type === 'text') scaled.height *= factor;
+  if (scaled.type === 'insert') scaled.scaleZ *= factor;
   scaled.selected = true;
   return scaled;
 }
@@ -75,7 +76,7 @@ export function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Doc
       break;
     case 'text': result.position = rotatePoint(result.position, base, angle); result.rotation = (result.rotation ?? 0) + angle; break;
     case 'dimension': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); result.offset = rotatePoint(result.offset, base, angle); break;
-    case 'rectangle': break;
+    case 'insert': result.position = rotatePoint(result.position, base, angle); result.rotation += angle; break;
   }
   return result;
 }

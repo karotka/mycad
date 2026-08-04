@@ -9,15 +9,14 @@ use it comfortably, then structural and interoperability work.
 
 ## 1. DXF interoperability
 
-ASCII DXF import and export both exist. Export covers current 2D entities,
-layers, colours, line types and line weights; dimensions are decomposed into
-ordinary drawing geometry because native DXF dimensions require block records.
+ASCII DXF import and export both exist. They cover current 2D entities, block
+definitions and transformed INSERT references, layers, colours, line types and
+line weights. Dimensions are still decomposed into ordinary drawing geometry.
 
 ### Import priorities
 
 | Entity or fidelity item | Remaining work | Effort |
 |---|---|---|
-| **INSERT / blocks** | Add block definitions plus transformed references to `Document`. This is the largest real-world import gap. | Large |
 | **HATCH** | Add a filled/boundary-path entity and renderer support. Reuse the existing face-region loop model where practical. | Large |
 | **3DFACE** | Needs a non-watertight surface object; importing it as a `Solid` would make booleans falsely appear supported. | Medium |
 | **Ordinate dimensions** | Add X/Y/Z ordinate geometry before mapping DXF type 6. Angular dimensions already exist; native DXF types 2 and 5 still need import mapping. | Medium |
@@ -37,8 +36,8 @@ Known import fidelity limits that remain:
 
 ### Export follow-up
 
-Native semantic dimensions would require BLOCKS plus DIMENSION records. Do this
-with block support rather than creating an export-only block model.
+The block model now exists. Native semantic dimensions still need generated
+dimension-picture blocks plus DIMENSION records that reference them.
 
 ---
 

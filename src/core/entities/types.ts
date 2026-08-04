@@ -1,8 +1,8 @@
 import { dist2, type Vec2, type Vec3 } from '../../math/geometry';
-import type { WorkPlane } from '../../math/workplane';
+import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
 
-export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
+export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension' | 'insert';
 
 export interface EntityBase {
   id: string;
@@ -122,7 +122,39 @@ export interface DimensionEntity extends EntityBase {
   textPosition?: Vec2;
 }
 
-export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
+/** A named DXF BLOCK definition. Its geometry stays in block-local coordinates. */
+export interface BlockDefinition {
+  name: string;
+  /** Base point in `workPlane`; z is optional for old 2D/DXF definitions. */
+  basePoint: Vec2 & { z?: number };
+  /** Coordinate frame in which native MyCAD block contents were captured. DXF blocks use WCS. */
+  workPlane?: WorkPlane;
+  entities: Entity[];
+  /** Native MyCAD blocks may mix drawing entities and reusable 3D bodies. */
+  solids?: Solid[];
+}
+
+/** A transformed reference to a block, kept as one selectable drawing object. */
+export interface InsertEntity extends EntityBase {
+  type: 'insert';
+  blockName: string;
+  position: Vec2;
+  scaleX: number;
+  scaleY: number;
+  scaleZ: number;
+  rotation: number;
+  columns: number;
+  rows: number;
+  columnSpacing: number;
+  rowSpacing: number;
+  /**
+   * A snapshot makes bounds, rendering and snaps independent of a Document
+   * lookup. Document.blockDefinitions remains the canonical set for DXF export.
+   */
+  definition: BlockDefinition;
+}
+
+export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity | InsertEntity;
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -585,12 +617,233 @@ export function ensureIdAbove(ids: Iterable<string>): void {
   }
 }
 
-export function cloneEntity(e: Entity): Entity {
-  return JSON.parse(JSON.stringify(e));
+export function cloneEntity<T extends Entity>(e: T): T {
+  if (e.type !== 'insert') return JSON.parse(JSON.stringify(e)) as T;
+  return {
+    ...JSON.parse(JSON.stringify({ ...e, definition: undefined })),
+    definition: cloneBlockDefinition(e.definition),
+  } as T;
+}
+
+/** Typed mesh arrays need a real copy; JSON turns them into numeric-key objects. */
+export function cloneSolidValue(solid: Solid): Solid {
+  return {
+    ...solid,
+    mesh: { positions: solid.mesh.positions.slice(), indices: solid.mesh.indices.slice() },
+    sourceEntityIds: [...solid.sourceEntityIds],
+    feature: JSON.parse(JSON.stringify(solid.feature)) as SolidFeature,
+  };
+}
+
+export function cloneBlockDefinition(definition: BlockDefinition): BlockDefinition {
+  return {
+    name: definition.name,
+    basePoint: { ...definition.basePoint },
+    workPlane: definition.workPlane ? JSON.parse(JSON.stringify(definition.workPlane)) as WorkPlane : undefined,
+    entities: definition.entities.map(cloneEntity),
+    solids: definition.solids?.map(cloneSolidValue),
+  };
+}
+
+/**
+ * Expands an INSERT into drawing primitives while keeping the INSERT itself as
+ * the object stored in Document. Array rows/columns are expanded here too.
+ */
+export function expandedInsertEntities(insert: InsertEntity): Entity[] {
+  const result: Entity[] = [];
+  const scaleZ = insert.scaleZ ?? 1;
+  const cos = Math.cos(insert.rotation), sin = Math.sin(insert.rotation);
+  const transformPoint = (point: Vec2, column: number, row: number): Vec2 => {
+    const x = (point.x - insert.definition.basePoint.x + column * insert.columnSpacing) * insert.scaleX;
+    const y = (point.y - insert.definition.basePoint.y + row * insert.rowSpacing) * insert.scaleY;
+    const sourceZ = (point as Vec2 & { z?: number }).z ?? 0;
+    const z = (((insert.position as Vec2 & { z?: number }).z ?? 0)
+      + (sourceZ - (insert.definition.basePoint.z ?? 0)) * scaleZ);
+    return {
+      x: insert.position.x + x * cos - y * sin,
+      y: insert.position.y + x * sin + y * cos,
+      ...(Math.abs(z) > 1e-12 ? { z } : {}),
+    } as Vec2;
+  };
+  const transformVector = (point: Vec2): Vec2 => ({
+    x: point.x * insert.scaleX * cos - point.y * insert.scaleY * sin,
+    y: point.x * insert.scaleX * sin + point.y * insert.scaleY * cos,
+  });
+  const finish = (entity: Entity, source: Entity, column: number, row: number): Entity => {
+    entity.id = `${insert.id}:${column}:${row}:${source.id}`;
+    entity.selected = insert.selected;
+    entity.workPlane = insert.workPlane ? JSON.parse(JSON.stringify(insert.workPlane)) : undefined;
+    if (source.layer === '0') {
+      entity.layer = insert.layer;
+      if (source.aci === 256) entity.color = insert.color;
+    }
+    if (source.aci === 0) {
+      entity.aci = insert.aci;
+      entity.color = insert.color;
+    }
+    return entity;
+  };
+  const transformed = (source: Entity, column: number, row: number): Entity[] => {
+    const at = (point: Vec2): Vec2 => transformPoint(point, column, row);
+    let entity: Entity;
+    switch (source.type) {
+      case 'point': entity = { ...cloneEntity(source), position: at(source.position) }; break;
+      case 'line': entity = { ...cloneEntity(source), start: at(source.start), end: at(source.end) }; break;
+      case 'rectangle': entity = {
+        ...cloneEntity(source), type: 'polyline',
+        vertices: [source.first, { x: source.opposite.x, y: source.first.y }, source.opposite, { x: source.first.x, y: source.opposite.y }].map(at),
+        closed: true,
+      } as PolylineEntity; break;
+      case 'octagon': entity = { ...cloneEntity(source), type: 'polyline', vertices: source.vertices.map(at), closed: true } as PolylineEntity; break;
+      case 'polyline': entity = { ...cloneEntity(source), vertices: source.vertices.map(at) }; break;
+      case 'circle': {
+        const xAxis = transformVector({ x: source.radius, y: 0 });
+        const yAxis = transformVector({ x: 0, y: source.radius });
+        const radiusX = Math.hypot(xAxis.x, xAxis.y), radiusY = Math.hypot(yAxis.x, yAxis.y);
+        if (Math.abs(radiusX - radiusY) <= Math.max(radiusX, radiusY) * 1e-9) {
+          entity = { ...cloneEntity(source), center: at(source.center), radius: radiusX };
+        } else {
+          entity = {
+            ...cloneEntity(source), type: 'ellipse', center: at(source.center), radiusX, radiusY,
+            rotation: Math.atan2(xAxis.y, xAxis.x),
+          } as EllipseEntity;
+        }
+        break;
+      }
+      case 'ellipse':
+        entity = { ...cloneEntity(source), type: 'polyline', vertices: ellipsePoints(source).slice(0, -1).map(at), closed: true } as PolylineEntity;
+        break;
+      case 'arc':
+        entity = { ...cloneEntity(source), type: 'polyline', vertices: curvePoints(source).map(at), closed: false } as PolylineEntity;
+        break;
+      case 'bezier': entity = {
+        ...cloneEntity(source), start: at(source.start), control1: at(source.control1), control2: at(source.control2), end: at(source.end),
+      }; break;
+      case 'text': {
+        const textAxis = transformVector({ x: Math.cos(source.rotation ?? 0), y: Math.sin(source.rotation ?? 0) });
+        entity = {
+          ...cloneEntity(source), position: at(source.position), rotation: Math.atan2(textAxis.y, textAxis.x),
+          height: source.height * Math.max(Math.abs(insert.scaleX), Math.abs(insert.scaleY)),
+        };
+        break;
+      }
+      case 'dimension': {
+        const scale = Math.max(Math.abs(insert.scaleX), Math.abs(insert.scaleY));
+        entity = {
+          ...cloneEntity(source), start: at(source.start), end: at(source.end), offset: at(source.offset),
+          arcPoint: source.arcPoint ? at(source.arcPoint) : undefined,
+          textPosition: source.textPosition ? at(source.textPosition) : undefined,
+          scale: source.scale * scale,
+          rotation: source.rotation === undefined ? undefined : source.rotation + insert.rotation,
+        };
+        break;
+      }
+      case 'insert': {
+        // Expand the child in its parent-block coordinates first, then apply
+        // this INSERT's affine transform to every primitive. Decomposing two
+        // nested non-uniform scales into one rotation/scale would lose the shear
+        // that their exact matrix composition creates.
+        return expandedInsertEntities(source).flatMap((child) => transformed(child, column, row));
+      }
+    }
+    return [finish(entity, source, column, row)];
+  };
+
+  const columns = Math.max(1, Math.floor(insert.columns));
+  const rows = Math.max(1, Math.floor(insert.rows));
+  for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+    for (const entity of insert.definition.entities) result.push(...transformed(entity, column, row));
+  }
+  return result;
+}
+
+/**
+ * 3D bodies inside an INSERT, transformed into world coordinates. They remain
+ * owned by the INSERT — the derived ids exist only for rendering/snaps and are
+ * never stored in Document.solids or selected independently.
+ */
+export function expandedInsertSolids(insert: InsertEntity): Solid[] {
+  const sourcePlane = insert.definition.workPlane ?? WORLD_WORK_PLANE;
+  const targetPlane = insert.workPlane ?? WORLD_WORK_PLANE;
+  const baseZ = insert.definition.basePoint.z ?? 0;
+  const positionZ = (insert.position as Vec2 & { z?: number }).z ?? 0;
+  const scaleZ = insert.scaleZ ?? 1;
+  const cos = Math.cos(insert.rotation), sin = Math.sin(insert.rotation);
+  const nested = insert.definition.entities
+    .filter((entity): entity is InsertEntity => entity.type === 'insert')
+    .flatMap(expandedInsertSolids);
+  const sources = [...(insert.definition.solids ?? []), ...nested];
+  const result: Solid[] = [];
+  const columns = Math.max(1, Math.floor(insert.columns));
+  const rows = Math.max(1, Math.floor(insert.rows));
+
+  for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+    for (const source of sources) {
+      const solid = cloneSolidValue(source);
+      for (let index = 0; index < solid.mesh.positions.length; index += 3) {
+        const local = worldToLocal(sourcePlane, {
+          x: solid.mesh.positions[index],
+          y: solid.mesh.positions[index + 1],
+          z: solid.mesh.positions[index + 2],
+        });
+        const x = (local.x - insert.definition.basePoint.x + column * insert.columnSpacing) * insert.scaleX;
+        const y = (local.y - insert.definition.basePoint.y + row * insert.rowSpacing) * insert.scaleY;
+        const target = localToWorld(targetPlane, {
+          x: insert.position.x + x * cos - y * sin,
+          y: insert.position.y + x * sin + y * cos,
+        }, positionZ + (local.z - baseZ) * scaleZ);
+        solid.mesh.positions[index] = target.x;
+        solid.mesh.positions[index + 1] = target.y;
+        solid.mesh.positions[index + 2] = target.z;
+      }
+      // A reflected instance reverses handedness; keep triangle normals outward.
+      if (insert.scaleX * insert.scaleY * scaleZ < 0) {
+        for (let index = 0; index + 2 < solid.mesh.indices.length; index += 3) {
+          const swap = solid.mesh.indices[index + 1];
+          solid.mesh.indices[index + 1] = solid.mesh.indices[index + 2];
+          solid.mesh.indices[index + 2] = swap;
+        }
+      }
+      solid.id = `${insert.id}:${column}:${row}:solid:${source.id}`;
+      solid.name = `${insert.blockName}:${source.name}`;
+      solid.selected = insert.selected;
+      solid.height *= Math.abs(scaleZ);
+      solid.feature = { kind: 'mesh' };
+      solid.revision++;
+      if (source.layer === '0') {
+        solid.layer = insert.layer;
+        if (source.aci === 256) solid.color = insert.color;
+      }
+      if (source.aci === 0) {
+        solid.aci = insert.aci;
+        solid.color = insert.color;
+      }
+      result.push(solid);
+    }
+  }
+  return result;
 }
 
 export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
   switch (e.type) {
+    case 'insert': {
+      const children = expandedInsertEntities(e);
+      const bounds = children.map(entityBounds);
+      const plane = e.workPlane ?? WORLD_WORK_PLANE;
+      for (const solid of expandedInsertSolids(e)) {
+        for (let index = 0; index < solid.mesh.positions.length; index += 3) {
+          const local = worldToLocal(plane, {
+            x: solid.mesh.positions[index], y: solid.mesh.positions[index + 1], z: solid.mesh.positions[index + 2],
+          });
+          bounds.push({ min: { x: local.x, y: local.y }, max: { x: local.x, y: local.y } });
+        }
+      }
+      if (bounds.length === 0) return { min: { ...e.position }, max: { ...e.position } };
+      return {
+        min: { x: Math.min(...bounds.map((item) => item.min.x)), y: Math.min(...bounds.map((item) => item.min.y)) },
+        max: { x: Math.max(...bounds.map((item) => item.max.x)), y: Math.max(...bounds.map((item) => item.max.y)) },
+      };
+    }
     case 'point':
       return { min: { ...e.position }, max: { ...e.position } };
     case 'ellipse': {
@@ -689,6 +942,7 @@ export function closedVertices(entity: Entity): Vec2[] | null {
 
 export function getEntityPoints(e: Entity): Vec2[] {
   switch (e.type) {
+    case 'insert': return [e.position, ...expandedInsertEntities(e).flatMap(getEntityPoints)];
     case 'point':
       return [e.position];
     case 'line':
@@ -717,6 +971,20 @@ export function getEntityPoints(e: Entity): Vec2[] {
 export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity {
   const copy = cloneEntity(e);
   switch (copy.type) {
+    case 'insert': {
+      const cos = Math.cos(copy.rotation), sin = Math.sin(copy.rotation);
+      const origin = copy.position;
+      const xPoint = { x: origin.x + cos * copy.scaleX, y: origin.y + sin * copy.scaleX };
+      const yPoint = { x: origin.x - sin * copy.scaleY, y: origin.y + cos * copy.scaleY };
+      const transformedOrigin = fn(origin), transformedX = fn(xPoint), transformedY = fn(yPoint);
+      const xAxis = { x: transformedX.x - transformedOrigin.x, y: transformedX.y - transformedOrigin.y };
+      const yAxis = { x: transformedY.x - transformedOrigin.x, y: transformedY.y - transformedOrigin.y };
+      copy.position = transformedOrigin;
+      copy.scaleX = Math.hypot(xAxis.x, xAxis.y);
+      copy.scaleY = (xAxis.x * yAxis.y - xAxis.y * yAxis.x < 0 ? -1 : 1) * Math.hypot(yAxis.x, yAxis.y);
+      copy.rotation = Math.atan2(xAxis.y, xAxis.x);
+      break;
+    }
     case 'point':
       copy.position = fn(copy.position);
       break;

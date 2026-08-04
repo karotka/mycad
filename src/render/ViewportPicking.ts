@@ -11,7 +11,9 @@ export function chooseObjectId(
   let fallback: string | null = null;
   for (const hit of hitObjects) {
     for (const [id, object] of objects) {
-      if (object !== hit) continue;
+      let owner: THREE.Object3D | null = hit;
+      while (owner && owner !== object) owner = owner.parent;
+      if (owner !== object) continue;
       fallback ??= id;
       if (!excludedIds.has(id)) return id;
     }
@@ -45,7 +47,7 @@ export class ViewportPicking {
 
   firstIntersection(canvas: HTMLCanvasElement, sx: number, sy: number, objects: Iterable<THREE.Object3D>): THREE.Intersection | null {
     this.setRay(canvas, sx, sy);
-    return this.raycaster.intersectObjects(Array.from(objects))[0] ?? null;
+    return this.raycaster.intersectObjects(Array.from(objects), true)[0] ?? null;
   }
 
   pickObjectId(
@@ -56,7 +58,7 @@ export class ViewportPicking {
     excludedIds: ReadonlySet<string> = new Set(),
   ): string | null {
     this.setRay(canvas, sx, sy);
-    const hits = this.raycaster.intersectObjects(Array.from(objects.values()));
+    const hits = this.raycaster.intersectObjects(Array.from(objects.values()), true);
     return chooseObjectId(hits.map((hit) => hit.object), objects, excludedIds);
   }
 

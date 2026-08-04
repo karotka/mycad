@@ -60,6 +60,16 @@ export class PreviewController {
       this.setPreview({ type: 'bezier', data: { start: active.data.start, control1: active.data.control1 ?? cursor, control2: active.data.control2 ?? cursor, end: cursor } });
       return;
     }
+    if (active.name === 'INSERT' && active.stepIndex === 1) {
+      const template = active.data.previewInsert as Entity | undefined;
+      if (template?.type !== 'insert') return;
+      const ghost = cloneEntity(template);
+      ghost.position = { ...cursor };
+      ghost.color = 0xe6f4ff;
+      ghost.selected = false;
+      this.setPreview({ type: 'insert', data: { entities: [ghost] } });
+      return;
+    }
     if (active.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
       // The objects ride under the cursor so you see what you are placing — and
       // it keeps its own kind, not a plain line, because a move reads how far it
@@ -297,7 +307,7 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
     case 'bezier': result.start = rotate(result.start); result.control1 = rotate(result.control1); result.control2 = rotate(result.control2); result.end = rotate(result.end); break;
     case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
     case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); if (result.textPosition) result.textPosition = rotate(result.textPosition); break;
-    case 'rectangle': break;
+    case 'insert': result.position = rotate(result.position); result.rotation += angle; break;
   }
   return result;
 }

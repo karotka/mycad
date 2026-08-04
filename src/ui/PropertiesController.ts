@@ -86,6 +86,19 @@ export class PropertiesController {
       case 'rectangle': return [...common, ...pointFields('first', 'First', object.first), ...pointFields('opposite', 'Opposite', object.opposite), { key: '_width', label: 'Width', value: Math.abs(object.opposite.x - object.first.x), kind: 'readonly' }, { key: '_height', label: 'Height', value: Math.abs(object.opposite.y - object.first.y), kind: 'readonly' }];
       case 'arc': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radius', label: 'Radius', value: object.radius }, { key: 'startAngle', label: 'Start angle °', value: object.startAngle * 180 / Math.PI }, { key: 'sweepAngle', label: 'Sweep angle °', value: object.sweepAngle * 180 / Math.PI }];
       case 'text': return [...common, ...pointFields('position', 'Position', object.position), { key: 'height', label: 'Text height', value: object.height }, { key: 'text', label: 'Text', value: object.text }];
+      case 'insert': return [
+        ...common,
+        { key: '_blockName', label: 'Block', value: object.blockName, kind: 'readonly' },
+        ...pointFields('position', 'Position', object.position),
+        { key: 'scaleX', label: 'Scale X', value: object.scaleX },
+        { key: 'scaleY', label: 'Scale Y', value: object.scaleY },
+        { key: 'scaleZ', label: 'Scale Z', value: object.scaleZ },
+        { key: 'rotation', label: 'Rotation °', value: object.rotation * 180 / Math.PI },
+        { key: 'columns', label: 'Columns', value: object.columns },
+        { key: 'rows', label: 'Rows', value: object.rows },
+        { key: 'columnSpacing', label: 'Column spacing', value: object.columnSpacing },
+        { key: 'rowSpacing', label: 'Row spacing', value: object.rowSpacing },
+      ];
       case 'dimension': {
         const points = object.dimensionKind === 'angular'
           ? [
@@ -197,6 +210,16 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
   else if (key === 'radius' && (entity.type === 'circle' || entity.type === 'arc') && Number(value) > 0) entity.radius = Number(value);
   else if (key === 'height' && entity.type === 'text' && Number(value) > 0) entity.height = Number(value);
   else if (key === 'text' && entity.type === 'text') entity.text = String(value);
+  else if (entity.type === 'insert' && key === 'rotation') entity.rotation = Number(value) * Math.PI / 180;
+  else if (entity.type === 'insert' && (key === 'scaleX' || key === 'scaleY' || key === 'scaleZ')) {
+    const number = Number(value);
+    if (Math.abs(number) > 1e-12) entity[key] = number;
+  }
+  else if (entity.type === 'insert' && (key === 'columns' || key === 'rows')) {
+    const number = Number(value);
+    if (Number.isInteger(number) && number >= 1) entity[key] = number;
+  }
+  else if (entity.type === 'insert' && (key === 'columnSpacing' || key === 'rowSpacing')) entity[key] = Number(value);
   else if (key === 'startAngle' && entity.type === 'arc') entity.startAngle = Number(value) * Math.PI / 180;
   else if (key === 'sweepAngle' && entity.type === 'arc') entity.sweepAngle = Number(value) * Math.PI / 180;
   else if (entity.type === 'dimension' && key === 'arrowType' && (value === 'closed' || value === 'open' || value === 'tick')) entity.arrowType = value;

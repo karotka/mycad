@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { curvePoints, ellipsePoints, entityBounds, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
@@ -647,6 +647,15 @@ export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5):
   for (let i = entities.length - 1; i >= 0; i--) {
     const e = entities[i];
     switch (e.type) {
+      case 'insert': {
+        if (hitTestEntity(expandedInsertEntities(e), point, tolerance)) return e;
+        if (expandedInsertSolids(e).length > 0) {
+          const bounds = entityBounds(e);
+          if (point.x >= bounds.min.x - tolerance && point.x <= bounds.max.x + tolerance
+            && point.y >= bounds.min.y - tolerance && point.y <= bounds.max.y + tolerance) return e;
+        }
+        break;
+      }
       case 'point': {
         if (Math.hypot(point.x - e.position.x, point.y - e.position.y) <= tolerance) return e;
         break;

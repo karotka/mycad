@@ -183,6 +183,9 @@ export class GripController {
     if (entity?.type === 'point' && !this.mode) {
       return [{ point: entity.position, index: 0, shape: 'square' }];
     }
+    if (entity?.type === 'insert' && !this.mode) {
+      return [{ point: entity.position, index: 0, shape: 'square' }];
+    }
     // Lines and rectangles expose their ordinary AutoCAD-like edit grips as
     // soon as they are selected; no context-menu mode is required.
     if (entity?.type === 'line' && this.mode === 'middle') {
@@ -330,6 +333,8 @@ export class GripController {
             shape: 'square',
           });
         }
+      } else if (entity.type === 'insert') {
+        grips.push({ point: entity.position, index: base, shape: 'square' });
       } else {
         const points = getEntityPoints(entity);
         points.forEach((point, index) => grips.push({ point, index: base + index, shape: 'square' }));
@@ -419,6 +424,8 @@ export class GripController {
     const original = this.drag.originalEntity;
     if (!entity) return;
     if (entity.type === 'point' && original.type === 'point') {
+      entity.position = { ...cursor };
+    } else if (entity.type === 'insert' && original.type === 'insert') {
       entity.position = { ...cursor };
     } else if (entity.type === 'line' && original.type === 'line') {
       if (this.mode === 'middle' || this.drag.gripIndex === 2) {

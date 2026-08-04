@@ -2,6 +2,7 @@ import type { Vec2 } from '../math/geometry';
 import { closePolyline, octagonVertices } from '../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import {
+  cloneBlockDefinition,
   genId,
   type PointEntity,
   type CircleEntity,
@@ -10,6 +11,8 @@ import {
   type BezierEntity,
   type TextEntity,
   type DimensionEntity,
+  type BlockDefinition,
+  type InsertEntity,
   type Entity,
   type LineEntity,
   type OctagonEntity,
@@ -49,6 +52,8 @@ export interface DocumentState {
 
 export class Document {
   entities: Entity[] = [];
+  /** Named drawing geometry referenced by INSERT entities. */
+  blockDefinitions: BlockDefinition[] = [];
   solids: Solid[] = [];
   selectedEntityIds = new Set<string>();
   selectedSolidIds = new Set<string>();
@@ -108,8 +113,23 @@ export class Document {
     for (const layer of this.layers) {
       this.layerColors[layer] = aciToRgb(this.layerAci[layer] ?? ACI_WHITE) ?? aciToRgb(ACI_WHITE)!;
     }
-    for (const entity of this.entities) entity.color = resolveAci(entity.aci, this.layerAci[entity.layer] ?? ACI_WHITE);
-    for (const solid of this.solids) solid.color = resolveAci(solid.aci, this.layerAci[solid.layer] ?? ACI_WHITE);
+    const recolourSolid = (solid: Solid): void => {
+      solid.color = resolveAci(solid.aci, this.layerAci[solid.layer] ?? ACI_WHITE);
+    };
+    const recolourDefinition = (definition: BlockDefinition, visited: Set<object>): void => {
+      if (visited.has(definition)) return;
+      visited.add(definition);
+      definition.entities.forEach((entity) => recolourEntity(entity, visited));
+      definition.solids?.forEach(recolourSolid);
+    };
+    const recolourEntity = (entity: Entity, visited: Set<object>): void => {
+      entity.color = resolveAci(entity.aci, this.layerAci[entity.layer] ?? ACI_WHITE);
+      if (entity.type === 'insert') recolourDefinition(entity.definition, visited);
+    };
+    const visited = new Set<object>();
+    for (const definition of this.blockDefinitions) recolourDefinition(definition, visited);
+    for (const entity of this.entities) recolourEntity(entity, visited);
+    for (const solid of this.solids) recolourSolid(solid);
   }
 
   /** Sets a layer's colour index and repaints everything that follows it. */
@@ -280,6 +300,28 @@ export class Document {
       selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       position,
+    };
+  }
+
+  createInsert(definition: BlockDefinition, position: Vec2): InsertEntity {
+    return {
+      id: genId('insert'),
+      type: 'insert',
+      layer: this.currentLayer,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
+      selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane),
+      blockName: definition.name,
+      position,
+      scaleX: 1,
+      scaleY: 1,
+      scaleZ: 1,
+      rotation: 0,
+      columns: 1,
+      rows: 1,
+      columnSpacing: 0,
+      rowSpacing: 0,
+      definition: cloneBlockDefinition(definition),
     };
   }
 

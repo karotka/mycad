@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { dimensionGeometry, type DimensionEntity, type EllipseEntity, type Entity } from '../core/entities/types';
+import { dimensionGeometry, type BlockDefinition, type DimensionEntity, type EllipseEntity, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { ACI_BYLAYER } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, LINE_TYPES } from '../core/lineStyles';
@@ -10,6 +10,8 @@ export interface DxfExportResult {
   entityCount: number;
   /** Dimensions turned into plain lines and text, since a DXF dimension needs a block. */
   dimensionsDecomposed: number;
+  /** MyCAD 3D bodies stored in block definitions cannot be represented by 2D DXF entities. */
+  blockSolidsOmitted: number;
 }
 
 /**
@@ -34,6 +36,8 @@ export function exportAsciiDxf(doc: Document): DxfExportResult {
 
   writeHeader(pair);
   writeTables(pair, doc, layers, [...usedLinetypes]);
+  const definitions = blockDefinitions(doc);
+  writeBlocks(pair, definitions);
 
   pair(0, 'SECTION');
   pair(2, 'ENTITIES');
@@ -47,7 +51,43 @@ export function exportAsciiDxf(doc: Document): DxfExportResult {
   pair(0, 'ENDSEC');
   pair(0, 'EOF');
 
-  return { dxf: out.join('\n') + '\n', entityCount, dimensionsDecomposed };
+  return {
+    dxf: out.join('\n') + '\n',
+    entityCount,
+    dimensionsDecomposed,
+    blockSolidsOmitted: definitions.reduce((total, definition) => total + (definition.solids?.length ?? 0), 0),
+  };
+}
+
+function blockDefinitions(doc: Document): BlockDefinition[] {
+  const definitions = new Map<string, BlockDefinition>();
+  const add = (definition: BlockDefinition): void => {
+    const key = definition.name.toUpperCase();
+    if (definitions.has(key)) return;
+    definitions.set(key, definition);
+    definition.entities.forEach((entity) => { if (entity.type === 'insert') add(entity.definition); });
+  };
+  doc.blockDefinitions.forEach(add);
+  doc.entities.forEach((entity) => { if (entity.type === 'insert') add(entity.definition); });
+  return [...definitions.values()];
+}
+
+function writeBlocks(pair: Pair, definitions: BlockDefinition[]): void {
+  pair(0, 'SECTION');
+  pair(2, 'BLOCKS');
+  for (const definition of definitions) {
+    pair(0, 'BLOCK');
+    pair(8, '0');
+    pair(2, definition.name);
+    pair(70, 0);
+    point(pair, 10, 20, definition.basePoint);
+    pair(3, definition.name);
+    pair(1, '');
+    definition.entities.forEach((entity) => writeEntity(pair, entity));
+    pair(0, 'ENDBLK');
+    pair(8, '0');
+  }
+  pair(0, 'ENDSEC');
 }
 
 type Pair = (code: number, value: string | number) => void;
@@ -125,6 +165,19 @@ function patternLength(pattern: readonly number[]): number {
 
 function writeEntity(pair: Pair, entity: Entity): void {
   switch (entity.type) {
+    case 'insert':
+      start(pair, 'INSERT', entity);
+      pair(2, entity.blockName);
+      point(pair, 10, 20, entity.position);
+      if (entity.scaleX !== 1) pair(41, num(entity.scaleX));
+      if (entity.scaleY !== 1) pair(42, num(entity.scaleY));
+      if (entity.scaleZ !== 1) pair(43, num(entity.scaleZ));
+      if (entity.rotation) pair(50, num(degrees(entity.rotation)));
+      if (entity.columns !== 1) pair(70, entity.columns);
+      if (entity.rows !== 1) pair(71, entity.rows);
+      if (entity.columnSpacing) pair(44, num(entity.columnSpacing));
+      if (entity.rowSpacing) pair(45, num(entity.rowSpacing));
+      break;
     case 'point':
       start(pair, 'POINT', entity);
       point(pair, 10, 20, entity.position);
@@ -188,9 +241,10 @@ function start(pair: Pair, type: string, entity: { layer: string; aci: number })
   if (entity.aci !== ACI_BYLAYER && entity.aci !== 0) pair(62, entity.aci);
 }
 
-function point(pair: Pair, xCode: number, yCode: number, p: Vec2): void {
+function point(pair: Pair, xCode: number, yCode: number, p: Vec2 & { z?: number }): void {
   pair(xCode, num(p.x));
   pair(yCode, num(p.y));
+  if (p.z !== undefined && Math.abs(p.z) > 1e-12) pair(yCode + 10, num(p.z));
 }
 
 function writeEllipse(pair: Pair, entity: EllipseEntity): void {

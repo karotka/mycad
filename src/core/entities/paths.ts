@@ -7,7 +7,7 @@
  * complete, because a missing case here is geometry silently left out of a cut
  * file rather than something that merely looks wrong on screen.
  */
-import { curvePoints, dimensionGeometry, ellipsePoints, type Entity } from './types';
+import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 
@@ -25,6 +25,8 @@ export interface EntityPath {
  */
 export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
   switch (entity.type) {
+    case 'insert':
+      return expandedInsertEntities(entity).flatMap((child) => entityToPaths(child, segments));
     case 'point':
       return [];
     case 'line':

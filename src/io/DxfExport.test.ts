@@ -68,6 +68,54 @@ describe('exportAsciiDxf structure', () => {
 });
 
 describe('exportAsciiDxf entities round-trip through the importer', () => {
+  it('keeps a BLOCK and transformed INSERT reference native', () => {
+    const doc = new Document();
+    const definition = {
+      name: 'Bracket',
+      basePoint: { x: 1, y: 2 },
+      entities: [doc.createLine({ x: 1, y: 2 }, { x: 6, y: 2 })],
+    };
+    doc.blockDefinitions = [definition];
+    const insert = doc.createInsert(definition, { x: 10, y: 20 });
+    insert.scaleX = 2;
+    insert.scaleY = 3;
+    insert.scaleZ = 4;
+    insert.position = { x: 10, y: 20, z: 7 } as { x: number; y: number };
+    insert.rotation = Math.PI / 2;
+    insert.columns = 2;
+    insert.columnSpacing = 12;
+    doc.addEntity(insert);
+
+    const exported = exportAsciiDxf(doc).dxf;
+    expect(exported).toContain('BLOCKS');
+    expect(exported).toContain('Bracket');
+    const result = importAsciiDxf(new Document(), exported);
+    expect(result.blockDefinitions).toHaveLength(1);
+    expect(result.entities[0]).toMatchObject({
+      type: 'insert', blockName: 'Bracket', position: { x: 10, y: 20, z: 7 },
+      scaleX: 2, scaleY: 3, scaleZ: 4, columns: 2, columnSpacing: 12,
+    });
+    const imported = result.entities[0];
+    if (imported.type !== 'insert') throw new Error('not an insert');
+    expect(imported.rotation).toBeCloseTo(Math.PI / 2, 8);
+  });
+
+  it('reports 3D solids omitted from otherwise native DXF block definitions', () => {
+    const doc = new Document();
+    const solid = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'Triangle', 0, [],
+    );
+    const definition = { name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] };
+    doc.blockDefinitions = [definition];
+    doc.addEntity(doc.createInsert(definition, { x: 0, y: 0 }));
+
+    const result = exportAsciiDxf(doc);
+
+    expect(result.blockSolidsOmitted).toBe(1);
+    expect(result.dxf).toContain('SolidPart');
+  });
+
   it('keeps a native point', () => {
     const doc = new Document();
     doc.addEntity(doc.createPoint({ x: 7.25, y: -4.5 }));

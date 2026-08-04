@@ -15,6 +15,15 @@ describe('3D picking order', () => {
     expect(chooseObjectId([front, back], objects, new Set(['front', 'back']))).toBe('front');
   });
 
+  it('maps a hit on a nested block mesh back to the INSERT root', () => {
+    const insert = new THREE.Group();
+    const nested = new THREE.Group();
+    const mesh = new THREE.Mesh();
+    nested.add(mesh);
+    insert.add(nested);
+    expect(chooseObjectId([mesh], new Map([['insert', insert]]), new Set())).toBe('insert');
+  });
+
   it('chooses the closest visible projected grip inside tolerance', () => {
     expect(closestProjectedIndex(
       { x: 10, y: 10 },

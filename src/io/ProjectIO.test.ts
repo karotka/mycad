@@ -7,6 +7,44 @@ import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
 
 describe('ProjectIO', () => {
+  it('round-trips block definitions and INSERT transforms', () => {
+    const source = new Document();
+    const definition = { name: 'Part', basePoint: { x: 1, y: 2 }, entities: [source.createLine({ x: 1, y: 2 }, { x: 6, y: 2 })] };
+    source.blockDefinitions = [definition];
+    const insert = source.createInsert(definition, { x: 10, y: 20 });
+    insert.scaleX = 2;
+    insert.rotation = Math.PI / 4;
+    source.addEntity(insert);
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.blockDefinitions[0]).toMatchObject({ name: 'Part', basePoint: { x: 1, y: 2 } });
+    expect(target.entities[0]).toMatchObject({ type: 'insert', blockName: 'Part', position: { x: 10, y: 20 }, scaleX: 2 });
+  });
+
+  it('round-trips typed 3D meshes stored inside block definitions and INSERT snapshots', () => {
+    const source = new Document();
+    const solid = source.createSolid(primitiveMesh({
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 4, depth: 6, height: 8,
+    }), 'Box', 8, []);
+    const definition = { name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] };
+    source.blockDefinitions = [definition];
+    const insert = source.createInsert(definition, { x: 10, y: 20 });
+    insert.scaleZ = 2;
+    source.addEntity(insert);
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.blockDefinitions[0].solids?.[0].mesh.positions).toBeInstanceOf(Float32Array);
+    expect(target.blockDefinitions[0].solids?.[0].mesh.indices).toBeInstanceOf(Uint32Array);
+    const loaded = target.entities[0];
+    expect(loaded).toMatchObject({ type: 'insert', scaleZ: 2 });
+    if (loaded.type !== 'insert') throw new Error('expected INSERT');
+    expect(loaded.definition.solids?.[0].mesh.positions).toBeInstanceOf(Float32Array);
+  });
+
   it('round-trips a native point entity', () => {
     const source = new Document();
     source.addEntity(source.createPoint({ x: 8.5, y: -2 }));

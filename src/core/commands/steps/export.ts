@@ -1,14 +1,19 @@
-import type { Solid } from '../../entities/types';
+import { expandedInsertSolids, type Entity, type Solid } from '../../entities/types';
 import type { CommandRun, StepOutcome } from '../types';
 
 /** Gather 3D solids first, then hand exactly that set to the file-save flow. */
 export function exportStlSelection({ ctx, step, value, data, gather }: CommandRun): StepOutcome | Promise<StepOutcome> {
-  if (step.kind !== 'solid') return 'advance';
+  if (step.kind !== 'solid' && step.kind !== 'entity') return 'advance';
   if (gather(value)) return 'stay';
 
-  const solids = (data.solids as Solid[] | undefined) ?? [];
+  const solids = [
+    ...((data.solids as Solid[] | undefined) ?? []),
+    ...((data.entities as Entity[] | undefined) ?? [])
+      .filter((entity) => entity.type === 'insert')
+      .flatMap((entity) => expandedInsertSolids(entity)),
+  ];
   if (solids.length === 0) {
-    ctx.log('STL export: select at least one 3D solid.');
+    ctx.log('STL export: select at least one 3D solid or block containing 3D solids.');
     return 'stay';
   }
   if (!ctx.exportStl) {

@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipsePoints, entityBounds, type Entity, type Solid } from '../core/entities/types';
+import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type Entity, type Solid } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
@@ -120,12 +120,13 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
     case 'polyline': return { points: entity.vertices, closed: entity.closed };
     case 'arc':
     case 'bezier': return { points: curvePoints(entity, 64), closed: false };
+    case 'insert':
     case 'text':
     case 'dimension': {
       const bounds = entityBounds(entity);
       // Off-plane text/dimension keeps its reference Z so the box outline projects
       // at the right depth for window selection.
-      const z = (((entity.type === 'text' ? entity.position : entity.start) as Vec2 & { z?: number }).z);
+      const z = (((entity.type === 'dimension' ? entity.start : entity.position) as Vec2 & { z?: number }).z);
       const corner = (point: Vec2): Vec2 => (z === undefined ? point : { ...point, z } as Vec2);
       return {
         points: [corner(bounds.min), corner({ x: bounds.max.x, y: bounds.min.y }), corner(bounds.max), corner({ x: bounds.min.x, y: bounds.max.y })],
@@ -157,9 +158,33 @@ export function applyProjectedWindowSelection(
     const outline = entityOutline(entity);
     const plane = entity.workPlane ?? WORLD_WORK_PLANE;
     const projected = outline.points.map((point) => project(localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0)));
-    const contained = projected.length > 0 && projected.every((point) => point !== null && pointInsideBox(point, box));
+    const solidProjections = entity.type === 'insert'
+      ? expandedInsertSolids(entity).map((solid) => {
+        const points: Array<Vec2 | null> = [];
+        for (let index = 0; index < solid.mesh.positions.length; index += 3) {
+          points.push(project({
+            x: solid.mesh.positions[index], y: solid.mesh.positions[index + 1], z: solid.mesh.positions[index + 2],
+          }));
+        }
+        return { solid, points };
+      })
+      : [];
+    const allProjected = [...projected, ...solidProjections.flatMap((item) => item.points)];
+    const contained = allProjected.length > 0 && allProjected.every((point) => point !== null && pointInsideBox(point, box));
     const visible = projected.filter((point): point is Vec2 => point !== null);
-    if (contained || (crossing && visible.length > 0 && polygonIntersectsBox(visible, box, outline.closed))) {
+    let intersects = crossing && visible.length > 0 && polygonIntersectsBox(visible, box, outline.closed);
+    if (crossing && !contained && !intersects) {
+      solidLoop: for (const { solid, points } of solidProjections) {
+        for (let offset = 0; offset + 2 < solid.mesh.indices.length; offset += 3) {
+          const triangle = [points[solid.mesh.indices[offset]], points[solid.mesh.indices[offset + 1]], points[solid.mesh.indices[offset + 2]]];
+          if (triangle.every((point): point is Vec2 => point !== null) && polygonIntersectsBox(triangle, box, true)) {
+            intersects = true;
+            break solidLoop;
+          }
+        }
+      }
+    }
+    if (contained || intersects) {
       doc.selectedEntityIds.add(entity.id);
     }
   }

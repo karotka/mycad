@@ -7,7 +7,7 @@
  * a thing anyone can do. That is the model history earning its keep.
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { closedVertices, curvePoints, type Entity, type Solid, type SolidFeature } from '../../entities/types';
+import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid, type SolidFeature } from '../../entities/types';
 import { regenerateSolidFeature } from '../../solids/ManifoldEngine';
 import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
@@ -15,6 +15,11 @@ import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
 
 function explodeEntity(entity: Entity, doc: Document): Entity[] {
+  if (entity.type === 'insert') return expandedInsertEntities(entity).map((child) => ({
+    ...child,
+    id: genId(child.type),
+    selected: false,
+  }));
   let points: Vec2[] = [];
   let closed = false;
   if (entity.type === 'rectangle') { points = closedVertices(entity)!; closed = true; }
@@ -45,12 +50,20 @@ export async function explodeObjects(run: CommandRun): Promise<StepOutcome> {
 
   for (const entity of data.entities as Entity[]) {
     const pieces = explodeEntity(entity, ctx.doc);
-    if (pieces.length === 0) {
+    const solidPieces = entity.type === 'insert'
+      ? expandedInsertSolids(entity).map((solid) => ({
+        ...cloneSolidValue(solid),
+        id: genId('solid'),
+        selected: false,
+      }))
+      : [];
+    if (pieces.length + solidPieces.length === 0) {
       ctx.log(`EXPLODE: ${entity.type} is already a primitive object.`);
       continue;
     }
     removedEntities.push(entity);
     parts.push(...pieces);
+    solidParts.push(...solidPieces);
   }
 
   for (const solid of data.solids as Solid[]) {

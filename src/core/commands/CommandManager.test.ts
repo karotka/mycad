@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
-import { linearDimensionRotation } from '../entities/types';
+import { expandedInsertSolids, linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
@@ -40,6 +40,9 @@ describe('CommandManager history integration', () => {
     expect(manager.resolveAlias('s')).toBe('SUBTRACT');
     expect(manager.resolveAlias('u')).toBe('UNION');
     expect(manager.resolveAlias('j')).toBe('JOIN');
+    expect(manager.resolveAlias('b')).toBe('BLOCK');
+    expect(manager.resolveAlias('i')).toBe('INSERT');
+    expect(manager.resolveAlias('bez')).toBe('BEZIER');
     expect(manager.resolveAlias('erase')).toBe('ERASE');
   });
 
@@ -58,7 +61,7 @@ describe('CommandManager history integration', () => {
     manager.updateContext({ exportStl });
 
     manager.startCommand('EXPORTSTL');
-    expect(manager.currentPrompt()).toContain('Select 3D solid(s)');
+    expect(manager.currentPrompt()).toContain('Select 3D solid(s) or block(s)');
     expect(exportStl).not.toHaveBeenCalled();
 
     await manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
@@ -90,6 +93,25 @@ describe('CommandManager history integration', () => {
     expect(exportStl).toHaveBeenCalledOnce();
     expect(exportStl).toHaveBeenCalledWith([first]);
     expect(manager.active).toBeNull();
+  });
+
+  it('exports transformed 3D contents of a selected block', () => {
+    const { doc, manager } = setup();
+    const solid = doc.createSolid(createBoxMesh(4, 6, 8), 'Box', 8, []);
+    const definition = { name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] };
+    const insert = doc.createInsert(definition, { x: 10, y: 20 });
+    insert.scaleZ = 2;
+    doc.entities.push(insert);
+    doc.selectEntity(insert.id);
+    const exportStl = vi.fn();
+    manager.updateContext({ exportStl });
+
+    manager.startCommand('EXPORTSTL');
+
+    expect(exportStl).toHaveBeenCalledOnce();
+    const exported = exportStl.mock.calls[0][0];
+    expect(exported).toHaveLength(1);
+    expect(Array.from(exported[0].mesh.positions)).toEqual(expect.arrayContaining([8, 17, 0, 12, 23, 16]));
   });
 
   it('joins connected lines into one closed polyline', async () => {
@@ -894,6 +916,115 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0].type).toBe('rectangle');
+  });
+
+  it('explodes one INSERT into its transformed drawing entities', async () => {
+    const { doc, manager, history } = setup();
+    const definition = {
+      name: 'Part', basePoint: { x: 0, y: 0 },
+      entities: [doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 }), doc.createCircle({ x: 2, y: 2 }, 1)],
+    };
+    const insert = doc.createInsert(definition, { x: 10, y: 20 });
+    insert.rotation = Math.PI / 2;
+    doc.addEntity(insert);
+    doc.selectEntity(insert.id);
+
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities.map((entity) => entity.type)).toEqual(['line', 'circle']);
+    expect(doc.entities[0]).toMatchObject({ start: { x: 10, y: 20 }, end: { x: 10, y: 25 } });
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('insert');
+  });
+
+  it('creates one named block from preselected entities and undoes it as one edit', async () => {
+    const { doc, manager, history } = setup();
+    const first = doc.createLine({ x: 2, y: 3 }, { x: 12, y: 3 });
+    const second = doc.createCircle({ x: 7, y: 8 }, 2);
+    doc.addEntity(first);
+    doc.addEntity(second);
+    doc.selectEntity(first.id);
+    doc.selectEntity(second.id, true);
+
+    manager.startCommand('BLOCK');
+    expect(manager.active).toMatchObject({ name: 'BLOCK', stepIndex: 1 });
+    await manager.submitInput('Bracket');
+    await manager.handleClick({ x: 2, y: 3 });
+
+    expect(doc.blockDefinitions).toHaveLength(1);
+    expect(doc.blockDefinitions[0]).toMatchObject({ name: 'Bracket', basePoint: { x: 2, y: 3 } });
+    expect(doc.blockDefinitions[0].entities).toHaveLength(2);
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'insert', blockName: 'Bracket', position: { x: 2, y: 3 } });
+    expect(doc.getSelectedEntities()).toHaveLength(1);
+
+    history.undo();
+    expect(doc.blockDefinitions).toEqual([]);
+    expect(doc.entities.map((entity) => entity.type).sort()).toEqual(['circle', 'line']);
+    history.redo();
+    expect(doc.blockDefinitions[0].name).toBe('Bracket');
+    expect(doc.entities[0].type).toBe('insert');
+  });
+
+  it('creates, transforms and explodes a native block containing a 3D solid', async () => {
+    const { doc, manager, history } = setup();
+    const solid = doc.createSolid(createBoxMesh(4, 6, 8), 'Box', 8, []);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+
+    manager.startCommand('BLOCK');
+    expect(manager.active).toMatchObject({ name: 'BLOCK', stepIndex: 1 });
+    await manager.submitInput('SolidPart');
+    await manager.handleClick({ x: 0, y: 0, z: 0 } as { x: number; y: number });
+
+    expect(doc.solids).toHaveLength(0);
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.blockDefinitions[0].solids).toHaveLength(1);
+    const insert = doc.entities[0];
+    if (insert.type !== 'insert') throw new Error('expected INSERT');
+    insert.position = { x: 10, y: 20, z: 5 } as { x: number; y: number };
+    insert.scaleX = 2;
+    insert.scaleY = 3;
+    insert.scaleZ = 4;
+    const expanded = expandedInsertSolids(insert)[0];
+    expect(Array.from(expanded.mesh.positions)).toEqual(expect.arrayContaining([6, 11, 5, 14, 29, 37]));
+
+    doc.clearSelection();
+    doc.selectEntity(insert.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(0);
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].mesh.positions).toBeInstanceOf(Float32Array);
+    history.undo();
+    expect(doc.entities[0].type).toBe('insert');
+  });
+
+  it('inserts a saved block with default scale and entered rotation', async () => {
+    const { doc, manager, history } = setup();
+    const definition = {
+      name: 'Hole', basePoint: { x: 5, y: 5 },
+      entities: [doc.createCircle({ x: 5, y: 5 }, 2)],
+    };
+    doc.blockDefinitions = [definition];
+
+    manager.startCommand('INSERT');
+    await manager.submitInput('hole');
+    expect(manager.active).toMatchObject({ name: 'INSERT', stepIndex: 1 });
+    await manager.handleClick({ x: 20, y: 30 });
+    await manager.submitInput('');
+    await manager.submitInput('90');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({
+      type: 'insert', blockName: 'Hole', position: { x: 20, y: 30 }, scaleX: 1, scaleY: 1,
+    });
+    expect(doc.entities[0].type === 'insert' && doc.entities[0].rotation).toBeCloseTo(Math.PI / 2);
+    history.undo();
+    expect(doc.entities).toEqual([]);
   });
 
   // A command that waits on the solid engine leaves the wizard open for a few

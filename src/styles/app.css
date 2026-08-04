@@ -673,6 +673,58 @@ html, body, #app {
    drop rather than after it. */
 .layer-row.drop-before { box-shadow: inset 0 2px #67c9ff; }
 
+/* Blocks stay in the same compact panel language as Layers. The miniature
+   drawing is the identifier: names can be alike, silhouettes rarely are. */
+.block-panel { width: 330px; padding: 6px; }
+.block-list { max-height: 290px; overflow-y: auto; border-top: 1px solid #343d46; }
+.block-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) 30px 28px;
+  align-items: center;
+  min-height: 54px;
+  border-bottom: 1px solid #2d353d;
+  cursor: pointer;
+}
+.block-row:hover { background: #242d35; box-shadow: inset 2px 0 #67c9ff; }
+.block-preview {
+  width: 56px;
+  height: 40px;
+  margin-left: 3px;
+  border: 1px solid #35414c;
+  border-radius: 2px;
+  background:
+    linear-gradient(rgba(103,201,255,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(103,201,255,.055) 1px, transparent 1px),
+    #10161b;
+  background-size: 8px 8px;
+}
+.block-thumbnail { display: block; width: 100%; height: 100%; fill: none; stroke: #8ed8ff; stroke-width: 1.15; vector-effect: non-scaling-stroke; }
+.block-thumbnail .block-base { fill: #f0b429; stroke: #f0b429; }
+.block-copy { min-width: 0; padding: 4px 5px; }
+.block-name {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 23px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #e5edf4;
+  font: 11px 'SF Mono', monospace;
+  outline: none;
+}
+.block-name:focus { border-color: #67c9ff; background: #11161b; color: #fff; }
+.block-copy small { display: block; overflow: hidden; padding: 0 4px; color: #76838e; font: 9px 'SF Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+.block-row > button { height: 30px; border: 0; background: transparent; color: #aebbc6; cursor: pointer; }
+.block-insert { font-size: 20px; line-height: 1; }
+.block-insert:hover { background: #094771; color: #fff; }
+.block-delete { color: #e18b8b !important; font-size: 18px; }
+.block-delete:hover:not(:disabled) { background: #672b31; color: #fff !important; }
+.block-delete:disabled { color: #4e5861 !important; cursor: default; }
+.block-empty { display: grid; gap: 6px; padding: 24px 18px 26px; color: #82909b; text-align: center; }
+.block-empty strong { color: #cbd5df; font: 600 11px 'SF Mono', monospace; text-transform: uppercase; }
+.block-empty span { font-size: 10px; line-height: 1.45; }
+
 .statusbar .coords {
   font-family: 'SF Mono', monospace;
   /* The readout is as wide as its text, so a minus sign or another digit used to

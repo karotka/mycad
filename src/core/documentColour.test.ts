@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from './Document';
 import { aciToRgb } from '../io/DxfAci';
+import { expandedInsertEntities } from './entities/types';
 
 describe('layer colour by index', () => {
   it('draws a new object in its layer colour, as BYLAYER', () => {
@@ -66,5 +67,20 @@ describe('layer colour by index', () => {
     const doc = new Document();
     expect(doc.layerAci['0']).toBe(7);
     expect(doc.layerColorFor('0')).toBe(aciToRgb(7));
+  });
+
+  it('recolours BYLAYER geometry inside an INSERT', () => {
+    const doc = new Document();
+    doc.layers.push('details');
+    const child = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
+    child.layer = 'details';
+    const definition = { name: 'Part', basePoint: { x: 0, y: 0 }, entities: [child] };
+    doc.blockDefinitions = [definition];
+    const insert = doc.createInsert(definition, { x: 0, y: 0 });
+    doc.entities.push(insert);
+
+    doc.setLayerAci('details', 1);
+
+    expect(expandedInsertEntities(insert)[0].color).toBe(0xff0000);
   });
 });

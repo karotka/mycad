@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipseAxisPoints, ellipsePoints, getEntityPoints, type Entity } from '../core/entities/types';
+import { curvePoints, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, type Entity, type Solid } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
@@ -22,7 +22,19 @@ export interface SnapCandidate {
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
+function visibleSnapSolids(doc: Document, excludedId?: string | null): Array<{ solid: Solid; ownerId: string }> {
+  const result = doc.solids
+    .filter((solid) => solid.id !== excludedId && !doc.hiddenLayers.has(solid.layer))
+    .map((solid) => ({ solid, ownerId: solid.id }));
+  for (const entity of doc.entities) {
+    if (entity.type !== 'insert' || entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    expandedInsertSolids(entity).forEach((solid) => result.push({ solid, ownerId: entity.id }));
+  }
+  return result;
+}
+
 const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'insert') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'point') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
     return localPointZ(entity.center) ?? 0;
@@ -45,6 +57,13 @@ export function measurementCandidates(doc: Document): Vec3[] {
     if (doc.hiddenLayers.has(entity.layer)) continue;
     for (const point of getEntityPoints(entity)) {
       candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, localPointZ(point) ?? entityPlaneOffset(entity)));
+    }
+    if (entity.type === 'insert') for (const solid of expandedInsertSolids(entity)) {
+      for (let index = 0; index < solid.mesh.positions.length; index += 3) {
+        candidates.push({
+          x: solid.mesh.positions[index], y: solid.mesh.positions[index + 1], z: solid.mesh.positions[index + 2],
+        });
+      }
     }
   }
   for (const solid of doc.solids) {
@@ -75,12 +94,14 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
     if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
     if (mode === 'node') {
       if (entity.type === 'point') addLocal(entity, entity.position);
+      else if (entity.type === 'insert') expandedInsertEntities(entity)
+        .filter((child) => child.type === 'point')
+        .forEach((child) => addLocal(entity, (child as Extract<Entity, { type: 'point' }>).position));
     } else if (mode === 'end' || mode === 'mid2p') addEntityEnds(entity, addLocal);
     else if (mode === 'center') addEntityCenters(entity, addLocal);
     else addEntityMiddles(entity, addLocal);
   }
-  for (const solid of doc.solids) {
-    if (solid.id === excludedId || doc.hiddenLayers.has(solid.layer)) continue;
+  for (const { solid } of visibleSnapSolids(doc, excludedId)) {
     const positions = solid.mesh.positions;
     if (mode === 'end') {
       for (let index = 0; index < positions.length; index += 3) {
@@ -146,8 +167,7 @@ export function nearestEdgeWorldPoint(
     bestDistance = distance;
     bestWorld = point;
   };
-  for (const solid of doc.solids) {
-    if (solid.id === excludedId || doc.hiddenLayers.has(solid.layer)) continue;
+  for (const { solid } of visibleSnapSolids(doc, excludedId)) {
     for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);
   }
   for (const entity of doc.entities) {
@@ -165,6 +185,7 @@ export function nearestEdgeWorldPoint(
 }
 
 function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
+  if (entity.type === 'insert') return expandedInsertEntities(entity).flatMap(entitySegments);
   let points: Vec2[] = [];
   let closed = false;
   if (entity.type === 'line') points = [entity.start, entity.end];
@@ -242,8 +263,7 @@ function perpendicularCandidates(doc: Document, reference?: Vec3 | null, exclude
       candidates.push(localToWorld(plane, { x: start.x + dx * t, y: start.y + dy * t }, startZ + (endZ - startZ) * t));
     }
   }
-  for (const solid of doc.solids) {
-    if (solid.id === excludedId || doc.hiddenLayers.has(solid.layer)) continue;
+  for (const { solid } of visibleSnapSolids(doc, excludedId)) {
     for (const edge of solidFeatureEdges(solid.mesh)) {
       const dx = edge.end.x - edge.start.x;
       const dy = edge.end.y - edge.start.y;
@@ -266,6 +286,7 @@ function perpendicularCandidates(doc: Document, reference?: Vec3 | null, exclude
 }
 
 function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
+  if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityEnds(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') [entity.start, entity.end].forEach((point) => add(entity, point));
   else if (entity.type === 'rectangle') {
     [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]
@@ -281,6 +302,7 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
 }
 
 function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
+  if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityCenters(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon' || entity.type === 'ellipse') add(entity, entity.center);
   else if (entity.type === 'rectangle') add(entity, midpoint(entity.first, entity.opposite));
   else if (entity.type === 'bezier') add(entity, curvePoints(entity, 2)[1]);
@@ -288,6 +310,7 @@ function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => 
 }
 
 function addEntityMiddles(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
+  if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityMiddles(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') add(entity, midpoint(entity.start, entity.end));
   else if (entity.type === 'arc' || entity.type === 'bezier') add(entity, curvePoints(entity, 2)[1]);
   else if (entity.type === 'rectangle') {

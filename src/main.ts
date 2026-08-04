@@ -12,6 +12,7 @@ import { InputController } from './interaction/InputController';
 import { GripController, type GripMode } from './interaction/GripController';
 import type { ProjectViewState } from './io/ProjectIO';
 import { LayerController } from './ui/LayerController';
+import { BlockController } from './ui/BlockController';
 import { WindowDragController } from './interaction/WindowDragController';
 import { type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
 import { ViewportNavigationController } from './interaction/ViewportNavigationController';
@@ -87,6 +88,8 @@ const textFont = get<HTMLSelectElement>('text-font');
 const textHeight = get<HTMLInputElement>('text-height');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
+const blockPanel = get<HTMLElement>('block-panel');
+const blockList = get<HTMLElement>('block-list');
 const propertiesPanel = get<HTMLElement>('properties-panel');
 const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
@@ -527,6 +530,29 @@ const commands = new CommandManager({
   },
   redraw,
 });
+const blockController = new BlockController(
+  cadDocument,
+  history,
+  blockPanel,
+  blockList,
+  get('block-count'),
+  get('block-toggle'),
+  get('block-create'),
+  get('block-close'),
+  {
+    startCreate: () => {
+      commands.startCommand('BLOCK');
+      input.focus();
+    },
+    startInsert: (name) => {
+      commands.startCommand('INSERT');
+      void commands.submitInput(name);
+      input.focus();
+    },
+    log,
+    redraw,
+  },
+);
 const drawingInteraction = new DrawingInteractionController(commands);
 const pointResolver = createPointResolver({
   doc: cadDocument,
@@ -902,6 +928,7 @@ cadDocument.subscribe(() => {
   redraw();
   namedUcsController.render();
   if (layerController.isOpen) layerController.render();
+  blockController.render();
   if (propertiesController.isOpen) propertiesController.render();
   settingsController.renderActive();
   modelTreeController.render();

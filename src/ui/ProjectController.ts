@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
-import { AddEntitiesEdit } from '../core/history/edits';
+import { AddEntitiesEdit, CompositeEdit, SetBlockDefinitionsEdit } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
@@ -10,7 +10,7 @@ import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
-import type { Solid } from '../core/entities/types';
+import { cloneBlockDefinition, type Solid } from '../core/entities/types';
 
 export interface ProjectControllerCallbacks {
   captureView(): ProjectViewState;
@@ -91,6 +91,7 @@ export class ProjectController {
     this.callbacks.cancelInteraction();
     this.doc.transaction(() => {
       this.doc.entities = [];
+      this.doc.blockDefinitions = [];
       this.doc.solids = [];
       this.doc.selectedEntityIds.clear();
       this.doc.selectedSolidIds.clear();
@@ -148,11 +149,20 @@ export class ProjectController {
         if (result.layerLineweight[layer] !== undefined) this.doc.layerLineweight[layer] ??= result.layerLineweight[layer];
         if (result.layerLinetype[layer] !== undefined) this.doc.layerLinetype[layer] ??= result.layerLinetype[layer];
       });
+      const definitionsAfterImport = this.doc.blockDefinitions.map(cloneBlockDefinition);
+      for (const definition of result.blockDefinitions) {
+        const index = definitionsAfterImport.findIndex((item) => item.name.toUpperCase() === definition.name.toUpperCase());
+        if (index >= 0) definitionsAfterImport[index] = definition;
+        else definitionsAfterImport.push(definition);
+      }
       this.doc.viewMode = '2d';
       this.doc.transaction(() => {
         this.doc.clearSelection();
         this.doc.recolour();
-        this.history.execute(new AddEntitiesEdit('Import DXF', result.entities));
+        this.history.execute(new CompositeEdit('Import DXF', [
+          new SetBlockDefinitionsEdit('Import DXF block definitions', this.doc.blockDefinitions, definitionsAfterImport),
+          new AddEntitiesEdit('Import DXF entities', result.entities),
+        ]));
       });
       this.callbacks.zoomExtents();
       this.callbacks.renderLayers();
@@ -224,6 +234,9 @@ export class ProjectController {
       ? ` (${result.dimensionsDecomposed} dimension(s) exploded to lines and text)`
       : '';
     this.callbacks.log(`DXF: ${result.entityCount} object(s)${note}.`);
+    if (result.blockSolidsOmitted > 0) {
+      this.callbacks.log(`DXF: ${result.blockSolidsOmitted} 3D block solid(s) omitted; use MYCAD or STL to preserve them.`);
+    }
     await this.saveText(result.dxf, this.exportDefaultPath('dxf'), 'AutoCAD DXF', 'dxf');
   }
 

@@ -43,6 +43,25 @@ describe('window selection', () => {
     expect([...doc.selectedSolidIds]).toEqual([solid.id]);
   });
 
+  it('selects a projected 3D block as its INSERT owner', () => {
+    const doc = new Document();
+    const solid = doc.createSolid(createBoxMesh(4, 4, 3), 'box', 3, []);
+    const definition = { name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] };
+    const insert = doc.createInsert(definition, { x: 5, y: 5 });
+    doc.entities.push(insert);
+
+    applyProjectedWindowSelection(
+      doc,
+      { minX: 2, minY: 2, maxX: 8, maxY: 8 },
+      false,
+      false,
+      (point) => ({ x: point.x, y: point.y }),
+    );
+
+    expect([...doc.selectedEntityIds]).toEqual([insert.id]);
+    expect(doc.selectedSolidIds.size).toBe(0);
+  });
+
   it('window-selects a projected point in the 3D view', () => {
     const doc = new Document();
     doc.viewMode = '3d';
@@ -87,6 +106,16 @@ describe('window selection', () => {
 });
 
 describe('picking a line along its length', () => {
+  it('returns the INSERT owner when its transformed child is picked', () => {
+    const doc = new Document();
+    const definition = { name: 'Part', basePoint: { x: 0, y: 0 }, entities: [doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 })] };
+    const insert = doc.createInsert(definition, { x: 20, y: 5 });
+    insert.rotation = Math.PI / 2;
+    doc.entities.push(insert);
+
+    expect(pickEntityAt(doc, { x: 20, y: 10 }, 0.2)).toMatchObject({ id: insert.id, type: 'insert' });
+  });
+
   it('picks a point only inside the requested tolerance', () => {
     const doc = new Document();
     const point = doc.createPoint({ x: 4, y: 6 });

@@ -7,7 +7,7 @@
  * itself is inferred from it, so adding an entry here is what makes a command
  * exist; forgetting to register one is a type error rather than a silent gap.
  */
-import { isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
+import { expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
 import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
@@ -21,6 +21,7 @@ import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
 import { sliceSolids } from './steps/slice';
+import { createBlock, insertBlock } from './steps/blocks';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -146,7 +147,7 @@ export const COMMANDS = [
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
-  { name: 'BEZIER', aliases: ['B', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
+  { name: 'BEZIER', aliases: ['BEZ', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
   { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], execute: measureDistance, help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
@@ -209,6 +210,31 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },
+  { name: 'BLOCK', aliases: ['B', 'BLOCK'], execute: createBlock, help: 'create a named reusable block from 2D objects and 3D solids', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select objects for block, then press Enter:', multi: true, accepts: ['entity', 'solid'] },
+      { kind: 'text', label: 'Enter block name:' },
+      { kind: 'point', label: 'Specify block base point:', ignoresDirection: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: (active, ctx) => {
+      const entities = ctx.doc.getSelectedEntities();
+      const solids = ctx.doc.getSelectedSolids();
+      if (entities.length + solids.length === 0) return;
+      active.data.entities = [...entities];
+      active.data.solids = [...solids];
+      active.stepIndex = 1;
+      ctx.log(`${entities.length + solids.length} object(s) preselected. Enter block name.`);
+    } },
+  { name: 'INSERT', aliases: ['I', 'INSERT'], execute: insertBlock, help: 'insert a reference to a named block', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'text', label: 'Enter block name:' },
+      { kind: 'point', label: 'Specify insertion point:', ignoresDirection: true },
+      { kind: 'number-pair', label: 'Enter X,Y scale', remember: true, defaultValue: [1, 1] },
+      { kind: 'number', label: 'Enter rotation in degrees (Enter = 0):', optional: true },
+      { kind: 'done' },
+    ] },
   { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend lines to boundaries', suggest: true,
     steps: [{ kind: 'entity', label: 'Select boundary edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to extend (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({}) },
@@ -303,14 +329,16 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
-  { name: 'EXPORTSTL', aliases: ['STL', 'EXPORTSTL'], execute: exportStlSelection, help: 'export selected 3D solids to STL',
-    steps: [{ kind: 'solid', label: 'Select 3D solid(s) to export, then press Enter:', multi: true }, { kind: 'done' }],
-    data: () => ({ solids: [] }),
+  { name: 'EXPORTSTL', aliases: ['STL', 'EXPORTSTL'], execute: exportStlSelection, help: 'export selected 3D solids or 3D blocks to STL',
+    steps: [{ kind: 'entity', label: 'Select 3D solid(s) or block(s) to export, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
     onStart: (active, ctx) => {
       const solids = ctx.doc.getSelectedSolids();
-      if (solids.length === 0) return;
+      const entities = ctx.doc.getSelectedEntities().filter((entity) => entity.type === 'insert' && expandedInsertSolids(entity).length > 0);
+      if (solids.length + entities.length === 0) return;
       active.data.solids = [...solids];
-      ctx.log(`${solids.length} solid(s) preselected for STL export.`);
+      active.data.entities = [...entities];
+      ctx.log(`${solids.length + entities.length} object(s) preselected for STL export.`);
     } },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
