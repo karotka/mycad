@@ -3,6 +3,7 @@ import { closePolyline, octagonVertices } from '../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import {
   genId,
+  type PointEntity,
   type CircleEntity,
   type EllipseEntity,
   type ArcEntity,
@@ -268,6 +269,18 @@ export class Document {
 
   getSelectedSolids(): Solid[] {
     return this.solids.filter((s) => this.selectedSolidIds.has(s.id));
+  }
+
+  createPoint(position: Vec2): PointEntity {
+    return {
+      id: genId('point'),
+      type: 'point',
+      layer: this.currentLayer,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
+      selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane),
+      position,
+    };
   }
 
   createLine(start: Vec2, end: Vec2): LineEntity {

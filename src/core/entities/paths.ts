@@ -25,6 +25,8 @@ export interface EntityPath {
  */
 export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
   switch (entity.type) {
+    case 'point':
+      return [];
     case 'line':
       return [{ points: [entity.start, entity.end], closed: false }];
     case 'polyline':

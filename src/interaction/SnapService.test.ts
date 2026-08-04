@@ -9,6 +9,16 @@ const points = (doc: CadDocument, mode: ObjectSnapMode, excluded?: string | null
   objectSnapCandidates(doc, mode, excluded, reference).map((candidate) => candidate.world);
 
 describe('SnapService', () => {
+  it('offers a POINT only through the Node object snap', () => {
+    const doc = new Document();
+    const point = doc.createPoint({ x: 3, y: 8 });
+    doc.entities.push(point, doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+
+    expect(points(doc, 'node')).toEqual([{ x: 3, y: 8, z: 0 }]);
+    expect(objectSnapCandidates(doc, 'node')[0]?.mode).toBe('node');
+    expect(points(doc, 'end')).not.toContainEqual({ x: 3, y: 8, z: 0 });
+  });
+
   it('collects End, Middle and Center candidates while excluding the dragged object', () => {
     const doc = new Document();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });

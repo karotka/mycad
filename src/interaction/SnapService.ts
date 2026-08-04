@@ -23,6 +23,7 @@ export interface SnapCandidate {
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
 const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'point') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
     return localPointZ(entity.center) ?? 0;
   }
@@ -72,7 +73,9 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
   };
   for (const entity of doc.entities) {
     if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
-    if (mode === 'end' || mode === 'mid2p') addEntityEnds(entity, addLocal);
+    if (mode === 'node') {
+      if (entity.type === 'point') addLocal(entity, entity.position);
+    } else if (mode === 'end' || mode === 'mid2p') addEntityEnds(entity, addLocal);
     else if (mode === 'center') addEntityCenters(entity, addLocal);
     else addEntityMiddles(entity, addLocal);
   }
@@ -94,7 +97,7 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
       // through. They are centres of circular feature-edge loops, not the
       // body's bounding-box centre.
       candidates.push(...solidCircularEdgeCenters(solid.mesh));
-    } else {
+    } else if (mode === 'middle' || mode === 'mid2p') {
       addSolidEdgeMiddles(solid.mesh.positions, solid.mesh.indices, candidates);
     }
   }

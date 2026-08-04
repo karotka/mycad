@@ -79,6 +79,7 @@ export class PropertiesController {
       ];
     }
     switch (object.type) {
+      case 'point': return [...common, ...pointFields('position', 'Position', object.position)];
       case 'line': return [...common, ...pointFields('start', 'Start', object.start), ...pointFields('end', 'End', object.end), { key: '_length', label: 'Length', value: Math.hypot(object.end.x - object.start.x, object.end.y - object.start.y), kind: 'readonly' }];
       case 'circle': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radius', label: 'Radius', value: object.radius }, { key: '_diameter', label: 'Diameter', value: object.radius * 2, kind: 'readonly' }];
       case 'ellipse': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radiusX', label: 'Radius X', value: object.radiusX }, { key: 'radiusY', label: 'Radius Y', value: object.radiusY }, { key: 'rotation', label: 'Rotation °', value: object.rotation * 180 / Math.PI }];

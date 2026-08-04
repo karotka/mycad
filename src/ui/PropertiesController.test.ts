@@ -8,6 +8,21 @@ import { primitiveMesh } from '../core/solids/ManifoldEngine';
 const element = (hidden = true) => ({ hidden, addEventListener: vi.fn() }) as unknown as HTMLElement;
 
 describe('PropertiesController', () => {
+  it('edits a point position through undoable properties', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const point = doc.createPoint({ x: 2, y: 3 });
+    doc.addEntity(point);
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateOne(object: typeof point, key: string, value: number): void })
+      .updateOne(point, 'position.x', 9);
+
+    expect(doc.getEntity(point.id)).toMatchObject({ type: 'point', position: { x: 9, y: 3 } });
+    history.undo();
+    expect(doc.getEntity(point.id)).toMatchObject({ type: 'point', position: { x: 2, y: 3 } });
+  });
+
   it('updates entity geometry through undoable history', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

@@ -2,7 +2,7 @@ import { dist2, type Vec2, type Vec3 } from '../../math/geometry';
 import type { WorkPlane } from '../../math/workplane';
 import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
 
-export type EntityType = 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
+export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension';
 
 export interface EntityBase {
   id: string;
@@ -22,6 +22,12 @@ export interface EntityBase {
   color: number;
   selected: boolean;
   workPlane?: WorkPlane;
+}
+
+/** A dimensionless drawing location, corresponding to a native DXF POINT. */
+export interface PointEntity extends EntityBase {
+  type: 'point';
+  position: Vec2;
 }
 
 export interface LineEntity extends EntityBase {
@@ -116,7 +122,7 @@ export interface DimensionEntity extends EntityBase {
   textPosition?: Vec2;
 }
 
-export type Entity = LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity;
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -585,6 +591,8 @@ export function cloneEntity(e: Entity): Entity {
 
 export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
   switch (e.type) {
+    case 'point':
+      return { min: { ...e.position }, max: { ...e.position } };
     case 'ellipse': {
       // Exact extent of a rotated ellipse.
       const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
@@ -681,6 +689,8 @@ export function closedVertices(entity: Entity): Vec2[] | null {
 
 export function getEntityPoints(e: Entity): Vec2[] {
   switch (e.type) {
+    case 'point':
+      return [e.position];
     case 'line':
       return [e.start, e.end];
     case 'circle':
@@ -707,6 +717,9 @@ export function getEntityPoints(e: Entity): Vec2[] {
 export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity {
   const copy = cloneEntity(e);
   switch (copy.type) {
+    case 'point':
+      copy.position = fn(copy.position);
+      break;
     case 'line':
       copy.start = fn(copy.start);
       copy.end = fn(copy.end);

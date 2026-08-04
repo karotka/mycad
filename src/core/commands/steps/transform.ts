@@ -57,6 +57,7 @@ export function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Doc
   }
   const result = cloneEntity(entity);
   switch (result.type) {
+    case 'point': result.position = rotatePoint(result.position, base, angle); break;
     case 'line': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); break;
     case 'circle': result.center = rotatePoint(result.center, base, angle); break;
     case 'ellipse':

@@ -287,6 +287,7 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
   result.color = 0xe6f4ff;
   result.selected = false;
   switch (result.type) {
+    case 'point': result.position = rotate(result.position); break;
     case 'line': result.start = rotate(result.start); result.end = rotate(result.end); break;
     case 'circle':
     case 'ellipse': result.center = rotate(result.center); break;

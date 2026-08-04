@@ -17,7 +17,6 @@ ordinary drawing geometry because native DXF dimensions require block records.
 
 | Entity or fidelity item | Remaining work | Effort |
 |---|---|---|
-| **POINT** | Add a bare point entity, picking, snaps, properties and rendering. | Small |
 | **INSERT / blocks** | Add block definitions plus transformed references to `Document`. This is the largest real-world import gap. | Large |
 | **HATCH** | Add a filled/boundary-path entity and renderer support. Reuse the existing face-region loop model where practical. | Large |
 | **3DFACE** | Needs a non-watertight surface object; importing it as a `Solid` would make booleans falsely appear supported. | Medium |

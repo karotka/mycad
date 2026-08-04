@@ -250,6 +250,24 @@ html, body, #app {
   border-radius: 50%;
 }
 
+/* Node: a circle crossed through its centre, for a POINT entity. */
+.snap-marker[data-snap='node'] {
+  border-radius: 50%;
+}
+.snap-marker[data-snap='node']::before,
+.snap-marker[data-snap='node']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  width: 2px;
+  height: 15px;
+  margin-left: -1px;
+  background: #65ff9a;
+}
+.snap-marker[data-snap='node']::before { transform: rotate(45deg); }
+.snap-marker[data-snap='node']::after { transform: rotate(-45deg); }
+
 /* Midpoint: a triangle, drawn with borders so it needs no extra element. */
 .snap-marker[data-snap='middle'],
 .snap-marker[data-snap='mid2p'] {

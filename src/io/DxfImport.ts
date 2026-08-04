@@ -195,7 +195,12 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     const fields = pairs.slice(index + 1, end);
     const layer = layerOf(fields);
 
-    if (type === 'LINE') {
+    if (type === 'POINT') {
+      noteFlattened(fields, 30);
+      finish(doc.createPoint(
+        { x: number(fields, 10) * scale, y: number(fields, 20) * scale },
+      ), fields, layer);
+    } else if (type === 'LINE') {
       noteFlattened(fields, 30, 31);
       finish(doc.createLine(
         { x: number(fields, 10) * scale, y: number(fields, 20) * scale },

@@ -91,6 +91,7 @@ function polygonIntersectsBox(polygon: readonly Vec2[], box: WindowBounds, close
 
 function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
   switch (entity.type) {
+    case 'point': return { points: [entity.position], closed: false };
     case 'line': return { points: [entity.start, entity.end], closed: false };
     case 'circle': {
       // The centre may sit off the work plane (drawn in another UCS); its Z has

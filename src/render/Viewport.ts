@@ -20,6 +20,7 @@ const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: 
 
 /** Height shared by points generated from a planar entity's defining anchor. */
 const entityPlaneOffset = (entity: Entity): number => {
+  if (entity.type === 'point') return localPointZ(entity.position) ?? 0;
   if (entity.type === 'circle' || entity.type === 'ellipse' || entity.type === 'octagon' || entity.type === 'arc') {
     return localPointZ(entity.center) ?? 0;
   }
@@ -240,6 +241,21 @@ export class Canvas2DRenderer {
     };
 
     switch (entity.type) {
+      case 'point': {
+        const p = toScreen(entity.position);
+        const arm = 4;
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.lineWidth = 1.5;
+        this.ctx.beginPath();
+        this.ctx.moveTo(p.x - arm, p.y);
+        this.ctx.lineTo(p.x + arm, p.y);
+        this.ctx.moveTo(p.x, p.y - arm);
+        this.ctx.lineTo(p.x, p.y + arm);
+        this.ctx.stroke();
+        this.ctx.restore();
+        break;
+      }
       case 'line': {
         const a = toScreen(entity.start);
         const b = toScreen(entity.end);
@@ -1592,7 +1608,11 @@ export class Viewport3D {
   pickEntity(canvas: HTMLCanvasElement, entities: Entity[], sx: number, sy: number, tolerance = 12): Entity | null {
     const rect = canvas.getBoundingClientRect();
     const project = (entity: Entity, point: Vec2): Vec2 | null => {
-      const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point);
+      const world = localToWorld(
+        entity.workPlane ?? WORLD_WORK_PLANE,
+        point,
+        localPointZ(point) ?? entityPlaneOffset(entity),
+      );
       const projected = new THREE.Vector3(world.x, world.z, -world.y).project(this.camera);
       if (projected.z < -1 || projected.z > 1) return null;
       return {
@@ -1631,6 +1651,7 @@ export class Viewport3D {
       let points: Vec2[] = [];
       let closed = false;
       switch (entity.type) {
+        case 'point': points = [entity.position]; break;
         case 'line': points = [entity.start, entity.end]; break;
         case 'circle':
           for (let index = 0; index < 72; index++) {
@@ -1662,6 +1683,11 @@ export class Viewport3D {
         }
       }
       const projected = points.map((point) => project(entity, point));
+      if (projected.length === 1 && projected[0]) {
+        const distance = Math.hypot(cursor.x - projected[0].x, cursor.y - projected[0].y);
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = entity; }
+        continue;
+      }
       const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
       if (closed && projectedPolygon.length === projected.length && polygonContains(cursor, projectedPolygon)) {
         const area = polygonArea(projectedPolygon);
@@ -1682,6 +1708,25 @@ export class Viewport3D {
   }
 
   private entityToObject(entity: Entity): THREE.Object3D {
+    if (entity.type === 'point') {
+      const world = localToWorld(
+        entity.workPlane ?? WORLD_WORK_PLANE,
+        entity.position,
+        (localPointZ(entity.position) ?? 0) + 0.015,
+      );
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(world.x, world.z, -world.y),
+      ]);
+      const material = new THREE.PointsMaterial({
+        color: entity.selected ? 0x65c7ff : entity.color,
+        size: 7,
+        sizeAttenuation: false,
+        depthTest: false,
+      });
+      const object = new THREE.Points(geometry, material);
+      object.renderOrder = 10;
+      return object;
+    }
     if (entity.type === 'text') {
       return this.textToObject(
         entity.position, entity.text, entity.height, entity.font ?? 'Arial',

@@ -15,9 +15,9 @@ export interface DxfExportResult {
 /**
  * Writes the drawing as an ASCII DXF (R2000 flavour): a HEADER naming the units,
  * a TABLES section defining the line types and layers, and an ENTITIES section
- * with one record per object. Nine of the ten entity kinds map to a native DXF
- * entity; a dimension has no self-contained form, so it is exploded into the
- * lines, arrowheads and text it draws.
+ * with one record per object. Every drawing entity except a dimension maps to a
+ * native DXF entity; a dimension has no self-contained form, so it is exploded
+ * into the lines, arrowheads and text it draws.
  *
  * The file round-trips through this project's own importer, and reads in the
  * common CAD tools (LibreCAD, plotters) that a 2D export is for.
@@ -125,6 +125,10 @@ function patternLength(pattern: readonly number[]): number {
 
 function writeEntity(pair: Pair, entity: Entity): void {
   switch (entity.type) {
+    case 'point':
+      start(pair, 'POINT', entity);
+      point(pair, 10, 20, entity.position);
+      break;
     case 'line':
       start(pair, 'LINE', entity);
       point(pair, 10, 20, entity.start);

@@ -1,4 +1,4 @@
-export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'nearest';
+export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'node' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'nearest';
 
 export interface DraftingSettings {
   orthoEnabled: boolean;
@@ -85,7 +85,7 @@ export function defaultDraftingSettings(): DraftingSettings {
     polarAngles: [30, 45, 90],
     objectSnapEnabled: true,
     objectSnapTrackingEnabled: false,
-    objectSnapModes: ['end', 'middle', 'center', 'intersection', 'nearest'],
+    objectSnapModes: ['end', 'middle', 'center', 'node', 'intersection', 'nearest'],
   };
 }
 

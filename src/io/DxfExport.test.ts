@@ -68,6 +68,13 @@ describe('exportAsciiDxf structure', () => {
 });
 
 describe('exportAsciiDxf entities round-trip through the importer', () => {
+  it('keeps a native point', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createPoint({ x: 7.25, y: -4.5 }));
+    const [point] = roundTrip(doc);
+    expect(point).toMatchObject({ type: 'point', position: { x: 7.25, y: -4.5 } });
+  });
+
   it('keeps a line', () => {
     const doc = new Document();
     doc.addEntity(doc.createLine({ x: 1, y: 2 }, { x: 30, y: 40 }));

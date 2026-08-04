@@ -647,6 +647,10 @@ export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5):
   for (let i = entities.length - 1; i >= 0; i--) {
     const e = entities[i];
     switch (e.type) {
+      case 'point': {
+        if (Math.hypot(point.x - e.position.x, point.y - e.position.y) <= tolerance) return e;
+        break;
+      }
       case 'line': {
         if (distanceToSegment(point, e.start, e.end) <= tolerance) return e;
         break;

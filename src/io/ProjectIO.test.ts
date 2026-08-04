@@ -7,6 +7,16 @@ import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
 
 describe('ProjectIO', () => {
+  it('round-trips a native point entity', () => {
+    const source = new Document();
+    source.addEntity(source.createPoint({ x: 8.5, y: -2 }));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.entities[0]).toMatchObject({ type: 'point', position: { x: 8.5, y: -2 } });
+  });
+
   it('serializes a versioned millimetre project with typed meshes', () => {
     const doc = new Document();
     const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
@@ -349,7 +359,7 @@ describe('ProjectIO', () => {
     loadProject(target, JSON.stringify(saved));
 
     expect(target.drafting.orthoEnabled).toBe(false);
-    expect(target.drafting.objectSnapModes).toEqual(['end', 'middle', 'center', 'intersection', 'nearest']);
+    expect(target.drafting.objectSnapModes).toEqual(['end', 'middle', 'center', 'node', 'intersection', 'nearest']);
     expect(target.dimensionStyle.precision).toBe(2);
   });
 

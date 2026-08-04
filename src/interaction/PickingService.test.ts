@@ -43,6 +43,23 @@ describe('window selection', () => {
     expect([...doc.selectedSolidIds]).toEqual([solid.id]);
   });
 
+  it('window-selects a projected point in the 3D view', () => {
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const point = doc.createPoint({ x: 4, y: 6 });
+    doc.addEntity(point);
+
+    applyProjectedWindowSelection(
+      doc,
+      { minX: 3, minY: 5, maxX: 5, maxY: 7 },
+      false,
+      false,
+      (world) => ({ x: world.x, y: world.y }),
+    );
+
+    expect(doc.selectedEntityIds.has(point.id)).toBe(true);
+  });
+
   it('window-selects a circle whose centre carries a Z (drawn off the UCS plane)', () => {
     const doc = new Document();
     doc.viewMode = '3d';
@@ -70,6 +87,15 @@ describe('window selection', () => {
 });
 
 describe('picking a line along its length', () => {
+  it('picks a point only inside the requested tolerance', () => {
+    const doc = new Document();
+    const point = doc.createPoint({ x: 4, y: 6 });
+    doc.addEntity(point);
+
+    expect(pickEntityAt(doc, { x: 4.1, y: 6.1 }, 0.2)).toMatchObject({ id: point.id });
+    expect(pickEntityAt(doc, { x: 4.3, y: 6.3 }, 0.2)).toBeNull();
+  });
+
   // Picking used to be fed the grid-snapped cursor instead of the real one. On a
   // diagonal line the snapped point sits up to ~0.35mm away, which exceeds the
   // tolerance at working zoom levels — so a line could only be picked where it

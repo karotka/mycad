@@ -182,6 +182,7 @@ export function shellHtml(tools: ShellTools): string {
     <section class="one-shot-snaps">
       <div class="context-menu-title">Object snap override</div>
       <button data-grip-mode="mid2p">Mid between 2P</button>
+      <button data-grip-mode="node">Node</button>
       <button data-grip-mode="end">Endpoint</button>
       <button data-grip-mode="intersection">Intersection</button>
       <button data-grip-mode="apparent-intersection">Apparent intersection</button>
@@ -193,6 +194,7 @@ export function shellHtml(tools: ShellTools): string {
       <button data-persistent-snap="end">Endpoint</button>
       <button data-persistent-snap="middle">Midpoint</button>
       <button data-persistent-snap="center">Center</button>
+      <button data-persistent-snap="node">Node</button>
       <button data-persistent-snap="intersection">Intersection</button>
       <button data-persistent-snap="apparent-intersection">Apparent intersection</button>
       <button data-persistent-snap="perpendicular">Perpendicular</button>

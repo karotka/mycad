@@ -6,6 +6,18 @@ import { dimensionGeometry } from '../core/entities/types';
 const dxf = (entities: string, units = 4) => `0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n${units}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`;
 
 describe('DXF import', () => {
+  it('imports a native POINT and reports a dropped Z coordinate', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf('0\nPOINT\n8\nNodes\n10\n12.5\n20\n-3\n30\n7\n'));
+
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]).toMatchObject({
+      type: 'point', layer: 'Nodes', position: { x: 12.5, y: -3 },
+    });
+    expect(result.approximated).toBe(1);
+    expect(result.ignored).toBe(0);
+  });
+
   it('imports common 2D entities and layers', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf(

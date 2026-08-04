@@ -157,7 +157,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
   return view;
 }
 
-const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular']);
+const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'node', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular', 'nearest']);
 
 function validWorkPlane(value: unknown): value is WorkPlane {
   if (!value || typeof value !== 'object') return false;
