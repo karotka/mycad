@@ -11,7 +11,7 @@ import { expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
 import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
-import { subtractSolids, unionSolids } from './steps/booleans';
+import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
@@ -259,7 +259,7 @@ export const COMMANDS = [
       { kind: 'number', label: 'Enter fillet radius:', remember: true },
       { kind: 'done' },
     ] },
-  { name: 'DELETEFACE', aliases: ['DF', 'DELETEFACE'], execute: deleteFaceStep, help: 'delete a planar solid face and heal the body', suggest: true,
+  { name: 'DELETEFACE', aliases: ['DF', 'DELETEFACE'], execute: deleteFaceStep, help: 'delete a solid face and heal the body', suggest: true,
     steps: [{ kind: 'solid', label: 'Select planar solid face to delete:' }, { kind: 'done' }] },
   { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
   { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
@@ -303,6 +303,18 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ solids: [] }) },
+  { name: 'INTERSECT', aliases: ['IN', 'INT', 'INTERSECT'], execute: intersectSolids, help: 'keep the common volume of solids', suggest: true,
+    steps: [
+      { kind: 'solid', label: 'Select intersecting solids, then press Enter:', multi: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [] }),
+    onStart: (active, ctx) => {
+      const solids = ctx.doc.getSelectedSolids();
+      if (solids.length < 2) return;
+      active.data.solids = [...solids];
+      ctx.log(`${solids.length} solids preselected. Press Enter to intersect them.`);
+    } },
   { name: 'THREAD', aliases: ['THR', 'THREAD'], execute: createThread, help: 'add a cosmetic thread to a hole or shaft', suggest: true,
     steps: [
       { kind: 'entity', label: 'Select a hole or shaft edge (or a circle) to thread:', accepts: ['entity', 'edge'] },

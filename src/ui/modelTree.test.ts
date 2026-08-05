@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import type { EdgeModificationFeature, ExtrusionFeature, PressPullFeature, PrimitiveFeature, SolidFeature } from '../core/entities/types';
-import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
+import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
+import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../core/geometry/FeatureMesh';
 import { editedSolid, featureAt, featureLabel, featureRows, removedFeatureSolid } from './modelTree';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
+import { buildExactFeature, openExactShape } from '../core/geometry/ExactSolid';
+import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
 
 const sphere = (radius: number, scale?: { x: number; y: number; z: number }): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius, height: radius * 2, scale });
@@ -98,6 +101,8 @@ describe('featureLabel', () => {
 
   it('counts what a boolean is made of', () => {
     expect(featureLabel(elephant)).toEqual({ label: 'Subtract', detail: '2 parts' });
+    expect(featureLabel({ kind: 'boolean', operation: 'intersect', operands: [sphere(1), sphere(1)] }))
+      .toEqual({ label: 'Intersect', detail: '2 parts' });
   });
 
   it('names reversible edge operations and their value', () => {
@@ -110,6 +115,62 @@ describe('featureLabel', () => {
 });
 
 describe('editedSolid', () => {
+  it('rebuilds an exact curved primitive as exact B-rep when a tree dimension changes', async () => {
+    const doc = new Document();
+    const feature: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'cylinder', center: { x: 0, y: 0 }, radius: 10, height: 40,
+    };
+    const geometry = await buildExactFeature(feature);
+    const solid = doc.createSolid(geometry!.mesh, 'Exact cylinder', 40, [], undefined, feature);
+    solid.exact = geometry!.exact;
+
+    const after = await editedSolid(solid, [], 'radius', 25);
+
+    expect(after?.exact?.revision).toBe(after?.revision);
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(after!, kernel);
+    try {
+      expect(kernel.inspect(shape!)).toMatchObject({
+        bounds: {
+          min: { x: expect.closeTo(-25, 5), y: expect.closeTo(-25, 5), z: 0 },
+          max: { x: expect.closeTo(25, 5), y: expect.closeTo(25, 5), z: 40 },
+        },
+        volume: expect.closeTo(25_000 * Math.PI, 7),
+        valid: true,
+      });
+    } finally {
+      shape?.dispose();
+    }
+  });
+
+  it('keeps an edited box operand inside an exact UNION exact', async () => {
+    const doc = new Document();
+    const first: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 20, depth: 10, height: 10,
+    };
+    const second: PrimitiveFeature = { ...first, center: { x: 10, y: 0 } };
+    const feature: SolidFeature = { kind: 'boolean', operation: 'union', operands: [first, second] };
+    const geometry = await buildExactFeature(feature);
+    const solid = doc.createSolid(geometry!.mesh, 'Exact union', 10, [], undefined, feature);
+    solid.exact = geometry!.exact;
+
+    const after = await editedSolid(solid, [1], 'width', 40);
+
+    expect(after?.exact?.revision).toBe(after?.revision);
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(after!, kernel);
+    try {
+      expect(kernel.inspect(shape!)).toMatchObject({
+        bounds: { min: { x: -10, y: -5, z: 0 }, max: { x: 30, y: 5, z: 10 } },
+        faceCount: 6,
+        volume: expect.closeTo(4_000, 7),
+        valid: true,
+      });
+    } finally {
+      shape?.dispose();
+    }
+  });
+
   const bounds = (solid: { mesh: { positions: Float32Array } }) => {
     let maxZ = -Infinity, maxX = -Infinity;
     for (let i = 0; i < solid.mesh.positions.length; i += 3) {

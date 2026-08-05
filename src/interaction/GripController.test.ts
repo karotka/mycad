@@ -3,7 +3,7 @@ import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { GripController } from './GripController';
 import type { EdgeModificationFeature, PrimitiveFeature } from '../core/entities/types';
-import { primitiveMesh } from '../core/solids/ManifoldEngine';
+import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 
 describe('GripController', () => {
   it('moves a chamfer feature with a solid centre grip instead of leaving its history behind', () => {
@@ -32,6 +32,36 @@ describe('GripController', () => {
     expect(solid.feature).toMatchObject({
       kind: 'edge-modification', edge: { start: { x: 12, y: 1, z: 0 } },
     });
+  });
+
+  it('keeps an exact solid current throughout repeated centre-grip previews', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const feature: PrimitiveFeature = {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const solid = doc.createSolid(primitiveMesh(feature), 'Exact box', 4, [], undefined, feature);
+    solid.exact = {
+      kernel: 'opencascade', revision: solid.revision,
+      shape: { format: 'occt-brep-v1', data: 'fixture' },
+    };
+    doc.addSolid(solid);
+    grips.mode = 'center';
+    grips.begin(undefined, solid, 0, { x: 0, y: 0 });
+
+    grips.update({ x: 2, y: 3 });
+    grips.update({ x: 7, y: -4 });
+
+    expect(solid.revision).toBe(1);
+    expect(solid.exact).toMatchObject({
+      revision: 1,
+      transform: [1, 0, 0, 7, 0, 1, 0, -4, 0, 0, 1, 0],
+    });
+    grips.commit();
+    history.undo();
+    expect(doc.solids[0].revision).toBe(0);
+    expect(doc.solids[0].exact?.transform).toBeUndefined();
   });
 
   it('records a whole line move as one edit', () => {

@@ -179,7 +179,7 @@ export function solidPlanarFaces(mesh: SolidMesh): PlanarFace[] {
     }
   }
 
-  // Some built-in meshes predate Manifold's outward-winding convention and are
+  // Some old/imported meshes predate the current outward-winding convention and are
   // consistently inside-out. Signed volume tells us which way the complete
   // shell is wound, so face normals presented to modelling tools are outward in
   // either case.

@@ -2,7 +2,7 @@
  * An entity reduced to the lines you would draw it with.
  *
  * The renderer, the solid engine and now the G-code exporter all need this, and
- * each had started writing its own: ManifoldEngine has two private ones between
+ * each had started writing its own: the old mesh kernel had two private ones between
  * them covering six of the ten entity types. This is the one that has to be
  * complete, because a missing case here is geometry silently left out of a cut
  * file rather than something that merely looks wrong on screen.

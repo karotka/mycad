@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
-import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh } from './ManifoldEngine';
+import { createBoxMesh, createConeMesh, createCylinderMesh } from '../geometry/PrimitiveMesh';
+import { exactBooleanMeshes } from '../geometry/FeatureMesh';
 import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidDesignEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
 import { localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
 
@@ -10,7 +11,7 @@ describe('solidDesignEdges', () => {
   });
 
   it('a drilled hole shows its rims but hides the cylinder-wall facets', async () => {
-    const holed = (await booleanSubtract(createBoxMesh(20, 20, 20, 0, 0, 0), createCylinderMesh(3, 30, 0, 0, 32)))!;
+    const holed = (await exactBooleanMeshes('subtract', [createBoxMesh(20, 20, 20, 0, 0, 0), createCylinderMesh(3, 30, 0, 0, 32)]))!;
     const edges = solidDesignEdges(holed);
     // Wall facets run up the bore (near the axis, vertical); rims are horizontal
     // circles. None of the vertical near-axis facet edges should be drawn.
@@ -47,7 +48,7 @@ describe('solid feature topology', () => {
   it('finds both ends of a round through-hole after a boolean cut', async () => {
     const cutter = createCylinderMesh(2, 8);
     for (let index = 2; index < cutter.positions.length; index += 3) cutter.positions[index] -= 1;
-    const cut = await booleanSubtract(createBoxMesh(12, 12, 6), cutter);
+    const cut = await exactBooleanMeshes('subtract', [createBoxMesh(12, 12, 6), cutter]);
     expect(cut).not.toBeNull();
 
     const centres = solidCircularEdgeCenters(cut!);
@@ -56,10 +57,10 @@ describe('solid feature topology', () => {
   });
 
   it('recognises both concentric base rims after subtracting one cone from another', async () => {
-    const cut = await booleanSubtract(
+    const cut = await exactBooleanMeshes('subtract', [
       createConeMesh(6, 10),
       createConeMesh(3, 10),
-    );
+    ]);
     expect(cut).not.toBeNull();
 
     const innerSegments = solidFeatureEdges(cut!).filter((edge) =>
@@ -149,7 +150,7 @@ describe('solid feature topology', () => {
   });
 
   it('splits a face that has a hole and gives the bore to the side it sits on', async () => {
-    const cut = (await booleanSubtract(createBoxMesh(20, 20, 10, 0, 0, 0), createCylinderMesh(1.5, 20, 5, 0, 32)))!;
+    const cut = (await exactBooleanMeshes('subtract', [createBoxMesh(20, 20, 10, 0, 0, 0), createCylinderMesh(1.5, 20, 5, 0, 32)]))!;
     const top = solidPlanarFaces(cut).find((face) => face.normal.z > 0.9 && Math.abs(face.plane.origin.z - 10) < 1e-2)!;
     const doc = new Document();
     doc.activeWorkPlane.origin.z = 10;
@@ -188,7 +189,7 @@ describe('solid feature topology', () => {
   it('keeps the inner loop of a planar face around a through-hole', async () => {
     const cutter = createCylinderMesh(2, 8);
     for (let index = 2; index < cutter.positions.length; index += 3) cutter.positions[index] -= 1;
-    const cut = (await booleanSubtract(createBoxMesh(12, 12, 6), cutter))!;
+    const cut = (await exactBooleanMeshes('subtract', [createBoxMesh(12, 12, 6), cutter]))!;
 
     const top = solidPlanarFaces(cut).find((face) => face.normal.z > 0.9 && Math.abs(face.plane.origin.z - 6) < 1e-4);
 

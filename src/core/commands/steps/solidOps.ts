@@ -8,7 +8,6 @@
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, isSweepProfileEntity, type Entity, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
-import { deletePlanarSolidFace, modifySolidEdge, pressPullFace, pressPullRegion, pressPullSolid, regenerateSolidFeature, sweepProfile } from '../../solids/ManifoldEngine';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -16,6 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
+import { buildExactFeature, deleteExactSolidFace, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -128,8 +128,8 @@ async function completeLinearExtrude(
     const feature = extrusionFeature(profile, entered, taperAngle);
     // Built from the feature, not beside it: the mesh and its editable recipe
     // stay the same answer for every selected profile.
-    const mesh = await regenerateSolidFeature(feature);
-    return mesh ? { profile, feature, mesh } : null;
+    const exact = await buildExactFeature(feature);
+    return exact ? { profile, feature, mesh: exact.mesh, exact } : null;
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
@@ -138,9 +138,11 @@ async function completeLinearExtrude(
       : 'Extrusion failed — select one or more closed profiles.');
     return 'advance';
   }
-  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
-    mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature,
-  ));
+  const solids = completed.map(({ profile, feature, mesh, exact }) => {
+    const solid = ctx.doc.createSolid(mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature);
+    if (exact) solid.exact = exact.exact;
+    return solid;
+  });
   ctx.history.execute(new ReplaceObjectsEdit('Extrude', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
   ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}${taperAngle ? `, taper=${taperAngle}°` : ''}`);
@@ -166,17 +168,19 @@ async function completeDirectionalExtrude(
     };
     if (Math.abs(direction.z) < 1e-9) return null;
     const feature = directionalExtrusionFeature(profile, direction);
-    const mesh = await regenerateSolidFeature(feature);
-    return mesh ? { profile, feature, mesh } : null;
+    const exact = await buildExactFeature(feature);
+    return exact ? { profile, feature, mesh: exact.mesh, exact } : null;
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
     ctx.log('Extrusion failed — Direction must cross the profile plane.');
     return 'advance';
   }
-  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
-    mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature,
-  ));
+  const solids = completed.map(({ profile, feature, mesh, exact }) => {
+    const solid = ctx.doc.createSolid(mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature);
+    if (exact) solid.exact = exact.exact;
+    return solid;
+  });
   ctx.history.execute(new ReplaceObjectsEdit('Extrude Direction', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
   ctx.log(`Directional extrusion complete: ${solids.length} solid(s).`);
@@ -188,7 +192,6 @@ async function completePathExtrude(run: CommandRun, profiles: Entity[], path: En
   ctx.log('Extruding along path…');
   const results = await Promise.all(profiles.map(async (profile) => {
     const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
-    const mesh = await sweepProfile(profile, path, plane);
     const feature = {
       kind: 'sweep' as const,
       createdBy: 'extrude' as const,
@@ -196,16 +199,21 @@ async function completePathExtrude(run: CommandRun, profiles: Entity[], path: En
       path: cloneEntity(path),
       workPlane: cloneWorkPlane(plane),
     };
-    return mesh ? { profile, feature, mesh } : null;
+    const exact = await buildExactFeature(feature);
+    return exact ? { profile, feature, mesh: exact.mesh, exact } : null;
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
     ctx.log('Extrusion failed — select a valid path that starts at the profile.');
     return 'advance';
   }
-  const solids = completed.map(({ profile, feature, mesh }) => ctx.doc.createSolid(
-    mesh, `Extrusion_${profile.id}_along_${path.id}`, 0, [profile.id, path.id], undefined, feature,
-  ));
+  const solids = completed.map(({ profile, feature, mesh, exact }) => {
+    const solid = ctx.doc.createSolid(
+      mesh, `Extrusion_${profile.id}_along_${path.id}`, 0, [profile.id, path.id], undefined, feature,
+    );
+    if (exact) solid.exact = exact.exact;
+    return solid;
+  });
   ctx.history.execute(new ReplaceObjectsEdit('Extrude Path', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
   ctx.log(`Path extrusion complete: ${solids.length} solid(s).`);
@@ -239,15 +247,14 @@ export async function sweepProfileStep(run: CommandRun): Promise<StepOutcome> {
   }
   ctx.log('Sweeping…');
   const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
-  const mesh = await sweepProfile(profile, path, plane);
-  if (!mesh) {
+  const feature = { kind: 'sweep' as const, profile: cloneEntity(profile), path: cloneEntity(path), workPlane: cloneWorkPlane(plane) };
+  const exact = await buildExactFeature(feature);
+  if (!exact) {
     ctx.log('Sweep failed — select a valid path and closed profile.');
     return 'advance';
   }
-  const solid = ctx.doc.createSolid(
-    mesh, `Sweep_${profile.id}_${path.id}`, 0, [profile.id, path.id], undefined,
-    { kind: 'sweep', profile: cloneEntity(profile), path: cloneEntity(path), workPlane: cloneWorkPlane(plane) },
-  );
+  const solid = ctx.doc.createSolid(exact.mesh, `Sweep_${profile.id}_${path.id}`, 0, [profile.id, path.id], undefined, feature);
+  solid.exact = exact.exact;
   ctx.history.execute(new ReplaceObjectsEdit('Sweep', [profile], [], [], [solid]));
   ctx.doc.clearSelection();
   ctx.doc.selectSolid(solid.id);
@@ -283,9 +290,11 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
   ctx.log('Applying PressPull…');
 
   const face = data.face as SolidFaceSelection | undefined;
-  let mesh;
+  let exact: Awaited<ReturnType<typeof buildExactFeature>> = null;
+  let mesh: SolidMesh | undefined;
   if (face?.region) {
-    mesh = await pressPullRegion(solid.mesh, face.region, delta);
+    exact = await pressPullExactSolid(solid, face.region, delta, solid.revision + 1);
+    mesh = exact?.mesh;
     if (mesh) {
       solid.feature = {
         kind: 'presspull-region',
@@ -299,19 +308,16 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
       };
     }
   } else if (face) {
-    // Compatibility for selections stored by older projects. New picks always
-    // carry a bounded planar region and take the parametric branch above.
-    mesh = pressPullFace(solid.mesh, face.vertexIndices, face.normal, delta);
-    if (mesh) solid.feature = { kind: 'mesh' };
+    ctx.log('PressPull requires a bounded planar face region. Select the face again.');
+    return 'stay';
   } else if (solid.feature.kind === 'extrusion') {
     // The whole solid, and its height is a number it already carries — so this
     // edits the feature and regenerates rather than dragging the mesh.
     const next = JSON.parse(JSON.stringify(solid.feature)) as typeof solid.feature;
     next.height = Math.max(0.01, next.height + delta);
-    mesh = await regenerateSolidFeature(next);
+    exact = await buildExactFeature(next, solid.revision + 1);
+    mesh = exact?.mesh;
     if (mesh) solid.feature = next;
-  } else {
-    mesh = await pressPullSolid(solid.mesh, delta);
   }
   if (!mesh) {
     ctx.log('PressPull failed — select a bounded planar face region or use a smaller distance.');
@@ -325,6 +331,7 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
     solid.height = Math.max(0.01, Math.max(...zValues) - Math.min(...zValues));
   }
   solid.revision++;
+  if (exact) solid.exact = exact.exact;
   ctx.history.recordApplied(new UpdateSolidEdit('Press/Pull', before, cloneSolid(solid)));
   ctx.doc.notify();
   ctx.log(`PressPull complete, delta=${delta}`);
@@ -394,12 +401,12 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     return 'stay';
   }
   const before = cloneSolid(solid);
-  const mesh = await modifySolidEdge(solid.mesh, edge, amount, rounded, amount2);
-  if (!mesh) {
+  const exact = await modifyExactSolidEdge(solid, edge, amount, rounded, amount2, solid.revision + 1);
+  if (!exact) {
     ctx.log(`${active.name} failed. Use a smaller value or select a convex edge.`);
     return 'stay';
   }
-  solid.mesh = mesh;
+  solid.mesh = exact.mesh;
   solid.feature = {
     kind: 'edge-modification',
     operation: rounded ? 'fillet' : 'chamfer',
@@ -414,6 +421,7 @@ export async function modifyEdgeStep(run: CommandRun): Promise<StepOutcome> {
     },
   };
   solid.revision++;
+  solid.exact = exact.exact;
   ctx.history.recordApplied(new UpdateSolidEdit(rounded ? 'Fillet edge' : 'Chamfer edge', before, cloneSolid(solid)));
   ctx.doc.notify();
   ctx.log(rounded
@@ -446,17 +454,20 @@ async function withoutLatestFeature(solid: Solid): Promise<Solid | null> {
   if (feature.kind !== 'edge-modification' && feature.kind !== 'presspull-region') return null;
   const after = cloneSolid(solid);
   after.feature = JSON.parse(JSON.stringify(feature.source));
-  const regenerated = await regenerateSolidFeature(after.feature);
+  const nextRevision = solid.revision + 1;
+  const exact = await buildExactFeature(after.feature, nextRevision);
   const fallback = feature.sourceMesh && {
     positions: new Float32Array(feature.sourceMesh.positions),
     indices: new Uint32Array(feature.sourceMesh.indices),
   };
-  if (!regenerated && !fallback) return null;
-  after.mesh = regenerated ?? fallback!;
+  if (!exact && !fallback) return null;
+  after.mesh = exact?.mesh ?? fallback!;
   after.height = after.feature.kind === 'primitive' || after.feature.kind === 'extrusion'
     ? after.feature.height
     : meshZSpan(after.mesh);
-  after.revision = solid.revision + 1;
+  after.revision = nextRevision;
+  after.exact = exact?.exact;
+  if (!exact && !await promoteSolidToExact(after)) return null;
   return after;
 }
 
@@ -516,9 +527,11 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
     const removal = await featureRemovalForPoint(solid, face.hitPoint, face.normal);
     if (removal) {
       const after = cloneSolid(solid);
+      const exact = await buildExactFeature(removal.feature, solid.revision + 1);
       after.feature = removal.feature;
-      after.mesh = removal.mesh;
+      after.mesh = exact?.mesh ?? removal.mesh;
       after.revision = solid.revision + 1;
+      if (exact) after.exact = exact.exact;
       after.height = removal.feature.kind === 'extrusion' || removal.feature.kind === 'primitive'
         ? removal.feature.height
         : meshZSpan(removal.mesh);
@@ -526,6 +539,25 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
       run.ctx.doc.clearSelection();
       run.ctx.doc.selectSolid(after.id);
       run.ctx.log('Delete Face complete — removed the feature under the cursor.');
+      return 'advance';
+    }
+  }
+
+
+  if (face.topologyFaceId !== undefined || face.hitPoint) {
+    run.ctx.log('Removing and healing exact face…');
+    const exact = await deleteExactSolidFace(solid, face, solid.revision + 1);
+    if (exact) {
+      const after = cloneSolid(solid);
+      after.mesh = exact.mesh;
+      after.exact = exact.exact;
+      after.feature = { kind: 'mesh' };
+      after.height = meshZSpan(exact.mesh);
+      after.revision = solid.revision + 1;
+      run.ctx.history.execute(new UpdateSolidEdit('Delete face', before, after));
+      run.ctx.doc.clearSelection();
+      run.ctx.doc.selectSolid(after.id);
+      run.ctx.log('Delete Face complete — neighbouring B-rep surfaces were extended and healed.');
       return 'advance';
     }
   }
@@ -544,18 +576,7 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
     removedLatestFeature = after !== null;
   }
   if (!after) {
-    run.ctx.log('Healing face…');
-    const mesh = await deletePlanarSolidFace(solid.mesh, face.vertexIndices);
-    if (mesh) {
-      after = cloneSolid(solid);
-      after.mesh = mesh;
-      after.feature = { kind: 'mesh' };
-      after.height = meshZSpan(mesh);
-      after.revision = solid.revision + 1;
-    }
-  }
-  if (!after) {
-    run.ctx.log('Delete Face cannot heal this face. Select a latest Chamfer/Fillet/PressPull face or a bounded face on a convex planar body.');
+    run.ctx.log('Delete Face cannot heal this face. Select a removable feature face or a face bounded by extendable B-rep surfaces.');
     return 'stay';
   }
 

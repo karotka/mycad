@@ -1,6 +1,7 @@
 import { dist2, type Vec2, type Vec3 } from '../../math/geometry';
 import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
+import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
 
 export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension' | 'insert';
 
@@ -438,10 +439,23 @@ export function curvePoints(e: ArcEntity | BezierEntity, segments = 64): Vec2[] 
 export interface SolidMesh {
   positions: Float32Array;
   indices: Uint32Array;
+  /** B-rep face behind each triangle when the mesh was derived from an exact solid. */
+  triangleFaceIds?: Uint32Array;
+}
+
+export interface ExactSolidGeometry {
+  kernel: 'opencascade';
+  /** Must equal `Solid.revision`; otherwise a mesh-only edit made this snapshot stale. */
+  revision: number;
+  shape: SerializedKernelSolid;
+  /** Placement accumulated since `shape` was serialized; omitted for identity. */
+  transform?: AffineTransform3;
 }
 
 export interface SolidFaceSelection {
   solidId: string;
+  /** Zero-based face in the current exact B-rep, when this came from exact tessellation. */
+  topologyFaceId?: number;
   vertexIndices: number[];
   normal: Vec3;
   /** Exact world-space point where the pointer ray met the planar face. */
@@ -459,6 +473,8 @@ export interface SolidFaceRegion {
 
 export interface SolidEdgeSelection {
   solidId: string;
+  /** The two exact B-rep faces whose common edge was picked. */
+  topologyFaceIds?: [number, number];
   start: Vec3;
   end: Vec3;
   normalA: Vec3;
@@ -495,7 +511,7 @@ export interface ExtrusionFeature {
 
 export interface BooleanFeature {
   kind: 'boolean';
-  operation: 'union' | 'subtract';
+  operation: 'union' | 'subtract' | 'intersect';
   operands: SolidFeature[];
 }
 
@@ -592,6 +608,8 @@ export interface Solid {
   height: number;
   sourceEntityIds: string[];
   feature: SolidFeature;
+  /** Exact source geometry. `mesh` remains a disposable rendering/picking cache. */
+  exact?: ExactSolidGeometry;
   revision: number;
 }
 
@@ -631,7 +649,16 @@ export function cloneEntity<T extends Entity>(e: T): T {
 export function cloneSolidValue(solid: Solid): Solid {
   return {
     ...solid,
-    mesh: { positions: solid.mesh.positions.slice(), indices: solid.mesh.indices.slice() },
+    mesh: {
+      positions: solid.mesh.positions.slice(),
+      indices: solid.mesh.indices.slice(),
+      triangleFaceIds: solid.mesh.triangleFaceIds?.slice(),
+    },
+    exact: solid.exact ? {
+      ...solid.exact,
+      shape: { ...solid.exact.shape },
+      transform: solid.exact.transform ? [...solid.exact.transform] as AffineTransform3 : undefined,
+    } : undefined,
     sourceEntityIds: [...solid.sourceEntityIds],
     feature: JSON.parse(JSON.stringify(solid.feature)) as SolidFeature,
   };

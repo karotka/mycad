@@ -1,16 +1,13 @@
 /**
  * Joining solids and cutting them apart.
  *
- * The mesh comes from the engine's boolean over the *meshes*, not from
- * regenerating the feature tree — deliberately. An imported solid has
- * `{ kind: 'mesh' }` and no history to regenerate from, so building it that way
- * would refuse to union anything that came out of a file. The tree it records
- * is then only as regenerable as its parts, which `editedSolid` already checks
- * before touching anything.
+ * Every operand is promoted to an OpenCascade B-rep first. Imported and old
+ * project meshes therefore remain usable, but the boolean result has one exact
+ * source of truth instead of a second mesh-only modelling path.
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
 import type { Solid, SolidFeature } from '../../entities/types';
-import { booleanSubtract, booleanUnion } from '../../solids/ManifoldEngine';
+import { booleanExactSolids } from '../../geometry/ExactSolid';
 import type { CommandRun, StepOutcome } from '../types';
 
 /** Deep, because the operand keeps its own tree and the source may yet be edited. */
@@ -50,22 +47,21 @@ export async function subtractSolids(run: CommandRun): Promise<StepOutcome> {
     return 'stay';
   }
   ctx.log(`Subtracting ${toolSolids.length} solid(s)…`);
-  let mesh = baseSolid.mesh;
   let feature = copyFeature(baseSolid);
   for (const toolSolid of toolSolids) {
-    const next = await booleanSubtract(mesh, toolSolid.mesh);
-    if (!next) {
-      ctx.log(`Subtract failed on ${toolSolid.name}.`);
-      return 'stay';
-    }
-    mesh = next;
     feature = {
       kind: 'boolean',
       operation: 'subtract',
       operands: [feature, copyFeature(toolSolid)],
     };
   }
-  const solid = ctx.doc.createSolid(mesh, 'Subtract', baseSolid.height, [], undefined, feature);
+  const exact = await booleanExactSolids('subtract', [baseSolid, ...toolSolids]);
+  if (!exact) {
+    ctx.log('Subtract failed — one of the bodies could not be converted to a closed B-rep.');
+    return 'stay';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Subtract', baseSolid.height, [], undefined, feature);
+  solid.exact = exact.exact;
   ctx.history.execute(new ReplaceObjectsEdit('Subtract', [], [baseSolid, ...toolSolids], [], [solid]));
   ctx.log(`Subtract complete: ${toolSolids.length} cutting solid(s).`);
   return 'advance';
@@ -84,19 +80,45 @@ export async function unionSolids({ ctx, active, data, value }: CommandRun): Pro
     return 'advance';
   }
   ctx.log('Joining solids…');
-  // Fuse touching shells: two solids that share a face but no volume would
-  // otherwise union into a zero-thickness internal wall.
-  const mesh = await booleanUnion(sources.map((source) => source.mesh), true);
-  if (!mesh) {
-    ctx.log('Union failed.');
+  const exact = await booleanExactSolids('union', sources);
+  if (!exact) {
+    ctx.log('Union failed — one of the bodies could not be converted to a closed B-rep.');
     return 'advance';
   }
-  const solid = ctx.doc.createSolid(mesh, 'Union', 0, [], undefined, {
+  const solid = ctx.doc.createSolid(exact.mesh, 'Union', 0, [], undefined, {
     kind: 'boolean',
     operation: 'union',
     operands: sources.map(copyFeature),
   });
+  solid.exact = exact.exact;
   ctx.history.execute(new ReplaceObjectsEdit('Union', [], sources, [], [solid]));
   ctx.log('Union complete.');
+  return 'advance';
+}
+
+export async function intersectSolids(run: CommandRun): Promise<StepOutcome> {
+  const { ctx, data, value } = run;
+  if (typeof value === 'string') {
+    run.gather(value);
+    return 'stay';
+  }
+  const sources = data.solids as Solid[];
+  if (sources.length < 2) {
+    ctx.log('Intersect requires at least two solids.');
+    return 'stay';
+  }
+  ctx.log(`Intersecting ${sources.length} solids…`);
+  const feature: SolidFeature = {
+    kind: 'boolean', operation: 'intersect', operands: sources.map(copyFeature),
+  };
+  const exact = await booleanExactSolids('intersect', sources);
+  if (!exact) {
+    ctx.log('The selected solids do not share a solid volume.');
+    return 'stay';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Intersect', 0, [], undefined, feature);
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Intersect', [], sources, [], [solid]));
+  ctx.log('Intersect complete.');
   return 'advance';
 }

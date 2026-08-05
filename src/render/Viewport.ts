@@ -594,6 +594,33 @@ export class Canvas2DRenderer {
 // of the viewport, matching the positive-quadrant bias of the 2D view.
 const DEFAULT_3D_ORBIT_TARGET = new THREE.Vector3(5, 0, -15);
 
+function exactFaceIdsForSegment(mesh: SolidMesh, start: Vec3, end: Vec3): [number, number] | undefined {
+  if (!mesh.triangleFaceIds) return undefined;
+  let extent = 1;
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    extent = Math.max(extent, Math.abs(mesh.positions[index]), Math.abs(mesh.positions[index + 1]), Math.abs(mesh.positions[index + 2]));
+  }
+  const toleranceSquared = (extent * 1e-6) ** 2;
+  const matches = (vertex: number, point: Vec3): boolean => {
+    const dx = mesh.positions[vertex * 3] - point.x;
+    const dy = mesh.positions[vertex * 3 + 1] - point.y;
+    const dz = mesh.positions[vertex * 3 + 2] - point.z;
+    return dx * dx + dy * dy + dz * dz <= toleranceSquared;
+  };
+  const faceIds = new Set<number>();
+  for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
+    const ids = [mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2]];
+    for (let edge = 0; edge < 3; edge++) {
+      const a = ids[edge], b = ids[(edge + 1) % 3];
+      if ((matches(a, start) && matches(b, end)) || (matches(a, end) && matches(b, start))) {
+        faceIds.add(mesh.triangleFaceIds[offset / 3]);
+      }
+    }
+  }
+  const values = [...faceIds];
+  return values.length === 2 ? [values[0], values[1]] : undefined;
+}
+
 export class Viewport3D {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
@@ -1918,7 +1945,7 @@ export class Viewport3D {
   private solidToGeometry(mesh: SolidMesh): THREE.BufferGeometry {
     const geom = new THREE.BufferGeometry();
     const pos = mesh.positions;
-    // Manifold uses Z-up; Three.js is Y-up — swap Y and Z
+    // MyCAD geometry uses Z-up; Three.js is Y-up — swap Y and Z
     const swapped = new Float32Array(pos.length);
     for (let i = 0; i < pos.length; i += 3) {
       swapped[i] = pos[i];
@@ -1948,7 +1975,7 @@ export class Viewport3D {
 
   /**
    * Line segments for a solid's wireframe, from its reconstructed face outlines
-   * (Manifold Z-up → Three Y-up). Falls back to the triangle-crease edges only
+   * (MyCAD Z-up → Three Y-up). Falls back to the triangle-crease edges only
    * if the CAD mesh is not to hand.
    */
   private designEdgesGeometry(cadMesh: SolidMesh | undefined, fallback: THREE.BufferGeometry): THREE.BufferGeometry {
@@ -2043,6 +2070,7 @@ export class Viewport3D {
     this.showFaceRegionHighlight(region);
     return {
       solidId,
+      topologyFaceId: solid.mesh.triangleFaceIds?.[hit.faceIndex],
       vertexIndices: face.vertexIndices,
       normal: face.normal,
       hitPoint,
@@ -2055,14 +2083,16 @@ export class Viewport3D {
    * ones included, which `pickSolidFace` rejects because they are not planar.
    * Used by Delete Face to reach a cylindrical hole wall.
    */
-  pickSolidSurfacePoint(canvas: HTMLCanvasElement, sx: number, sy: number): { solidId: string; hitPoint: Vec3; normal: Vec3 } | null {
+  pickSolidSurfacePoint(canvas: HTMLCanvasElement, sx: number, sy: number, solids: readonly Solid[]): { solidId: string; topologyFaceId?: number; hitPoint: Vec3; normal: Vec3 } | null {
     const hit = this.picking.firstIntersection(canvas, sx, sy, this.solidMeshes.values());
     if (!hit || !hit.face) return null;
     const entry = Array.from(this.solidMeshes.entries()).find(([, object]) => object === hit.object);
     if (!entry) return null;
+    const solid = solids.find((candidate) => candidate.id === entry[0]);
     const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
     return {
       solidId: entry[0],
+      topologyFaceId: hit.faceIndex == null ? undefined : solid?.mesh.triangleFaceIds?.[hit.faceIndex],
       hitPoint: { x: hit.point.x, y: -hit.point.z, z: hit.point.y },
       normal: { x: worldNormal.x, y: -worldNormal.z, z: worldNormal.y },
     };
@@ -2113,7 +2143,7 @@ export class Viewport3D {
 
   pickSolidEdge(canvas: HTMLCanvasElement, solids: Solid[], sx: number, sy: number, tolerance = 11): SolidEdgeSelection | null {
     const rect = canvas.getBoundingClientRect();
-    type EdgeData = { a: number; b: number; normals: Vec3[] };
+    type EdgeData = { a: number; b: number; normals: Vec3[]; faceIds: number[] };
     let best = tolerance;
     let result: SolidEdgeSelection | null = null;
     const project = (point: Vec3): { x: number; y: number; z: number } => {
@@ -2135,8 +2165,10 @@ export class Viewport3D {
         for (let e = 0; e < 3; e++) {
           const a = ids[e]; const b = ids[(e + 1) % 3];
           const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-          const edge = edges.get(key) ?? { a: Math.min(a, b), b: Math.max(a, b), normals: [] };
+          const edge = edges.get(key) ?? { a: Math.min(a, b), b: Math.max(a, b), normals: [], faceIds: [] };
           edge.normals.push(normal);
+          const faceId = solid.mesh.triangleFaceIds?.[i / 3];
+          if (faceId !== undefined) edge.faceIds.push(faceId);
           edges.set(key, edge);
         }
       }
@@ -2153,7 +2185,17 @@ export class Viewport3D {
         const distance = Math.hypot(sx - (pa.x + dx * t), sy - (pa.y + dy * t));
         if (distance <= best) {
           best = distance;
-          result = { solidId: solid.id, start: a, end: b, normalA: edge.normals[0], normalB: edge.normals[1] };
+          const distinctFaceIds = [...new Set(edge.faceIds)];
+          result = {
+            solidId: solid.id,
+            start: a,
+            end: b,
+            normalA: edge.normals[0],
+            normalB: edge.normals[1],
+            ...(distinctFaceIds.length === 2
+              ? { topologyFaceIds: [distinctFaceIds[0], distinctFaceIds[1]] as [number, number] }
+              : {}),
+          };
         }
       }
     }
@@ -2201,8 +2243,10 @@ export class Viewport3D {
           if (distance > best) continue;
           best = distance;
           highlighted = circle.points;
+          const topologyFaceIds = exactFaceIdsForSegment(solid.mesh, start, end);
           result = {
             solidId: solid.id,
+            ...(topologyFaceIds ? { topologyFaceIds } : {}),
             start,
             end,
             normalA: circle.normal,

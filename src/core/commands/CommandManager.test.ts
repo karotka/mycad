@@ -6,9 +6,12 @@ import { expandedInsertSolids, linearDimensionRotation } from '../entities/types
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
-import { createBoxMesh, createCylinderMesh, primitiveMesh, regenerateSolidFeature } from '../solids/ManifoldEngine';
+import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
+import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
-import { planarFaceRegionAt, solidCircularEdges, solidPlanarFaces } from '../solids/SolidTopology';
+import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../solids/SolidTopology';
+import { buildExactFeature, openExactShape } from '../geometry/ExactSolid';
+import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 
 function setup() {
   const doc = new Document();
@@ -39,6 +42,7 @@ describe('CommandManager history integration', () => {
     expect(manager.resolveAlias('e')).toBe('EXTRUDE');
     expect(manager.resolveAlias('s')).toBe('SUBTRACT');
     expect(manager.resolveAlias('u')).toBe('UNION');
+    expect(manager.resolveAlias('int')).toBe('INTERSECT');
     expect(manager.resolveAlias('j')).toBe('JOIN');
     expect(manager.resolveAlias('b')).toBe('BLOCK');
     expect(manager.resolveAlias('i')).toBe('INSERT');
@@ -848,6 +852,7 @@ describe('CommandManager history integration', () => {
 
     expect(doc.solids).toHaveLength(1);
     expect(doc.solids[0].feature.kind).toBe('sweep');
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
     expect(doc.entities).toHaveLength(1);
     history.undo();
     expect(doc.solids).toHaveLength(0);
@@ -1237,14 +1242,22 @@ describe('CommandManager history integration', () => {
     expect(manager.active).toMatchObject({ name: 'BOX', stepIndex: 2, data: { framePrimitiveBase: true } });
     await manager.submitInput('4');
     expect(doc.solids[0]).toMatchObject({ name: 'Box', feature: { kind: 'primitive', primitive: 'box', width: 10, depth: 6, height: 4 } });
+    expect(doc.solids[0].exact).toMatchObject({
+      kernel: 'opencascade',
+      revision: 0,
+      shape: { format: 'occt-brep-v1' },
+    });
+    expect(doc.solids[0].mesh.triangleFaceIds).toHaveLength(doc.solids[0].mesh.indices.length / 3);
     history.undo(); expect(doc.solids).toHaveLength(0);
     history.redo(); expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0].exact?.shape.data).toContain('CASCADE Topology V3');
 
     manager.startCommand('CYLINDER');
     await manager.handleClick({ x: 20, y: 0 });
     await manager.submitInput('3');
     await manager.submitInput('8');
     expect(doc.solids.at(-1)).toMatchObject({ name: 'Cylinder', feature: { kind: 'primitive', primitive: 'cylinder', radius: 3, height: 8 } });
+    expect(doc.solids.at(-1)?.exact?.revision).toBe(doc.solids.at(-1)?.revision);
   });
 
   it('uses one normalized BOX/WEDGE feature for live preview and placement', () => {
@@ -1327,6 +1340,7 @@ describe('CommandManager history integration', () => {
 
       await manager.submitInput('2');
       expect(doc.solids, name).toHaveLength(1);
+      expect(doc.solids[0].exact?.revision, name).toBe(doc.solids[0].revision);
     }
   });
 
@@ -1341,6 +1355,7 @@ describe('CommandManager history integration', () => {
     manager.startCommand('PYRAMID');
     await manager.handleClick({ x: 30, y: 0 }); await manager.submitInput('4'); await manager.submitInput('9');
     expect(doc.solids.map((solid) => solid.feature.kind === 'primitive' ? solid.feature.primitive : '')).toEqual(['wedge', 'sphere', 'cone', 'pyramid']);
+    expect(doc.solids.every((solid) => solid.exact?.revision === solid.revision)).toBe(true);
   });
 
   it('selects a solid, slices it with three plane points and undoes both halves together', async () => {
@@ -1370,6 +1385,37 @@ describe('CommandManager history integration', () => {
     expect(doc.solids[0].id).toBe(source.id);
     expect(history.redo()).toBe(true);
     expect(doc.solids).toHaveLength(2);
+  });
+
+  it('keeps exact B-rep geometry through BOX, oblique SLICE and UNION', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BOX');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 20, y: 30 });
+    await manager.submitInput('40');
+    const source = doc.solids[0];
+    expect(source.exact?.revision).toBe(source.revision);
+
+    manager.startCommand('SLICE');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, source.id);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 10, y: 15, z: 20 });
+    await manager.handleClick({ x: 11, y: 14, z: 20 });
+    await manager.handleClick({ x: 11, y: 15, z: 18 });
+
+    expect(doc.solids).toHaveLength(2);
+    expect(doc.solids.every((solid) => solid.exact?.revision === solid.revision)).toBe(true);
+    const [first, second] = doc.solids;
+
+    manager.startCommand('UNION');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+
+    expect(doc.solids).toHaveLength(1);
+    const reunited = doc.solids[0];
+    expect(reunited.exact).toMatchObject({ kernel: 'opencascade', revision: reunited.revision });
+    expect(solidPlanarFaces(reunited.mesh)).toHaveLength(6);
+    expect(solidDesignEdges(reunited.mesh)).toHaveLength(12);
   });
 
   it('uses an existing planar face as the SLICE plane', async () => {
@@ -1557,6 +1603,7 @@ describe('TORUS command', () => {
     expect(doc.solids[0].feature).toMatchObject({
       kind: 'primitive', primitive: 'torus', radius: 10, tubeRadius: 2,
     });
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
     expect(doc.viewMode).toBe('3d');
 
     expect(history.undo()).toBe(true);
@@ -1794,6 +1841,10 @@ describe('commands take the selection you already made', () => {
       kind: 'primitive' as const, primitive: 'box' as const, center: { x: 4, y: 0 }, width: 2, depth: 2, height: 2,
     };
     const solid = doc.createSolid(primitiveMesh(feature), 'box', 2, [], undefined, feature);
+    solid.exact = {
+      kernel: 'opencascade', revision: solid.revision,
+      shape: { format: 'occt-brep-v1', data: 'fixture' },
+    };
     doc.addSolid(solid);
     doc.selectSolid(solid.id, true);
 
@@ -1809,6 +1860,10 @@ describe('commands take the selection you already made', () => {
     const xs = Array.from(copy.mesh.positions).filter((_, index) => index % 3 === 0);
     expect(Math.min(...xs)).toBeCloseTo(-5, 5);
     expect(Math.max(...xs)).toBeCloseTo(-3, 5);
+    expect(copy.exact).toMatchObject({
+      revision: copy.revision,
+      transform: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0],
+    });
     expect(history.undo()).toBe(true);
     expect(doc.solids).toHaveLength(1);
   });
@@ -2164,6 +2219,7 @@ describe('EXTRUDE', () => {
   it('goes up for a positive height', async () => {
     const { solid, minZ, maxZ } = await extrude('10');
     expect(solid).toBeDefined();
+    expect(solid.exact?.revision).toBe(solid.revision);
     expect(minZ).toBeCloseTo(0, 4);
     expect(maxZ).toBeCloseTo(10, 4);
   });
@@ -2181,7 +2237,7 @@ describe('EXTRUDE', () => {
     const { solid } = await extrude('-10');
     expect(solid.feature.kind).toBe('extrusion');
     if (solid.feature.kind !== 'extrusion') throw new Error('expected an extrusion');
-    // Manifold only extrudes along +Z, so downwards is the same prism dropped
+    // A downward extrusion is the same positive-height feature placed below
     // by its own height — which regeneration already knew how to honour.
     expect(solid.feature.height).toBe(10);
     expect(solid.feature.reverse).toBe(true);
@@ -2218,6 +2274,7 @@ describe('EXTRUDE', () => {
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(2);
     expect(kit.doc.solids.every((solid) => solid.feature.kind === 'extrusion')).toBe(true);
+    expect(kit.doc.solids.every((solid) => solid.exact?.revision === solid.revision)).toBe(true);
     expect(kit.history.undo()).toBe(true);
     expect(kit.doc.entities).toHaveLength(2);
     expect(kit.doc.solids).toHaveLength(0);
@@ -2241,6 +2298,7 @@ describe('EXTRUDE', () => {
     if (kit.doc.solids[0].feature.kind !== 'sweep') throw new Error('expected a path extrusion');
     expect(kit.doc.solids[0].feature.profile.id).toBe(profile.id);
     expect(kit.doc.solids[0].feature.path.id).toBe(path.id);
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
     expect(kit.doc.entities.map((entity) => entity.id)).toEqual([path.id]);
   });
 
@@ -2265,6 +2323,7 @@ describe('EXTRUDE', () => {
     const zs = Array.from(positions).filter((_value, index) => index % 3 === 2);
     expect(Math.min(...zs)).toBeCloseTo(0, 4);
     expect(Math.max(...zs)).toBeCloseTo(10, 4);
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
   });
 
   it('extrudes in the 3D vector specified by two Direction points', async () => {
@@ -2281,6 +2340,7 @@ describe('EXTRUDE', () => {
 
     const solid = kit.doc.solids[0];
     expect(solid?.feature).toMatchObject({ kind: 'extrusion', direction: { x: 5, y: 0, z: 10 } });
+    expect(solid.exact?.revision).toBe(solid.revision);
     const xs = Array.from(solid.mesh.positions).filter((_value, index) => index % 3 === 0);
     const zs = Array.from(solid.mesh.positions).filter((_value, index) => index % 3 === 2);
     expect(Math.max(...xs)).toBeCloseTo(7, 4);
@@ -2301,6 +2361,7 @@ describe('EXTRUDE', () => {
 
     const solid = kit.doc.solids[0];
     expect(solid?.feature).toMatchObject({ kind: 'extrusion', height: 10, taperAngle: 5 });
+    expect(solid.exact?.revision).toBe(solid.revision);
     const topX: number[] = [];
     for (let i = 0; i < solid.mesh.positions.length; i += 3) {
       if (Math.abs(solid.mesh.positions[i + 2] - 10) < 1e-5) topX.push(solid.mesh.positions[i]);
@@ -2321,6 +2382,7 @@ describe('EXTRUDE', () => {
     await kit.manager.submitInput('-10');
 
     const mesh = kit.doc.solids[0].mesh;
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
     const widthAt = (z: number) => {
       const xs: number[] = [];
       for (let i = 0; i < mesh.positions.length; i += 3) {
@@ -2349,8 +2411,10 @@ describe('PRESSPULL', () => {
   it('keeps a bounded face pull as an editable feature and one undo restores the source', async () => {
     const kit = setup();
     const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
-    const sourceMesh = primitiveMesh(feature);
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
     const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
     kit.doc.addSolid(solid);
     kit.doc.activeWorkPlane.origin.z = 4;
     const divider = kit.doc.createLine({ x: -5, y: 0 }, { x: 5, y: 0 });
@@ -2367,6 +2431,7 @@ describe('PRESSPULL', () => {
     await kit.manager.submitInput('3');
 
     expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'presspull-region', distance: 3 });
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
     expect(Math.max(...Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2))).toBeCloseTo(7, 4);
     expect(kit.history.undo()).toBe(true);
     expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
@@ -2451,6 +2516,50 @@ describe('remembered command values', () => {
       kind: 'edge-modification', operation: 'chamfer', amount: 1, amount2: 2,
     });
   });
+
+  it('keeps FILLET on a topology-selected edge in the exact kernel', async () => {
+    const { doc, manager } = setup();
+    const feature = {
+      kind: 'primitive' as const, primitive: 'box' as const,
+      center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    const geometry = await buildExactFeature(feature);
+    const solid = doc.createSolid(geometry!.mesh, 'box', 4, [], undefined, feature);
+    solid.exact = geometry!.exact;
+    doc.addSolid(solid);
+    const incident = new Map<string, { vertices: [number, number]; faces: Set<number> }>();
+    for (let offset = 0; offset < solid.mesh.indices.length; offset += 3) {
+      const ids = [solid.mesh.indices[offset], solid.mesh.indices[offset + 1], solid.mesh.indices[offset + 2]];
+      for (let index = 0; index < 3; index++) {
+        const a = ids[index], b = ids[(index + 1) % 3];
+        const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+        const item = incident.get(key) ?? { vertices: [a, b] as [number, number], faces: new Set<number>() };
+        item.faces.add(solid.mesh.triangleFaceIds![offset / 3]);
+        incident.set(key, item);
+      }
+    }
+    const selected = [...incident.values()].find((item) => item.faces.size === 2)!;
+    const point = (index: number) => ({
+      x: solid.mesh.positions[index * 3],
+      y: solid.mesh.positions[index * 3 + 1],
+      z: solid.mesh.positions[index * 3 + 2],
+    });
+    const edge = {
+      solidId: solid.id,
+      topologyFaceIds: [...selected.faces] as [number, number],
+      start: point(selected.vertices[0]),
+      end: point(selected.vertices[1]),
+      normalA: { x: 1, y: 0, z: 0 },
+      normalB: { x: 0, y: 1, z: 0 },
+    };
+
+    manager.startCommand('FILLET');
+    await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
+    await manager.submitInput('1');
+
+    expect(doc.solids[0].feature).toMatchObject({ kind: 'edge-modification', operation: 'fillet' });
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
+  });
 });
 
 describe('DELETEFACE', () => {
@@ -2468,9 +2577,15 @@ describe('DELETEFACE', () => {
     await manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, edge);
     await manager.submitInput('1, 1');
     const chamfered = doc.solids[0];
-    const generated = solidPlanarFaces(chamfered.mesh).find((face) =>
-      face.normal.x > 0.5 && face.normal.y > 0.5
-    )!;
+    const sourceFaces = solidPlanarFaces(source);
+    const generated = solidPlanarFaces(chamfered.mesh).find((face) => !sourceFaces.some((candidate) => {
+      const parallel = Math.abs(
+        face.normal.x * candidate.normal.x + face.normal.y * candidate.normal.y + face.normal.z * candidate.normal.z,
+      ) > 1 - 1e-6;
+      const offset = face.normal.x * face.plane.origin.x + face.normal.y * face.plane.origin.y + face.normal.z * face.plane.origin.z;
+      const candidateOffset = face.normal.x * candidate.plane.origin.x + face.normal.y * candidate.plane.origin.y + face.normal.z * candidate.plane.origin.z;
+      return parallel && Math.abs(offset - candidateOffset) < 1e-5;
+    }))!;
     const selection = {
       solidId: solid.id,
       vertexIndices: generated.vertexIndices,
@@ -2484,8 +2599,20 @@ describe('DELETEFACE', () => {
 
     expect(manager.active).toBeNull();
     expect(doc.solids[0].feature.kind).toBe('mesh');
-    expect(doc.solids[0].mesh.positions).toEqual(source.positions);
-    expect(doc.solids[0].mesh.indices).toEqual(source.indices);
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
+    const kernel = await openCascadeKernel();
+    const restored = await openExactShape(doc.solids[0], kernel);
+    expect(restored).not.toBeNull();
+    if (restored) {
+      expect(kernel.inspect(restored)).toMatchObject({
+        bounds: { min: { x: -5, y: -3, z: expect.closeTo(0, 10) }, max: { x: 5, y: 3, z: 4 } },
+        faceCount: 6,
+        solidCount: 1,
+        valid: true,
+        volume: expect.closeTo(240, 6),
+      });
+      restored.dispose();
+    }
     expect(history.undo()).toBe(true);
     expect(doc.solids[0].feature).toMatchObject({ kind: 'edge-modification', operation: 'chamfer' });
   });
@@ -2498,8 +2625,10 @@ describe('DELETEFACE', () => {
         { kind: 'primitive', primitive: 'cylinder', center: { x: 0, y: 0 }, radius: 3, height: 30 },
       ],
     } as never;
-    const mesh = (await regenerateSolidFeature(feature))!;
+    const geometry = await buildExactFeature(feature);
+    const mesh = geometry!.mesh;
     const solid = doc.createSolid(mesh, 'holed block', 20, [], undefined, feature);
+    solid.exact = geometry!.exact;
     doc.addSolid(solid);
     // A curved hole wall gives no planar face — the pointer handler hands Delete
     // Face the raw surface point instead (empty vertexIndices + a hitPoint).
@@ -2509,6 +2638,7 @@ describe('DELETEFACE', () => {
 
     expect(manager.active).toBeNull();
     expect(doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
     expect(history.undo()).toBe(true);
     expect(doc.solids[0].feature).toMatchObject({ kind: 'boolean', operation: 'subtract' });
   });
@@ -2540,6 +2670,57 @@ describe('staged SUBTRACT', () => {
     expect(doc.solids[0].feature).toMatchObject({ kind: 'boolean', operation: 'subtract' });
     expect(history.undo()).toBe(true);
     expect(doc.solids).toHaveLength(3);
+  });
+
+  it('keeps SUBTRACT exact and INTERSECT creates the exact shared volume', async () => {
+    const exactBox = async (doc: Document, name: string, centerX: number) => {
+      const feature = {
+        kind: 'primitive' as const, primitive: 'box' as const,
+        center: { x: centerX, y: 0 }, width: 10, depth: 10, height: 10,
+      };
+      const geometry = await buildExactFeature(feature);
+      const solid = doc.createSolid(geometry!.mesh, name, 10, [], undefined, feature);
+      solid.exact = geometry!.exact;
+      doc.addSolid(solid);
+      return solid;
+    };
+
+    const subtract = setup();
+    const subtractBase = await exactBox(subtract.doc, 'base', 0);
+    const subtractTool = await exactBox(subtract.doc, 'tool', 5);
+    subtract.manager.startCommand('SUBTRACT');
+    await subtract.manager.handleClick({ x: 0, y: 0 }, undefined, subtractBase.id);
+    await subtract.manager.submitInput('');
+    await subtract.manager.handleClick({ x: 0, y: 0 }, undefined, subtractTool.id);
+    await subtract.manager.submitInput('');
+    expect(subtract.doc.solids).toHaveLength(1);
+    expect(subtract.doc.solids[0].exact?.revision).toBe(subtract.doc.solids[0].revision);
+
+    const intersect = setup();
+    const first = await exactBox(intersect.doc, 'first', 0);
+    const second = await exactBox(intersect.doc, 'second', 5);
+    intersect.manager.startCommand('INTERSECT');
+    await intersect.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await intersect.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await intersect.manager.submitInput('');
+    expect(intersect.doc.solids).toHaveLength(1);
+    const common = intersect.doc.solids[0];
+    expect(common).toMatchObject({
+      name: 'Intersect',
+      feature: { kind: 'boolean', operation: 'intersect' },
+      exact: { kernel: 'opencascade', revision: common.revision },
+    });
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(common, kernel);
+    try {
+      expect(kernel.inspect(shape!)).toMatchObject({
+        bounds: { min: { x: 0, y: -5, z: 0 }, max: { x: 5, y: 5, z: 10 } },
+        volume: expect.closeTo(500, 8),
+        valid: true,
+      });
+    } finally {
+      shape?.dispose();
+    }
   });
 });
 

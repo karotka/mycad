@@ -3,9 +3,10 @@ import { cloneEntity, type Entity, type Solid } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { solidBounds } from '../interaction/PickingService';
-import { primitiveMesh } from '../core/solids/ManifoldEngine';
 import { primitiveParams, setPrimitiveParam } from '../core/solids/featureParams';
 import { translatedFeature } from '../core/solids/featureTransform';
+import { preserveExactTransform, scaleAffine, translationAffine } from '../core/geometry/ExactTransform';
+import { buildExactFeature, hasCurrentExactGeometry } from '../core/geometry/ExactSolid';
 
 type ObjectValue = Entity | Solid;
 type PropertyField = {
@@ -177,12 +178,17 @@ export class PropertiesController {
     const beforeEntity = 'type' in object ? cloneEntity(object) : null;
     const beforeSolid = !('type' in object) ? cloneSolid(object) : null;
     const after = 'type' in object ? cloneEntity(object) : cloneSolid(object);
+    let pending: Promise<void> | void = undefined;
     if (key === 'layer' && typeof value === 'string' && value) after.layer = value;
     else if (key === 'color' && typeof value === 'number') after.color = value;
     else if ('type' in after) updateEntity(after, key, value);
-    else updateSolid(after, key, Number(value));
-    this.history.execute(new ReplaceObjectsEdit('Change properties', beforeEntity ? [beforeEntity] : [], beforeSolid ? [beforeSolid] : [], 'type' in after ? [after] : [], !('type' in after) ? [after] : []));
-    this.changed(); this.render();
+    else pending = updateSolid(after, key, Number(value));
+    const commit = (): void => {
+      this.history.execute(new ReplaceObjectsEdit('Change properties', beforeEntity ? [beforeEntity] : [], beforeSolid ? [beforeSolid] : [], 'type' in after ? [after] : [], !('type' in after) ? [after] : []));
+      this.changed(); this.render();
+    };
+    if (pending) void pending.then(commit);
+    else commit();
   }
 
   private updateMultiple(objects: ObjectValue[], key: 'layer' | 'color', value: string | number): void {
@@ -242,7 +248,7 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
   }
 }
 
-function updateSolid(solid: Solid, key: string, value: number): void {
+function updateSolid(solid: Solid, key: string, value: number): Promise<void> | void {
   if (!Number.isFinite(value)) return;
   if (solid.feature.kind === 'primitive') {
     const feature = solid.feature;
@@ -252,10 +258,16 @@ function updateSolid(solid: Solid, key: string, value: number): void {
       // The engine builds primitives; this panel only says what changed. The
       // copy that used to live here had fallen behind it — it never applied a
       // scale, and it had never heard of a torus.
-      solid.mesh = primitiveMesh(feature);
-      solid.height = feature.height; solid.revision++;
-      return;
+      const nextRevision = solid.revision + 1;
+      return buildExactFeature(feature, nextRevision).then((geometry) => {
+        if (!geometry) throw new Error(`OpenCascade cannot rebuild the ${feature.primitive} primitive.`);
+        solid.mesh = geometry.mesh;
+        solid.exact = geometry.exact;
+        solid.height = feature.height;
+        solid.revision = nextRevision;
+      });
     }
+    if (key !== 'x' && key !== 'y' && key !== 'z') return;
   }
   // Moving is the one thing every feature can say: a plane's origin, or each
   // part of a boolean. Dragging the vertices instead was what baked the recipe
@@ -266,8 +278,8 @@ function updateSolid(solid: Solid, key: string, value: number): void {
     const delta = { x: 0, y: 0, z: 0 };
     delta[key] = value - from;
     const moved = translatedFeature(solid.feature, delta);
-    if (moved) {
-      solid.feature = moved;
+    if (moved || hasCurrentExactGeometry(solid)) {
+      if (moved) solid.feature = moved;
       // The mesh is shifted rather than regenerated: moving every vertex by the
       // same amount is exactly what regenerating would do, and a boolean's
       // regeneration needs WASM this cannot wait for.
@@ -276,6 +288,7 @@ function updateSolid(solid: Solid, key: string, value: number): void {
         solid.mesh.positions[index + 1] += delta.y;
         solid.mesh.positions[index + 2] += delta.z;
       }
+      preserveExactTransform(solid, translationAffine(delta));
       solid.revision++;
       return;
     }
@@ -287,5 +300,12 @@ function updateSolid(solid: Solid, key: string, value: number): void {
   const resize = ['width', 'depth', 'height'].includes(key);
   if (resize && (value <= 0 || size <= 1e-12)) return;
   for (let index = axis; index < solid.mesh.positions.length; index += 3) solid.mesh.positions[index] = resize ? min + (solid.mesh.positions[index] - min) * value / size : solid.mesh.positions[index] + value - min;
+  if (resize) {
+    const factor = value / size;
+    preserveExactTransform(solid, scaleAffine(
+      { x: axis === 0 ? min : 0, y: axis === 1 ? min : 0, z: axis === 2 ? min : 0 },
+      { x: axis === 0 ? factor : 1, y: axis === 1 ? factor : 1, z: axis === 2 ? factor : 1 },
+    ));
+  }
   solid.feature = { kind: 'mesh' }; solid.revision++;
 }

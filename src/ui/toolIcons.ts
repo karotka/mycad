@@ -33,6 +33,7 @@ export function toolIcon(command: ToolbarIcon): string {
     SWEEP: '<path d="M4 17c4-1 6-4 8-7s4-5 8-6"/><path d="M14 4h6v6M10 14l4 4"/>',
     UNION: '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 7.2a6 6 0 010 9.6"/>',
     SUBTRACT: '<circle cx="9" cy="12" r="7"/><path d="M12 5.7a7 7 0 010 12.6M14 12h7"/>',
+    INTERSECT: '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 7.2a6 6 0 000 9.6M12 7.2a6 6 0 010 9.6" fill="currentColor" opacity=".35"/>',
     MIRROR: '<path d="M12 2v20M9 5L3 9v6l6 4V5zM15 5l6 4v6l-6 4" stroke-dasharray="2 2"/>',
     JOIN: '<path d="M3 18l6-7 5 4 7-10M7 11h4M12 15h4"/><circle cx="9" cy="11" r="1.5"/><circle cx="14" cy="15" r="1.5"/>',
     EXPLODE: '<rect x="7" y="7" width="10" height="10"/><path d="M7 7L3 3M17 7l4-4M7 17l-4 4M17 17l4 4M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4"/>',

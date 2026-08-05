@@ -1,10 +1,11 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type ExactSolidGeometry, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
 import { solidBounds } from './PickingService';
 import { translatedFeature } from '../core/solids/featureTransform';
+import { scaleAffine, transformedExactGeometry, translationAffine } from '../core/geometry/ExactTransform';
 
 export type GripMode = 'end' | 'center' | 'middle';
 /** `angle` (radians) orients an edge grip along the edge it sits on. */
@@ -17,7 +18,9 @@ type DragState = {
   origin: Vec2;
   originalEntity?: Entity;
   originalPositions?: Float32Array;
+  originalIndices?: Uint32Array;
   originalFeature?: SolidFeature;
+  originalExact?: ExactSolidGeometry;
   originalRevision?: number;
 };
 
@@ -362,7 +365,9 @@ export class GripController {
       origin: { ...origin },
       originalEntity: entity ? cloneEntity(entity) : undefined,
       originalPositions: solid?.mesh.positions.slice(),
+      originalIndices: solid?.mesh.indices.slice(),
       originalFeature: solid ? JSON.parse(JSON.stringify(solid.feature)) : undefined,
+      originalExact: solid?.exact ? cloneSolid(solid).exact : undefined,
       originalRevision: solid?.revision,
     };
     this.changed = false;
@@ -389,7 +394,9 @@ export class GripController {
       if (current) {
         const before = cloneSolid(current);
         before.mesh.positions = this.drag.originalPositions.slice();
+        if (this.drag.originalIndices) before.mesh.indices = this.drag.originalIndices.slice();
         if (this.drag.originalFeature) before.feature = JSON.parse(JSON.stringify(this.drag.originalFeature));
+        before.exact = this.drag.originalExact ? { ...this.drag.originalExact, shape: { ...this.drag.originalExact.shape } } : undefined;
         if (this.drag.originalRevision !== undefined) before.revision = this.drag.originalRevision;
         this.history.recordApplied(new UpdateSolidEdit('Edit solid grip', before, cloneSolid(current)));
       }
@@ -407,7 +414,9 @@ export class GripController {
       const solid = this.doc.getSolid(this.drag.objectId);
       if (solid) {
         solid.mesh.positions = this.drag.originalPositions.slice();
+        if (this.drag.originalIndices) solid.mesh.indices = this.drag.originalIndices.slice();
         if (this.drag.originalFeature) solid.feature = JSON.parse(JSON.stringify(this.drag.originalFeature));
+        solid.exact = this.drag.originalExact ? { ...this.drag.originalExact, shape: { ...this.drag.originalExact.shape } } : undefined;
         if (this.drag.originalRevision !== undefined) solid.revision = this.drag.originalRevision;
       }
     }
@@ -520,6 +529,8 @@ export class GripController {
     const b = solidBounds({ ...solid, mesh: { ...solid.mesh, positions: this.drag.originalPositions } });
     let appliedScaleX = 1;
     let appliedScaleY = 1;
+    let scaleAnchorX = 0;
+    let scaleAnchorY = 0;
     const anchors = [[b.maxX, b.maxY], [b.minX, b.maxY], [b.minX, b.minY], [b.maxX, b.minY]];
     if (this.mode === 'center') {
       for (let i = 0; i < positions.length; i += 3) { positions[i] += dx; positions[i + 1] += dy; }
@@ -528,6 +539,8 @@ export class GripController {
       const dragged = [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY]];
       if (this.mode === 'end') {
         const anchor = anchors[side];
+        scaleAnchorX = anchor[0];
+        scaleAnchorY = anchor[1];
         const start = dragged[side];
         const sx = (start[0] + dx - anchor[0]) / (start[0] - anchor[0] || 1);
         const sy = (start[1] + dy - anchor[1]) / (start[1] - anchor[1] || 1);
@@ -538,10 +551,10 @@ export class GripController {
           positions[i + 1] = anchor[1] + (positions[i + 1] - anchor[1]) * sy;
         }
       } else if (this.mode === 'middle') {
-        if (side === 0) appliedScaleY = (b.minY + dy - b.maxY) / (b.minY - b.maxY || 1);
-        if (side === 1) appliedScaleX = (b.maxX + dx - b.minX) / (b.maxX - b.minX || 1);
-        if (side === 2) appliedScaleY = (b.maxY + dy - b.minY) / (b.maxY - b.minY || 1);
-        if (side === 3) appliedScaleX = (b.minX + dx - b.maxX) / (b.minX - b.maxX || 1);
+        if (side === 0) { appliedScaleY = (b.minY + dy - b.maxY) / (b.minY - b.maxY || 1); scaleAnchorY = b.maxY; }
+        if (side === 1) { appliedScaleX = (b.maxX + dx - b.minX) / (b.maxX - b.minX || 1); scaleAnchorX = b.minX; }
+        if (side === 2) { appliedScaleY = (b.maxY + dy - b.minY) / (b.maxY - b.minY || 1); scaleAnchorY = b.minY; }
+        if (side === 3) { appliedScaleX = (b.minX + dx - b.maxX) / (b.minX - b.maxX || 1); scaleAnchorX = b.maxX; }
         for (let i = 0; i < positions.length; i += 3) {
           if (side === 0) positions[i + 1] = b.maxY + (positions[i + 1] - b.maxY) * ((b.minY + dy - b.maxY) / (b.minY - b.maxY || 1));
           if (side === 1) positions[i] = b.minX + (positions[i] - b.minX) * ((b.maxX + dx - b.minX) / (b.maxX - b.minX || 1));
@@ -551,6 +564,16 @@ export class GripController {
       }
     }
     solid.mesh.positions = positions;
+    if (this.drag.originalIndices) {
+      solid.mesh.indices = this.drag.originalIndices.slice();
+      if (appliedScaleX * appliedScaleY < 0) {
+        for (let index = 0; index + 2 < solid.mesh.indices.length; index += 3) {
+          const swap = solid.mesh.indices[index + 1];
+          solid.mesh.indices[index + 1] = solid.mesh.indices[index + 2];
+          solid.mesh.indices[index + 2] = swap;
+        }
+      }
+    }
     const originalFeature = this.drag.originalFeature;
     if (originalFeature && this.mode === 'center') {
       // Moving the whole body moves the feature's edge references and saved
@@ -572,6 +595,15 @@ export class GripController {
       // regenerate a different shape.
       solid.feature = { kind: 'mesh' };
     }
-    solid.revision++;
+    const sourceRevision = this.drag.originalRevision ?? solid.revision;
+    const nextRevision = sourceRevision + 1;
+    const transform = this.mode === 'center'
+      ? translationAffine({ x: dx, y: dy, z: 0 })
+      : scaleAffine(
+        { x: scaleAnchorX, y: scaleAnchorY, z: 0 },
+        { x: appliedScaleX, y: appliedScaleY, z: 1 },
+      );
+    solid.exact = transformedExactGeometry(this.drag.originalExact, sourceRevision, transform, nextRevision);
+    solid.revision = nextRevision;
   }
 }

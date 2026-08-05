@@ -2,8 +2,8 @@ import { Document } from '../core/Document';
 import { entityBounds, type Entity, type PrimitiveFeature, type Solid, type SolidFeature, type SolidMesh } from '../core/entities/types';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit, cloneSolid, ReplaceObjectsEdit, UpdateSolidEdit } from '../core/history/edits';
-import { booleanSubtract, booleanUnion, primitiveMesh } from '../core/solids/ManifoldEngine';
 import { featureRemovalForPoint } from '../core/solids/featureRemoval';
+import { booleanExactSolids, buildExactFeature } from '../core/geometry/ExactSolid';
 import { exportAsciiStl } from '../io/ProjectIO';
 import type { Vec3 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis } from '../math/workplane';
@@ -192,7 +192,7 @@ export class CadModelApi {
     return this.summary();
   }
 
-  createPrimitive(input: PrimitiveInput): Record<string, unknown> {
+  async createPrimitive(input: PrimitiveInput): Promise<Record<string, unknown>> {
     const centerX = finite(input.center.x, 'center.x');
     const centerY = finite(input.center.y, 'center.y');
     const z = input.center.z === undefined ? 0 : finite(input.center.z, 'center.z');
@@ -230,14 +230,17 @@ export class CadModelApi {
       }
     }
     const defaultName = input.primitive[0].toUpperCase() + input.primitive.slice(1);
+    const geometry = await buildExactFeature(feature);
+    if (!geometry) throw new Error(`OpenCascade cannot build the ${input.primitive} primitive.`);
     const solid = this.documentValue.createSolid(
-      primitiveMesh(feature),
+      geometry.mesh,
       input.name?.trim() || defaultName,
       feature.height,
       [],
       undefined,
       feature,
     );
+    solid.exact = geometry.exact;
     this.historyValue.execute(new ReplaceObjectsEdit(`MCP create ${defaultName}`, [], [], [], [solid]));
     this.documentValue.viewMode = '3d';
     this.selectObjects([solid.id]);
@@ -276,36 +279,35 @@ export class CadModelApi {
     return lines.map((line) => entitySummary(this.documentValue.getEntity(line.id)!));
   }
 
-  async booleanOperation(operation: 'union' | 'subtract', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {
+  async booleanOperation(operation: 'union' | 'subtract' | 'intersect', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {
     const ids = [...new Set(solidIds)];
     if (ids.length < 2) throw new Error(`${operation} requires at least two solid IDs.`);
     const solids = ids.map((id) => this.documentValue.getSolid(id));
     const missing = ids.filter((_, index) => !solids[index]);
     if (missing.length > 0) throw new Error(`Unknown solid ID(s): ${missing.join(', ')}.`);
     const sources = solids as Solid[];
-    let mesh: SolidMesh | null;
     let feature: SolidFeature;
     if (operation === 'union') {
-      mesh = await booleanUnion(sources.map((solid) => solid.mesh), true);
       feature = { kind: 'boolean', operation: 'union', operands: sources.map((solid) => cloneFeature(solid.feature)) };
+    } else if (operation === 'intersect') {
+      feature = { kind: 'boolean', operation: 'intersect', operands: sources.map((solid) => cloneFeature(solid.feature)) };
     } else {
-      mesh = sources[0].mesh;
       feature = cloneFeature(sources[0].feature);
       for (const cutter of sources.slice(1)) {
-        mesh = await booleanSubtract(mesh, cutter.mesh);
-        if (!mesh) break;
         feature = { kind: 'boolean', operation: 'subtract', operands: [feature, cloneFeature(cutter.feature)] };
       }
     }
-    if (!mesh || mesh.indices.length === 0) throw new Error(`${operation} did not produce a valid solid.`);
+    const exact = await booleanExactSolids(operation, sources);
+    if (!exact || exact.mesh.indices.length === 0) throw new Error(`${operation} did not produce a valid exact solid.`);
     const result = this.documentValue.createSolid(
-      mesh,
-      name?.trim() || (operation === 'union' ? 'Union' : 'Subtract'),
-      meshHeight(mesh),
+      exact.mesh,
+      name?.trim() || (operation === 'union' ? 'Union' : operation === 'subtract' ? 'Subtract' : 'Intersect'),
+      meshHeight(exact.mesh),
       [],
       undefined,
       feature,
     );
+    result.exact = exact.exact;
     this.historyValue.execute(new ReplaceObjectsEdit(`MCP ${operation}`, [], sources, [], [result]));
     this.selectObjects([result.id]);
     return solidSummary(this.documentValue.getSolid(result.id)!);

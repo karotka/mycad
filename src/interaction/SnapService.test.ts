@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { measurementCandidates, nearestCandidate2d, nearestEdgeWorldPoint, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
-import { createBoxMesh, createCylinderMesh } from '../core/solids/ManifoldEngine';
+import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 
 /** Candidates carry the snap that found them; these tests care about the points. */
 const points = (doc: CadDocument, mode: ObjectSnapMode, excluded?: string | null, reference?: { x: number; y: number; z: number } | null) =>

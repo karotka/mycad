@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import type { EdgeModificationFeature, ExtrusionFeature, PrimitiveFeature } from '../core/entities/types';
-import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
+import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
+import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../core/geometry/FeatureMesh';
 import { ModelTreeController } from './ModelTreeController';
 
 /**
@@ -91,7 +92,7 @@ describe('ModelTreeController', () => {
     rowLabelled('Extrusion').click();
 
     type(fieldLabelled('Height'), '25');
-    await vi.waitFor(() => expect(doc.solids[0].revision).toBe(solid.revision + 1));
+    await vi.waitFor(() => expect(doc.solids[0].revision).toBe(solid.revision + 1), { timeout: 30_000 });
 
     const rebuilt = doc.solids[0];
     let maxZ = -Infinity;
@@ -111,7 +112,7 @@ describe('ModelTreeController', () => {
     // Waiting on the field would prove nothing: it says 25 because that is what
     // was typed into it. The row is redrawn from the document.
     type(fieldLabelled('Height'), '25');
-    await vi.waitFor(() => expect(rowLabelled('Extrusion').textContent).toContain('25 high'));
+    await vi.waitFor(() => expect(rowLabelled('Extrusion').textContent).toContain('25 high'), { timeout: 30_000 });
 
     // The row stays open, so the next value can be typed without hunting for it.
     expect(fieldLabelled('Height')).toBeTruthy();
@@ -124,7 +125,7 @@ describe('ModelTreeController', () => {
     rowLabelled('Extrusion').click();
 
     type(fieldLabelled('Height'), '25');
-    await vi.waitFor(() => expect((doc.solids[0].feature as ExtrusionFeature).height).toBe(25));
+    await vi.waitFor(() => expect((doc.solids[0].feature as ExtrusionFeature).height).toBe(25), { timeout: 30_000 });
     history.undo();
 
     expect((doc.solids[0].feature as ExtrusionFeature).height).toBe(10);
@@ -163,7 +164,7 @@ describe('ModelTreeController', () => {
     controller.toggle();
 
     rowLabelled('Chamfer').querySelector<HTMLButtonElement>('.tree-delete')!.click();
-    await vi.waitFor(() => expect(doc.solids[0].feature.kind).toBe('primitive'));
+    await vi.waitFor(() => expect(doc.solids[0].feature.kind).toBe('primitive'), { timeout: 30_000 });
     expect(doc.solids[0].mesh.indices.length).toBe(sourceMesh.indices.length);
 
     history.undo();

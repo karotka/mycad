@@ -719,13 +719,15 @@ async function dispatchMcpRequest(request: { id: string; method: string; params:
           (params.mode ?? 'replace') as SelectionMode,
         );
         break;
-      case 'create_primitive': result = cadMcp.createPrimitive(params as unknown as PrimitiveInput); break;
+      case 'create_primitive': result = await cadMcp.createPrimitive(params as unknown as PrimitiveInput); break;
       case 'create_lines':
         if (!Array.isArray(params.segments)) throw new Error('Line segments are required.');
         result = cadMcp.createLines(params.segments as LineSegmentInput[]);
         break;
       case 'boolean_solids':
-        if (params.operation !== 'union' && params.operation !== 'subtract') throw new Error('Boolean operation must be union or subtract.');
+        if (params.operation !== 'union' && params.operation !== 'subtract' && params.operation !== 'intersect') {
+          throw new Error('Boolean operation must be union, subtract or intersect.');
+        }
         result = await cadMcp.booleanOperation(
           params.operation,
           stringArray(params.solidIds, 'solidIds'),

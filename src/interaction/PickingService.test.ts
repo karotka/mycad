@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { applyProjectedWindowSelection, applyWindowSelection, pickEntityAt } from './PickingService';
 import { snapPoint2 } from '../math/geometry';
-import { createBoxMesh } from '../core/solids/ManifoldEngine';
+import { createBoxMesh } from '../core/geometry/PrimitiveMesh';
 
 describe('window selection', () => {
   it('distinguishes contained and crossing objects and ignores hidden layers', () => {

@@ -45,20 +45,13 @@ dimension-picture blocks plus DIMENSION records that reference them.
 
 These can now build on the shared planar-face and boundary-loop representation.
 
-### Extend DELETEFACE beyond convex planar bodies
-
-DELETEFACE removes a picked face introduced by the latest
-CHAMFER/FILLET/PRESSPULL feature, and heals a bounded face on an imported or
-otherwise baked convex planar body by extending its remaining support planes.
-What remains is local healing on concave bodies, faces around holes and curved
-analytic surfaces; these cannot use a global convex reconstruction without
-silently filling material.
-
 ### Persistent SLICE feature
 
-SLICE currently produces two correct capped mesh bodies. A future feature-tree
-version could retain the cutting plane and offer keep-both/keep-side choices.
-This is useful but lower priority because the existing command is already usable.
+SLICE currently promotes old mesh bodies when necessary and produces two exact,
+capped B-reps, but the result is intentionally stored as a baked shape. A future
+feature-tree version could retain the cutting plane and offer keep-both/keep-side
+choices. This is useful but lower priority because the existing command is
+already usable.
 
 ### Loft and freeform surfaces
 
@@ -132,11 +125,15 @@ Current candidates, only if profiling points at them:
 - intersection snap is O(entity pairs × segment pairs) and performs work-plane
   transforms inside the nested loops on every relevant pointer move;
 - `entityRenderKey` serialises each mutable entity with `JSON.stringify`;
-- Manifold booleans run synchronously on the main thread after async WASM init.
+- OpenCascade modelling runs synchronously on the main thread after async WASM
+  initialisation. Move it into a geometry worker if profiling shows visible UI
+  stalls.
 
 Measured reference costs were roughly 0.12 ms for measurement candidates and
-300–400 ms for large one-off sweep/union operations. A worker is not justified
-until real models show longer blocking operations.
+300–400 ms for large one-off modelling operations. A worker is not justified
+until real models show longer blocking operations. The full OpenCascade build is
+also a roughly 50 MB WASM asset; before distribution, produce a custom build with
+only the used OCCT modules and verify the LGPL distribution obligations.
 
 ---
 
@@ -184,20 +181,7 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ---
 
-## 7. Manifold dependency and CSP
-
-The browser CSP still needs `unsafe-eval` because manifold 2.5.1's Emscripten
-embind creates invokers with `new Function`. Tightening the policy without
-changing the build breaks every boolean, extrusion and sweep while Node tests
-continue to pass.
-
-The real fix is a manifold build with `-sDYNAMIC_EXECUTION=0`, either vendored or
-supported upstream. Evaluate that together with a manifold upgrade as a separate
-job: newer releases have API differences and a smaller WASM payload.
-
----
-
-## 8. Housekeeping
+## 7. Housekeeping
 
 - no ESLint, Prettier or CI; tests and `tsc` are run manually;
 - `noUnusedLocals` and `noUnusedParameters` are disabled;

@@ -1,16 +1,12 @@
 /**
  * The primitive solids: pick where it goes, pick how big, and it exists.
  *
- * Six commands that were six near-identical cases, each building its mesh by
- * hand — the local builder, then the work plane transform, then the feature
- * describing the same thing a second time. `primitiveMesh` already does all of
- * that from the feature alone, so the feature is the only thing left to say. It
- * is the same duplication the properties panel had, and it had already drifted
- * there; here it had not yet, which is the only difference.
+ * Six commands share one exact feature builder, so placement, rendering mesh
+ * and editable parameters cannot describe different shapes.
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
 import type { PrimitiveFeature } from '../../entities/types';
-import { primitiveMesh } from '../../solids/ManifoldEngine';
+import { buildExactFeature } from '../../geometry/ExactSolid';
 import { cloneWorkPlane, type WorkPlane } from '../../../math/workplane';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
@@ -20,8 +16,16 @@ import type { CommandRun, StepOutcome } from '../types';
  * from the engine rather than from the caller, so a primitive cannot be built
  * one way and described another.
  */
-function place(run: CommandRun, name: string, feature: PrimitiveFeature, message: string): StepOutcome {
-  const solid = run.ctx.doc.createSolid(primitiveMesh(feature), name, feature.height, [], undefined, feature);
+async function placeExactPrimitive(
+  run: CommandRun,
+  name: string,
+  feature: PrimitiveFeature,
+  message: string,
+): Promise<StepOutcome> {
+  const geometry = await buildExactFeature(feature);
+  if (!geometry) throw new Error(`OpenCascade cannot build the ${feature.primitive} primitive.`);
+  const solid = run.ctx.doc.createSolid(geometry.mesh, name, feature.height, [], undefined, feature);
+  solid.exact = geometry.exact;
   run.ctx.history.execute(new ReplaceObjectsEdit(name, [], [], [], [solid]));
   run.ctx.doc.viewMode = '3d';
   run.ctx.log(message);
@@ -99,7 +103,11 @@ export function torusPrimitiveFeature(
 }
 
 /** A box and a wedge are the same wizard: two corners, then a height. */
-function boxLike(run: CommandRun, name: 'Box' | 'Wedge', primitive: 'box' | 'wedge'): StepOutcome {
+function boxLike(
+  run: CommandRun,
+  name: 'Box' | 'Wedge',
+  primitive: 'box' | 'wedge',
+): StepOutcome | Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.start = value; return 'advance'; }
   if (active.stepIndex === 1) {
@@ -117,19 +125,16 @@ function boxLike(run: CommandRun, name: 'Box' | 'Wedge', primitive: 'box' | 'wed
     ctx.log(`${name} dimensions must be greater than zero.`);
     return 'stay';
   }
-  return place(
-    run,
-    name,
-    feature,
-    `${name} created: ${round(feature.width!)} × ${round(feature.depth!)} × ${round(feature.height)}`,
-  );
+  const message =
+    `${name} created: ${round(feature.width!)} × ${round(feature.depth!)} × ${round(feature.height)}`;
+  return placeExactPrimitive(run, name, feature, message);
 }
 
-export const createBox = (run: CommandRun): StepOutcome => boxLike(run, 'Box', 'box');
-export const createWedge = (run: CommandRun): StepOutcome => boxLike(run, 'Wedge', 'wedge');
+export const createBox = (run: CommandRun): StepOutcome | Promise<StepOutcome> => boxLike(run, 'Box', 'box');
+export const createWedge = (run: CommandRun): StepOutcome | Promise<StepOutcome> => boxLike(run, 'Wedge', 'wedge');
 
 /** A cylinder, a cone and a pyramid are the same wizard: centre, radius, height. */
-function radialLike(run: CommandRun, name: 'Cylinder' | 'Cone' | 'Pyramid', primitive: 'cylinder' | 'cone' | 'pyramid'): StepOutcome {
+function radialLike(run: CommandRun, name: 'Cylinder' | 'Cone' | 'Pyramid', primitive: 'cylinder' | 'cone' | 'pyramid'): StepOutcome | Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.center = value; return 'advance'; }
   if (active.stepIndex === 1) {
@@ -151,7 +156,7 @@ function radialLike(run: CommandRun, name: 'Cylinder' | 'Cone' | 'Pyramid', prim
     ctx.log(`${name} radius and height must be greater than zero.`);
     return 'stay';
   }
-  return place(
+  return placeExactPrimitive(
     run,
     name,
     feature,
@@ -159,11 +164,11 @@ function radialLike(run: CommandRun, name: 'Cylinder' | 'Cone' | 'Pyramid', prim
   );
 }
 
-export const createCylinder = (run: CommandRun): StepOutcome => radialLike(run, 'Cylinder', 'cylinder');
-export const createCone = (run: CommandRun): StepOutcome => radialLike(run, 'Cone', 'cone');
-export const createPyramid = (run: CommandRun): StepOutcome => radialLike(run, 'Pyramid', 'pyramid');
+export const createCylinder = (run: CommandRun): StepOutcome | Promise<StepOutcome> => radialLike(run, 'Cylinder', 'cylinder');
+export const createCone = (run: CommandRun): StepOutcome | Promise<StepOutcome> => radialLike(run, 'Cone', 'cone');
+export const createPyramid = (run: CommandRun): StepOutcome | Promise<StepOutcome> => radialLike(run, 'Pyramid', 'pyramid');
 
-export function createSphere(run: CommandRun): StepOutcome {
+export function createSphere(run: CommandRun): StepOutcome | Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.center = value; return 'advance'; }
 
@@ -173,14 +178,14 @@ export function createSphere(run: CommandRun): StepOutcome {
     ctx.log('Sphere radius must be greater than zero.');
     return 'stay';
   }
-  return place(run, 'Sphere',
+  return placeExactPrimitive(run, 'Sphere',
     // A sphere's height is twice its radius and follows it, which is the same
     // rule `primitiveParams` keeps: two ways to say one number disagree.
     { kind: 'primitive', primitive: 'sphere', center, radius, height: radius * 2, workPlane: cloneWorkPlane(ctx.doc.activeWorkPlane) },
     `Sphere created: R${round(radius)}`);
 }
 
-export function createTorus(run: CommandRun): StepOutcome {
+export function createTorus(run: CommandRun): StepOutcome | Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) { data.center = value; return 'advance'; }
   if (active.stepIndex === 1) {
@@ -204,7 +209,7 @@ export function createTorus(run: CommandRun): StepOutcome {
   }
   const feature = torusPrimitiveFeature(center, data.radiusPoint as Vec2, tubeRadius, ctx.doc.activeWorkPlane);
   if (!feature) return 'stay';
-  return place(run, 'Torus',
+  return placeExactPrimitive(run, 'Torus',
     feature,
     `Torus created: R${round(feature.radius!)}, tube R${round(feature.tubeRadius!)}`);
 }

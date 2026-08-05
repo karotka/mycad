@@ -2,7 +2,8 @@ import type { Vec2, Vec3 } from '../../../math/geometry';
 import { localToWorld } from '../../../math/workplane';
 import type { Solid, SolidFaceSelection, SolidMesh } from '../../entities/types';
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { splitSolidByPlane } from '../../solids/ManifoldEngine';
+import { exactResult, openExactShape, promoteSolidToExact } from '../../geometry/ExactSolid';
+import { openCascadeKernel } from '../../geometry/OpenCascadeRuntime';
 import type { CommandContext, CommandRun, StepOutcome } from '../types';
 
 interface CuttingPlane {
@@ -48,7 +49,13 @@ function planeFromPoints(first: Vec3, second: Vec3, third: Vec3): CuttingPlane |
     : { origin: first, normal };
 }
 
-function slicedPiece(ctx: CommandContext, source: Solid, mesh: SolidMesh, index: number): Solid {
+function slicedPiece(
+  ctx: CommandContext,
+  source: Solid,
+  mesh: SolidMesh,
+  index: number,
+  exact?: NonNullable<Solid['exact']>,
+): Solid {
   const piece = ctx.doc.createSolid(
     mesh,
     `${source.name}_Slice${index}`,
@@ -61,6 +68,7 @@ function slicedPiece(ctx: CommandContext, source: Solid, mesh: SolidMesh, index:
   piece.layer = source.layer;
   piece.aci = source.aci;
   piece.color = source.color;
+  piece.exact = exact;
   return piece;
 }
 
@@ -68,13 +76,31 @@ async function applySlice(ctx: CommandContext, sources: readonly Solid[], plane:
   ctx.log(`Slicing ${sources.length} solid(s)…`);
   const removed: Solid[] = [];
   const pieces: Solid[] = [];
+  const exactKernel = await openCascadeKernel();
   for (const source of sources) {
     const current = ctx.doc.getSolid(source.id);
     if (!current) continue;
-    const split = await splitSolidByPlane(current.mesh, plane.origin, plane.normal);
-    if (!split) continue;
-    removed.push(current);
-    pieces.push(slicedPiece(ctx, current, split[0], 1), slicedPiece(ctx, current, split[1], 2));
+    if (!await promoteSolidToExact(current)) continue;
+    const exactSource = await openExactShape(current, exactKernel);
+    if (!exactSource) continue;
+    try {
+      const exactPieces = exactKernel.splitByPlane(exactSource, plane);
+      if (exactPieces.length < 2) {
+        exactPieces.forEach((piece) => piece.dispose());
+        continue;
+      }
+      removed.push(current);
+      exactPieces.forEach((pieceShape, index) => {
+        try {
+          const geometry = exactResult(exactKernel, pieceShape, 0);
+          pieces.push(slicedPiece(ctx, current, geometry.mesh, index + 1, geometry.exact));
+        } finally {
+          pieceShape.dispose();
+        }
+      });
+    } finally {
+      exactSource.dispose();
+    }
   }
 
   if (removed.length === 0) {

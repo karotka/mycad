@@ -165,7 +165,7 @@ export function setPrimitiveParam(feature: PrimitiveFeature, key: string, value:
 
   if (key === 'scaleX' || key === 'scaleY' || key === 'scaleZ') {
     // A zero factor flattens the shape into nothing, which is not a solid and
-    // which Manifold will not weld to anything.
+    // which no regular solid boolean can weld to anything.
     if (value === 0) return false;
     const scale = { ...(feature.scale ?? { x: 1, y: 1, z: 1 }) };
     scale[key === 'scaleX' ? 'x' : key === 'scaleY' ? 'y' : 'z'] = value;
@@ -174,9 +174,15 @@ export function setPrimitiveParam(feature: PrimitiveFeature, key: string, value:
   }
   if (key === 'width') { feature.width = value; return true; }
   if (key === 'depth') { feature.depth = value; return true; }
-  if (key === 'tubeRadius') { feature.tubeRadius = value; return true; }
+  if (key === 'tubeRadius') {
+    if (feature.primitive !== 'torus' || value >= (feature.radius ?? 0)) return false;
+    feature.tubeRadius = value;
+    feature.height = value * 2;
+    return true;
+  }
   if (key === 'radiusTop') { feature.radiusTop = value; return true; }
   if (key === 'radius') {
+    if (feature.primitive === 'torus' && value <= (feature.tubeRadius ?? 0)) return false;
     feature.radius = value;
     if (feature.primitive === 'sphere') feature.height = value * 2;
     return true;

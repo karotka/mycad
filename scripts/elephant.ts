@@ -20,7 +20,7 @@ import { writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { Document } from '../src/core/Document';
-import { regenerateSolidFeature } from '../src/core/solids/ManifoldEngine';
+import { buildExactFeature } from '../src/core/geometry/ExactSolid';
 import { serializeProject } from '../src/io/ProjectIO';
 import { workPlaneFromAxis } from '../src/math/workplane';
 import type { PrimitiveFeature, SolidFeature } from '../src/core/entities/types';
@@ -151,14 +151,16 @@ async function main(): Promise<void> {
   console.log(`Building an elephant out of ${count(solid)} primitives...`);
 
   const started = Date.now();
-  const mesh = await regenerateSolidFeature(solid);
-  if (!mesh) throw new Error('The engine could not build it.');
+  const geometry = await buildExactFeature(solid);
+  if (!geometry) throw new Error('The engine could not build it.');
 
   const doc = new Document();
-  doc.addSolid(doc.createSolid(mesh, 'Elephant', 0, [], 0xd2703c, solid));
+  const elephant = doc.createSolid(geometry.mesh, 'Elephant', 0, [], 0xd2703c, solid);
+  elephant.exact = geometry.exact;
+  doc.addSolid(elephant);
   writeFileSync(output, serializeProject(doc));
 
-  console.log(`${mesh.indices.length / 3} triangles in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  console.log(`${geometry.mesh.indices.length / 3} triangles in ${((Date.now() - started) / 1000).toFixed(1)}s`);
   console.log(`Written to ${output} — open it in MyCAD.`);
 }
 

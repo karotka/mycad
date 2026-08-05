@@ -115,7 +115,7 @@ export class DesktopCadClient implements CadMcpBackend {
   createLines(segments: readonly LineSegmentInput[]): Promise<Array<Record<string, unknown>>> {
     return this.call('create_lines', { segments });
   }
-  booleanOperation(operation: 'union' | 'subtract', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {
+  booleanOperation(operation: 'union' | 'subtract' | 'intersect', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {
     return this.call('boolean_solids', { operation, solidIds, name });
   }
   deleteFeature(

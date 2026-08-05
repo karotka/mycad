@@ -66,6 +66,15 @@ describe('setPrimitiveParam', () => {
     // But a negative one only mirrors it, and that is a real shape.
     expect(setPrimitiveParam(sphere, 'scaleY', -1)).toBe(true);
   });
+
+  it('keeps torus radii in the valid ring range', () => {
+    const torus = feature({ primitive: 'torus', radius: 10, tubeRadius: 2, height: 4 });
+    expect(setPrimitiveParam(torus, 'tubeRadius', 10)).toBe(false);
+    expect(setPrimitiveParam(torus, 'radius', 2)).toBe(false);
+    expect(setPrimitiveParam(torus, 'tubeRadius', 3)).toBe(true);
+    expect(setPrimitiveParam(torus, 'radius', 12)).toBe(true);
+    expect(torus).toMatchObject({ radius: 12, tubeRadius: 3, height: 6 });
+  });
 });
 
 describe('extrusions', () => {

@@ -17,8 +17,6 @@ import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expan
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
-import {
-} from '../solids/ManifoldEngine';
 import { translatedFeature } from '../solids/featureTransform';
 import { rotateSolidAroundPlane } from './steps/transform';
 

@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "manifold-3d": "^2.5.1",
+    "opencascade.js": "^2.0.0-beta.b5ff984",
     "three": "^0.170.0",
     "zod": "^3.25.76"
   },

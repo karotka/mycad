@@ -3,7 +3,9 @@ import { Document } from '../core/Document';
 import { dimensionGeometry, type DimensionEntity } from '../core/entities/types';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { PropertiesController } from './PropertiesController';
-import { primitiveMesh } from '../core/solids/ManifoldEngine';
+import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
+import { buildExactFeature, openExactShape } from '../core/geometry/ExactSolid';
+import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
 
 const element = (hidden = true) => ({ hidden, addEventListener: vi.fn() }) as unknown as HTMLElement;
 
@@ -63,7 +65,7 @@ describe('PropertiesController', () => {
     expect(dimensionGeometry(doc.getEntity(dimension.id) as DimensionEntity).text).toBe('4× 10.00 ±0.00 mm TYP');
   });
 
-  it('keeps an ellipsoid an ellipsoid when its radius is edited', () => {
+  it('keeps an ellipsoid an ellipsoid when its radius is edited', async () => {
     const doc = new Document();
     const history = new CommandHistory(doc);
     const feature = {
@@ -77,18 +79,22 @@ describe('PropertiesController', () => {
 
     (controller as unknown as { updateOne(object: typeof solid, key: string, value: number): void })
       .updateOne(solid, 'radius', 20);
+    await vi.waitFor(() => expect(doc.solids[0].revision).toBe(solid.revision + 1), { timeout: 30_000 });
 
     // The panel used to rebuild the mesh from its own copy of the engine's
     // switch, which knew nothing of scale — so editing the radius of a squashed
     // sphere silently inflated it back into a ball.
     const updated = doc.solids[0];
-    let maxZ = -Infinity, maxX = -Infinity;
-    for (let i = 0; i < updated.mesh.positions.length; i += 3) {
-      maxX = Math.max(maxX, updated.mesh.positions[i]);
-      maxZ = Math.max(maxZ, updated.mesh.positions[i + 2]);
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(updated, kernel);
+    expect(shape).not.toBeNull();
+    if (shape) {
+      expect(kernel.inspect(shape).bounds).toMatchObject({
+        min: { x: expect.closeTo(-20, 6), y: expect.closeTo(-20, 6), z: expect.closeTo(-5, 6) },
+        max: { x: expect.closeTo(20, 6), y: expect.closeTo(20, 6), z: expect.closeTo(5, 6) },
+      });
+      shape.dispose();
     }
-    expect(maxX).toBeCloseTo(20, 4);
-    expect(maxZ).toBeCloseTo(5, 4);
   });
 
   const subtracted = (doc: Document) => {
@@ -188,4 +194,63 @@ describe('PropertiesController', () => {
     for (let i = 0; i < updated.mesh.positions.length; i += 3) minX = Math.min(minX, updated.mesh.positions[i]);
     expect(minX).toBeCloseTo(20, 4);
   });
+
+  it('moves exact geometry with the position fields and restores it on undo', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const feature = {
+      kind: 'primitive' as const, primitive: 'box' as const,
+      center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    };
+    // SLICE pieces deliberately have no regenerable feature but do retain B-rep.
+    const solid = doc.createSolid(primitiveMesh(feature), 'Exact piece', 4, [], 0xffffff, { kind: 'mesh' });
+    solid.exact = {
+      kernel: 'opencascade', revision: solid.revision,
+      shape: { format: 'occt-brep-v1', data: 'fixture' },
+    };
+    doc.addSolid(solid);
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateOne(object: typeof solid, key: string, value: number): void })
+      .updateOne(solid, 'x', 20);
+
+    expect(doc.solids[0].exact).toMatchObject({
+      revision: doc.solids[0].revision,
+      transform: [1, 0, 0, 25, 0, 1, 0, 0, 0, 0, 1, 0],
+    });
+    history.undo();
+    expect(doc.solids[0].exact).toEqual(solid.exact);
+
+    const restored = doc.solids[0];
+    (controller as unknown as { updateOne(object: typeof restored, key: string, value: number): void })
+      .updateOne(restored, 'width', 20);
+    expect(doc.solids[0].exact).toMatchObject({
+      revision: doc.solids[0].revision,
+      transform: [2, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0],
+    });
+  });
+
+  it('regenerates exact primitive dimensions changed in Properties before committing history', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const feature = {
+      kind: 'primitive' as const, primitive: 'cylinder' as const,
+      center: { x: 0, y: 0 }, radius: 5, height: 4,
+    };
+    const geometry = await buildExactFeature(feature);
+    const solid = doc.createSolid(geometry!.mesh, 'Exact cylinder', 4, [], 0xffffff, feature);
+    solid.exact = geometry!.exact;
+    doc.addSolid(solid);
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateOne(object: typeof solid, key: string, value: number): void })
+      .updateOne(solid, 'radius', 10);
+
+    await vi.waitFor(() => expect(doc.solids[0].revision).toBe(1));
+    expect(doc.solids[0].exact?.revision).toBe(doc.solids[0].revision);
+    expect(Math.min(...Array.from(doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 0))).toBeCloseTo(-10, 5);
+    expect(Math.max(...Array.from(doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 0))).toBeCloseTo(10, 5);
+    history.undo();
+    expect(doc.solids[0].exact?.revision).toBe(0);
+  }, 30_000);
 });

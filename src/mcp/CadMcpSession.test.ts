@@ -24,13 +24,13 @@ describe('CadMcpSession', () => {
     const stlPath = join(directory, 'fixture.stl');
     const session = new CadMcpSession();
 
-    const base = session.createPrimitive({
+    const base = await session.createPrimitive({
       primitive: 'box', center: { x: 0, y: 0 }, width: 80, depth: 50, height: 10,
     });
-    const firstHole = session.createPrimitive({
+    const firstHole = await session.createPrimitive({
       primitive: 'cylinder', center: { x: 15, y: 15, z: -1 }, radius: 2, height: 12,
     });
-    const secondHole = session.createPrimitive({
+    const secondHole = await session.createPrimitive({
       primitive: 'cylinder', center: { x: 65, y: 35, z: -1 }, radius: 2, height: 12,
     });
     const result = await session.booleanOperation('subtract', [
@@ -41,6 +41,7 @@ describe('CadMcpSession', () => {
     expect(session.getObject(String(result.id))).toMatchObject({
       kind: 'solid', name: 'Plate', featureKind: 'boolean',
     });
+    expect(session.document.solids[0].exact?.revision).toBe(session.document.solids[0].revision);
 
     await session.saveProject(projectPath);
     await session.exportStl(stlPath);
@@ -55,15 +56,33 @@ describe('CadMcpSession', () => {
     ]);
   });
 
-  it('keeps MCP changes in the normal undo and redo history', () => {
+  it('keeps exact MCP primitives in the normal undo and redo history', async () => {
     const session = new CadMcpSession();
-    session.createPrimitive({
+    await session.createPrimitive({
       primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10,
     });
 
     expect(session.summary()).toMatchObject({ solidCount: 1, canUndo: true, canRedo: false });
+    expect(session.document.solids[0].exact?.revision).toBe(session.document.solids[0].revision);
     expect(session.undo()).toMatchObject({ solidCount: 0, canUndo: false, canRedo: true });
     expect(session.redo()).toMatchObject({ solidCount: 1, canUndo: true, canRedo: false });
+  });
+
+  it('intersects MCP solids as an exact boolean', async () => {
+    const session = new CadMcpSession();
+    const first = await session.createPrimitive({
+      primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10,
+    });
+    const second = await session.createPrimitive({
+      primitive: 'box', center: { x: 5, y: 0 }, width: 10, depth: 10, height: 10,
+    });
+
+    const common = await session.booleanOperation('intersect', [String(first.id), String(second.id)]);
+
+    expect(common).toMatchObject({ name: 'Intersect', featureKind: 'boolean' });
+    expect(session.document.solids).toHaveLength(1);
+    expect(session.document.solids[0].exact?.revision).toBe(session.document.solids[0].revision);
+    expect(session.document.solids[0].feature).toMatchObject({ kind: 'boolean', operation: 'intersect' });
   });
 
   it('creates horizontal and vertical line entities between 3D UCS points', () => {

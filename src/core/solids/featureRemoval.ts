@@ -12,7 +12,7 @@
  */
 import type { Solid, SolidFeature, SolidMesh } from '../entities/types';
 import type { Vec3 } from '../../math/geometry';
-import { regenerateSolidFeature } from './ManifoldEngine';
+import { buildExactFeature } from '../geometry/ExactSolid';
 
 export interface RemovalCandidate {
   /** Path from the root feature to the feature this removes. */
@@ -238,11 +238,11 @@ function surfaceMatches(
   return Number.isFinite(best) ? { distance: best } : null;
 }
 
-/** The base a subtract cuts from is its operand 0; removing it would strand the cutters. */
-function isSubtractBase(root: SolidFeature, candidate: RemovalCandidate): boolean {
+/** Operand 0 is the body being edited; removing it would strand additions/cutters. */
+function isBooleanBase(root: SolidFeature, candidate: RemovalCandidate): boolean {
   if (candidate.mode !== 'splice' || candidate.path[candidate.path.length - 1] !== 0) return false;
   const parent = featureAt(root, candidate.path.slice(0, -1));
-  return parent?.kind === 'boolean' && parent.operation === 'subtract';
+  return parent?.kind === 'boolean';
 }
 
 export interface FeatureRemovalResult {
@@ -277,9 +277,9 @@ export async function featureRemovalForPoint(solid: Solid, worldPoint: Vec3, wor
   const build = async (candidate: RemovalCandidate): Promise<FeatureRemovalResult | null> => {
     const feature = applyRemoval(root, candidate);
     if (!feature) return null;
-    const mesh = await regenerateSolidFeature(feature);
-    if (!mesh || mesh.indices.length === 0) return null;
-    return { candidate, feature, mesh };
+    const geometry = await buildExactFeature(feature);
+    if (!geometry || geometry.mesh.indices.length === 0) return null;
+    return { candidate, feature, mesh: geometry.mesh };
   };
 
   const clickedNormal = normalized3(worldNormal
@@ -294,10 +294,11 @@ export async function featureRemovalForPoint(solid: Solid, worldPoint: Vec3, wor
   const originalVolume = meshVolume(original);
   let bestSplice: (FeatureRemovalResult & { distance: number; volumeDelta: number }) | null = null;
   for (const candidate of candidates) {
-    if (candidate.mode !== 'splice' || isSubtractBase(root, candidate)) continue;
+    if (candidate.mode !== 'splice' || isBooleanBase(root, candidate)) continue;
     const operand = featureAt(root, candidate.path);
     if (!operand) continue;
-    const operandMesh = await regenerateSolidFeature(operand);
+    const operandGeometry = await buildExactFeature(operand);
+    const operandMesh = operandGeometry?.mesh;
     if (!operandMesh || operandMesh.indices.length === 0) continue;
     const match = surfaceMatches(
       point,

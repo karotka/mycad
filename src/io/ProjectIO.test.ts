@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { WORLD_WORK_PLANE } from '../math/workplane';
 import { resetIdCounter, type EdgeModificationFeature, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type SweepFeature } from '../core/entities/types';
-import { primitiveMesh } from '../core/solids/ManifoldEngine';
+import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
 
@@ -69,6 +69,32 @@ describe('ProjectIO', () => {
     expect(saved.settings).toMatchObject({ gridSize: 1, gridVisible: true, snapSize: 0.5 });
     expect(saved.entities[0].type).toBe('rectangle');
     expect(saved.solids[0].mesh.positions).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 1]);
+  });
+
+  it('round-trips exact B-rep metadata and its triangle-to-face map', () => {
+    const source = new Document();
+    const solid = source.createSolid({
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+      triangleFaceIds: new Uint32Array([4]),
+    }, 'Exact', 1, []);
+    solid.exact = {
+      kernel: 'opencascade',
+      revision: solid.revision,
+      shape: { format: 'occt-brep-v1', data: 'CASCADE Topology V3 fixture' },
+      transform: [
+        1, 0, 0, 12,
+        0, 1, 0, -3,
+        0, 0, 1, 7,
+      ],
+    };
+    source.addSolid(solid);
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.solids[0].mesh.triangleFaceIds).toEqual(new Uint32Array([4]));
+    expect(target.solids[0].exact).toEqual(solid.exact);
   });
 
   it('advances the id counter on load so a new solid cannot overwrite a loaded one', () => {

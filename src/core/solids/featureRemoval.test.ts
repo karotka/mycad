@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { candidateRemovals, applyRemoval, featureRemovalForPoint } from './featureRemoval';
-import { regenerateSolidFeature } from './ManifoldEngine';
+import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import type { Solid, SolidFeature, SolidMesh } from '../entities/types';
 
 const box = (cx: number, cy: number, w: number, d: number, h: number): SolidFeature =>

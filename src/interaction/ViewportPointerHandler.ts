@@ -799,8 +799,19 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       // Delete Face can also remove a hole or bump, whose face need not be
       // planar. If no planar face was hit, still hand it the raw surface point.
       if (!face && commands.active?.name === 'DELETEFACE') {
-        const hit = renderer3d.pickSolidSurfacePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
-        if (hit) face = { solidId: hit.solidId, vertexIndices: [], normal: hit.normal, hitPoint: hit.hitPoint };
+        const hit = renderer3d.pickSolidSurfacePoint(
+          renderer3d.renderer.domElement,
+          event.clientX,
+          event.clientY,
+          cadDocument.solids,
+        );
+        if (hit) face = {
+          solidId: hit.solidId,
+          topologyFaceId: hit.topologyFaceId,
+          vertexIndices: [],
+          normal: hit.normal,
+          hitPoint: hit.hitPoint,
+        };
       }
       const action = resolveViewportAction({
         commandActive: Boolean(commands.active),

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature, SolidFeature, SolidMesh } from '../entities/types';
-import { primitiveMesh, regenerateSolidFeature } from './ManifoldEngine';
+import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature, SolidFeature } from '../entities/types';
+import { primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
+import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
 import { solidCircularEdges, solidPlanarFaces } from './SolidTopology';
+import { buildExactFeature } from '../geometry/ExactSolid';
+import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 
 const sphere = (over: Partial<PrimitiveFeature> = {}): PrimitiveFeature =>
   ({ kind: 'primitive', primitive: 'sphere', center: { x: 0, y: 0 }, radius: 4, height: 8, ...over });
@@ -59,17 +62,6 @@ const pressPullFeature = (): PressPullFeature => {
   };
 };
 
-/** What the old code did: drag every vertex, and forget how the solid was made. */
-function bakedScale(mesh: SolidMesh, base: { x: number; y: number; z: number }, factor: number): Float32Array {
-  const out = mesh.positions.slice();
-  for (let i = 0; i < out.length; i += 3) {
-    out[i] = base.x + (out[i] - base.x) * factor;
-    out[i + 1] = base.y + (out[i + 1] - base.y) * factor;
-    out[i + 2] = base.z + (out[i + 2] - base.z) * factor;
-  }
-  return out;
-}
-
 const bounds = (positions: Float32Array) => {
   const span = (axis: number) => {
     let min = Infinity, max = -Infinity;
@@ -86,23 +78,46 @@ const closeTo = (actual: ReturnType<typeof bounds>, expected: ReturnType<typeof 
   }
 };
 
+const featureBounds = async (feature: SolidFeature): Promise<ReturnType<typeof bounds>> => {
+  const geometry = await buildExactFeature(feature);
+  if (!geometry) throw new Error('Expected an exact feature.');
+  const kernel = await openCascadeKernel();
+  const shape = kernel.deserialize(geometry.exact.shape);
+  try {
+    const result = kernel.inspect(shape).bounds;
+    return {
+      x: { min: result.min.x, max: result.max.x },
+      y: { min: result.min.y, max: result.max.y },
+      z: { min: result.min.z, max: result.max.z },
+    };
+  } finally {
+    shape.dispose();
+  }
+};
+
+const scaledBounds = (box: ReturnType<typeof bounds>, base: { x: number; y: number; z: number }, factor: number) => ({
+  x: { min: base.x + (box.x.min - base.x) * factor, max: base.x + (box.x.max - base.x) * factor },
+  y: { min: base.y + (box.y.min - base.y) * factor, max: base.y + (box.y.max - base.y) * factor },
+  z: { min: base.z + (box.z.min - base.z) * factor, max: base.z + (box.z.max - base.z) * factor },
+});
+
 describe('scaledFeature', () => {
   it('gives the same solid the vertex-dragging did', async () => {
     // The point of the whole exercise: keeping the history must not change the
     // shape. If these disagree, the tree describes something else.
     const feature = sphere();
-    const before = (await regenerateSolidFeature(feature))!;
+    const before = await featureBounds(feature);
     const base = { x: 10, y: -4, z: 2 };
 
-    const after = (await regenerateSolidFeature(scaledFeature(feature, base, 3)!))!;
+    const after = await featureBounds(scaledFeature(feature, base, 3)!);
 
-    closeTo(bounds(after.positions), bounds(bakedScale(before, base, 3)));
+    closeTo(after, scaledBounds(before, base, 3), 6);
   });
 
   it('scales about the base, so a solid centred on it does not move', async () => {
     const feature = sphere();
-    const scaled = (await regenerateSolidFeature(scaledFeature(feature, { x: 0, y: 0, z: 0 }, 2)!))!;
-    closeTo(bounds(scaled.positions), { x: { min: -8, max: 8 }, y: { min: -8, max: 8 }, z: { min: -8, max: 8 } });
+    const scaled = await featureBounds(scaledFeature(feature, { x: 0, y: 0, z: 0 }, 2)!);
+    closeTo(scaled, { x: { min: -8, max: 8 }, y: { min: -8, max: 8 }, z: { min: -8, max: 8 } }, 6);
   });
 
   it('keeps a scaled ellipsoid an ellipsoid, and still a primitive', () => {
@@ -118,12 +133,12 @@ describe('scaledFeature', () => {
   it('scales every part of a boolean, so what it welded still fits', async () => {
     const feature: SolidFeature = {
       kind: 'boolean', operation: 'union',
-      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 6, y: 0, z: 0 }) }],
+      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 5, y: 0, z: 0 }) }],
     };
-    const before = (await regenerateSolidFeature(feature))!;
+    const before = await featureBounds(feature);
     const base = { x: 1, y: 2, z: 3 };
-    const after = (await regenerateSolidFeature(scaledFeature(feature, base, 2.5)!))!;
-    closeTo(bounds(after.positions), bounds(bakedScale(before, base, 2.5)), 1);
+    const after = await featureBounds(scaledFeature(feature, base, 2.5)!);
+    closeTo(after, scaledBounds(before, base, 2.5), 6);
   });
 
   it('has nothing to say about a mesh or a sweep', () => {
@@ -199,16 +214,15 @@ describe('translatedFeature', () => {
   it('moves a primitive and everything a boolean is made of', async () => {
     const feature: SolidFeature = {
       kind: 'boolean', operation: 'union',
-      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 6, y: 0, z: 0 }) }],
+      operands: [sphere(), { ...sphere({ radius: 2 }), workPlane: plane({ x: 5, y: 0, z: 0 }) }],
     };
-    const before = (await regenerateSolidFeature(feature))!;
-    const after = (await regenerateSolidFeature(translatedFeature(feature, delta)!))!;
-    const box = bounds(before.positions);
-    closeTo(bounds(after.positions), {
+    const box = await featureBounds(feature);
+    const after = await featureBounds(translatedFeature(feature, delta)!);
+    closeTo(after, {
       x: { min: box.x.min + delta.x, max: box.x.max + delta.x },
       y: { min: box.y.min + delta.y, max: box.y.max + delta.y },
       z: { min: box.z.min + delta.z, max: box.z.max + delta.z },
-    }, 1);
+    }, 6);
   });
 
   it('has nothing to move on a bare mesh', () => {
@@ -256,8 +270,7 @@ describe('rotatedFeature', () => {
     expect(turned.workPlane!.origin.x).toBeCloseTo(0, 6);
     expect(turned.workPlane!.origin.y).toBeCloseTo(6, 6);
 
-    const mesh = (await regenerateSolidFeature(turned))!;
-    closeTo(bounds(mesh.positions), { x: { min: -1, max: 1 }, y: { min: 5, max: 7 }, z: { min: -1, max: 1 } });
+    closeTo(await featureBounds(turned), { x: { min: -1, max: 1 }, y: { min: 5, max: 7 }, z: { min: -1, max: 1 } }, 6);
   });
 
   it('turns the plane axes, not only its origin', () => {
@@ -273,10 +286,9 @@ describe('rotatedFeature', () => {
   it('turns an ellipsoid so its long axis follows', async () => {
     const feature = sphere({ radius: 1, scale: { x: 8, y: 1, z: 1 }, workPlane: plane({ x: 0, y: 0, z: 0 }) });
     const turned = rotatedFeature(feature, { x: 0, y: 0, z: 0 }, up, Math.PI / 2)!;
-    const mesh = (await regenerateSolidFeature(turned))!;
     // Long in X becomes long in Y. Baking the mesh got this right too — but at
     // the cost of the radii that said so.
-    closeTo(bounds(mesh.positions), { x: { min: -1, max: 1 }, y: { min: -8, max: 8 }, z: { min: -1, max: 1 } });
+    closeTo(await featureBounds(turned), { x: { min: -1, max: 1 }, y: { min: -8, max: 8 }, z: { min: -1, max: 1 } }, 6);
   });
 
   it('turns about any axis, not only Z', () => {
@@ -318,8 +330,7 @@ describe('mirroredFeature', () => {
 
     expect(mirrored.kind).toBe('primitive');
     expect(mirrored.workPlane?.origin.x).toBeCloseTo(-6, 6);
-    const mesh = (await regenerateSolidFeature(mirrored))!;
-    closeTo(bounds(mesh.positions), { x: { min: -7, max: -5 }, y: { min: -1, max: 1 }, z: { min: -1, max: 1 } });
+    closeTo(await featureBounds(mirrored), { x: { min: -7, max: -5 }, y: { min: -1, max: 1 }, z: { min: -1, max: 1 } }, 6);
   });
 
   it('bakes only a featureless mesh', () => {

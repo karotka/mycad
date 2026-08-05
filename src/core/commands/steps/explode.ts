@@ -8,7 +8,7 @@
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
 import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid, type SolidFeature } from '../../entities/types';
-import { regenerateSolidFeature } from '../../solids/ManifoldEngine';
+import { buildExactFeature } from '../../geometry/ExactSolid';
 import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
@@ -75,12 +75,13 @@ export async function explodeObjects(run: CommandRun): Promise<StepOutcome> {
     }
     const before = solidParts.length;
     for (const [index, feature] of solid.feature.operands.entries()) {
-      const mesh = await regenerateSolidFeature(feature);
-      if (!mesh) continue;
+      const geometry = await buildExactFeature(feature);
+      if (!geometry) continue;
       const part = ctx.doc.createSolid(
-        mesh, `${solid.name}_part_${index + 1}`, solid.height, solid.sourceEntityIds, solid.color,
+        geometry.mesh, `${solid.name}_part_${index + 1}`, solid.height, solid.sourceEntityIds, solid.color,
         JSON.parse(JSON.stringify(feature)) as SolidFeature,
       );
+      part.exact = geometry.exact;
       part.layer = solid.layer;
       solidParts.push(part);
     }

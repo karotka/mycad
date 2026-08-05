@@ -1,5 +1,6 @@
 import type { Document } from '../core/Document';
 import { ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import type { AffineTransform3 } from '../core/geometry/GeometryKernel';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
@@ -47,10 +48,14 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
     solids: doc.solids.map((solid) => ({
       ...solid,
       selected: false,
+      exact: solid.exact?.revision === solid.revision ? solid.exact : undefined,
       feature: trimFeatureForSave(solid.feature),
       mesh: {
         positions: Array.from(solid.mesh.positions),
         indices: Array.from(solid.mesh.indices),
+        ...(solid.mesh.triangleFaceIds
+          ? { triangleFaceIds: Array.from(solid.mesh.triangleFaceIds) }
+          : {}),
       },
     })),
   }, (_key, item) => item instanceof Float32Array || item instanceof Uint32Array ? Array.from(item) : item);
@@ -78,20 +83,55 @@ function trimFeatureForSave(feature: SolidFeature): SolidFeature {
 
 function loadSolidValue(value: unknown): Solid {
   const solid = value as Record<string, unknown>;
-  const mesh = solid?.mesh as { positions?: unknown; indices?: unknown } | undefined;
+  const mesh = solid?.mesh as { positions?: unknown; indices?: unknown; triangleFaceIds?: unknown } | undefined;
   if (!mesh || !Array.isArray(mesh.positions) || !Array.isArray(mesh.indices)) {
     throw new Error('The project contains an invalid 3D solid.');
   }
   return {
     ...solid,
+    exact: loadExactGeometry(solid.exact, solid.revision),
     selected: false,
     aci: legacyAci(solid),
     layer: typeof solid.layer === 'string' ? solid.layer : '0',
     mesh: {
       positions: new Float32Array(mesh.positions as number[]),
       indices: new Uint32Array(mesh.indices as number[]),
+      triangleFaceIds: Array.isArray(mesh.triangleFaceIds)
+        ? new Uint32Array(mesh.triangleFaceIds as number[])
+        : undefined,
     },
   } as Solid;
+}
+
+function loadExactGeometry(value: unknown, revision: unknown): Solid['exact'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const shape = raw.shape as Record<string, unknown> | undefined;
+  if (raw.kernel !== 'opencascade'
+    || typeof raw.revision !== 'number'
+    || raw.revision !== revision
+    || shape?.format !== 'occt-brep-v1'
+    || typeof shape.data !== 'string'
+    || shape.data.length === 0) return undefined;
+  const transform = loadAffineTransform(raw.transform);
+  if (raw.transform !== undefined && !transform) return undefined;
+  return {
+    kernel: 'opencascade',
+    revision: raw.revision,
+    shape: { format: 'occt-brep-v1', data: shape.data },
+    transform,
+  };
+}
+
+function loadAffineTransform(value: unknown): AffineTransform3 | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length !== 12
+    || value.some((coordinate) => typeof coordinate !== 'number' || !Number.isFinite(coordinate))) return undefined;
+  const determinant = value[0] * (value[5] * value[10] - value[6] * value[9])
+    - value[1] * (value[4] * value[10] - value[6] * value[8])
+    + value[2] * (value[4] * value[9] - value[5] * value[8]);
+  if (Math.abs(determinant) <= 1e-15) return undefined;
+  return [...value] as unknown as AffineTransform3;
 }
 
 function loadBlockDefinition(value: unknown): BlockDefinition {

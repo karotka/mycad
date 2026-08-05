@@ -16,7 +16,7 @@ import type { Vec3 } from '../../math/geometry';
  * convention, it is the app disagreeing with you in silence — and every CAD
  * program in the world extrudes downwards for a negative height.
  *
- * Manifold only extrudes along +Z, so downwards is the same prism built upwards
+ * A downward parametric extrusion is stored as the same positive-height prism
  * and dropped by its own height. `transform.translateZ` already existed for
  * exactly this kind of thing, and regeneration already honours it.
  */

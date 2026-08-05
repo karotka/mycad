@@ -115,9 +115,9 @@ export function createMyCadMcpServer(session: CadMcpBackend = new CadMcpSession(
   }, async ({ segments }) => result(await session.createLines(segments)));
 
   server.registerTool('boolean_solids', {
-    description: 'Union solids, or subtract every later solid from the first solid. Sources are replaced by one parametric result.',
+    description: 'Union solids, subtract every later solid from the first, or keep their common volume. Sources are replaced by one parametric result.',
     inputSchema: {
-      operation: z.enum(['union', 'subtract']),
+      operation: z.enum(['union', 'subtract', 'intersect']),
       solidIds: z.array(z.string().min(1)).min(2),
       name: z.string().min(1).optional(),
     },

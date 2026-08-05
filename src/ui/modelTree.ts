@@ -10,7 +10,7 @@
 import type { Solid, SolidFeature } from '../core/entities/types';
 import { cloneSolid } from '../core/history/edits';
 import { setFeatureParam } from '../core/solids/featureParams';
-import { regenerateSolidFeature } from '../core/solids/ManifoldEngine';
+import { buildExactFeature, promoteSolidToExact } from '../core/geometry/ExactSolid';
 
 export interface TreeRow {
   /** Which operand to take at each level to reach this feature from the root. */
@@ -28,7 +28,7 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
   switch (feature.kind) {
     case 'boolean':
       return {
-        label: feature.operation === 'union' ? 'Union' : 'Subtract',
+        label: feature.operation === 'union' ? 'Union' : feature.operation === 'subtract' ? 'Subtract' : 'Intersect',
         detail: `${feature.operands.length} parts`,
       };
     case 'primitive': {
@@ -128,14 +128,16 @@ export async function editedSolid(
   const after = cloneSolid(solid);
   const target = featureAt(after.feature, path);
   if (!target || !setFeatureParam(target, key, value)) return null;
-  const mesh = await regenerateSolidFeature(after.feature);
-  if (!mesh) return null;
-  after.mesh = mesh;
+  const nextRevision = solid.revision + 1;
+  const exact = await buildExactFeature(after.feature, nextRevision);
+  if (!exact) return null;
+  after.mesh = exact.mesh;
+  after.exact = exact.exact;
   // The 3D view rebuilds a solid's geometry when its revision moves, and not
   // otherwise: forget this and the model keeps the shape it used to be.
-  after.revision = solid.revision + 1;
+  after.revision = nextRevision;
   if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
-  else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(mesh);
+  else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(exact.mesh);
   return after;
 }
 
@@ -167,14 +169,17 @@ export async function removedFeatureSolid(solid: Solid, path: readonly number[])
     }
   }
 
-  const regenerated = await regenerateSolidFeature(after.feature);
-  const mesh = regenerated ?? (path.length === 0 && target.sourceMesh ? {
+  const nextRevision = solid.revision + 1;
+  const exact = await buildExactFeature(after.feature, nextRevision);
+  const mesh = exact?.mesh ?? (path.length === 0 && target.sourceMesh ? {
     positions: new Float32Array(target.sourceMesh.positions),
     indices: new Uint32Array(target.sourceMesh.indices),
   } : null);
   if (!mesh) return null;
   after.mesh = mesh;
-  after.revision = solid.revision + 1;
+  after.revision = nextRevision;
+  after.exact = exact?.exact;
+  if (!exact && !await promoteSolidToExact(after)) return null;
   if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
   else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(mesh);
   return after;

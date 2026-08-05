@@ -7,9 +7,11 @@ import type { CommandHistory, DocumentEdit } from '../core/history/CommandHistor
 import { CompositeEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { cloneEntity, entityBounds, transformEntityPoints, type Entity, type SolidFaceSelection, type SolidMesh } from '../core/entities/types';
 import { translatedFeature } from '../core/solids/featureTransform';
+import { preserveExactTransform, translationAffine } from '../core/geometry/ExactTransform';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from '../core/commands/steps/solids';
-import { primitiveMesh, regenerateSolidFeature } from '../core/solids/ManifoldEngine';
 import { extrusionFeature } from '../core/solids/extrusion';
+import { buildExactFeature } from '../core/geometry/ExactSolid';
+import { primitivePreviewMesh } from '../core/geometry/PrimitiveMesh';
 import { axisOffsetUnderRay } from './AxisDrag';
 import type { Viewport3D } from '../render/Viewport3D';
 import type { PreviewController } from '../ui/PreviewController';
@@ -91,6 +93,7 @@ export function createMoveEditing(ctx: MoveEditingContext) {
       after.mesh.positions[i + 2] += delta.z;
     }
     after.feature = translatedFeature(after.feature, delta) ?? { kind: 'mesh' };
+    preserveExactTransform(after, translationAffine(delta));
     after.revision++;
     return new UpdateSolidEdit('Move solid', before, after);
   }
@@ -249,7 +252,7 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     const name = active.name[0] + active.name.slice(1).toLowerCase();
     return {
       value: finalValue,
-      mesh: primitiveMesh(feature),
+      mesh: primitivePreviewMesh(feature),
       snap,
       label: `${name} ${active.name === 'TORUS' ? 'tube radius' : 'height'}`,
     };
@@ -274,9 +277,9 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     // Built by the engine that will build the real one, so the preview cannot
     // promise a shape the command then declines to make. The await settles in a
     // microtask, before anything is painted, so this does not flicker.
-    void regenerateSolidFeature(extrusionFeature(drag.profile, drag.height)).then((mesh) => {
-      if (!mesh || token !== extrudePreviewToken) return;
-      previewController.setPreview({ type: 'solid', data: { solidId: '', mesh } });
+    void buildExactFeature(extrusionFeature(drag.profile, drag.height)).then((geometry) => {
+      if (!geometry || token !== extrudePreviewToken) return;
+      previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: geometry.mesh } });
       redraw();
     });
   }

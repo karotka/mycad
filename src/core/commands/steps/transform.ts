@@ -10,6 +10,7 @@
 import { ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, closedVertices, genId, transformEntityPoints, type Entity, type Solid } from '../../entities/types';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
+import { mirrorAffine, preserveExactTransform, rotationAffine, scaleAffine, translationAffine } from '../../geometry/ExactTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
 import { dist2, formatPoint, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { Document } from '../../Document';
@@ -42,6 +43,7 @@ export function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
   // of it stay the same shape — this used to end at `{ kind: 'mesh' }`, so
   // resizing a sphere cost you the radius that made it.
   scaled.feature = scaledFeature(scaled.feature, base, factor) ?? { kind: 'mesh' };
+  preserveExactTransform(scaled, scaleAffine(base, { x: factor, y: factor, z: factor }));
   scaled.revision++;
   scaled.selected = true;
   return scaled;
@@ -102,8 +104,10 @@ export function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: n
   }
   // A rotation is the work plane turned, which every feature already carries,
   // so this one never needed to bake at all.
-  rotated.feature = rotatedFeature(rotated.feature, localToWorld(plane, centerLocal, centerLocal.z), plane.zAxis, angle)
+  const rotationOrigin = localToWorld(plane, centerLocal, centerLocal.z);
+  rotated.feature = rotatedFeature(rotated.feature, rotationOrigin, plane.zAxis, angle)
     ?? { kind: 'mesh' };
+  preserveExactTransform(rotated, rotationAffine(rotationOrigin, plane.zAxis, angle));
   rotated.revision++;
   return rotated;
 }
@@ -138,6 +142,7 @@ export function copySolid(solid: Solid, delta: Vec3): Solid {
   // Its own history moves with it: a copy that forgot how it was made would
   // be a mesh sitting beside the parametric solid it came from.
   copy.feature = translatedFeature(copy.feature, delta) ?? { kind: 'mesh' };
+  preserveExactTransform(copy, translationAffine(delta));
   copy.revision++;
   return copy;
 }
@@ -204,6 +209,7 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
       copy.mesh.indices[index + 2] = second;
     }
     copy.feature = mirroredFeature(copy.feature, plane, axisStart, axisEnd) ?? { kind: 'mesh' };
+    preserveExactTransform(copy, mirrorAffine(plane, axisStart, axisEnd));
     copy.revision++;
     copy.selected = false;
     return copy;

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { BlockController } from './BlockController';
-import { createBoxMesh } from '../core/solids/ManifoldEngine';
+import { createBoxMesh } from '../core/geometry/PrimitiveMesh';
 
 function setup() {
   document.body.innerHTML = `
