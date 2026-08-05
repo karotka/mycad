@@ -2407,7 +2407,7 @@ describe('remembered command values', () => {
       kind: 'edge-modification', operation: 'fillet', amount: 1,
     });
     if (doc.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
-    expect(Array.isArray(doc.solids[0].feature.sourceMesh.positions)).toBe(true);
+    expect(Array.isArray(doc.solids[0].feature.sourceMesh!.positions)).toBe(true);
     expect(history.undo()).toBe(true);
 
     manager.startCommand('FILLET');

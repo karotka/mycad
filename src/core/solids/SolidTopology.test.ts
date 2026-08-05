@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
 import { booleanSubtract, createBoxMesh, createConeMesh, createCylinderMesh } from './ManifoldEngine';
-import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
+import { planarFaceRegionAt, planarFaceRegions, solidCircularEdgeCenters, solidCircularEdges, solidDesignEdges, solidFeatureEdges, solidPlanarFaces } from './SolidTopology';
 import { localToWorld, WORLD_WORK_PLANE } from '../../math/workplane';
+
+describe('solidDesignEdges', () => {
+  it('draws a box as its 12 edges, not the triangulation diagonals', () => {
+    expect(solidDesignEdges(createBoxMesh(10, 6, 4)).length).toBe(12);
+  });
+
+  it('a drilled hole shows its rims but hides the cylinder-wall facets', async () => {
+    const holed = (await booleanSubtract(createBoxMesh(20, 20, 20, 0, 0, 0), createCylinderMesh(3, 30, 0, 0, 32)))!;
+    const edges = solidDesignEdges(holed);
+    // Wall facets run up the bore (near the axis, vertical); rims are horizontal
+    // circles. None of the vertical near-axis facet edges should be drawn.
+    const wallFacets = edges.filter((edge) => {
+      const mx = (edge.start.x + edge.end.x) / 2, my = (edge.start.y + edge.end.y) / 2;
+      const radial = Math.hypot(mx, my), rise = Math.abs(edge.start.z - edge.end.z);
+      return radial < 5 && rise > 1;
+    });
+    expect(wallFacets.length).toBe(0);
+    expect(edges.length).toBeGreaterThan(12); // the box edges plus the two rim loops
+  });
+});
 
 describe('solid feature topology', () => {
   it('keeps box creases and discards coplanar triangle diagonals', () => {

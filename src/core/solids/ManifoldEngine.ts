@@ -871,10 +871,11 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
     // Most sources can be rebuilt from their recipe. A legacy/baked mesh has no
     // recipe, so the feature keeps exactly the geometry it received instead.
     const regenerated = await regenerateSolidFeature(feature.source);
-    const source = regenerated ?? {
+    const source = regenerated ?? (feature.sourceMesh && {
       positions: new Float32Array(feature.sourceMesh.positions),
       indices: new Uint32Array(feature.sourceMesh.indices),
-    };
+    });
+    if (!source) return null;
     return modifySolidEdge(
       source,
       feature.edge,
@@ -885,10 +886,11 @@ export async function regenerateSolidFeature(feature: SolidFeature): Promise<Sol
   }
   if (feature.kind === 'presspull-region') {
     const regenerated = await regenerateSolidFeature(feature.source);
-    const source = regenerated ?? {
+    const source = regenerated ?? (feature.sourceMesh && {
       positions: new Float32Array(feature.sourceMesh.positions),
       indices: new Uint32Array(feature.sourceMesh.indices),
-    };
+    });
+    if (!source) return null;
     return pressPullRegion(source, feature.region, feature.distance);
   }
 

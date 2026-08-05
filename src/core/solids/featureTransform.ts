@@ -331,10 +331,11 @@ function transformedEdge(
 }
 
 function transformedMesh(
-  mesh: SerializedSolidMesh,
+  mesh: SerializedSolidMesh | undefined,
   transform: (value: Vec3) => Vec3,
   reverseWinding = false,
-): SerializedSolidMesh {
+): SerializedSolidMesh | undefined {
+  if (!mesh) return undefined;
   const positions: number[] = [];
   for (let index = 0; index < mesh.positions.length; index += 3) {
     const point = transform({ x: mesh.positions[index], y: mesh.positions[index + 1], z: mesh.positions[index + 2] });

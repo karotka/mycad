@@ -434,6 +434,7 @@ const meshZSpan = (mesh: SolidMesh): number => {
 function savedSourceMesh(solid: Solid): SolidMesh | null {
   const feature = solid.feature;
   if (feature.kind !== 'edge-modification' && feature.kind !== 'presspull-region') return null;
+  if (!feature.sourceMesh) return null;
   return {
     positions: new Float32Array(feature.sourceMesh.positions),
     indices: new Uint32Array(feature.sourceMesh.indices),
@@ -445,10 +446,13 @@ async function withoutLatestFeature(solid: Solid): Promise<Solid | null> {
   if (feature.kind !== 'edge-modification' && feature.kind !== 'presspull-region') return null;
   const after = cloneSolid(solid);
   after.feature = JSON.parse(JSON.stringify(feature.source));
-  after.mesh = (await regenerateSolidFeature(after.feature)) ?? {
+  const regenerated = await regenerateSolidFeature(after.feature);
+  const fallback = feature.sourceMesh && {
     positions: new Float32Array(feature.sourceMesh.positions),
     indices: new Uint32Array(feature.sourceMesh.indices),
   };
+  if (!regenerated && !fallback) return null;
+  after.mesh = regenerated ?? fallback!;
   after.height = after.feature.kind === 'primitive' || after.feature.kind === 'extrusion'
     ? after.feature.height
     : meshZSpan(after.mesh);

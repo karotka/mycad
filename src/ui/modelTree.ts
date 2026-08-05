@@ -168,7 +168,7 @@ export async function removedFeatureSolid(solid: Solid, path: readonly number[])
   }
 
   const regenerated = await regenerateSolidFeature(after.feature);
-  const mesh = regenerated ?? (path.length === 0 ? {
+  const mesh = regenerated ?? (path.length === 0 && target.sourceMesh ? {
     positions: new Float32Array(target.sourceMesh.positions),
     indices: new Uint32Array(target.sourceMesh.indices),
   } : null);

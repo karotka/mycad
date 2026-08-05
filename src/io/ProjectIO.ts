@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { ensureIdAbove, type BlockDefinition, type Entity, type Solid } from '../core/entities/types';
+import { ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
@@ -47,12 +47,33 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
     solids: doc.solids.map((solid) => ({
       ...solid,
       selected: false,
+      feature: trimFeatureForSave(solid.feature),
       mesh: {
         positions: Array.from(solid.mesh.positions),
         indices: Array.from(solid.mesh.indices),
       },
     })),
-  }, (_key, item) => item instanceof Float32Array || item instanceof Uint32Array ? Array.from(item) : item, 2);
+  }, (_key, item) => item instanceof Float32Array || item instanceof Uint32Array ? Array.from(item) : item);
+}
+
+/**
+ * A copy of a feature tree without the baked `sourceMesh` snapshots that a
+ * regenerable source does not need. Those snapshots are the bulk of a project
+ * file and, because each boolean deep-copies its operands' history, they pile up
+ * with every operation. Kept only where the source is a bare mesh with no recipe
+ * to rebuild it from; everywhere else the source regenerates on load.
+ */
+function trimFeatureForSave(feature: SolidFeature): SolidFeature {
+  if (feature.kind === 'boolean') {
+    return { ...feature, operands: feature.operands.map(trimFeatureForSave) };
+  }
+  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region') {
+    const source = trimFeatureForSave(feature.source);
+    if (source.kind === 'mesh') return { ...feature, source };
+    const { sourceMesh: _dropped, ...rest } = feature;
+    return { ...rest, source } as SolidFeature;
+  }
+  return feature;
 }
 
 function loadSolidValue(value: unknown): Solid {

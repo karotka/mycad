@@ -221,7 +221,7 @@ describe('removedFeatureSolid', () => {
     const restored = await removedFeatureSolid(solid, []);
 
     expect(restored?.feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
-    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh.indices.length);
+    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh!.indices.length);
     expect(restored?.revision).toBe(solid.revision + 1);
     expect(solid.feature.kind).toBe('edge-modification');
   });
@@ -234,7 +234,7 @@ describe('removedFeatureSolid', () => {
     const restored = await removedFeatureSolid(solid, []);
 
     expect(restored?.feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
-    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh.indices.length);
+    expect(restored?.mesh.indices.length).toBe(feature.sourceMesh!.indices.length);
   });
 });
 

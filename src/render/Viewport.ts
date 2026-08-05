@@ -14,7 +14,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
-import { planarFaceRegionAt, solidCircularEdges, solidFeatureEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
+import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
@@ -176,14 +176,14 @@ export class Canvas2DRenderer {
   }
 
   private drawSolidProjection(solid: Solid, w: number, h: number): void {
-    // Draw only the design edges (outline, sharp creases, hole and fillet rims),
-    // not every triangle of the mesh — the raw triangulation reads as noise in a
-    // 2D view. `solidFeatureEdges` keeps boundary and crease edges and drops the
-    // smooth facets that tessellate curved surfaces.
+    // Draw the outlines of the reconstructed faces, not triangle creases: this
+    // keeps only the part's real edges (outline, hole and fillet rims) and drops
+    // internal triangulation, boolean T-junctions, and curved-wall facets that
+    // otherwise read as noise.
     this.ctx.strokeStyle = solid.selected ? '#65c7ff' : '#ffffff';
     this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    for (const edge of solidFeatureEdges(solid.mesh)) {
+    for (const edge of solidDesignEdges(solid.mesh)) {
       const start = worldToScreen({ x: edge.start.x, y: edge.start.y }, w, h, this.pan, this.zoom);
       const end = worldToScreen({ x: edge.end.x, y: edge.end.y }, w, h, this.pan, this.zoom);
       this.ctx.moveTo(start.x, start.y);
@@ -875,11 +875,12 @@ export class Viewport3D {
     material.side = THREE.DoubleSide;
     material.needsUpdate = true;
     this.disposeSolidEdges(mesh);
-    // All three styles show the same feature edges (outline, creases, hole and
-    // fillet rims). Wireframe and x-ray keep them see-through; shaded lets the
-    // opaque faces occlude the ones behind.
+    // All three styles show the same design edges (face outlines, hole and fillet
+    // rims) — drawn from the reconstructed faces, so triangulation and curved-wall
+    // facets never appear. Wireframe and x-ray keep them see-through; shaded lets
+    // the opaque faces occlude the ones behind.
     const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(mesh.geometry, 24),
+      this.designEdgesGeometry(mesh.userData.cadMesh as SolidMesh | undefined, mesh.geometry),
       new THREE.LineBasicMaterial({
         color: selected ? 0x9fe2ff : wire ? 0xcdd9e5 : xray ? 0x8fc8e8 : 0x27313a,
         transparent: xray, opacity: xray ? 0.9 : 1,
@@ -1216,6 +1217,7 @@ export class Viewport3D {
           this.disposeSolidEdges(mesh);
           mesh.geometry.dispose();
           mesh.geometry = this.solidToGeometry(solid.mesh);
+          mesh.userData.cadMesh = solid.mesh;
           mesh.userData.revision = solid.revision;
           geometryChanged = true;
         }
@@ -1937,10 +1939,30 @@ export class Viewport3D {
       wireframe: false,
     }));
     mesh.userData.revision = solid.revision;
+    mesh.userData.cadMesh = solid.mesh;
     mesh.userData.selected = solid.selected;
     mesh.userData.baseColor = solid.color;
     this.applySolidStyle(mesh, solid.selected);
     return mesh;
+  }
+
+  /**
+   * Line segments for a solid's wireframe, from its reconstructed face outlines
+   * (Manifold Z-up → Three Y-up). Falls back to the triangle-crease edges only
+   * if the CAD mesh is not to hand.
+   */
+  private designEdgesGeometry(cadMesh: SolidMesh | undefined, fallback: THREE.BufferGeometry): THREE.BufferGeometry {
+    if (!cadMesh) return new THREE.EdgesGeometry(fallback, 24);
+    const edges = solidDesignEdges(cadMesh);
+    const positions = new Float32Array(edges.length * 6);
+    let o = 0;
+    for (const { start, end } of edges) {
+      positions[o++] = start.x; positions[o++] = start.z; positions[o++] = -start.y;
+      positions[o++] = end.x; positions[o++] = end.z; positions[o++] = -end.y;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return geometry;
   }
 
   private faceRegionPrismGeometry(region: SolidFaceRegion, distance: number): THREE.BufferGeometry | null {

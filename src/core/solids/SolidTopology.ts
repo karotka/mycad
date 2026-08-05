@@ -30,6 +30,74 @@ const DEFAULT_SMOOTH_DOT = 0.95;
 const featureEdgeCache = new WeakMap<SolidMesh, SolidFeatureEdge[]>();
 const circularEdgeCache = new WeakMap<SolidMesh, SolidCircularEdge[]>();
 const planarFaceCache = new WeakMap<SolidMesh, PlanarFace[]>();
+const designEdgeCache = new WeakMap<SolidMesh, Array<{ start: Vec3; end: Vec3 }>>();
+
+/**
+ * The edges to draw a solid's wireframe from. An edge is drawn when it separates
+ * two genuinely different faces of the part; it is dropped when it is internal to
+ * one flat face (a triangulation diagonal or a boolean's T-junction) or internal
+ * to a curved wall (the facets a cylinder is tessellated into).
+ *
+ * Curved walls are told apart from real creases by grouping: coplanar-face
+ * neighbours that meet at a shallow angle are flooded into one "smooth surface".
+ * A tessellated cylinder is one big smooth group, so its facet edges vanish; a
+ * chamfer or a rib meeting a face at a similar angle is only two faces, so its
+ * edge stays. This keeps the outline, hole and fillet rims, and every real
+ * crease, while the mess a boolean leaves on flat and cylindrical faces does not
+ * show — the way a CAD wireframe looks.
+ */
+export function solidDesignEdges(mesh: SolidMesh): Array<{ start: Vec3; end: Vec3 }> {
+  const cached = designEdgeCache.get(mesh);
+  if (cached) return cached;
+
+  const faces = solidPlanarFaces(mesh);
+  const triangleCount = mesh.indices.length / 3;
+  const triangleFace = new Int32Array(triangleCount).fill(-1);
+  faces.forEach((face, index) => face.triangleIndices.forEach((triangle) => { triangleFace[triangle] = index; }));
+
+  // Every mesh edge, with the (one or two) triangles that use it.
+  const incident = new Map<string, { va: number; vb: number; triangles: number[] }>();
+  for (let triangle = 0; triangle < triangleCount; triangle++) {
+    const ids = [mesh.indices[triangle * 3], mesh.indices[triangle * 3 + 1], mesh.indices[triangle * 3 + 2]];
+    for (let e = 0; e < 3; e++) {
+      const va = ids[e], vb = ids[(e + 1) % 3];
+      const lo = Math.min(va, vb), hi = Math.max(va, vb);
+      const edgeKey = `${lo}:${hi}`;
+      const record = incident.get(edgeKey) ?? { va: lo, vb: hi, triangles: [] };
+      record.triangles.push(triangle);
+      incident.set(edgeKey, record);
+    }
+  }
+
+  // Flood coplanar faces that meet at a shallow angle into smooth surfaces.
+  const SMOOTH_DOT = Math.cos((50 * Math.PI) / 180);
+  const CURVED_GROUP_MIN = 4; // a real crease is a couple of faces; a cylinder is many
+  const parent = faces.map((_, index) => index);
+  const find = (index: number): number => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
+  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  for (const record of incident.values()) {
+    if (record.triangles.length !== 2) continue;
+    const fa = triangleFace[record.triangles[0]], fb = triangleFace[record.triangles[1]];
+    if (fa < 0 || fb < 0 || fa === fb) continue;
+    const na = faces[fa].normal, nb = faces[fb].normal;
+    if (na.x * nb.x + na.y * nb.y + na.z * nb.z >= SMOOTH_DOT) union(fa, fb);
+  }
+  const groupSize = new Map<number, number>();
+  for (let index = 0; index < faces.length; index++) { const root = find(index); groupSize.set(root, (groupSize.get(root) ?? 0) + 1); }
+
+  const result: Array<{ start: Vec3; end: Vec3 }> = [];
+  const point = (v: number): Vec3 => ({ x: mesh.positions[v * 3], y: mesh.positions[v * 3 + 1], z: mesh.positions[v * 3 + 2] });
+  for (const record of incident.values()) {
+    if (record.triangles.length === 1) { result.push({ start: point(record.va), end: point(record.vb) }); continue; }
+    if (record.triangles.length !== 2) continue;
+    const fa = triangleFace[record.triangles[0]], fb = triangleFace[record.triangles[1]];
+    if (fa < 0 || fb < 0 || fa === fb) continue; // one flat face's own triangulation
+    if (find(fa) === find(fb) && (groupSize.get(find(fa)) ?? 0) >= CURVED_GROUP_MIN) continue; // inside a curved wall
+    result.push({ start: point(record.va), end: point(record.vb) });
+  }
+  designEdgeCache.set(mesh, result);
+  return result;
+}
 
 /** One connected coplanar surface reconstructed from indexed mesh triangles. */
 export interface PlanarFace {

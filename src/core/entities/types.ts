@@ -532,8 +532,9 @@ export interface EdgeModificationFeature {
   amount: number;
   /** CHAMFER distance on the face identified by `edge.normalB`; old projects use `amount`. */
   amount2?: number;
-  /** Geometry immediately before this operation, for a baked mesh source. */
-  sourceMesh: SerializedSolidMesh;
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
 }
 
 /** A reversible union/subtraction made by pulling a bounded planar face region. */
@@ -542,8 +543,9 @@ export interface PressPullFeature {
   source: SolidFeature;
   region: SolidFaceRegion;
   distance: number;
-  /** Geometry immediately before this operation, for a baked mesh source. */
-  sourceMesh: SerializedSolidMesh;
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
 }
 
 export interface PrimitiveFeature {

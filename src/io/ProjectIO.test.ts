@@ -166,8 +166,10 @@ describe('ProjectIO', () => {
 
     expect(target.solids[0].feature).toMatchObject({ kind: 'edge-modification', amount: 1, amount2: 2 });
     if (target.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
-    expect(target.solids[0].feature.sourceMesh.positions).toEqual(Array.from(mesh.positions));
-    expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
+    // The regenerable source (a primitive) means the baked sourceMesh is dropped
+    // on save to keep the file small; the source round-trips and rebuilds it.
+    expect(target.solids[0].feature.sourceMesh).toBeUndefined();
+    expect(target.solids[0].feature.source).toMatchObject({ kind: 'primitive', primitive: 'box' });
   });
 
   it('round-trips an editable bounded PressPull region', () => {
@@ -190,7 +192,30 @@ describe('ProjectIO', () => {
     expect(target.solids[0].feature).toMatchObject({ kind: 'presspull-region', distance: 3 });
     if (target.solids[0].feature.kind !== 'presspull-region') throw new Error('expected a PressPull feature');
     expect(target.solids[0].feature.region.loops).toEqual(JSON.parse(JSON.stringify(face.loops)));
-    expect(Array.isArray(target.solids[0].feature.sourceMesh.positions)).toBe(true);
+    // Regenerable source → the baked sourceMesh is dropped on save.
+    expect(target.solids[0].feature.sourceMesh).toBeUndefined();
+    expect(target.solids[0].feature.source).toMatchObject({ kind: 'primitive', primitive: 'box' });
+  });
+
+  it('keeps the sourceMesh when the source is a baked mesh with no recipe', () => {
+    const source = new Document();
+    const mesh = primitiveMesh({ kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4 });
+    const feature: EdgeModificationFeature = {
+      kind: 'edge-modification', operation: 'chamfer', source: { kind: 'mesh' }, amount: 1, amount2: 2,
+      edge: {
+        solidId: 'box', start: { x: 5, y: 3, z: 0 }, end: { x: 5, y: 3, z: 4 },
+        normalA: { x: 1, y: 0, z: 0 }, normalB: { x: 0, y: 1, z: 0 },
+      },
+      sourceMesh: { positions: Array.from(mesh.positions), indices: Array.from(mesh.indices) },
+    };
+    source.addSolid(source.createSolid(mesh, 'Chamfered mesh', 4, [], undefined, feature));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    // No recipe to rebuild from → the snapshot must survive the round-trip.
+    if (target.solids[0].feature.kind !== 'edge-modification') throw new Error('expected an edge feature');
+    expect(target.solids[0].feature.sourceMesh?.positions).toEqual(Array.from(mesh.positions));
   });
 
   it('round-trips EXTRUDE direction, taper and path recipes', () => {
