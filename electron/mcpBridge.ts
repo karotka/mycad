@@ -15,7 +15,7 @@ const HOST = '127.0.0.1' as const;
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const ALLOWED_METHODS = new Set([
   'new_document', 'open_project', 'get_document', 'list_objects', 'get_object',
-  'select_objects', 'create_primitive', 'create_lines', 'boolean_solids', 'delete_feature',
+  'select_objects', 'create_primitive', 'create_lines', 'extrude', 'boolean_solids', 'delete_feature',
   'delete_objects', 'undo', 'redo', 'save_project', 'export_stl',
 ]);
 

@@ -61,25 +61,29 @@ export class BlockController {
     private readonly panel: HTMLElement,
     private readonly list: HTMLElement,
     private readonly countLabel: HTMLElement,
-    private readonly toggle: HTMLElement,
+    private readonly toggleButton: HTMLElement,
     create: HTMLElement,
     close: HTMLElement,
     private readonly callbacks: BlockControllerCallbacks,
   ) {
-    toggle.addEventListener('click', () => {
-      this.panel.hidden = !this.panel.hidden;
-      this.toggle.classList.toggle('active', !this.panel.hidden);
-      if (!this.panel.hidden) this.render();
-    });
-    close.addEventListener('click', () => {
-      this.panel.hidden = true;
-      this.toggle.classList.remove('active');
-    });
+    toggleButton.addEventListener('click', () => this.toggle());
+    close.addEventListener('click', () => this.close());
     create.addEventListener('click', () => this.callbacks.startCreate());
     this.render();
   }
 
   get isOpen(): boolean { return !this.panel.hidden; }
+
+  toggle(): void {
+    this.panel.hidden = !this.panel.hidden;
+    this.toggleButton.classList.toggle('active', !this.panel.hidden);
+    if (!this.panel.hidden) this.render();
+  }
+
+  close(): void {
+    this.panel.hidden = true;
+    this.toggleButton.classList.remove('active');
+  }
 
   render(): void {
     this.countLabel.textContent = String(this.doc.blockDefinitions.length);

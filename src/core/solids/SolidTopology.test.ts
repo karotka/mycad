@@ -117,6 +117,23 @@ describe('solid feature topology', () => {
     expect(planarFaceRegionAt(face, [], { x: 0, y: 0, z: 1 })).toBeNull();
   });
 
+  it('recognises a closed profile drawn a few microns off the exact face plane', () => {
+    // The exact kernel can fit a face plane a hair from the UCS a circle was
+    // drawn on, so the profile lands ~micrometres out. It must still be read as
+    // being on the face, or PRESSPULL cannot find the region to pull.
+    const mesh = createBoxMesh(20, 20, 4); // top face at z = 4
+    const top = solidPlanarFaces(mesh).find((face) => face.normal.z > 0.9)!;
+    const doc = new Document();
+    doc.activeWorkPlane.origin.z = 4.003; // 3 µm above the top face
+    const circle = doc.createCircle({ x: 0, y: 0 }, 3);
+
+    const region = planarFaceRegionAt(top, [circle], { x: 0, y: 0, z: 4.002 });
+
+    expect(region).not.toBeNull();
+    // The small circle interior, not the whole 20×20 face around it.
+    expect(region!.loops[0].length).toBeGreaterThan(8);
+  });
+
   it('splits a planar box face into the two regions made by a coplanar line', () => {
     const mesh = createBoxMesh(10, 6, 4);
     const top = solidPlanarFaces(mesh).find((face) => face.normal.z > 0.9)!;

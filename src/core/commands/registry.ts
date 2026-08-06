@@ -22,6 +22,7 @@ import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
 import { sliceSolids } from './steps/slice';
 import { createBlock, insertBlock } from './steps/blocks';
+import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -363,6 +364,10 @@ export const COMMANDS = [
   { name: 'UNDO', aliases: ['UNDO'], help: 'undo last edit', run: (ctx) => { ctx.log(ctx.history.undo() ? 'Undo complete.' : 'Nothing to undo.'); ctx.redraw(); } },
   { name: 'REDO', aliases: ['REDO'], help: 'redo last edit', run: (ctx) => { ctx.log(ctx.history.redo() ? 'Redo complete.' : 'Nothing to redo.'); ctx.redraw(); } },
   { name: 'HELP', aliases: ['H', 'HELP'], run: (ctx) => { for (const line of helpText()) ctx.log(line); } },
+  { name: 'HIDEOBJECTS', aliases: ['HIDEOBJECTS', 'HIDE'], help: 'hide selected objects', run: hideSelectedObjects },
+  { name: 'ISOLATEOBJECTS', aliases: ['ISOLATEOBJECTS', 'ISOLATE'], help: 'hide all but the selected objects', run: isolateSelectedObjects },
+  { name: 'SHOWALL', aliases: ['SHOWALL', 'UNISOLATE'], help: 'show all hidden objects', run: showAllObjects },
+  { name: 'LAYCUR', aliases: ['LAYCUR'], help: 'move selected objects to the current layer', run: changeToCurrentLayer },
 ] as const satisfies readonly CommandDefShape[];
 
 /** Inferred from the array above: registering a command is what makes the name exist. */

@@ -27,11 +27,12 @@ export class PropertiesController {
     private readonly changed: () => void,
   ) {
     toggle.addEventListener('click', () => this.toggle());
-    close.addEventListener('click', () => { this.panel.hidden = true; });
+    close.addEventListener('click', () => this.close());
   }
 
   get isOpen(): boolean { return !this.panel.hidden; }
   toggle(): void { this.panel.hidden = !this.panel.hidden; if (!this.panel.hidden) this.render(); }
+  close(): void { this.panel.hidden = true; }
 
   render(): void {
     if (!this.isOpen) return;

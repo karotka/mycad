@@ -18,6 +18,9 @@ export interface InputControllerCallbacks {
   toggleGridSnap(): void;
   toggleObjectSnapTracking(): void;
   toggleProperties(): void;
+  toggleTree(): void;
+  toggleLayers(): void;
+  toggleBlocks(): void;
   commandActive(): boolean;
   commandInputChanged(): void;
 }
@@ -66,7 +69,13 @@ export class InputController {
       return;
     }
     if (primaryModifier && key === 's') { event.preventDefault(); if (event.shiftKey) this.callbacks.saveAs(); else this.callbacks.save(); return; }
+    // The side panels, on Ctrl/Cmd+1..4 — Properties on 1 matches AutoCAD; Tree,
+    // Layers and Blocks follow the same run of keys. They close on a canvas click,
+    // so these reopen them without reaching for the toolbar.
     if (primaryModifier && key === '1') { event.preventDefault(); this.callbacks.toggleProperties(); return; }
+    if (primaryModifier && key === '2') { event.preventDefault(); this.callbacks.toggleTree(); return; }
+    if (primaryModifier && key === '3') { event.preventDefault(); this.callbacks.toggleLayers(); return; }
+    if (primaryModifier && key === '4') { event.preventDefault(); this.callbacks.toggleBlocks(); return; }
     if (primaryModifier && key === 'n') { event.preventDefault(); this.callbacks.newProject(); return; }
     if (event.metaKey && key === 'o') { event.preventDefault(); this.callbacks.open(); return; }
     if (event.metaKey && key === 'e') { event.preventDefault(); this.callbacks.export(); return; }

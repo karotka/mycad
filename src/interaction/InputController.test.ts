@@ -25,7 +25,7 @@ describe('InputController', () => {
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
-      toggleProperties: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     const controller = new InputController(input, form, callbacks, target);
@@ -52,7 +52,7 @@ describe('InputController', () => {
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
-      toggleProperties: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     const controller = new InputController(input, form, callbacks, target);
@@ -76,7 +76,7 @@ describe('InputController', () => {
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
-      toggleProperties: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     const controller = new InputController(input, form, callbacks, target);
@@ -106,7 +106,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
       open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
-      toggleProperties: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
       commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
     };
     // The controller listens from construction; there is nothing to attach.

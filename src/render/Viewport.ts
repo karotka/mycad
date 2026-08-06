@@ -137,11 +137,11 @@ export class Canvas2DRenderer {
     this.layerLineweight = doc.layerLineweight;
     this.layerLinetype = doc.layerLinetype;
 
-    for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer))) {
+    for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
       this.drawSolidProjection(solid, w, h);
     }
 
-    for (const entity of doc.entities.filter((item) => !doc.hiddenLayers.has(item.layer))) {
+    for (const entity of doc.entities.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
       this.drawEntity(entity, w, h, entity.selected, joinMode);
     }
 
@@ -563,7 +563,7 @@ export class Canvas2DRenderer {
 
   zoomExtents(doc: Document, w: number, h: number): void {
     let minX = -10, minY = -10, maxX = 10, maxY = 10;
-    const visibleEntities = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer));
+    const visibleEntities = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer) && !doc.hiddenObjects.has(entity.id));
     if (visibleEntities.length > 0) {
       minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
       for (const e of visibleEntities) {

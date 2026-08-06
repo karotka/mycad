@@ -74,6 +74,9 @@ export class Document {
   /** Dash pattern name per layer, e.g. 'Continuous', 'Dashed'. */
   layerLinetype: Record<string, string> = { '0': DEFAULT_LINE_TYPE };
   hiddenLayers = new Set<string>();
+  /** Ids of individually hidden entities/solids (object isolate/hide). A view
+   *  state cleared by "Show all", never saved with the project. */
+  hiddenObjects = new Set<string>();
   gridSize = 1;
   gridVisible = true;
   snapSize = 0.5;

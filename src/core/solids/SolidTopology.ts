@@ -50,18 +50,14 @@ export function solidDesignEdges(mesh: SolidMesh): Array<{ start: Vec3; end: Vec
   const cached = designEdgeCache.get(mesh);
   if (cached) return cached;
 
-  const faces = solidPlanarFaces(mesh);
   const triangleCount = mesh.indices.length / 3;
-  const triangleFace = new Int32Array(triangleCount).fill(-1);
-  faces.forEach((face, index) => face.triangleIndices.forEach((triangle) => { triangleFace[triangle] = index; }));
 
   // Every mesh edge, with the (one or two) triangles that use it.
   const incident = new Map<string, { va: number; vb: number; triangles: number[] }>();
   for (let triangle = 0; triangle < triangleCount; triangle++) {
     const ids = [mesh.indices[triangle * 3], mesh.indices[triangle * 3 + 1], mesh.indices[triangle * 3 + 2]];
     for (let e = 0; e < 3; e++) {
-      const va = ids[e], vb = ids[(e + 1) % 3];
-      const lo = Math.min(va, vb), hi = Math.max(va, vb);
+      const lo = Math.min(ids[e], ids[(e + 1) % 3]), hi = Math.max(ids[e], ids[(e + 1) % 3]);
       const edgeKey = `${lo}:${hi}`;
       const record = incident.get(edgeKey) ?? { va: lo, vb: hi, triangles: [] };
       record.triangles.push(triangle);
@@ -69,21 +65,49 @@ export function solidDesignEdges(mesh: SolidMesh): Array<{ start: Vec3; end: Vec
     }
   }
 
-  // Flood coplanar faces that meet at a shallow angle into smooth surfaces.
+  // Base faces: the exact kernel's triangle→face map when present, otherwise a
+  // coplanar reconstruction. Face ids are exact for an analytic solid but become
+  // one-per-facet for a mesh converted to B-rep; the smooth-group flood below
+  // handles both, so a curved wall never shows an internal edge either way.
+  const triangleFace = new Int32Array(triangleCount).fill(-1);
+  const faceNormals: Vec3[] = [];
+  const faceIds = mesh.triangleFaceIds;
+  if (faceIds && faceIds.length === triangleCount) {
+    const idToIndex = new Map<number, number>();
+    const accum: [number, number, number][] = [];
+    for (let triangle = 0; triangle < triangleCount; triangle++) {
+      let index = idToIndex.get(faceIds[triangle]);
+      if (index === undefined) { index = accum.length; idToIndex.set(faceIds[triangle], index); accum.push([0, 0, 0]); }
+      triangleFace[triangle] = index;
+      const a = pointAt(mesh, mesh.indices[triangle * 3]);
+      const b = pointAt(mesh, mesh.indices[triangle * 3 + 1]);
+      const c = pointAt(mesh, mesh.indices[triangle * 3 + 2]);
+      // Area-weighted (unnormalised cross product) so slivers barely tilt the face.
+      accum[index][0] += (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y);
+      accum[index][1] += (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
+      accum[index][2] += (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    }
+    for (const n of accum) { const l = Math.hypot(n[0], n[1], n[2]) || 1; faceNormals.push({ x: n[0] / l, y: n[1] / l, z: n[2] / l }); }
+  } else {
+    const faces = solidPlanarFaces(mesh);
+    faces.forEach((face, index) => { face.triangleIndices.forEach((triangle) => { triangleFace[triangle] = index; }); faceNormals.push(face.normal); });
+  }
+
+  // Flood base faces that meet at a shallow angle into one smooth surface.
   const SMOOTH_DOT = Math.cos((50 * Math.PI) / 180);
   const CURVED_GROUP_MIN = 4; // a real crease is a couple of faces; a cylinder is many
-  const parent = faces.map((_, index) => index);
+  const parent = faceNormals.map((_, index) => index);
   const find = (index: number): number => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
   const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
   for (const record of incident.values()) {
     if (record.triangles.length !== 2) continue;
     const fa = triangleFace[record.triangles[0]], fb = triangleFace[record.triangles[1]];
     if (fa < 0 || fb < 0 || fa === fb) continue;
-    const na = faces[fa].normal, nb = faces[fb].normal;
+    const na = faceNormals[fa], nb = faceNormals[fb];
     if (na.x * nb.x + na.y * nb.y + na.z * nb.z >= SMOOTH_DOT) union(fa, fb);
   }
   const groupSize = new Map<number, number>();
-  for (let index = 0; index < faces.length; index++) { const root = find(index); groupSize.set(root, (groupSize.get(root) ?? 0) + 1); }
+  for (let index = 0; index < faceNormals.length; index++) { const root = find(index); groupSize.set(root, (groupSize.get(root) ?? 0) + 1); }
 
   const result: Array<{ start: Vec3; end: Vec3 }> = [];
   const point = (v: number): Vec3 => ({ x: mesh.positions[v * 3], y: mesh.positions[v * 3 + 1], z: mesh.positions[v * 3 + 2] });
@@ -91,7 +115,7 @@ export function solidDesignEdges(mesh: SolidMesh): Array<{ start: Vec3; end: Vec
     if (record.triangles.length === 1) { result.push({ start: point(record.va), end: point(record.vb) }); continue; }
     if (record.triangles.length !== 2) continue;
     const fa = triangleFace[record.triangles[0]], fb = triangleFace[record.triangles[1]];
-    if (fa < 0 || fb < 0 || fa === fb) continue; // one flat face's own triangulation
+    if (fa < 0 || fb < 0 || fa === fb) continue; // one face's own triangulation
     if (find(fa) === find(fb) && (groupSize.get(find(fa)) ?? 0) >= CURVED_GROUP_MIN) continue; // inside a curved wall
     result.push({ start: point(record.va), end: point(record.vb) });
   }
@@ -414,7 +438,7 @@ export function planarFaceRegionAt(face: PlanarFace, entities: readonly Entity[]
   // still recognised, while a point genuinely off the plane is still rejected.
   let extent = 1;
   for (const loop of face.loops) for (const vertex of loop) extent = Math.max(extent, Math.abs(vertex.x), Math.abs(vertex.y));
-  if (Math.abs(local.z) > Math.max(1e-3, extent * 1e-4)) return null;
+  if (Math.abs(local.z) > Math.max(1e-2, extent * 1e-4)) return null;
   const candidates = planarFaceRegions(face, entities)
     .filter((region) => pointInRegion({ x: local.x, y: local.y }, region.loops));
   // A click exactly on a shared divider belongs geometrically to both sides.
@@ -436,8 +460,13 @@ const localPointZ = (point: Vec2): number => (point as Vec2 & { z?: number }).z 
 
 /** Whether a face-local point lies on the face plane, tolerant of float32 drift
  *  that scales with the point's distance from the plane origin. */
+// A 2D entity a user draws onto a face lands a few microns off its exact plane —
+// snap noise, or the face plane being fitted slightly differently by the exact
+// kernel than the UCS it was drawn on. The floor tolerates that (well below any
+// intended gap) so the profile is still recognised on the face; the scaled term
+// additionally forgives a slightly-tilted fitted normal far from the origin.
 const onFacePlane = (point: { x: number; y: number; z: number }): boolean =>
-  Math.abs(point.z) <= Math.max(1e-3, Math.max(Math.abs(point.x), Math.abs(point.y)) * 1e-4);
+  Math.abs(point.z) <= Math.max(1e-2, Math.max(Math.abs(point.x), Math.abs(point.y)) * 1e-4);
 
 /** Average of a loop's vertices — inside it for the convex holes a bore leaves. */
 const loopCentroid = (loop: Vec2[]): Vec2 =>

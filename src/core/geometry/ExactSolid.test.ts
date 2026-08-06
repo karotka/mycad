@@ -5,6 +5,7 @@ import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { buildExactBox, buildExactFeature, hasCurrentExactGeometry, openExactShape } from './ExactSolid';
 import { openCascadeKernel } from './OpenCascadeRuntime';
 import { mirroredFeature } from '../solids/featureTransform';
+import { extrusionFeature } from '../solids/extrusion';
 
 describe('exact solid production placement', () => {
   it('keeps one B-rep current through COPY, SCALE and ROTATE', async () => {
@@ -55,6 +56,31 @@ describe('exact solid production placement', () => {
       expect(kernel.inspect(shape!)).toMatchObject({
         bounds: { min: { x: -6, y: 0, z: 0 }, max: { x: -4, y: 4, z: 6 } },
         volume: expect.closeTo(48, 8),
+        valid: true,
+      });
+    } finally {
+      shape?.dispose();
+    }
+  });
+
+  it('extrudes a profile from the height it was snapped to, not the work-plane origin', async () => {
+    const doc = new Document();
+    // A 4×2 rectangle snapped 50 up the active plane keeps that elevation as a
+    // local z on its corners; the prism must start there, not at Z=0.
+    const rectangle = doc.createRectangle({ x: 0, y: 0, z: 50 } as { x: number; y: number }, { x: 4, y: 2, z: 50 } as { x: number; y: number });
+    const feature = extrusionFeature(rectangle, 10);
+    const geometry = await buildExactFeature(feature);
+    const solid = doc.createSolid(geometry!.mesh, 'Riser', 10, [rectangle.id], undefined, feature);
+    solid.exact = geometry!.exact;
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(solid, kernel);
+    try {
+      expect(kernel.inspect(shape!)).toMatchObject({
+        bounds: {
+          min: { x: expect.closeTo(0, 6), y: expect.closeTo(0, 6), z: expect.closeTo(50, 6) },
+          max: { x: expect.closeTo(4, 6), y: expect.closeTo(2, 6), z: expect.closeTo(60, 6) },
+        },
+        volume: expect.closeTo(80, 6),
         valid: true,
       });
     } finally {

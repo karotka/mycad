@@ -54,6 +54,10 @@ export function toolIcon(command: ToolbarIcon): string {
     UCS: '<path d="M5 19V7M5 19h12M5 19l7-7M5 7l-2 3M5 7l2 3M17 19l-3-2M17 19l-3 2M12 12l-1-4M12 12l4-1"/>',
     ZOOM_ALL: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">ALL</text>',
     ZOOM_WINDOW: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">WIN</text>',
+    ISOLATEOBJECTS: '<path d="M12 3a6 6 0 00-3.5 10.9c.5.4.8 1 .9 1.6h5.2c.1-.6.4-1.2.9-1.6A6 6 0 0012 3z"/><path d="M9.5 18h5M10.5 20.5h3"/>',
+    HIDEOBJECTS: '<path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.4"/><line x1="4" y1="4" x2="20" y2="20"/>',
+    SHOWALL: '<path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.6"/>',
+    LAYCUR: '<circle cx="12" cy="16" r="3"/><circle cx="6.5" cy="11" r="1.7"/><circle cx="12" cy="8.5" r="1.7"/><circle cx="17.5" cy="11" r="1.7"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[command] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`;
 }

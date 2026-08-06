@@ -637,7 +637,7 @@ html, body, #app {
 .layer-panel header button { width: 24px; height: 20px; border: 1px solid #52606c; background: #28313a; color: #fff; cursor: pointer; }
 .panel-header-actions { display: flex; gap: 4px; }
 .layer-list { max-height: 210px; overflow-y: auto; border-top: 1px solid #343d46; }
-.layer-row { display: grid; grid-template-columns: 18px 42px 25px 54px 50px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
+.layer-row { display: grid; grid-template-columns: 18px 24px 24px 25px 54px 50px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
 .layer-row .layer-lineweight, .layer-row .layer-linetype { display: flex; align-items: center; justify-content: center; height: 21px; min-width: 0; margin: 0 2px; padding: 0; border: 1px solid #3a444d; border-radius: 2px; background: #12171c; color: #cbd5df; font: 10px 'SF Mono', monospace; cursor: pointer; }
 .layer-row .layer-lineweight:hover, .layer-row .layer-linetype:hover { border-color: #67c9ff; color: #fff; }
 .layer-row .layer-lineweight svg, .layer-row .layer-linetype svg { display: block; }
@@ -652,7 +652,11 @@ html, body, #app {
 .layer-row:hover { background: #242d35; }
 .layer-row.active { background: #094771; box-shadow: inset 2px 0 #67c9ff; }
 .layer-row button { height: 26px; border: 0; background: transparent; color: #cbd5df; cursor: pointer; }
-.layer-row .layer-eye { color: #67c9ff; font-size: 9px; text-transform: uppercase; }
+.layer-row .layer-eye, .layer-row .layer-paw { display: flex; align-items: center; justify-content: center; padding: 0; color: #67c9ff; }
+.layer-row .layer-eye.off { color: #566069; }
+.layer-row .layer-paw { color: #8f9aa4; }
+.layer-row .layer-paw:hover { color: #67c9ff; }
+.layer-row .layer-eye svg, .layer-row .layer-paw svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .layer-color { width: 17px; height: 17px; padding: 0; border: 1px solid #697681; border-radius: 2px; background: none; cursor: pointer; }
 .layer-color::-webkit-color-swatch-wrapper { padding: 1px; }
 .layer-color::-webkit-color-swatch { border: 0; }

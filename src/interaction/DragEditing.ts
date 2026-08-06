@@ -155,8 +155,13 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     // number that is nearly it — the same object snap EXTRUDE already honours. A
     // vertex on the face itself reads as zero depth and is ignored below.
     const snap = nearestMeasurementPoint(event);
-    const delta = snap
-      ? worldToLocal(face.region.plane, snap).z
+    const snapDelta = snap ? worldToLocal(face.region.plane, snap).z : null;
+    // A snap that lands on the face's own plane reads as zero depth. Falling back
+    // to the pointer-ray depth then keeps the click that ends the drag committing
+    // the pull that is on screen, rather than swallowing it as "no distance" and
+    // letting the click re-pick the face instead.
+    const delta = snapDelta !== null && Math.abs(snapDelta) >= 1e-6
+      ? snapDelta
       : renderer3d.faceDragDelta(renderer3d.renderer.domElement, solid, face, event.clientX, event.clientY);
     if (delta === null || Math.abs(delta) < 1e-6) return null;
     previewController.setPreview({ type: 'presspull-region', data: { region: face.region, distance: delta } });

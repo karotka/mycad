@@ -41,7 +41,7 @@ import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPl
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 import { createToolActions } from './interaction/ToolActions';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
-import { CadModelApi, type LineSegmentInput, type PrimitiveInput, type SelectionMode } from './mcp/CadModelApi';
+import { CadModelApi, type ExtrudeInput, type LineSegmentInput, type PrimitiveInput, type SelectionMode } from './mcp/CadModelApi';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -400,8 +400,8 @@ function drawFrame(): void {
       shape: grip.shape,
       hot: grip.index === gripController.hoveredGrip,
     }));
-    const visibleEntities = cadDocument.entities.filter((entity) => !cadDocument.hiddenLayers.has(entity.layer));
-    const visibleSolids = cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer));
+    const visibleEntities = cadDocument.entities.filter((entity) => !cadDocument.hiddenLayers.has(entity.layer) && !cadDocument.hiddenObjects.has(entity.id));
+    const visibleSolids = cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer) && !cadDocument.hiddenObjects.has(solid.id));
     renderer3d.syncEntities(visibleEntities);
     renderer3d.syncPreview(previewController.preview);
     renderer3d.syncGrips(grips);
@@ -679,7 +679,7 @@ commands.updateContext({ exportStl: (solids) => projectController.exportStl(soli
 const cadMcp = new CadModelApi(cadDocument, history, () => projectController.currentFilePath ?? null);
 
 const mcpMutations = new Set([
-  'new_document', 'open_project', 'select_objects', 'create_primitive', 'create_lines', 'boolean_solids',
+  'new_document', 'open_project', 'select_objects', 'create_primitive', 'create_lines', 'extrude', 'boolean_solids',
   'delete_feature', 'delete_objects', 'undo', 'redo',
 ]);
 
@@ -724,6 +724,7 @@ async function dispatchMcpRequest(request: { id: string; method: string; params:
         if (!Array.isArray(params.segments)) throw new Error('Line segments are required.');
         result = cadMcp.createLines(params.segments as LineSegmentInput[]);
         break;
+      case 'extrude': result = await cadMcp.extrude(params as unknown as ExtrudeInput); break;
       case 'boolean_solids':
         if (params.operation !== 'union' && params.operation !== 'subtract' && params.operation !== 'intersect') {
           throw new Error('Boolean operation must be union, subtract or intersect.');
@@ -1036,6 +1037,9 @@ new InputController(input, commandForm, {
   toggleObjectSnapTracking: () => toggleDraftingMode('objectSnapTrackingEnabled', 'Object Snap Tracking'),
   togglePolar: () => toggleDraftingMode('polarEnabled', 'Polar Tracking'),
   toggleProperties: () => propertiesController.toggle(),
+  toggleTree: () => modelTreeController.toggle(),
+  toggleLayers: () => layerController.toggle(),
+  toggleBlocks: () => blockController.toggle(),
   commandActive: () => Boolean(commands.active),
   commandInputChanged: () => {
     suggestionIndex = 0;
@@ -1124,6 +1128,16 @@ input.addEventListener('input', () => {
 
 // The browser's own menu never appears; ours is opened from the release above.
 viewport.addEventListener('contextmenu', (event) => event.preventDefault());
+
+// A click on the drawing dismisses the floating side panels — they overlay the
+// canvas, and reopen from their toolbar button or Ctrl+1..4. The panels sit
+// outside the viewport element, so clicking one never reaches this listener.
+viewport.addEventListener('pointerdown', () => {
+  modelTreeController.close();
+  layerController.close();
+  blockController.close();
+  propertiesController.close();
+});
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
   button.addEventListener('click', () => {

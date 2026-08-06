@@ -101,6 +101,52 @@ describe('CadMcpSession', () => {
     expect(localToWorld(vertical.workPlane, vertical.end)).toEqual({ x: 20, y: 30, z: 40 });
   });
 
+  it('extrudes a points outline into a solid from its traced elevation', async () => {
+    const session = new CadMcpSession();
+    // A 40×20 outline traced 50 up the active plane, pulled 5 mm.
+    const solid = await session.extrude({
+      points: [
+        { x: 0, y: 0, z: 50 }, { x: 40, y: 0, z: 50 }, { x: 40, y: 20, z: 50 }, { x: 0, y: 20, z: 50 },
+      ],
+      height: 5,
+      name: 'Base',
+    });
+
+    // Only the solid is committed — the traced outline is not left behind.
+    expect(session.summary()).toMatchObject({ viewMode: '3d', entityCount: 0, solidCount: 1 });
+    expect(solid).toMatchObject({ name: 'Base', featureKind: 'extrusion' });
+    expect(solid.bounds).toMatchObject({
+      min: { x: expect.closeTo(0, 5), y: expect.closeTo(0, 5), z: expect.closeTo(50, 5) },
+      max: { x: expect.closeTo(40, 5), y: expect.closeTo(20, 5), z: expect.closeTo(55, 5) },
+    });
+    expect(session.document.solids[0].exact?.revision).toBe(session.document.solids[0].revision);
+    expect(session.undo()).toMatchObject({ solidCount: 0, canRedo: true });
+  });
+
+  it('extrudes an existing closed profile and consumes it', async () => {
+    const session = new CadMcpSession();
+    const profile = session.document.createPolyline(
+      [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+      true,
+    );
+    session.document.addEntity(profile);
+    expect(session.summary()).toMatchObject({ entityCount: 1, solidCount: 0 });
+
+    const solid = await session.extrude({ profileId: profile.id, height: 3 });
+
+    expect(solid).toMatchObject({ featureKind: 'extrusion' });
+    // The profile is replaced by the extrusion, not left alongside it.
+    expect(session.summary()).toMatchObject({ entityCount: 0, solidCount: 1 });
+    expect(session.document.getEntity(profile.id)).toBeUndefined();
+  });
+
+  it('rejects an extrusion of an open or missing profile', async () => {
+    const session = new CadMcpSession();
+    await expect(session.extrude({ profileId: 'nope', height: 5 })).rejects.toThrow('does not exist');
+    await expect(session.extrude({ points: [{ x: 0, y: 0 }], height: 5 })).rejects.toThrow('three points');
+    await expect(session.extrude({ points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], height: 0 })).rejects.toThrow('non-zero');
+  });
+
   it('rejects unrelated file types', async () => {
     const session = new CadMcpSession();
     await expect(session.saveProject('/tmp/not-a-project.json')).rejects.toThrow('Expected a .mycad file path');

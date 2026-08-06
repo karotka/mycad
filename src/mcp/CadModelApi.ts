@@ -1,8 +1,9 @@
 import { Document } from '../core/Document';
-import { entityBounds, type Entity, type PrimitiveFeature, type Solid, type SolidFeature, type SolidMesh } from '../core/entities/types';
+import { entityBounds, isSweepProfileEntity, type Entity, type PrimitiveFeature, type Solid, type SolidFeature, type SolidMesh } from '../core/entities/types';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit, cloneSolid, ReplaceObjectsEdit, UpdateSolidEdit } from '../core/history/edits';
 import { featureRemovalForPoint } from '../core/solids/featureRemoval';
+import { extrusionFeature } from '../core/solids/extrusion';
 import { booleanExactSolids, buildExactFeature } from '../core/geometry/ExactSolid';
 import { exportAsciiStl } from '../io/ProjectIO';
 import type { Vec3 } from '../math/geometry';
@@ -26,6 +27,16 @@ export interface PrimitiveInput {
 export interface LineSegmentInput {
   start: { x: number; y: number; z?: number };
   end: { x: number; y: number; z?: number };
+}
+
+export interface ExtrudeInput {
+  /** Extrude an existing closed profile entity by ID. */
+  profileId?: string;
+  /** Or build a closed outline in the active UCS from these vertices, then extrude it. */
+  points?: Array<{ x: number; y: number; z?: number }>;
+  /** Signed distance in mm along the active UCS Z axis; negative extrudes downward. */
+  height: number;
+  name?: string;
 }
 
 export interface DocumentSummary {
@@ -277,6 +288,62 @@ export class CadModelApi {
     this.documentValue.viewMode = '3d';
     this.documentValue.notify();
     return lines.map((line) => entitySummary(this.documentValue.getEntity(line.id)!));
+  }
+
+  /**
+   * Extrude a closed profile into a solid along the active UCS Z axis. The profile
+   * is either an existing closed entity (consumed by the extrusion, as in the
+   * EXTRUDE command) or an outline built here from points in the active UCS. Points
+   * may carry a z, so an outline traced at a height extrudes from that height.
+   */
+  async extrude(input: ExtrudeInput): Promise<Record<string, unknown>> {
+    const height = finite(input.height, 'height');
+    if (Math.abs(height) < 1e-9) throw new Error('height must be non-zero.');
+    const hasProfile = typeof input.profileId === 'string' && input.profileId.length > 0;
+    const hasPoints = Array.isArray(input.points) && input.points.length > 0;
+    if (hasProfile === hasPoints) throw new Error('Provide either profileId or points, but not both.');
+
+    let profile: Entity;
+    let consumed: Entity[] = [];
+    if (hasProfile) {
+      const entity = this.documentValue.getEntity(input.profileId!);
+      if (!entity) throw new Error(`Entity ${input.profileId} does not exist.`);
+      if (!isSweepProfileEntity(entity)) {
+        throw new Error('The profile must be a closed circle, rectangle, octagon or closed polyline.');
+      }
+      profile = entity;
+      consumed = [entity]; // replaced by the new solid, as the EXTRUDE command does
+    } else {
+      const points = input.points!;
+      if (points.length < 3) throw new Error('At least three points are needed to form a closed outline.');
+      const vertices = points.map((point, index) => ({
+        x: finite(point.x, `points[${index}].x`),
+        y: finite(point.y, `points[${index}].y`),
+        ...(point.z === undefined ? {} : { z: finite(point.z, `points[${index}].z`) }),
+      }));
+      // Built in the active UCS but not added to the document — the extrusion is the
+      // object the caller wanted, so only the solid is committed to history.
+      profile = this.documentValue.createPolyline(vertices, true);
+    }
+
+    const feature = extrusionFeature(profile, height);
+    const geometry = await buildExactFeature(feature);
+    if (!geometry) {
+      throw new Error('OpenCascade could not extrude this profile — check that the outline is closed and does not self-intersect.');
+    }
+    const solid = this.documentValue.createSolid(
+      geometry.mesh,
+      input.name?.trim() || 'Extrusion',
+      feature.height,
+      [profile.id],
+      undefined,
+      feature,
+    );
+    solid.exact = geometry.exact;
+    this.historyValue.execute(new ReplaceObjectsEdit('MCP extrude', consumed, [], [], [solid]));
+    this.documentValue.viewMode = '3d';
+    this.selectObjects([solid.id]);
+    return solidSummary(this.documentValue.getSolid(solid.id)!);
   }
 
   async booleanOperation(operation: 'union' | 'subtract' | 'intersect', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {

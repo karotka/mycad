@@ -14,6 +14,33 @@ app.setName(APP_NAME);
 
 const writableFiles = new Set<string>();
 const MAX_TEXT_FILE_BYTES = 256 * 1024 * 1024;
+
+// The folder the last open/save landed in, so the next dialog starts there
+// instead of the OS default. Persisted so it survives a restart.
+const prefsPath = () => path.join(app.getPath('userData'), 'mycad-prefs.json');
+let lastDirectory: string | undefined;
+let prefsLoaded = false;
+
+async function loadPrefs(): Promise<void> {
+  if (prefsLoaded) return;
+  prefsLoaded = true;
+  try {
+    const prefs = JSON.parse(await fs.readFile(prefsPath(), 'utf8'));
+    if (typeof prefs?.lastDirectory === 'string') lastDirectory = prefs.lastDirectory;
+  } catch { /* no prefs yet — first run */ }
+}
+
+async function rememberDirectory(filePath: string): Promise<void> {
+  lastDirectory = path.dirname(filePath);
+  try { await fs.writeFile(prefsPath(), JSON.stringify({ lastDirectory }), 'utf8'); } catch { /* best effort */ }
+}
+
+/** A name to save under becomes a full path in the last-used folder; an absolute
+ *  path (an already-open file) is honoured as given. */
+function saveDefaultPath(proposed: string): string {
+  if (proposed && path.isAbsolute(proposed)) return proposed;
+  return path.join(lastDirectory ?? app.getPath('documents'), proposed || 'model.mycad');
+}
 const MCP_RENDERER_TIMEOUT_MS = 120_000;
 
 interface PendingMcpRequest extends DesktopBridgeRequest {
@@ -235,13 +262,15 @@ ipcMain.handle('save-file', async (event, options: {
   assertTrustedSender(event);
   validateContent(options?.content);
   validateFilters(options?.filters);
+  await loadPrefs();
   const result = await dialog.showSaveDialog({
-    defaultPath: options.defaultPath,
+    defaultPath: saveDefaultPath(options.defaultPath),
     filters: options.filters,
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   await fs.writeFile(result.filePath, options.content, 'utf8');
   writableFiles.add(result.filePath);
+  await rememberDirectory(result.filePath);
   return { canceled: false, filePath: result.filePath };
 });
 
@@ -256,15 +285,18 @@ ipcMain.handle('open-file', async (event, options: {
 }) => {
   assertTrustedSender(event);
   validateFilters(options?.filters);
+  await loadPrefs();
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: options.filters,
+    ...(lastDirectory ? { defaultPath: lastDirectory } : {}),
   });
   if (result.canceled || result.filePaths.length === 0) return { canceled: true };
   const filePath = result.filePaths[0];
   const stat = await fs.stat(filePath);
   if (stat.size > MAX_TEXT_FILE_BYTES) throw new Error('The selected file is too large.');
   writableFiles.add(filePath);
+  await rememberDirectory(filePath);
   return { canceled: false, filePath, content: await fs.readFile(filePath, 'utf8') };
 });
 
@@ -287,6 +319,7 @@ ipcMain.handle('quick-save', async (event, options: { filePath?: string; default
   if (options.filePath && !writableFiles.has(options.filePath)) throw new Error('The renderer cannot write to this path.');
   await fs.writeFile(filePath, options.content, 'utf8');
   writableFiles.add(filePath);
+  if (options.filePath) await rememberDirectory(options.filePath);
   return { filePath };
 });
 

@@ -29,7 +29,7 @@ export class ModelTreeController {
     private readonly log: (message: string) => void,
   ) {
     toggleButton.addEventListener('click', () => this.toggle());
-    close.addEventListener('click', () => { this.panel.hidden = true; this.syncToggle(); });
+    close.addEventListener('click', () => this.close());
   }
 
   get isOpen(): boolean { return !this.panel.hidden; }
@@ -39,6 +39,8 @@ export class ModelTreeController {
     this.syncToggle();
     if (!this.panel.hidden) this.render();
   }
+
+  close(): void { this.panel.hidden = true; this.syncToggle(); }
 
   /** The button lights up while its panel is open, like the drafting toggles. */
   private syncToggle(): void {

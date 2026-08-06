@@ -4,7 +4,7 @@ import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { CadMcpBackend } from './CadMcpBackend';
-import type { DocumentSummary, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
+import type { DocumentSummary, ExtrudeInput, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
 
 interface Discovery {
   version: 1;
@@ -115,6 +115,7 @@ export class DesktopCadClient implements CadMcpBackend {
   createLines(segments: readonly LineSegmentInput[]): Promise<Array<Record<string, unknown>>> {
     return this.call('create_lines', { segments });
   }
+  extrude(input: ExtrudeInput): Promise<Record<string, unknown>> { return this.call('extrude', { ...input }); }
   booleanOperation(operation: 'union' | 'subtract' | 'intersect', solidIds: readonly string[], name?: string): Promise<Record<string, unknown>> {
     return this.call('boolean_solids', { operation, solidIds, name });
   }

@@ -114,6 +114,17 @@ export function createMyCadMcpServer(session: CadMcpBackend = new CadMcpSession(
     annotations: { destructiveHint: false, idempotentHint: false },
   }, async ({ segments }) => result(await session.createLines(segments)));
 
+  server.registerTool('extrude', {
+    description: 'Extrude a closed profile into a solid along the active UCS Z axis. Give an existing closed profile by profileId, or points to trace a closed outline in the active UCS. Height is signed — negative extrudes downward. Points may carry a z so an outline traced at a height extrudes from that height.',
+    inputSchema: {
+      profileId: z.string().min(1).optional().describe('ID of an existing closed profile (rectangle, circle, octagon or closed polyline). Provide this or points.'),
+      points: z.array(center).min(3).optional().describe('Outline vertices in the active UCS; a closed polyline is built from them. Provide this or profileId.'),
+      height: z.number().finite().describe('Extrusion distance in mm; negative extrudes downward.'),
+      name: z.string().min(1).optional(),
+    },
+    annotations: { destructiveHint: false, idempotentHint: false },
+  }, async (input) => result(await session.extrude(input)));
+
   server.registerTool('boolean_solids', {
     description: 'Union solids, subtract every later solid from the first, or keep their common volume. Sources are replaced by one parametric result.',
     inputSchema: {

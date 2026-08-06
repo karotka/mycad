@@ -1,4 +1,4 @@
-import type { DocumentSummary, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
+import type { DocumentSummary, ExtrudeInput, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -13,6 +13,7 @@ export interface CadMcpBackend {
   selectObjects(ids: readonly string[], mode?: SelectionMode): Awaitable<DocumentSummary>;
   createPrimitive(input: PrimitiveInput): Awaitable<Record<string, unknown>>;
   createLines(segments: readonly LineSegmentInput[]): Awaitable<Array<Record<string, unknown>>>;
+  extrude(input: ExtrudeInput): Awaitable<Record<string, unknown>>;
   booleanOperation(operation: 'union' | 'subtract' | 'intersect', solidIds: readonly string[], name?: string): Awaitable<Record<string, unknown>>;
   deleteFeature(
     solidId: string,

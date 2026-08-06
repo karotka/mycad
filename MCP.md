@@ -38,6 +38,7 @@ Headless mode owns a separate in-memory document. Saving it explicitly is requir
 - Inspect the document, current selection, objects, active UCS and Undo/Redo state.
 - Create boxes, wedges, spheres, cones, cylinders, pyramids and tori in the active UCS.
 - Create batches of 3D line segments between points in the active UCS.
+- Extrude a closed profile into a solid: an existing closed entity by `profileId`, or a `points` outline traced in the active UCS. The height is signed (negative extrudes downward) and outline points may carry a z, so a profile traced at a height extrudes from that height.
 - Union solids or subtract several cutters from one base solid.
 - Remove a feature from an oriented surface point.
 - Select or delete objects, undo and redo modelling edits.

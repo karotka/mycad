@@ -1,4 +1,4 @@
-import { closedVertices, type BooleanFeature, type Entity, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, type BooleanFeature, type Entity, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
@@ -317,7 +317,11 @@ function planeDirection(plane: WorkPlane, vector: { x: number; y: number }): Poi
 
 function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
   const transform = feature.transform;
-  const z = transform.translateZ ?? 0;
+  // The profile keeps the elevation it was drawn at as a local z on its points
+  // (a snap onto something above the UCS rides its height along). Start the prism
+  // there, not at the work-plane origin, or a rectangle drawn on top of a box
+  // extrudes up from Z=0 instead of from where it sits.
+  const z = (transform.translateZ ?? 0) + profileElevation(feature.profile);
   const taperAngle = feature.taperAngle ?? 0;
   if (feature.direction && Math.abs(taperAngle) > 1e-12) return null;
   const vector = feature.direction
@@ -380,6 +384,19 @@ function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKerne
   } finally {
     local.dispose();
   }
+}
+
+/**
+ * How far the profile sits off its own work plane, read from the first vertex
+ * that carries a local z. A profile that never left the plane returns 0, so an
+ * ordinary ground-level extrusion is unaffected.
+ */
+function profileElevation(profile: Entity): number {
+  for (const point of getEntityPoints(profile)) {
+    const pz = (point as { z?: number }).z;
+    if (typeof pz === 'number' && Number.isFinite(pz)) return pz;
+  }
+  return 0;
 }
 
 function taperedLength(base: number, height: number, angleDegrees: number): number | null {
@@ -518,9 +535,48 @@ export async function pressPullExactSolid(
   try {
     result = pressPullShape(kernel, source, region, distance);
     return exactResult(kernel, result, revision);
+  } catch {
+    // The analytic boolean can throw on a solid whose exact topology OCCT will not
+    // fuse (many stacked holes, chamfers). Fall through to the faceted retry rather
+    // than giving up — and never rethrow: the caller awaits this inside a command
+    // step, where an uncaught rejection latches the step's `advancing` guard and
+    // every later click and typed distance is silently dropped, so the face looks
+    // stuck.
   } finally {
     result?.dispose();
     source.dispose();
+  }
+  return pressPullMeshFallback(kernel, solid.mesh, region, distance, revision);
+}
+
+/**
+ * The same press/pull done on the solid's tessellation instead of its analytic
+ * B-rep. A faceted shape has none of the tangencies and slivers that make OCCT
+ * refuse the exact fuse, so a face that would not move on the exact solid usually
+ * moves here — at the cost of turning the result faceted, which is the honest
+ * trade for getting the edit at all. Returns null (never throws) if even this
+ * fails.
+ */
+function pressPullMeshFallback(
+  kernel: OpenCascadeKernel,
+  mesh: SolidMesh,
+  region: SolidFaceRegion,
+  distance: number,
+  revision: number,
+): ExactSolidResult | null {
+  const faceted = kernel.fromMesh(mesh.positions, mesh.indices);
+  let source: OpenCascadeSolid | null = null;
+  let result: OpenCascadeSolid | null = null;
+  try {
+    source = kernel.heal(faceted);
+    result = pressPullShape(kernel, source, region, distance);
+    return exactResult(kernel, result, revision);
+  } catch {
+    return null;
+  } finally {
+    result?.dispose();
+    source?.dispose();
+    faceted.dispose();
   }
 }
 

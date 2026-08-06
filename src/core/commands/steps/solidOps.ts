@@ -320,7 +320,9 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
     if (mesh) solid.feature = next;
   }
   if (!mesh) {
-    ctx.log('PressPull failed — select a bounded planar face region or use a smaller distance.');
+    ctx.log(face
+      ? 'PressPull could not modify this solid here — try a smaller distance or a different face. Press Escape to cancel.'
+      : 'PressPull failed — select a bounded planar face region or use a smaller distance.');
     return 'stay';
   }
 
