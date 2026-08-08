@@ -497,6 +497,14 @@ export async function openExactShape(
  */
 const FACETED_BOOLEAN_TRIANGLE_BUDGET = 3000;
 
+/**
+ * How many B-rep faces a boolean's operands may carry in total before it is
+ * refused. Clean parametric solids have a handful of faces each; an operand whose
+ * promotion fell back to a tessellation has one face per triangle. Past this the
+ * boolean would run for minutes on the UI thread, which reads as a freeze.
+ */
+const FACETED_BOOLEAN_FACE_BUDGET = 500;
+
 const facetedTriangleLoad = (solids: readonly Solid[]): number =>
   solids
     .filter((solid) => solid.feature.kind === 'mesh')
@@ -509,14 +517,29 @@ export async function booleanExactSolids(
   revision = 0,
 ): Promise<ExactSolidResult | null> {
   if (solids.length === 0 || (operation !== 'union' && solids.length < 2)) return null;
-  // A boolean over many faceted mesh operands would hang the UI thread; fail fast
-  // and let the caller ask the user to rebuild the messy solid first.
+  // Cheap pre-check: promoting a giant raw mesh to exact is itself slow, so refuse
+  // before even doing that when the mesh operands are clearly too heavy.
   if (facetedTriangleLoad(solids) > FACETED_BOOLEAN_TRIANGLE_BUDGET) return null;
   const promoted = await Promise.all(solids.map((solid) => promoteSolidToExact(solid)));
   if (promoted.some((current) => !current)) return null;
   const kernel = await openCascadeKernel();
   const operands = await Promise.all(solids.map((solid) => openExactShape(solid, kernel)));
   if (operands.some((shape) => shape === null)) {
+    operands.forEach((shape) => shape?.dispose());
+    return null;
+  }
+
+  // Real guard: a clean parametric solid carries a handful of B-rep faces, but one
+  // whose promotion fell back to a tessellation (a sliced remnant, or a feature
+  // OCCT would not rebuild) carries one face per triangle — hundreds or thousands.
+  // A boolean over such operands costs ~O(faces^2) on the UI thread with no
+  // cancellation, which is the freeze. `feature.kind` alone misses this (a faceted
+  // presspull-region reads as a normal feature), so measure the actual faces and
+  // refuse past budget rather than hang. The caller reports it; the fix is to
+  // rebuild the offending solid as a clean parametric one first.
+  const totalFaces = (operands as OpenCascadeSolid[])
+    .reduce((sum, shape) => sum + kernel.inspect(shape).faceCount, 0);
+  if (totalFaces > FACETED_BOOLEAN_FACE_BUDGET) {
     operands.forEach((shape) => shape?.dispose());
     return null;
   }
@@ -558,6 +581,12 @@ function booleanMeshFallback(
   solids: readonly Solid[],
   revision: number,
 ): ExactSolidResult | null {
+  // The fallback turns every operand into one B-rep face per triangle, so it has
+  // the same O(faces^2) freeze risk as the exact op. Bound it by total triangles
+  // (all operands, not just mesh-kind) so a clean-but-densely-tessellated solid
+  // whose exact op threw cannot hang here instead.
+  const totalTriangles = solids.reduce((sum, solid) => sum + solid.mesh.indices.length / 3, 0);
+  if (totalTriangles > FACETED_BOOLEAN_TRIANGLE_BUDGET) return null;
   const faceted = solids.map((solid) => kernel.fromMesh(solid.mesh.positions, solid.mesh.indices));
   const operands: OpenCascadeSolid[] = [];
   let combined: OpenCascadeSolid | null = null;

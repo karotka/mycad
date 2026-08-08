@@ -41,7 +41,7 @@ export class PropertiesController {
     if (objects.length > 1) { this.renderMultiple(objects); return; }
     const object = objects[0];
     const fields = this.fields(object);
-    this.content.innerHTML = `<div class="property-row readonly"><span>Type</span><output>${'type' in object ? object.type : '3D Solid'}</output></div>${fields.map((field) => this.fieldHtml(field)).join('')}`;
+    this.content.innerHTML = `<div class="property-row readonly"><span>Type</span><output>${'type' in object ? object.type : '3D Solid'}</output></div><div class="property-row readonly"><span>ID</span><output class="property-id" title="${escapeHtml(object.id)}">${escapeHtml(object.id)}</output></div>${fields.map((field) => this.fieldHtml(field)).join('')}`;
     this.bindInputs(object, fields);
   }
 
