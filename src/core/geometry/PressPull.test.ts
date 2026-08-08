@@ -96,4 +96,25 @@ describe('boolean on a mesh-featured solid (slice remnant)', () => {
     const maxX = Math.max(...Array.from(result!.mesh.positions).filter((_v, i) => i % 3 === 0));
     expect(maxX).toBeLessThan(6);
   });
+
+  it('refuses (returns null fast) a boolean over too many faceted mesh triangles', async () => {
+    const doc = new Document();
+    // Two mesh solids whose combined triangle count blows the faceted budget: a
+    // real boolean over these would hang the UI thread, so it must fail fast.
+    const big = () => {
+      const positions: number[] = [];
+      const indices: number[] = [];
+      for (let i = 0; i < 2500; i++) {
+        const b = positions.length / 3;
+        positions.push(i, 0, 0, i + 1, 0, 0, i, 1, 0);
+        indices.push(b, b + 1, b + 2);
+      }
+      return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
+    };
+    const a = doc.createSolid(big(), 'A', 1, [], undefined, { kind: 'mesh' });
+    const b = doc.createSolid(big(), 'B', 1, [], undefined, { kind: 'mesh' });
+
+    const result = await booleanExactSolids('union', [a, b], 1);
+    expect(result).toBeNull();
+  });
 });

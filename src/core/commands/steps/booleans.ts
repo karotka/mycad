@@ -57,7 +57,7 @@ export async function subtractSolids(run: CommandRun): Promise<StepOutcome> {
   }
   const exact = await booleanExactSolids('subtract', [baseSolid, ...toolSolids]);
   if (!exact) {
-    ctx.log('Subtract failed — one of the bodies could not be converted to a closed B-rep.');
+    ctx.log('Subtract failed — a body could not be converted to a closed B-rep, or a sliced mesh remnant is too faceted. Rebuild it as a clean solid first.');
     return 'stay';
   }
   const solid = ctx.doc.createSolid(exact.mesh, 'Subtract', baseSolid.height, [], undefined, feature);
@@ -82,7 +82,7 @@ export async function unionSolids({ ctx, active, data, value }: CommandRun): Pro
   ctx.log('Joining solids…');
   const exact = await booleanExactSolids('union', sources);
   if (!exact) {
-    ctx.log('Union failed — one of the bodies could not be converted to a closed B-rep.');
+    ctx.log('Union failed — a body is too faceted to join (a sliced mesh remnant). Rebuild it as a clean solid first, then union.');
     return 'advance';
   }
   const solid = ctx.doc.createSolid(exact.mesh, 'Union', 0, [], undefined, {

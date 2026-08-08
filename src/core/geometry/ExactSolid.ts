@@ -486,6 +486,22 @@ export async function openExactShape(
   }
 }
 
+/**
+ * How many faceted (recipe-less `mesh`) triangles a boolean's operands may carry
+ * before it is refused rather than attempted. Every such triangle becomes its own
+ * B-rep face, so a boolean over several large mesh solids costs roughly the
+ * product of their face counts and runs synchronously on the UI thread with no
+ * cancellation — past this budget it reads as a freeze, not a slow op. Refusing
+ * with a clean null lets the caller report it; the fix is to rebuild the messy
+ * sliced solid as a parametric one first, after which the boolean is instant.
+ */
+const FACETED_BOOLEAN_TRIANGLE_BUDGET = 3000;
+
+const facetedTriangleLoad = (solids: readonly Solid[]): number =>
+  solids
+    .filter((solid) => solid.feature.kind === 'mesh')
+    .reduce((total, solid) => total + solid.mesh.indices.length / 3, 0);
+
 /** Applies a boolean to the actual stored B-reps, including baked SLICE pieces. */
 export async function booleanExactSolids(
   operation: BooleanFeature['operation'],
@@ -493,6 +509,9 @@ export async function booleanExactSolids(
   revision = 0,
 ): Promise<ExactSolidResult | null> {
   if (solids.length === 0 || (operation !== 'union' && solids.length < 2)) return null;
+  // A boolean over many faceted mesh operands would hang the UI thread; fail fast
+  // and let the caller ask the user to rebuild the messy solid first.
+  if (facetedTriangleLoad(solids) > FACETED_BOOLEAN_TRIANGLE_BUDGET) return null;
   const promoted = await Promise.all(solids.map((solid) => promoteSolidToExact(solid)));
   if (promoted.some((current) => !current)) return null;
   const kernel = await openCascadeKernel();

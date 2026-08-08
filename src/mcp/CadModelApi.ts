@@ -365,7 +365,7 @@ export class CadModelApi {
       }
     }
     const exact = await booleanExactSolids(operation, sources);
-    if (!exact || exact.mesh.indices.length === 0) throw new Error(`${operation} did not produce a valid exact solid.`);
+    if (!exact || exact.mesh.indices.length === 0) throw new Error(`${operation} did not produce a valid exact solid (a sliced mesh remnant may be too faceted to combine — rebuild it as a clean parametric solid first).`);
     const result = this.documentValue.createSolid(
       exact.mesh,
       name?.trim() || (operation === 'union' ? 'Union' : operation === 'subtract' ? 'Subtract' : 'Intersect'),
