@@ -100,14 +100,21 @@ describe('boolean on a mesh-featured solid (slice remnant)', () => {
 });
 
 // The boolean runs in a Web Worker in the browser; in Node (here and the headless
-// MCP server) runBooleanJob runs the same core inline. This exercises that core —
-// serialised B-reps in, a {mesh, exact} out — which is exactly what the worker does.
+// MCP server) runBooleanJob runs the same core inline. This exercises that core,
+// and specifically both operand sources: an already-exact B-rep passed straight
+// through, and a feature rebuilt from scratch — the rebuild being the step that
+// must happen off the main thread because it runs its own booleans.
 describe('runBooleanJob core', () => {
-  it('unions two overlapping boxes from their serialised B-reps', async () => {
+  it('unions an exact operand with one rebuilt from its feature, off the main thread', async () => {
+    const boxFeature = { kind: 'primitive' as const, primitive: 'box' as const, center: { x: 5, y: 0 }, width: 10, depth: 10, height: 10 };
     const a = await buildExactBox({ kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 });
-    const b = await buildExactBox({ kind: 'primitive', primitive: 'box', center: { x: 5, y: 0 }, width: 10, depth: 10, height: 10 });
+    const b = await buildExactBox(boxFeature);
 
-    const result = await runBooleanJob('union', [a.exact.shape, b.exact.shape], 1);
+    const result = await runBooleanJob('union', [
+      { source: 'exact', shape: a.exact.shape },
+      // No exact shape given — the worker must rebuild this operand from its feature.
+      { source: 'feature', feature: boxFeature, positions: b.mesh.positions, indices: b.mesh.indices },
+    ], 1);
 
     expect(result).not.toBeNull();
     expect(result!.exact.revision).toBe(1);

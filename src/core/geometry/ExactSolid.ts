@@ -2,8 +2,8 @@ import { closedVertices, getEntityPoints, type BooleanFeature, type Entity, type
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
-import type { AffineTransform3, Point3, SerializedKernelSolid, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
-import { runBooleanJob } from './booleanJob';
+import type { AffineTransform3, Point3, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
+import { runBooleanJob, type BooleanOperand } from './booleanJob';
 
 export interface ExactSolidResult {
   mesh: SolidMesh;
@@ -488,15 +488,19 @@ export async function openExactShape(
 }
 
 /**
- * Applies a boolean to the actual stored B-reps, including baked SLICE pieces.
+ * Applies a boolean to the given solids.
  *
- * The fuse/cut/common itself runs off the main thread (see runBooleanJob): a
- * boolean over a pathological solid can hang OCCT indefinitely, and only a worker
- * we can `terminate()` guarantees the UI never freezes. This function does the
- * cheap, safe part — promote each operand and serialise its world-space B-rep —
- * then hands the serialised operands to the job runner, which computes the result
- * under a timeout and returns a fully-serialisable {mesh, exact} (or null if it
- * was cancelled or failed).
+ * Crucially this function touches OCCT not at all: it only reads data already in
+ * memory (each solid's current exact B-rep, or its feature recipe and mesh) and
+ * describes the operands for the worker. Every OCCT call — rebuilding an operand's
+ * exact shape from its feature (which runs its own nested booleans), the fuse/cut/
+ * common, the heal, the tessellation — happens in computeBooleanResult, which the
+ * worker runs off the main thread. A boolean, or a feature rebuild, over a
+ * pathological solid can hang OCCT with no way to interrupt a blocking WASM call,
+ * so anything that could hang must be behind the worker we can `terminate()`; if
+ * even the promotion ran here, the UI would still freeze. The job runner races the
+ * worker against a timeout and returns a serialisable {mesh, exact}, or null if it
+ * was cancelled or failed.
  */
 export async function booleanExactSolids(
   operation: BooleanFeature['operation'],
@@ -504,39 +508,32 @@ export async function booleanExactSolids(
   revision = 0,
 ): Promise<ExactSolidResult | null> {
   if (solids.length === 0 || (operation !== 'union' && solids.length < 2)) return null;
-  const promoted = await Promise.all(solids.map((solid) => promoteSolidToExact(solid)));
-  if (promoted.some((current) => !current)) return null;
-  const kernel = await openCascadeKernel();
-  const operands: SerializedKernelSolid[] = [];
-  for (const solid of solids) {
-    const shape = await openExactShape(solid, kernel);
-    if (!shape) return null;
-    try {
-      operands.push(kernel.serialize(shape));
-    } finally {
-      shape.dispose();
-    }
-  }
+  const operands: BooleanOperand[] = solids.map((solid) => hasCurrentExactGeometry(solid)
+    ? { source: 'exact', shape: solid.exact!.shape, transform: solid.exact!.transform }
+    : { source: 'feature', feature: solid.feature, positions: solid.mesh.positions, indices: solid.mesh.indices });
   return runBooleanJob(operation, operands, revision);
 }
 
 /**
- * The boolean itself, over already-serialised operands. This is what the worker
- * runs (and what the node/test path calls directly): deserialise each operand,
- * combine, heal, and tessellate into a {mesh, exact} that survives structured
- * cloning back to the main thread. Kept free of any DOM/Solid dependency so it can
- * live in a worker. Throws on OCCT failure; the caller turns that into a null.
+ * The boolean itself, over operand descriptions. This is what the worker runs (and
+ * what the Node/test path calls directly): resolve each operand to a live shape —
+ * deserialise its stored B-rep, or rebuild it from its feature (falling back to the
+ * mesh) — combine, heal, and tessellate into a {mesh, exact} that survives
+ * structured cloning back to the main thread. Kept free of any DOM/Solid dependency
+ * so it can live in a worker. Throws on OCCT failure; the caller turns that into a
+ * null.
  */
 export function computeBooleanResult(
   kernel: OpenCascadeKernel,
   operation: BooleanFeature['operation'],
-  operands: readonly SerializedKernelSolid[],
+  operands: readonly BooleanOperand[],
   revision: number,
 ): ExactSolidResult {
-  const shapes = operands.map((operand) => kernel.deserialize(operand));
+  const shapes: OpenCascadeSolid[] = [];
   let combined: OpenCascadeSolid | null = null;
   let healed: OpenCascadeSolid | null = null;
   try {
+    for (const operand of operands) shapes.push(resolveBooleanOperand(kernel, operand));
     combined = operation === 'union'
       ? kernel.union(shapes)
       : operation === 'subtract'
@@ -548,6 +545,33 @@ export function computeBooleanResult(
     healed?.dispose();
     combined?.dispose();
     shapes.forEach((shape) => shape.dispose());
+  }
+}
+
+/**
+ * Turns one operand description into a live world-space B-rep. A current exact
+ * shape is just deserialised (and re-placed by its transform, mirroring
+ * openExactShape); otherwise the feature is rebuilt — the step that can run its
+ * own nested booleans — and only if that yields nothing does it fall back to the
+ * tessellation. Runs wherever computeBooleanResult runs, i.e. in the worker.
+ */
+function resolveBooleanOperand(kernel: OpenCascadeKernel, operand: BooleanOperand): OpenCascadeSolid {
+  if (operand.source === 'exact') {
+    const shape = kernel.deserialize(operand.shape);
+    if (!operand.transform) return shape;
+    try {
+      return kernel.transform(shape, operand.transform);
+    } finally {
+      shape.dispose();
+    }
+  }
+  const built = exactShapeFromFeature(operand.feature, kernel);
+  if (built) return built;
+  const faceted = kernel.fromMesh(operand.positions, operand.indices);
+  try {
+    return kernel.heal(faceted);
+  } finally {
+    faceted.dispose();
   }
 }
 

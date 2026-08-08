@@ -9,14 +9,27 @@
  * In Node — tests and the headless MCP server, which have no UI to freeze and no
  * Worker — it runs the same computation inline instead.
  */
-import type { BooleanFeature } from '../entities/types';
-import type { SerializedKernelSolid } from './GeometryKernel';
+import type { BooleanFeature, SolidFeature } from '../entities/types';
+import type { AffineTransform3, SerializedKernelSolid } from './GeometryKernel';
 import type { ExactSolidResult } from './ExactSolid';
+
+/**
+ * One boolean operand, described so the worker can rebuild it with no help from
+ * the main thread. Either its exact B-rep is already current (pass it straight
+ * through, plus any placement transform), or it is not, and we pass the feature
+ * recipe and a mesh so the worker can rebuild the exact shape — or fall back to
+ * the tessellation — entirely off the main thread. Building the exact shape is
+ * itself where OCCT can hang (a feature tree runs its own booleans), which is
+ * exactly why it must happen in the worker, not here.
+ */
+export type BooleanOperand =
+  | { source: 'exact'; shape: SerializedKernelSolid; transform?: AffineTransform3 }
+  | { source: 'feature'; feature: SolidFeature; positions: ArrayLike<number>; indices: ArrayLike<number> };
 
 export interface BooleanJobRequest {
   id: number;
   operation: BooleanFeature['operation'];
-  operands: readonly SerializedKernelSolid[];
+  operands: readonly BooleanOperand[];
   revision: number;
 }
 
@@ -35,7 +48,7 @@ const runningInNode = typeof window === 'undefined' && typeof (globalThis as { d
 
 export async function runBooleanJob(
   operation: BooleanFeature['operation'],
-  operands: readonly SerializedKernelSolid[],
+  operands: readonly BooleanOperand[],
   revision: number,
   timeoutMs: number = BOOLEAN_TIMEOUT_MS,
 ): Promise<ExactSolidResult | null> {
@@ -71,7 +84,7 @@ function discardWorker(): void {
 
 function runInWorker(
   operation: BooleanFeature['operation'],
-  operands: readonly SerializedKernelSolid[],
+  operands: readonly BooleanOperand[],
   revision: number,
   timeoutMs: number,
 ): Promise<ExactSolidResult | null> {
