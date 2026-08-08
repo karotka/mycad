@@ -503,12 +503,20 @@ function updateViewCubeOrientation(): void {
 function followWorkPlaneView(): void {
   renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
   if (!isWorldWorkPlane(cadDocument.activeWorkPlane)) {
+    // Changing the UCS moves the construction plane, not the camera. Keep the
+    // current 3D view so switching UCS does not force a re-orbit and re-zoom
+    // every time — the coordinates change under a still camera. Only when
+    // stepping up from the flat 2D view, where there is no meaningful 3D camera
+    // yet, do we frame the content and face it once.
+    const steppingUpFrom2D = cadDocument.viewMode === '2d';
     cadDocument.viewMode = '3d';
-    // Frame first: setStandardView reuses orbitTarget/orbitRadius, so without a
-    // fresh frame the plan view keeps the old centre and zoom and the content
-    // lands off-screen at the wrong scale (the "TOP looks broken" report).
-    renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
-    renderer3d.setStandardView('top');
+    if (steppingUpFrom2D) {
+      // Frame first: setStandardView reuses orbitTarget/orbitRadius, so without a
+      // fresh frame the plan view keeps the old centre and zoom and the content
+      // lands off-screen at the wrong scale (the "TOP looks broken" report).
+      renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
+      renderer3d.setStandardView('top');
+    }
   }
   redraw();
 }

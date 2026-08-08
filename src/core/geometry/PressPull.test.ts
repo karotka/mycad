@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
-import { buildExactBox, buildExactFeature, pressPullExactSolid } from './ExactSolid';
+import { booleanExactSolids, buildExactBox, buildExactFeature, pressPullExactSolid } from './ExactSolid';
 import { exactBooleanMeshes } from './FeatureMesh';
 import type { SolidFaceRegion } from '../entities/types';
 
@@ -66,5 +66,34 @@ describe('pressPull on a boolean-derived solid', () => {
     // A throw here would fail the test outright — which is the regression we guard.
     const result = await pressPullExactSolid(solid, degenerate, 5, solid.revision + 1);
     expect(result).toBeNull();
+  });
+});
+
+// A slice leaves faceted `mesh` solids; cutting a chunk off one with a boolean is
+// the standard move, so it must run on mesh-featured solids, not just exact ones.
+describe('boolean on a mesh-featured solid (slice remnant)', () => {
+  it('subtracts a cutter box from a faceted mesh solid without throwing', async () => {
+    const doc = new Document();
+    const plate = await buildExactBox({
+      kind: 'primitive', primitive: 'box',
+      center: { x: 0, y: 0 }, width: 40, depth: 20, height: 10,
+    });
+    // A raw mesh solid, exactly what SLICE produces — no feature tree.
+    const remnant = doc.createSolid(plate.mesh, 'Slice remnant', 10, [], undefined, { kind: 'mesh' });
+    const cutter = await buildExactBox({
+      kind: 'primitive', primitive: 'box',
+      center: { x: 15, y: 0 }, width: 20, depth: 30, height: 20,
+    });
+    const cutterSolid = doc.createSolid(cutter.mesh, 'Cutter', 20, [], undefined, {
+      kind: 'primitive', primitive: 'box', center: { x: 15, y: 0 }, width: 20, depth: 30, height: 20,
+    });
+    cutterSolid.exact = cutter.exact;
+
+    const result = await booleanExactSolids('subtract', [remnant, cutterSolid], 1);
+    expect(result).not.toBeNull();
+    expect(result!.mesh.indices.length).toBeGreaterThan(0);
+    // The cut took: the +X half is gone, so the solid no longer reaches x=20.
+    const maxX = Math.max(...Array.from(result!.mesh.positions).filter((_v, i) => i % 3 === 0));
+    expect(maxX).toBeLessThan(6);
   });
 });

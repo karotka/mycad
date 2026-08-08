@@ -513,10 +513,52 @@ export async function booleanExactSolids(
         : kernel.intersect(shapes);
     healed = kernel.heal(combined);
     return exactResult(kernel, healed, revision);
+  } catch {
+    // A sliced or otherwise faceted operand can make OCCT refuse the exact fuse or
+    // its tessellation ("no triangulation for face N") — the same fragility that
+    // press/pull hits. Fall through to the faceted retry rather than letting the
+    // whole boolean throw, which would surface as a hard error to the caller.
   } finally {
     healed?.dispose();
     combined?.dispose();
     operands.forEach((shape) => shape?.dispose());
+  }
+  return booleanMeshFallback(kernel, operation, solids, revision);
+}
+
+/**
+ * The same boolean done on each operand's tessellation instead of its analytic
+ * B-rep. A faceted shape has none of the tangencies and slivers that make OCCT
+ * refuse the exact op, so a cut that will not run on the exact solids usually runs
+ * here — at the cost of a faceted result, which is the honest trade for getting
+ * the edit at all. Returns null (never throws) if even this fails.
+ */
+function booleanMeshFallback(
+  kernel: OpenCascadeKernel,
+  operation: BooleanFeature['operation'],
+  solids: readonly Solid[],
+  revision: number,
+): ExactSolidResult | null {
+  const faceted = solids.map((solid) => kernel.fromMesh(solid.mesh.positions, solid.mesh.indices));
+  const operands: OpenCascadeSolid[] = [];
+  let combined: OpenCascadeSolid | null = null;
+  let healed: OpenCascadeSolid | null = null;
+  try {
+    for (const shape of faceted) operands.push(kernel.heal(shape));
+    combined = operation === 'union'
+      ? kernel.union(operands)
+      : operation === 'subtract'
+        ? kernel.subtract(operands[0], operands.slice(1))
+        : kernel.intersect(operands);
+    healed = kernel.heal(combined);
+    return exactResult(kernel, healed, revision);
+  } catch {
+    return null;
+  } finally {
+    healed?.dispose();
+    combined?.dispose();
+    operands.forEach((shape) => shape?.dispose());
+    faceted.forEach((shape) => shape.dispose());
   }
 }
 
