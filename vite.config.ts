@@ -5,6 +5,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
+  // The boolean worker imports OCCT, which Vite code-splits into its own chunk.
+  // Code-splitting a worker needs the ES output format; the default 'iife' cannot
+  // express the dynamic imports and fails the build.
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 5173,
   },

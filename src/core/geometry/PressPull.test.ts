@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../Document';
 import { booleanExactSolids, buildExactBox, buildExactFeature, pressPullExactSolid } from './ExactSolid';
+import { runBooleanJob } from './booleanJob';
 import { exactBooleanMeshes } from './FeatureMesh';
 import type { SolidFaceRegion } from '../entities/types';
 
@@ -96,25 +97,23 @@ describe('boolean on a mesh-featured solid (slice remnant)', () => {
     const maxX = Math.max(...Array.from(result!.mesh.positions).filter((_v, i) => i % 3 === 0));
     expect(maxX).toBeLessThan(6);
   });
+});
 
-  it('refuses (returns null fast) a boolean over too many faceted mesh triangles', async () => {
-    const doc = new Document();
-    // Two mesh solids whose combined triangle count blows the faceted budget: a
-    // real boolean over these would hang the UI thread, so it must fail fast.
-    const big = () => {
-      const positions: number[] = [];
-      const indices: number[] = [];
-      for (let i = 0; i < 2500; i++) {
-        const b = positions.length / 3;
-        positions.push(i, 0, 0, i + 1, 0, 0, i, 1, 0);
-        indices.push(b, b + 1, b + 2);
-      }
-      return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
-    };
-    const a = doc.createSolid(big(), 'A', 1, [], undefined, { kind: 'mesh' });
-    const b = doc.createSolid(big(), 'B', 1, [], undefined, { kind: 'mesh' });
+// The boolean runs in a Web Worker in the browser; in Node (here and the headless
+// MCP server) runBooleanJob runs the same core inline. This exercises that core —
+// serialised B-reps in, a {mesh, exact} out — which is exactly what the worker does.
+describe('runBooleanJob core', () => {
+  it('unions two overlapping boxes from their serialised B-reps', async () => {
+    const a = await buildExactBox({ kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 });
+    const b = await buildExactBox({ kind: 'primitive', primitive: 'box', center: { x: 5, y: 0 }, width: 10, depth: 10, height: 10 });
 
-    const result = await booleanExactSolids('union', [a, b], 1);
-    expect(result).toBeNull();
+    const result = await runBooleanJob('union', [a.exact.shape, b.exact.shape], 1);
+
+    expect(result).not.toBeNull();
+    expect(result!.exact.revision).toBe(1);
+    const xs = Array.from(result!.mesh.positions).filter((_v, i) => i % 3 === 0);
+    // The two boxes centred at x=0 and x=5 (each 10 wide) fuse into x ∈ [-5, 10].
+    expect(Math.min(...xs)).toBeCloseTo(-5, 3);
+    expect(Math.max(...xs)).toBeCloseTo(10, 3);
   });
 });

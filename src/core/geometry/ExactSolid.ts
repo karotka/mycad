@@ -2,7 +2,8 @@ import { closedVertices, getEntityPoints, type BooleanFeature, type Entity, type
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
-import type { AffineTransform3, Point3, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
+import type { AffineTransform3, Point3, SerializedKernelSolid, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
+import { runBooleanJob } from './booleanJob';
 
 export interface ExactSolidResult {
   mesh: SolidMesh;
@@ -487,67 +488,55 @@ export async function openExactShape(
 }
 
 /**
- * How many faceted (recipe-less `mesh`) triangles a boolean's operands may carry
- * before it is refused rather than attempted. Every such triangle becomes its own
- * B-rep face, so a boolean over several large mesh solids costs roughly the
- * product of their face counts and runs synchronously on the UI thread with no
- * cancellation — past this budget it reads as a freeze, not a slow op. Refusing
- * with a clean null lets the caller report it; the fix is to rebuild the messy
- * sliced solid as a parametric one first, after which the boolean is instant.
+ * Applies a boolean to the actual stored B-reps, including baked SLICE pieces.
+ *
+ * The fuse/cut/common itself runs off the main thread (see runBooleanJob): a
+ * boolean over a pathological solid can hang OCCT indefinitely, and only a worker
+ * we can `terminate()` guarantees the UI never freezes. This function does the
+ * cheap, safe part — promote each operand and serialise its world-space B-rep —
+ * then hands the serialised operands to the job runner, which computes the result
+ * under a timeout and returns a fully-serialisable {mesh, exact} (or null if it
+ * was cancelled or failed).
  */
-const FACETED_BOOLEAN_TRIANGLE_BUDGET = 3000;
-
-/**
- * How many B-rep faces a boolean's operands may carry in total before it is
- * refused. Clean parametric solids have a handful of faces each; an operand whose
- * promotion fell back to a tessellation has one face per triangle. Past this the
- * boolean would run for minutes on the UI thread, which reads as a freeze.
- */
-const FACETED_BOOLEAN_FACE_BUDGET = 500;
-
-const facetedTriangleLoad = (solids: readonly Solid[]): number =>
-  solids
-    .filter((solid) => solid.feature.kind === 'mesh')
-    .reduce((total, solid) => total + solid.mesh.indices.length / 3, 0);
-
-/** Applies a boolean to the actual stored B-reps, including baked SLICE pieces. */
 export async function booleanExactSolids(
   operation: BooleanFeature['operation'],
   solids: readonly Solid[],
   revision = 0,
 ): Promise<ExactSolidResult | null> {
   if (solids.length === 0 || (operation !== 'union' && solids.length < 2)) return null;
-  // Cheap pre-check: promoting a giant raw mesh to exact is itself slow, so refuse
-  // before even doing that when the mesh operands are clearly too heavy.
-  if (facetedTriangleLoad(solids) > FACETED_BOOLEAN_TRIANGLE_BUDGET) return null;
   const promoted = await Promise.all(solids.map((solid) => promoteSolidToExact(solid)));
   if (promoted.some((current) => !current)) return null;
   const kernel = await openCascadeKernel();
-  const operands = await Promise.all(solids.map((solid) => openExactShape(solid, kernel)));
-  if (operands.some((shape) => shape === null)) {
-    operands.forEach((shape) => shape?.dispose());
-    return null;
+  const operands: SerializedKernelSolid[] = [];
+  for (const solid of solids) {
+    const shape = await openExactShape(solid, kernel);
+    if (!shape) return null;
+    try {
+      operands.push(kernel.serialize(shape));
+    } finally {
+      shape.dispose();
+    }
   }
+  return runBooleanJob(operation, operands, revision);
+}
 
-  // Real guard: a clean parametric solid carries a handful of B-rep faces, but one
-  // whose promotion fell back to a tessellation (a sliced remnant, or a feature
-  // OCCT would not rebuild) carries one face per triangle — hundreds or thousands.
-  // A boolean over such operands costs ~O(faces^2) on the UI thread with no
-  // cancellation, which is the freeze. `feature.kind` alone misses this (a faceted
-  // presspull-region reads as a normal feature), so measure the actual faces and
-  // refuse past budget rather than hang. The caller reports it; the fix is to
-  // rebuild the offending solid as a clean parametric one first.
-  const totalFaces = (operands as OpenCascadeSolid[])
-    .reduce((sum, shape) => sum + kernel.inspect(shape).faceCount, 0);
-  if (totalFaces > FACETED_BOOLEAN_FACE_BUDGET) {
-    operands.forEach((shape) => shape?.dispose());
-    return null;
-  }
-
+/**
+ * The boolean itself, over already-serialised operands. This is what the worker
+ * runs (and what the node/test path calls directly): deserialise each operand,
+ * combine, heal, and tessellate into a {mesh, exact} that survives structured
+ * cloning back to the main thread. Kept free of any DOM/Solid dependency so it can
+ * live in a worker. Throws on OCCT failure; the caller turns that into a null.
+ */
+export function computeBooleanResult(
+  kernel: OpenCascadeKernel,
+  operation: BooleanFeature['operation'],
+  operands: readonly SerializedKernelSolid[],
+  revision: number,
+): ExactSolidResult {
+  const shapes = operands.map((operand) => kernel.deserialize(operand));
   let combined: OpenCascadeSolid | null = null;
   let healed: OpenCascadeSolid | null = null;
   try {
-    const shapes = operands as OpenCascadeSolid[];
     combined = operation === 'union'
       ? kernel.union(shapes)
       : operation === 'subtract'
@@ -555,58 +544,10 @@ export async function booleanExactSolids(
         : kernel.intersect(shapes);
     healed = kernel.heal(combined);
     return exactResult(kernel, healed, revision);
-  } catch {
-    // A sliced or otherwise faceted operand can make OCCT refuse the exact fuse or
-    // its tessellation ("no triangulation for face N") — the same fragility that
-    // press/pull hits. Fall through to the faceted retry rather than letting the
-    // whole boolean throw, which would surface as a hard error to the caller.
   } finally {
     healed?.dispose();
     combined?.dispose();
-    operands.forEach((shape) => shape?.dispose());
-  }
-  return booleanMeshFallback(kernel, operation, solids, revision);
-}
-
-/**
- * The same boolean done on each operand's tessellation instead of its analytic
- * B-rep. A faceted shape has none of the tangencies and slivers that make OCCT
- * refuse the exact op, so a cut that will not run on the exact solids usually runs
- * here — at the cost of a faceted result, which is the honest trade for getting
- * the edit at all. Returns null (never throws) if even this fails.
- */
-function booleanMeshFallback(
-  kernel: OpenCascadeKernel,
-  operation: BooleanFeature['operation'],
-  solids: readonly Solid[],
-  revision: number,
-): ExactSolidResult | null {
-  // The fallback turns every operand into one B-rep face per triangle, so it has
-  // the same O(faces^2) freeze risk as the exact op. Bound it by total triangles
-  // (all operands, not just mesh-kind) so a clean-but-densely-tessellated solid
-  // whose exact op threw cannot hang here instead.
-  const totalTriangles = solids.reduce((sum, solid) => sum + solid.mesh.indices.length / 3, 0);
-  if (totalTriangles > FACETED_BOOLEAN_TRIANGLE_BUDGET) return null;
-  const faceted = solids.map((solid) => kernel.fromMesh(solid.mesh.positions, solid.mesh.indices));
-  const operands: OpenCascadeSolid[] = [];
-  let combined: OpenCascadeSolid | null = null;
-  let healed: OpenCascadeSolid | null = null;
-  try {
-    for (const shape of faceted) operands.push(kernel.heal(shape));
-    combined = operation === 'union'
-      ? kernel.union(operands)
-      : operation === 'subtract'
-        ? kernel.subtract(operands[0], operands.slice(1))
-        : kernel.intersect(operands);
-    healed = kernel.heal(combined);
-    return exactResult(kernel, healed, revision);
-  } catch {
-    return null;
-  } finally {
-    healed?.dispose();
-    combined?.dispose();
-    operands.forEach((shape) => shape?.dispose());
-    faceted.forEach((shape) => shape.dispose());
+    shapes.forEach((shape) => shape.dispose());
   }
 }
 

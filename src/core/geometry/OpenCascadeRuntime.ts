@@ -21,6 +21,22 @@ export function openCascadeKernel(): Promise<OpenCascadeKernel> {
   return kernelPromise;
 }
 
+let workerKernelPromise: Promise<OpenCascadeKernel> | null = null;
+
+/**
+ * The kernel for the boolean worker. A Web Worker has no `window`, so the
+ * ordinary auto-detecting `openCascadeKernel` would mistake it for Node and load
+ * the filesystem adapter; the worker always wants the browser (WASM) loader.
+ */
+export function openCascadeKernelForWorker(): Promise<OpenCascadeKernel> {
+  if (workerKernelPromise) return workerKernelPromise;
+  workerKernelPromise = loadBrowserKernel().catch((error) => {
+    workerKernelPromise = null;
+    throw error;
+  });
+  return workerKernelPromise;
+}
+
 async function loadBrowserKernel(): Promise<OpenCascadeKernel> {
   const [{ default: initOpenCascade }, { default: wasmUrl }] = await Promise.all([
     import('opencascade.js/dist/opencascade.full.js'),
