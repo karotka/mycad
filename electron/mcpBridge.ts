@@ -16,7 +16,9 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 const ALLOWED_METHODS = new Set([
   'new_document', 'open_project', 'get_document', 'list_objects', 'get_object',
   'select_objects', 'create_primitive', 'create_lines', 'extrude', 'boolean_solids', 'delete_feature',
-  'delete_objects', 'undo', 'redo', 'save_project', 'export_stl',
+  'delete_objects', 'describe_solid', 'transform_solids', 'press_pull', 'fillet_edge', 'chamfer_edge',
+  'slice_solid', 'set_ucs', 'restore_wcs', 'create_layer', 'set_current_layer', 'set_object_layer',
+  'undo', 'redo', 'save_project', 'export_stl',
 ]);
 
 export function desktopBridgeDiscoveryPath(): string {

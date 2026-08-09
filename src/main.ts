@@ -41,7 +41,7 @@ import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPl
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 import { createToolActions } from './interaction/ToolActions';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
-import { CadModelApi, type ExtrudeInput, type LineSegmentInput, type PrimitiveInput, type SelectionMode } from './mcp/CadModelApi';
+import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -688,7 +688,8 @@ const cadMcp = new CadModelApi(cadDocument, history, () => projectController.cur
 
 const mcpMutations = new Set([
   'new_document', 'open_project', 'select_objects', 'create_primitive', 'create_lines', 'extrude', 'boolean_solids',
-  'delete_feature', 'delete_objects', 'undo', 'redo',
+  'delete_feature', 'delete_objects', 'transform_solids', 'press_pull', 'fillet_edge', 'chamfer_edge', 'slice_solid',
+  'set_ucs', 'restore_wcs', 'create_layer', 'set_current_layer', 'set_object_layer', 'undo', 'redo',
 ]);
 
 const stringArray = (value: unknown, label: string): string[] => {
@@ -733,6 +734,29 @@ async function dispatchMcpRequest(request: { id: string; method: string; params:
         result = cadMcp.createLines(params.segments as LineSegmentInput[]);
         break;
       case 'extrude': result = await cadMcp.extrude(params as unknown as ExtrudeInput); break;
+      case 'describe_solid':
+        if (typeof params.id !== 'string') throw new Error('A solid ID is required.');
+        result = cadMcp.describeSolid(params.id);
+        break;
+      case 'transform_solids': result = cadMcp.transformSolids(params as unknown as TransformInput); break;
+      case 'press_pull': result = await cadMcp.pressPull(params as unknown as PressPullInput); break;
+      case 'fillet_edge': result = await cadMcp.modifyEdge(params as unknown as EdgeModifyInput, true); break;
+      case 'chamfer_edge': result = await cadMcp.modifyEdge(params as unknown as EdgeModifyInput, false); break;
+      case 'slice_solid': result = await cadMcp.sliceSolid(params as unknown as SliceInput); break;
+      case 'set_ucs': result = cadMcp.setUcs(params as unknown as UcsInput); break;
+      case 'restore_wcs': result = cadMcp.restoreWcs(); break;
+      case 'create_layer':
+        if (typeof params.name !== 'string') throw new Error('A layer name is required.');
+        result = cadMcp.createLayer(params.name, params.makeCurrent === true);
+        break;
+      case 'set_current_layer':
+        if (typeof params.name !== 'string') throw new Error('A layer name is required.');
+        result = cadMcp.setCurrentLayer(params.name);
+        break;
+      case 'set_object_layer':
+        if (typeof params.layer !== 'string') throw new Error('A layer name is required.');
+        result = cadMcp.setObjectLayer(stringArray(params.ids, 'ids'), params.layer);
+        break;
       case 'boolean_solids':
         if (params.operation !== 'union' && params.operation !== 'subtract' && params.operation !== 'intersect') {
           throw new Error('Boolean operation must be union, subtract or intersect.');

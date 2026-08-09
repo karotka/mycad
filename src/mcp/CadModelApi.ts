@@ -1,13 +1,18 @@
 import { Document } from '../core/Document';
-import { entityBounds, isSweepProfileEntity, type Entity, type PrimitiveFeature, type Solid, type SolidFeature, type SolidMesh } from '../core/entities/types';
+import { cloneEntity, entityBounds, isSweepProfileEntity, type Entity, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFeature, type SolidMesh } from '../core/entities/types';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit, cloneSolid, ReplaceObjectsEdit, UpdateSolidEdit } from '../core/history/edits';
 import { featureRemovalForPoint } from '../core/solids/featureRemoval';
 import { extrusionFeature } from '../core/solids/extrusion';
-import { booleanExactSolids, buildExactFeature } from '../core/geometry/ExactSolid';
+import { translatedFeature } from '../core/solids/featureTransform';
+import { solidPlanarFaces, solidCircularEdges, planarFaceRegionAt, type PlanarFace } from '../core/solids/SolidTopology';
+import { rotateSolidAroundPlane, scaleSolid } from '../core/commands/steps/transform';
+import { booleanExactSolids, buildExactFeature, exactResult, modifyExactSolidEdge, openExactShape, pressPullExactSolid, promoteSolidToExact } from '../core/geometry/ExactSolid';
+import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
+import { preserveExactTransform, translationAffine } from '../core/geometry/ExactTransform';
 import { exportAsciiStl } from '../io/ProjectIO';
 import type { Vec3 } from '../math/geometry';
-import { cloneWorkPlane, localToWorld, workPlaneFromXAxis } from '../math/workplane';
+import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, workPlaneFromXAxis, workPlaneFromXYAxes, worldToLocal, type WorkPlane } from '../math/workplane';
 
 export type McpPrimitive = PrimitiveFeature['primitive'];
 export type SelectionMode = 'replace' | 'add' | 'remove';
@@ -27,6 +32,54 @@ export interface PrimitiveInput {
 export interface LineSegmentInput {
   start: { x: number; y: number; z?: number };
   end: { x: number; y: number; z?: number };
+}
+
+export interface TransformInput {
+  ids: string[];
+  /** World-space translation. */
+  translate?: { x: number; y: number; z: number };
+  /** Rotation in degrees about `axis` (default world Z) through `center` (default each solid's own centre). */
+  rotate?: { angle: number; axis?: Vec3; center?: Vec3 };
+  /** Uniform scale about `center` (default each solid's own centre). */
+  scale?: { factor: number; center?: Vec3 };
+}
+
+export interface PressPullInput {
+  solidId: string;
+  /** World point on the planar face to push or pull. */
+  point: Vec3;
+  /** Outward world normal of that face. */
+  normal: Vec3;
+  /** Signed distance in mm; positive pulls out along the normal, negative pushes in. */
+  distance: number;
+}
+
+export interface EdgeModifyInput {
+  solidId: string;
+  /** The two world-space endpoints of the edge to fillet/chamfer. */
+  edgeStart: Vec3;
+  edgeEnd: Vec3;
+  /** Fillet radius, or chamfer setback. */
+  amount: number;
+  /** Chamfer's second setback (defaults to `amount`). Ignored for fillet. */
+  amount2?: number;
+}
+
+export interface SliceInput {
+  solidId: string;
+  /** A world point on the cutting plane. */
+  planeOrigin: Vec3;
+  /** The cutting plane's world normal. */
+  planeNormal: Vec3;
+}
+
+export interface UcsInput {
+  origin: Vec3;
+  /** A point on the positive X axis. */
+  xPoint: Vec3;
+  /** A point on the positive Y side (defines the plane). */
+  yPoint: Vec3;
+  name?: string;
 }
 
 export interface ExtrudeInput {
@@ -396,6 +449,220 @@ export class CadModelApi {
     return solidSummary(this.documentValue.getSolid(after.id)!);
   }
 
+  /**
+   * A read of a solid's real geometry — planar faces (each as a world-space
+   * outline plus any holes) and circular edges (hole and rim centres/radii). This
+   * is what lets an agent measure a part without exporting STL and parsing it.
+   */
+  describeSolid(id: string): Record<string, unknown> {
+    const solid = this.documentValue.getSolid(id);
+    if (!solid) throw new Error(`Solid ${id} does not exist.`);
+    const faces = solidPlanarFaces(solid.mesh).map((face) => ({
+      normal: { ...face.normal },
+      origin: { ...face.plane.origin },
+      area: faceArea(face),
+      outline: (face.loops[0] ?? []).map((point) => localToWorld(face.plane, point, 0)),
+      holes: face.loops.slice(1).map((loop) => loop.map((point) => localToWorld(face.plane, point, 0))),
+    }));
+    const circularEdges = solidCircularEdges(solid.mesh).map((edge) => ({
+      center: { ...edge.center }, normal: { ...edge.normal }, radius: edge.radius,
+    }));
+    return { ...solidSummary(solid), faces, circularEdges };
+  }
+
+  /** Move, rotate and/or scale solids in place as one undoable edit, keeping their recipe. */
+  transformSolids(input: TransformInput): Array<Record<string, unknown>> {
+    const ids = [...new Set(input.ids)];
+    if (ids.length === 0) throw new Error('At least one solid ID is required.');
+    if (!input.translate && !input.rotate && !input.scale) throw new Error('Provide translate, rotate and/or scale.');
+    const before = ids.map((id) => {
+      const solid = this.documentValue.getSolid(id);
+      if (!solid) throw new Error(`Unknown solid ID: ${id}.`);
+      return solid;
+    });
+    const after = before.map((solid) => {
+      const result = transformSolidInPlace(solid, input);
+      result.id = solid.id;
+      result.name = solid.name;
+      result.selected = true;
+      return result;
+    });
+    this.historyValue.execute(new ReplaceObjectsEdit('MCP transform', [], before, [], after));
+    this.selectObjects(after.map((solid) => solid.id));
+    return after.map((solid) => solidSummary(this.documentValue.getSolid(solid.id)!));
+  }
+
+  /**
+   * Push or pull a planar face along its normal (AutoCAD's PRESSPULL). Runs OCCT
+   * on the calling thread, unlike boolean_solids — a pathological solid could make
+   * it slow; rebuild the messy body first if so.
+   */
+  async pressPull(input: PressPullInput): Promise<Record<string, unknown>> {
+    const solid = this.documentValue.getSolid(input.solidId);
+    if (!solid) throw new Error(`Solid ${input.solidId} does not exist.`);
+    if (!Number.isFinite(input.distance) || Math.abs(input.distance) < 1e-6) throw new Error('distance must be non-zero.');
+    const region = this.faceRegionAt(solid, input.point, input.normal);
+    if (!region) throw new Error('No bounded planar face found at that point with that normal.');
+    const before = cloneSolid(solid);
+    const exact = await pressPullExactSolid(solid, region, input.distance, solid.revision + 1);
+    if (!exact) throw new Error('PressPull failed — try a smaller distance or a different face.');
+    const after = cloneSolid(before);
+    after.feature = {
+      kind: 'presspull-region',
+      source: cloneFeature(before.feature),
+      region: JSON.parse(JSON.stringify(region)),
+      distance: input.distance,
+      sourceMesh: { positions: Array.from(before.mesh.positions), indices: Array.from(before.mesh.indices) },
+    };
+    after.mesh = exact.mesh;
+    after.exact = exact.exact;
+    after.height = meshHeight(exact.mesh);
+    after.revision = solid.revision + 1;
+    this.historyValue.execute(new UpdateSolidEdit('MCP press/pull', before, after));
+    this.selectObjects([after.id]);
+    return solidSummary(this.documentValue.getSolid(after.id)!);
+  }
+
+  /** Round (fillet) or bevel (chamfer) the edge whose two endpoints are given. */
+  async modifyEdge(input: EdgeModifyInput, rounded: boolean): Promise<Record<string, unknown>> {
+    const solid = this.documentValue.getSolid(input.solidId);
+    if (!solid) throw new Error(`Solid ${input.solidId} does not exist.`);
+    if (!(input.amount > 0)) throw new Error('amount must be greater than zero.');
+    const edge: SolidEdgeSelection = {
+      solidId: solid.id,
+      start: input.edgeStart,
+      end: input.edgeEnd,
+      normalA: { x: 0, y: 0, z: 0 },
+      normalB: { x: 0, y: 0, z: 0 },
+    };
+    const before = cloneSolid(solid);
+    const exact = await modifyExactSolidEdge(solid, edge, input.amount, rounded, input.amount2 ?? input.amount, solid.revision + 1);
+    if (!exact) throw new Error(`${rounded ? 'Fillet' : 'Chamfer'} failed — no edge was found between those endpoints, or the amount is too large.`);
+    const after = cloneSolid(before);
+    after.feature = {
+      kind: 'edge-modification',
+      source: cloneFeature(before.feature),
+      edge: JSON.parse(JSON.stringify(edge)),
+      operation: rounded ? 'fillet' : 'chamfer',
+      amount: input.amount,
+      ...(rounded ? {} : { amount2: input.amount2 ?? input.amount }),
+      sourceMesh: { positions: Array.from(before.mesh.positions), indices: Array.from(before.mesh.indices) },
+    };
+    after.mesh = exact.mesh;
+    after.exact = exact.exact;
+    after.height = meshHeight(exact.mesh);
+    after.revision = solid.revision + 1;
+    this.historyValue.execute(new UpdateSolidEdit(`MCP ${rounded ? 'fillet' : 'chamfer'}`, before, after));
+    this.selectObjects([after.id]);
+    return solidSummary(this.documentValue.getSolid(after.id)!);
+  }
+
+  /** Cut a solid with a plane into its closed pieces (AutoCAD's SLICE, keeping both sides). */
+  async sliceSolid(input: SliceInput): Promise<Array<Record<string, unknown>>> {
+    const solid = this.documentValue.getSolid(input.solidId);
+    if (!solid) throw new Error(`Solid ${input.solidId} does not exist.`);
+    const normalLength = Math.hypot(input.planeNormal.x, input.planeNormal.y, input.planeNormal.z);
+    if (normalLength < 1e-9) throw new Error('planeNormal must be non-zero.');
+    if (!await promoteSolidToExact(solid)) throw new Error('This solid could not be prepared for slicing.');
+    const kernel = await openCascadeKernel();
+    const source = await openExactShape(solid, kernel);
+    if (!source) throw new Error('This solid has no exact geometry to slice.');
+    const plane = {
+      origin: { ...input.planeOrigin },
+      normal: {
+        x: input.planeNormal.x / normalLength,
+        y: input.planeNormal.y / normalLength,
+        z: input.planeNormal.z / normalLength,
+      },
+    };
+    const pieces: Solid[] = [];
+    try {
+      const exactPieces = kernel.splitByPlane(source, plane);
+      try {
+        if (exactPieces.length < 2) throw new Error('The plane does not pass through the solid.');
+        exactPieces.forEach((pieceShape, index) => {
+          const geometry = exactResult(kernel, pieceShape, 0);
+          const piece = this.documentValue.createSolid(geometry.mesh, `${solid.name}_slice${index + 1}`, meshHeight(geometry.mesh), [], undefined, { kind: 'mesh' });
+          piece.layer = solid.layer;
+          piece.exact = geometry.exact;
+          pieces.push(piece);
+        });
+      } finally {
+        exactPieces.forEach((pieceShape) => pieceShape.dispose());
+      }
+    } finally {
+      source.dispose();
+    }
+    this.historyValue.execute(new ReplaceObjectsEdit('MCP slice', [], [solid], [], pieces));
+    this.selectObjects(pieces.map((piece) => piece.id));
+    return pieces.map((piece) => solidSummary(this.documentValue.getSolid(piece.id)!));
+  }
+
+  /** Set the active UCS from three world points (origin, +X, +Y), as the UCS command does. */
+  setUcs(input: UcsInput): DocumentSummary {
+    const plane = workPlaneFromXYAxes(input.origin, input.xPoint, input.yPoint);
+    const named = this.documentValue.addNamedWorkPlane(plane, input.name?.trim() || undefined);
+    this.documentValue.activateNamedWorkPlane(named.id);
+    this.documentValue.viewMode = '3d';
+    this.documentValue.notify();
+    return this.summary();
+  }
+
+  /** Restore the World Coordinate System. */
+  restoreWcs(): DocumentSummary {
+    this.documentValue.restoreWorldWorkPlane();
+    this.documentValue.notify();
+    return this.summary();
+  }
+
+  /** Create a layer (no-op if it already exists) and optionally make it current. */
+  createLayer(name: string, makeCurrent = false): DocumentSummary {
+    const clean = name.trim();
+    if (!clean) throw new Error('A layer name is required.');
+    if (!this.documentValue.layers.includes(clean)) this.documentValue.layers.push(clean);
+    if (makeCurrent) this.documentValue.currentLayer = clean;
+    this.documentValue.notify();
+    return this.summary();
+  }
+
+  /** Make an existing layer the current one. */
+  setCurrentLayer(name: string): DocumentSummary {
+    if (!this.documentValue.layers.includes(name)) throw new Error(`Layer "${name}" does not exist.`);
+    this.documentValue.currentLayer = name;
+    this.documentValue.notify();
+    return this.summary();
+  }
+
+  /** Move objects onto a layer as one undoable edit. */
+  setObjectLayer(ids: readonly string[], layer: string): DocumentSummary {
+    if (!this.documentValue.layers.includes(layer)) throw new Error(`Layer "${layer}" does not exist.`);
+    const unique = [...new Set(ids)];
+    const entities = unique.map((id) => this.documentValue.getEntity(id)).filter((value): value is Entity => Boolean(value));
+    const solids = unique.map((id) => this.documentValue.getSolid(id)).filter((value): value is Solid => Boolean(value));
+    if (entities.length + solids.length !== unique.length) {
+      const found = new Set([...entities.map((entity) => entity.id), ...solids.map((solid) => solid.id)]);
+      throw new Error(`Unknown object ID(s): ${unique.filter((id) => !found.has(id)).join(', ')}.`);
+    }
+    const afterEntities = entities.map((entity) => ({ ...cloneEntity(entity), layer }));
+    const afterSolids = solids.map((solid) => ({ ...cloneSolid(solid), layer }));
+    this.historyValue.execute(new ReplaceObjectsEdit('MCP set layer', entities, solids, afterEntities, afterSolids));
+    this.documentValue.recolour();
+    this.documentValue.notify();
+    return this.summary();
+  }
+
+  /** The bounded planar-face region at a point with a matching outward normal. */
+  private faceRegionAt(solid: Solid, point: Vec3, normal: Vec3): ReturnType<typeof planarFaceRegionAt> {
+    const length = Math.hypot(normal.x, normal.y, normal.z) || 1;
+    const unit = { x: normal.x / length, y: normal.y / length, z: normal.z / length };
+    for (const face of solidPlanarFaces(solid.mesh)) {
+      if (dot3(face.normal, unit) < 0.9) continue;
+      const region = planarFaceRegionAt(face, this.documentValue.entities, point);
+      if (region) return region;
+    }
+    return null;
+  }
+
   deleteObjects(ids: readonly string[]): DocumentSummary {
     const unique = [...new Set(ids)];
     const entities = unique.map((id) => this.documentValue.getEntity(id)).filter((value): value is Entity => Boolean(value));
@@ -427,4 +694,74 @@ export class CadModelApi {
     if (missing.length > 0) throw new Error(`Unknown solid ID(s): ${missing.join(', ')}.`);
     return { content: exportAsciiStl(solids as Solid[]), solidIds: ids };
   }
+}
+
+const dot3 = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
+
+/** Net area of a planar face: its outer loop minus its holes, in the face plane. */
+function faceArea(face: PlanarFace): number {
+  const loopArea = (loop: { x: number; y: number }[]): number => {
+    let area = 0;
+    for (let index = 0; index < loop.length; index++) {
+      const p = loop[index];
+      const q = loop[(index + 1) % loop.length];
+      area += p.x * q.y - q.x * p.y;
+    }
+    return Math.abs(area) / 2;
+  };
+  return face.loops.reduce((sum, loop, index) => sum + (index === 0 ? 1 : -1) * loopArea(loop), 0);
+}
+
+/** The centre of a solid's bounding box, the default pivot for rotate and scale. */
+function solidCenter(solid: Solid): Vec3 {
+  const bounds = meshBounds(solid.mesh);
+  return {
+    x: (bounds.min.x + bounds.max.x) / 2,
+    y: (bounds.min.y + bounds.max.y) / 2,
+    z: (bounds.min.z + bounds.max.z) / 2,
+  };
+}
+
+/** A work plane whose Z axis is `normal`, so a rotation about it is a rotation about that axis. */
+function planeFromNormal(origin: Vec3, normal: Vec3): WorkPlane {
+  const length = Math.hypot(normal.x, normal.y, normal.z) || 1;
+  const z = { x: normal.x / length, y: normal.y / length, z: normal.z / length };
+  const reference = Math.abs(z.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
+  let x = {
+    x: reference.y * z.z - reference.z * z.y,
+    y: reference.z * z.x - reference.x * z.z,
+    z: reference.x * z.y - reference.y * z.x,
+  };
+  const xLength = Math.hypot(x.x, x.y, x.z) || 1;
+  x = { x: x.x / xLength, y: x.y / xLength, z: x.z / xLength };
+  const y = { x: z.y * x.z - z.z * x.y, y: z.z * x.x - z.x * x.z, z: z.x * x.y - z.y * x.x };
+  return { origin: { ...origin }, xAxis: x, yAxis: y, zAxis: z };
+}
+
+/** Apply translate, then rotate, then scale to a solid, keeping its feature recipe. */
+function transformSolidInPlace(solid: Solid, input: TransformInput): Solid {
+  let current = solid;
+  if (input.translate) {
+    const delta = input.translate;
+    const moved = cloneSolid(current);
+    for (let index = 0; index < moved.mesh.positions.length; index += 3) {
+      moved.mesh.positions[index] += delta.x;
+      moved.mesh.positions[index + 1] += delta.y;
+      moved.mesh.positions[index + 2] += delta.z;
+    }
+    moved.feature = translatedFeature(moved.feature, delta) ?? { kind: 'mesh' };
+    preserveExactTransform(moved, translationAffine(delta));
+    moved.revision++;
+    current = moved;
+  }
+  if (input.rotate) {
+    const center = input.rotate.center ?? solidCenter(current);
+    const plane = planeFromNormal(center, input.rotate.axis ?? { x: 0, y: 0, z: 1 });
+    current = rotateSolidAroundPlane(current, worldToLocal(plane, center), (input.rotate.angle * Math.PI) / 180, plane);
+  }
+  if (input.scale) {
+    if (!(input.scale.factor > 0)) throw new Error('scale.factor must be greater than zero.');
+    current = scaleSolid(current, input.scale.center ?? solidCenter(current), input.scale.factor);
+  }
+  return current;
 }

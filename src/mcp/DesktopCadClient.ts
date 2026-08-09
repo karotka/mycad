@@ -4,7 +4,7 @@ import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { CadMcpBackend } from './CadMcpBackend';
-import type { DocumentSummary, ExtrudeInput, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
+import type { DocumentSummary, EdgeModifyInput, ExtrudeInput, LineSegmentInput, PressPullInput, PrimitiveInput, SelectionMode, SliceInput, TransformInput, UcsInput } from './CadModelApi';
 
 interface Discovery {
   version: 1;
@@ -127,6 +127,16 @@ export class DesktopCadClient implements CadMcpBackend {
     return this.call('delete_feature', { solidId, point, normal });
   }
   deleteObjects(ids: readonly string[]): Promise<DocumentSummary> { return this.call('delete_objects', { ids }); }
+  describeSolid(id: string): Promise<Record<string, unknown>> { return this.call('describe_solid', { id }); }
+  transformSolids(input: TransformInput): Promise<Array<Record<string, unknown>>> { return this.call('transform_solids', { ...input }); }
+  pressPull(input: PressPullInput): Promise<Record<string, unknown>> { return this.call('press_pull', { ...input }); }
+  modifyEdge(input: EdgeModifyInput, rounded: boolean): Promise<Record<string, unknown>> { return this.call(rounded ? 'fillet_edge' : 'chamfer_edge', { ...input }); }
+  sliceSolid(input: SliceInput): Promise<Array<Record<string, unknown>>> { return this.call('slice_solid', { ...input }); }
+  setUcs(input: UcsInput): Promise<DocumentSummary> { return this.call('set_ucs', { ...input }); }
+  restoreWcs(): Promise<DocumentSummary> { return this.call('restore_wcs'); }
+  createLayer(name: string, makeCurrent?: boolean): Promise<DocumentSummary> { return this.call('create_layer', { name, makeCurrent }); }
+  setCurrentLayer(name: string): Promise<DocumentSummary> { return this.call('set_current_layer', { name }); }
+  setObjectLayer(ids: readonly string[], layer: string): Promise<DocumentSummary> { return this.call('set_object_layer', { ids, layer }); }
   undo(): Promise<DocumentSummary> { return this.call('undo'); }
   redo(): Promise<DocumentSummary> { return this.call('redo'); }
   exportStl(path: string, solidIds?: readonly string[]): Promise<{ path: string; solidIds: string[] }> {

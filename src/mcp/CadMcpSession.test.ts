@@ -152,4 +152,55 @@ describe('CadMcpSession', () => {
     await expect(session.saveProject('/tmp/not-a-project.json')).rejects.toThrow('Expected a .mycad file path');
     await expect(session.exportStl('/tmp/not-a-model.obj', [])).rejects.toThrow('Expected a .stl file path');
   });
+
+  it('describes a solid\'s faces and circular edges without STL', async () => {
+    const session = new CadMcpSession();
+    const box = await session.createPrimitive({ primitive: 'box', center: { x: 0, y: 0 }, width: 40, depth: 20, height: 10 });
+    const hole = await session.createPrimitive({ primitive: 'cylinder', center: { x: 0, y: 0, z: -1 }, radius: 3, height: 12 });
+    const plate = await session.booleanOperation('subtract', [String(box.id), String(hole.id)]);
+
+    const described = session.describeSolid(String(plate.id)) as { faces: Array<{ normal: { z: number } }>; circularEdges: Array<{ radius: number }> };
+    // A box-with-a-hole has a top and bottom face with a +/-Z normal…
+    expect(described.faces.some((face) => face.normal.z > 0.99)).toBe(true);
+    // …and two circular rims (top and bottom of the bore) at radius 3.
+    expect(described.circularEdges.filter((edge) => Math.abs(edge.radius - 3) < 1e-3).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('translates a solid in place, keeping its recipe and id', async () => {
+    const session = new CadMcpSession();
+    const box = await session.createPrimitive({ primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 });
+    const moved = session.transformSolids({ ids: [String(box.id)], translate: { x: 100, y: 0, z: 0 } });
+
+    expect(moved[0].id).toBe(box.id);
+    expect(moved[0].featureKind).toBe('primitive');
+    expect((moved[0].bounds as { min: { x: number } }).min.x).toBeCloseTo(95, 5);
+    expect(session.summary()).toMatchObject({ solidCount: 1, canUndo: true });
+    expect(session.undo()).toMatchObject({ solidCount: 1 });
+    expect((session.getObject(String(box.id)).bounds as { min: { x: number } }).min.x).toBeCloseTo(-5, 5);
+  });
+
+  it('press-pulls a face and slices a solid', async () => {
+    const session = new CadMcpSession();
+    const box = await session.createPrimitive({ primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 });
+    // Pull the top face (z=10, +Z) up by 5 → the solid grows to 15 tall.
+    const pulled = await session.pressPull({ solidId: String(box.id), point: { x: 0, y: 0, z: 10 }, normal: { x: 0, y: 0, z: 1 }, distance: 5 });
+    expect((pulled.bounds as { max: { z: number } }).max.z).toBeCloseTo(15, 4);
+
+    const pieces = await session.sliceSolid({ solidId: String(pulled.id), planeOrigin: { x: 0, y: 0, z: 7 }, planeNormal: { x: 0, y: 0, z: 1 } });
+    expect(pieces).toHaveLength(2);
+  });
+
+  it('manages layers and the UCS through MCP', async () => {
+    const session = new CadMcpSession();
+    const box = await session.createPrimitive({ primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 10, height: 10 });
+
+    expect(session.createLayer('walls', true)).toMatchObject({ currentLayer: 'walls' });
+    session.setCurrentLayer('0');
+    session.setObjectLayer([String(box.id)], 'walls');
+    expect(session.getObject(String(box.id))).toMatchObject({ layer: 'walls' });
+
+    const ucs = session.setUcs({ origin: { x: 1, y: 2, z: 3 }, xPoint: { x: 2, y: 2, z: 3 }, yPoint: { x: 1, y: 3, z: 3 } });
+    expect(ucs.activeUcs.origin).toEqual({ x: 1, y: 2, z: 3 });
+    expect(session.restoreWcs().activeUcs.origin).toEqual({ x: 0, y: 0, z: 0 });
+  });
 });

@@ -1,4 +1,4 @@
-import type { DocumentSummary, ExtrudeInput, LineSegmentInput, PrimitiveInput, SelectionMode } from './CadModelApi';
+import type { DocumentSummary, EdgeModifyInput, ExtrudeInput, LineSegmentInput, PressPullInput, PrimitiveInput, SelectionMode, SliceInput, TransformInput, UcsInput } from './CadModelApi';
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -21,6 +21,16 @@ export interface CadMcpBackend {
     normal: { x: number; y: number; z: number },
   ): Awaitable<Record<string, unknown>>;
   deleteObjects(ids: readonly string[]): Awaitable<DocumentSummary>;
+  describeSolid(id: string): Awaitable<Record<string, unknown>>;
+  transformSolids(input: TransformInput): Awaitable<Array<Record<string, unknown>>>;
+  pressPull(input: PressPullInput): Awaitable<Record<string, unknown>>;
+  modifyEdge(input: EdgeModifyInput, rounded: boolean): Awaitable<Record<string, unknown>>;
+  sliceSolid(input: SliceInput): Awaitable<Array<Record<string, unknown>>>;
+  setUcs(input: UcsInput): Awaitable<DocumentSummary>;
+  restoreWcs(): Awaitable<DocumentSummary>;
+  createLayer(name: string, makeCurrent?: boolean): Awaitable<DocumentSummary>;
+  setCurrentLayer(name: string): Awaitable<DocumentSummary>;
+  setObjectLayer(ids: readonly string[], layer: string): Awaitable<DocumentSummary>;
   undo(): Awaitable<DocumentSummary>;
   redo(): Awaitable<DocumentSummary>;
   exportStl(path: string, solidIds?: readonly string[]): Awaitable<{ path: string; solidIds: string[] }>;
