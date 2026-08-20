@@ -9,6 +9,8 @@ export interface InputControllerCallbacks {
   importDxf(): void;
   export(): void;
   deleteSelection(): boolean;
+  copySelection(): boolean;
+  pasteClipboard(): boolean;
   show2d(): void;
   toggleObjectSnap(): void;
   toggleDynamicUcs(): void;
@@ -83,6 +85,16 @@ export class InputController {
     if (event.metaKey && key === 'e') { event.preventDefault(); this.callbacks.export(); return; }
 
     const isTextEntry = this.isTextEntry(event.target);
+    // Copy/paste of whole objects — but never when typing in a field, so the
+    // native clipboard still works in the command line and property inputs.
+    if (primaryModifier && key === 'c' && !isTextEntry) {
+      if (this.callbacks.copySelection()) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
+    if (primaryModifier && key === 'v' && !isTextEntry) {
+      if (this.callbacks.pasteClipboard()) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
     if (!isTextEntry && (event.key === 'Delete' || event.key === 'Backspace') && this.callbacks.deleteSelection()) {
       event.preventDefault();
       event.stopPropagation();

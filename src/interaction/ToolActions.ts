@@ -3,6 +3,7 @@ import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { cloneEntity } from '../core/entities/types';
+import { clipboardSize, readClipboard, setClipboard } from './clipboard';
 import { hitTestEntity } from '../core/commands/CommandManager';
 import { hitTestSolid2d } from './PickingService';
 import { type GripMode } from './GripController';
@@ -56,6 +57,38 @@ export function createToolActions(ctx: ToolActionsContext) {
     gripController.hoveredGrip = -1;
     previewController.clearPreview();
     log(`Deleted objects: ${entities.length + solids.length}`);
+    redraw();
+    return true;
+  }
+
+  /** Cmd/Ctrl+C: hold the selected objects for a later paste. */
+  function copySelectedObjects(): boolean {
+    if (doc.selectedEntityIds.size === 0 && doc.selectedSolidIds.size === 0) return false;
+    const count = setClipboard(doc.getSelectedEntities(), doc.getSelectedSolids());
+    log(`Copied objects: ${count}`);
+    return true;
+  }
+
+  /**
+   * Cmd/Ctrl+V: drop fresh copies of the buffer into the drawing at their
+   * original coordinates and leave them selected. Pasting into an empty drawing
+   * — the copy-into-a-new-file case — zooms to the pasted objects, which would
+   * otherwise sit off-screen when they came from a drawing far from the origin.
+   */
+  function pasteClipboard(): boolean {
+    if (clipboardSize() === 0) { log('Clipboard is empty.'); return false; }
+    const wasEmpty = doc.entities.length === 0 && doc.solids.length === 0;
+    const { entities, solids } = readClipboard();
+    history.execute(new ReplaceObjectsEdit('Paste', [], [], entities, solids));
+    doc.clearSelection();
+    entities.forEach((entity, index) => doc.selectEntity(entity.id, index > 0));
+    solids.forEach((solid) => doc.selectSolid(solid.id, true));
+    if (wasEmpty) {
+      const { width, height } = ctx.size();
+      if (doc.viewMode === '2d') renderer2d.zoomExtents(doc, width, height);
+      else renderer3d.frameContent(doc.entities, doc.solids);
+    }
+    log(`Pasted objects: ${entities.length + solids.length}`);
     redraw();
     return true;
   }
@@ -188,6 +221,8 @@ export function createToolActions(ctx: ToolActionsContext) {
 
   return {
     deleteSelectedObjects,
+    copySelectedObjects,
+    pasteClipboard,
     toggleDraftingMode,
     toggleGridSnap,
     toggleGridDisplay,

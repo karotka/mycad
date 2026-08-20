@@ -630,7 +630,7 @@ const toolActions = createToolActions({
   redraw,
 });
 const {
-  deleteSelectedObjects, toggleDraftingMode, toggleGridSnap,
+  deleteSelectedObjects, copySelectedObjects, pasteClipboard, toggleDraftingMode, toggleGridSnap,
   toggleGridDisplay, toggleCutArea, openContextMenu,
 } = toolActions;
 
@@ -843,7 +843,19 @@ const menuActions: Record<string, () => void> = {
   settings: () => settingsController.toggle(),
   undo: () => { log(history.undo() ? 'Undo complete.' : 'Nothing to undo.'); redraw(); },
   redo: () => { log(history.redo() ? 'Redo complete.' : 'Nothing to redo.'); redraw(); },
+  // Copy/paste act on the drawing, unless a text field owns focus — then they
+  // fall back to the native clipboard so the command line and property inputs
+  // keep working. Electron's execCommand handles that text case in the renderer.
+  copy: () => { if (isTextFieldFocused()) document.execCommand('copy'); else copySelectedObjects(); },
+  cut: () => { if (isTextFieldFocused()) document.execCommand('cut'); else if (copySelectedObjects()) deleteSelectedObjects(); },
+  paste: () => { if (isTextFieldFocused()) document.execCommand('paste'); else pasteClipboard(); },
 };
+
+function isTextFieldFocused(): boolean {
+  const element = document.activeElement;
+  return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+    || (element instanceof HTMLElement && element.isContentEditable);
+}
 
 const removeMenuListener = window.mycadEvents?.onMenuAction((action) => {
   menuActions[action]?.();
@@ -1055,6 +1067,8 @@ new InputController(input, commandForm, {
   importDxf: () => { void projectController.importDxf(); },
   export: startStlExport,
   deleteSelection: deleteSelectedObjects,
+  copySelection: copySelectedObjects,
+  pasteClipboard,
   show2d: () => {
     releaseDynamicUcs();
     cadDocument.viewMode = '2d';

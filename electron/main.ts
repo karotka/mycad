@@ -86,7 +86,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -143,9 +143,13 @@ function buildMenu(win: BrowserWindow): void {
         { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
         { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        // Not the plain roles: those copy the DOM text selection, so on the
+        // canvas they do nothing. These route to the renderer, which copies the
+        // selected objects on the canvas and falls back to the native clipboard
+        // when a text field is focused.
+        { label: 'Cut', accelerator: 'CmdOrCtrl+X', click: send('cut') },
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: send('copy') },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: send('paste') },
         { role: 'selectAll' },
         // On macOS Settings lives in the app menu; elsewhere it belongs here.
         ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }]),
