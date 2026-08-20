@@ -6,6 +6,7 @@ export interface InputControllerCallbacks {
   saveAs(): void;
   newProject(): void;
   open(): void;
+  importDxf(): void;
   export(): void;
   deleteSelection(): boolean;
   show2d(): void;
@@ -78,6 +79,7 @@ export class InputController {
     if (primaryModifier && key === '4') { event.preventDefault(); this.callbacks.toggleBlocks(); return; }
     if (primaryModifier && key === 'n') { event.preventDefault(); this.callbacks.newProject(); return; }
     if (event.metaKey && key === 'o') { event.preventDefault(); this.callbacks.open(); return; }
+    if (primaryModifier && key === 'i') { event.preventDefault(); this.callbacks.importDxf(); return; }
     if (event.metaKey && key === 'e') { event.preventDefault(); this.callbacks.export(); return; }
 
     const isTextEntry = this.isTextEntry(event.target);

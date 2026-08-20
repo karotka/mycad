@@ -121,7 +121,7 @@ function buildMenu(win: BrowserWindow): void {
         {
           label: 'Import',
           submenu: [
-            { label: 'DXF…', click: send('import-dxf') },
+            { label: 'DXF…', accelerator: 'CmdOrCtrl+I', click: send('import-dxf') },
             { label: 'Excellon Drill…', click: send('import-excellon') },
           ],
         },

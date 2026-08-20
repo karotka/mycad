@@ -1052,6 +1052,7 @@ new InputController(input, commandForm, {
   saveAs: () => { void projectController.saveAs(); },
   newProject: () => projectController.newProject(),
   open: () => { void projectController.open(); },
+  importDxf: () => { void projectController.importDxf(); },
   export: startStlExport,
   deleteSelection: deleteSelectedObjects,
   show2d: () => {

@@ -330,7 +330,7 @@ export class Canvas2DRenderer {
         this.ctx.save();
         this.ctx.translate(p.x, p.y);
         this.ctx.rotate(-(entity.rotation ?? 0));
-        this.ctx.font=`${Math.max(8,entity.height*this.zoom)}px ${JSON.stringify(entity.font ?? 'Arial')}`;
+        this.ctx.font=`${Math.max(0.5,entity.height*this.zoom)}px ${JSON.stringify(entity.font ?? 'Arial')}`;
         this.ctx.fillText(entity.text,0,0);
         this.ctx.restore();
         break;
@@ -358,7 +358,7 @@ export class Canvas2DRenderer {
         }
         const text = toScreen(geometry.textPoint);
         this.ctx.save(); this.ctx.translate(text.x, text.y); this.ctx.rotate(-geometry.textAngle);
-        this.ctx.font = `${Math.max(8, entity.textHeight * entity.scale * this.zoom)}px Arial`;
+        this.ctx.font = `${Math.max(0.5, entity.textHeight * entity.scale * this.zoom)}px Arial`;
         this.ctx.textAlign = 'center'; this.ctx.textBaseline = 'middle'; this.ctx.fillText(geometry.text, 0, 0); this.ctx.restore();
         break;
       }
@@ -546,7 +546,7 @@ export class Canvas2DRenderer {
     } else if (preview.type === 'bezier') {
       const q=preview.data as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2}; const a=worldToScreen(q.start,w,h,this.pan,this.zoom),b=worldToScreen(q.control1,w,h,this.pan,this.zoom),c=worldToScreen(q.control2,w,h,this.pan,this.zoom),d2=worldToScreen(q.end,w,h,this.pan,this.zoom);this.ctx.beginPath();this.ctx.moveTo(a.x,a.y);this.ctx.bezierCurveTo(b.x,b.y,c.x,c.y,d2.x,d2.y);this.ctx.stroke();
     } else if (preview.type === 'text') {
-      const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const p=worldToScreen(q.position,w,h,this.pan,this.zoom);this.ctx.setLineDash([]);this.ctx.font=`${Math.max(8,(q.height ?? 2.5)*this.zoom)}px ${JSON.stringify(q.font ?? 'Arial')}`;this.ctx.fillStyle='#888';this.ctx.fillText(q.text,p.x,p.y);
+      const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const p=worldToScreen(q.position,w,h,this.pan,this.zoom);this.ctx.setLineDash([]);this.ctx.font=`${Math.max(0.5,(q.height ?? 2.5)*this.zoom)}px ${JSON.stringify(q.font ?? 'Arial')}`;this.ctx.fillStyle='#888';this.ctx.fillText(q.text,p.x,p.y);
     }
 
     this.ctx.setLineDash([]);

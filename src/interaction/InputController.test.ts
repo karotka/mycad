@@ -22,7 +22,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -49,7 +49,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -73,7 +73,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -103,7 +103,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
