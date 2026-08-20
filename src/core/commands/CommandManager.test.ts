@@ -1008,6 +1008,24 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0].type).toBe('insert');
   });
 
+  it('explodes a 3D solid into one closed polyline per planar face, AutoCAD-style', async () => {
+    const { doc, manager, history } = setup();
+    const solid = doc.createSolid(createBoxMesh(4, 6, 8), 'Box', 8, []);
+    doc.addSolid(solid);
+    doc.selectSolid(solid.id);
+
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    // A box has six planar faces, so it comes apart into six closed polylines.
+    expect(doc.solids).toHaveLength(0);
+    expect(doc.entities).toHaveLength(6);
+    expect(doc.entities.every((entity) => entity.type === 'polyline' && entity.closed)).toBe(true);
+    history.undo();
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.entities).toHaveLength(0);
+  });
+
   it('inserts a saved block with default scale and entered rotation', async () => {
     const { doc, manager, history } = setup();
     const definition = {

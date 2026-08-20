@@ -1,14 +1,16 @@
 /**
- * Taking something apart: a rectangle into its four lines, a boolean solid back
- * into the parts it was made of.
+ * Taking something apart: a rectangle into its four lines, an INSERT into the
+ * drawing it stands for, and — like AutoCAD — a 3D solid into its faces.
  *
- * The solid half only works because the feature tree kept how it was built — it
- * regenerates each operand rather than trying to cut a mesh apart, which is not
- * a thing anyone can do. That is the model history earning its keep.
+ * A solid explodes into one closed polyline per planar face (its outline, plus a
+ * separate loop for each hole), laid on that face's own plane. Curved walls have
+ * no planar region, so a cylinder gives back its two end circles and not its
+ * side; this mirrors AutoCAD turning the flat faces into regions and leaving the
+ * curved ones as surfaces it cannot represent here.
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid, type SolidFeature } from '../../entities/types';
-import { buildExactFeature } from '../../geometry/ExactSolid';
+import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid } from '../../entities/types';
+import { solidPlanarFaces } from '../../solids/SolidTopology';
 import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
@@ -39,7 +41,27 @@ function explodeEntity(entity: Entity, doc: Document): Entity[] {
   return result;
 }
 
-export async function explodeObjects(run: CommandRun): Promise<StepOutcome> {
+/**
+ * A solid's planar faces as closed polylines — AutoCAD's "solid to regions". Each
+ * loop (the face outline first, then any holes) becomes one closed polyline on
+ * the face's plane, so the pieces sit exactly where the faces were.
+ */
+function explodeSolidToFaces(solid: Solid, doc: Document): Entity[] {
+  const result: Entity[] = [];
+  for (const face of solidPlanarFaces(solid.mesh)) {
+    for (const loop of face.loops) {
+      if (loop.length < 3) continue;
+      const polyline = doc.createPolyline(loop.map((point) => ({ x: point.x, y: point.y })), true);
+      polyline.workPlane = cloneWorkPlane(face.plane);
+      polyline.layer = solid.layer;
+      polyline.color = solid.color;
+      result.push(polyline);
+    }
+  }
+  return result;
+}
+
+export function explodeObjects(run: CommandRun): StepOutcome {
   const { data, value, ctx } = run;
   if (run.gather(value)) return 'stay';
 
@@ -67,25 +89,15 @@ export async function explodeObjects(run: CommandRun): Promise<StepOutcome> {
   }
 
   for (const solid of data.solids as Solid[]) {
-    // Only a boolean has parts to give back. Everything else is one shape, and
-    // a mesh has forgotten whether it ever was more than that.
-    if (solid.feature.kind !== 'boolean') {
-      ctx.log(`EXPLODE: ${solid.name} is not a boolean compound solid.`);
+    // Like AutoCAD: a solid comes apart into its faces, whatever it was built
+    // from. A face with no planar area (a bare curved wall) has no region to give.
+    const faces = explodeSolidToFaces(solid, ctx.doc);
+    if (faces.length === 0) {
+      ctx.log(`EXPLODE: ${solid.name} has no planar faces to explode.`);
       continue;
     }
-    const before = solidParts.length;
-    for (const [index, feature] of solid.feature.operands.entries()) {
-      const geometry = await buildExactFeature(feature);
-      if (!geometry) continue;
-      const part = ctx.doc.createSolid(
-        geometry.mesh, `${solid.name}_part_${index + 1}`, solid.height, solid.sourceEntityIds, solid.color,
-        JSON.parse(JSON.stringify(feature)) as SolidFeature,
-      );
-      part.exact = geometry.exact;
-      part.layer = solid.layer;
-      solidParts.push(part);
-    }
-    if (solidParts.length > before) removedSolids.push(solid);
+    removedSolids.push(solid);
+    parts.push(...faces);
   }
 
   if (parts.length + solidParts.length === 0) {
