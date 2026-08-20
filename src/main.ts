@@ -853,6 +853,10 @@ const menuActions: Record<string, () => void> = {
 
 function isTextFieldFocused(): boolean {
   const element = document.activeElement;
+  // The command line holds focus the whole time you draw — AutoCAD-style — so it
+  // is canvas mode, not a text field: Cmd+C/Cmd+V there act on objects. Only the
+  // property and value inputs (and any contenteditable) count as text editing.
+  if (element === input) return false;
   return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
     || (element instanceof HTMLElement && element.isContentEditable);
 }
