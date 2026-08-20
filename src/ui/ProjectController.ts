@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
-import { AddEntitiesEdit, CompositeEdit, SetBlockDefinitionsEdit } from '../core/history/edits';
+import { AddEntitiesEdit, CompositeEdit, SetBlockDefinitionsEdit, SetWorkPlanesEdit, captureWorkPlanes, worldWorkPlaneState } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
@@ -160,6 +160,9 @@ export class ProjectController {
         this.doc.clearSelection();
         this.doc.recolour();
         this.history.execute(new CompositeEdit('Import DXF', [
+          // A DXF is a drawing of its own; the named UCS from whatever was open
+          // before are not part of it, so importing resets the coordinate systems.
+          new SetWorkPlanesEdit('Import DXF coordinate systems', captureWorkPlanes(this.doc), worldWorkPlaneState()),
           new SetBlockDefinitionsEdit('Import DXF block definitions', this.doc.blockDefinitions, definitionsAfterImport),
           new AddEntitiesEdit('Import DXF entities', result.entities),
         ]));
@@ -197,7 +200,10 @@ export class ProjectController {
       this.doc.transaction(() => {
         this.doc.clearSelection();
         this.doc.recolour();
-        this.history.execute(new AddEntitiesEdit('Import Excellon', result.entities));
+        this.history.execute(new CompositeEdit('Import Excellon', [
+          new SetWorkPlanesEdit('Import Excellon coordinate systems', captureWorkPlanes(this.doc), worldWorkPlaneState()),
+          new AddEntitiesEdit('Import Excellon entities', result.entities),
+        ]));
       });
       this.callbacks.zoomExtents();
       this.callbacks.renderLayers();

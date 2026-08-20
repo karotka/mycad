@@ -1,7 +1,8 @@
-import type { Document } from '../Document';
+import type { Document, NamedWorkPlane } from '../Document';
 import { cloneBlockDefinition, cloneEntity, cloneSolidValue, type BlockDefinition, type Entity, type Solid } from '../entities/types';
 import type { DocumentEdit } from './CommandHistory';
 import { ACI_WHITE, aciToRgb } from '../../io/DxfAci';
+import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 
 export function cloneSolid(solid: Solid): Solid {
   return cloneSolidValue(solid);
@@ -151,6 +152,60 @@ export class RemoveSolidEdit implements DocumentEdit {
   constructor(readonly label: string, private readonly solid: Solid) {}
   apply(doc: Document): void { doc.removeSolid(this.solid.id); }
   revert(doc: Document): void { replaceSolid(doc, this.solid); }
+}
+
+/** A snapshot of the drawing's coordinate systems — the active plane and the saved named ones. */
+export interface WorkPlaneState {
+  activeWorkPlane: WorkPlane;
+  namedWorkPlanes: NamedWorkPlane[];
+  activeNamedWorkPlaneId: string | null;
+}
+
+function cloneWorkPlaneState(state: WorkPlaneState): WorkPlaneState {
+  return {
+    activeWorkPlane: cloneWorkPlane(state.activeWorkPlane),
+    namedWorkPlanes: state.namedWorkPlanes.map((plane) => ({ ...plane, workPlane: cloneWorkPlane(plane.workPlane) })),
+    activeNamedWorkPlaneId: state.activeNamedWorkPlaneId,
+  };
+}
+
+export function captureWorkPlanes(doc: Document): WorkPlaneState {
+  return cloneWorkPlaneState({
+    activeWorkPlane: doc.activeWorkPlane,
+    namedWorkPlanes: doc.namedWorkPlanes,
+    activeNamedWorkPlaneId: doc.activeNamedWorkPlaneId,
+  });
+}
+
+/** The World Coordinate System with no saved UCS — a drawing's fresh coordinate state. */
+export function worldWorkPlaneState(): WorkPlaneState {
+  return { activeWorkPlane: cloneWorkPlane(WORLD_WORK_PLANE), namedWorkPlanes: [], activeNamedWorkPlaneId: null };
+}
+
+/**
+ * Replaces the drawing's coordinate systems — the active UCS and the saved named
+ * ones — as one undoable edit, so they belong to the document's history like any
+ * geometry change rather than being applied out of band.
+ */
+export class SetWorkPlanesEdit implements DocumentEdit {
+  private readonly before: WorkPlaneState;
+  private readonly after: WorkPlaneState;
+
+  constructor(readonly label: string, before: WorkPlaneState, after: WorkPlaneState) {
+    this.before = cloneWorkPlaneState(before);
+    this.after = cloneWorkPlaneState(after);
+  }
+
+  apply(doc: Document): void { this.restore(doc, this.after); }
+  revert(doc: Document): void { this.restore(doc, this.before); }
+
+  private restore(doc: Document, state: WorkPlaneState): void {
+    const clone = cloneWorkPlaneState(state);
+    doc.namedWorkPlanes = clone.namedWorkPlanes;
+    doc.activeNamedWorkPlaneId = clone.activeNamedWorkPlaneId;
+    doc.activeWorkPlane = clone.activeWorkPlane;
+    doc.notify();
+  }
 }
 
 export class UpdateEntityEdit implements DocumentEdit {
