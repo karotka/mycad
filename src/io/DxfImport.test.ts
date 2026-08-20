@@ -366,4 +366,30 @@ describe('DXF ELLIPSE', () => {
     expect(result.entities).toHaveLength(0);
     expect(result.ignoredTypes).toEqual({ ELLIPSE: 1 });
   });
+
+  it('imports a SOLID hatch as its boundary loop', () => {
+    // A solid-filled 10×10 square (polyline boundary path) → one closed polyline.
+    const result = importAsciiDxf(new Document(), dxf(
+      '0\nHATCH\n8\nFill\n70\n1\n91\n1\n92\n3\n72\n0\n73\n1\n93\n4\n'
+      + '10\n0\n20\n0\n10\n10\n20\n0\n10\n10\n20\n10\n10\n0\n20\n10\n',
+    ));
+    const polylines = result.entities.filter((entity) => entity.type === 'polyline');
+    expect(polylines).toHaveLength(1);
+    expect(polylines[0].type === 'polyline' && polylines[0].closed).toBe(true);
+    expect(result.ignored).toBe(0);
+    expect(result.approximated).toBe(1);
+  });
+
+  it('imports a pattern hatch as its generated hatch lines', () => {
+    // Horizontal pattern (angle 0, offset 0,2) over the 10×10 square → line strokes.
+    const result = importAsciiDxf(new Document(), dxf(
+      '0\nHATCH\n8\nFill\n70\n0\n91\n1\n92\n3\n72\n0\n73\n1\n93\n4\n'
+      + '10\n0\n20\n0\n10\n10\n20\n0\n10\n10\n20\n10\n10\n0\n20\n10\n'
+      + '78\n1\n53\n0\n43\n0\n44\n0\n45\n0\n46\n2\n79\n0\n',
+    ));
+    const lines = result.entities.filter((entity) => entity.type === 'line');
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    // No boundary polyline is emitted for a pattern fill — the outline lives elsewhere.
+    expect(result.entities.some((entity) => entity.type === 'polyline')).toBe(false);
+  });
 });

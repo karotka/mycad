@@ -3,6 +3,7 @@ import type { BlockDefinition, Entity, InsertEntity } from '../core/entities/typ
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { expandBulges, type BulgeVertex } from './DxfBulge';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
+import { hatchGeometry } from './DxfHatch';
 
 type Pair = { code: number; value: string };
 
@@ -460,6 +461,17 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       addPolyline(vertices, (number(fields, 70) & 1) === 1, fields, layer, type);
       while (cursor < pairs.length && !(pairs[cursor].code === 0 && pairs[cursor].value.toUpperCase() === 'SEQEND')) cursor++;
       end = Math.min(pairs.length, cursor + 1);
+    } else if (type === 'HATCH') {
+      // We have no fill primitive and a pen plotter cannot fill, so a hatch is
+      // imported as the lines you would actually draw: a SOLID fill becomes its
+      // boundary loops, a pattern fill becomes its generated hatch lines. Either
+      // way the fill is approximated by strokes, so it is reported, never silent.
+      noteFlattened(fields, 30);
+      const hatch = hatchGeometry(fields, scale);
+      if (hatch.solid) for (const loop of hatch.loops) { if (loop.length >= 2) finish(doc.createPolyline(loop, true), fields, layer); }
+      for (const [a, b] of hatch.lines) finish(doc.createLine(a, b), fields, layer);
+      if ((hatch.solid && hatch.loops.length) || hatch.lines.length) approximated++;
+      else skip(type);
     } else if (!['VERTEX', 'SEQEND'].includes(type)) skip(type);
     index = end;
   }
