@@ -360,7 +360,12 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       let sweep = endAngle - start;
       while (sweep <= 0) sweep += Math.PI * 2;
       finish(doc.createArc({ x: number(fields, 10) * scale, y: number(fields, 20) * scale }, number(fields, 40) * scale, start, sweep), fields, layer);
-    } else if (type === 'TEXT') {
+    } else if (type === 'TEXT' || type === 'ATTRIB') {
+      // An ATTRIB is a block attribute carrying its filled-in value in code 1,
+      // laid out exactly like TEXT — the visible text in a title block or symbol.
+      // Skip the invisible (70 bit 1) and the empty ones silently: they are data
+      // or blank fields, not drawing, and are not worth naming as "unsupported".
+      if (type === 'ATTRIB' && ((number(fields, 70, 0) & 1) || !(fields.find((pair) => pair.code === 1)?.value ?? ''))) { index = end; continue; }
       noteFlattened(fields, 30);
       // Codes 72/73 move the insertion point to the alignment point at 11/21.
       const aligned = (number(fields, 72, 0) !== 0 || number(fields, 73, 0) !== 0)

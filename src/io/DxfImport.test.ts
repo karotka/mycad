@@ -28,6 +28,14 @@ describe('DXF import', () => {
     expect(entityBounds(insert)).toEqual({ min: { x: 10, y: 20 }, max: { x: 10, y: 30 } });
   });
 
+  it('imports a block ATTRIB as its filled-in text, skipping invisible ones', () => {
+    const result = importAsciiDxf(new Document(),
+      dxf('0\nATTRIB\n8\nTitle\n1\nZdenek Philipp\n10\n5\n20\n7\n40\n2.5\n50\n0\n70\n0\n'
+        + '0\nATTRIB\n8\nTitle\n1\nHidden\n10\n5\n20\n1\n40\n2.5\n70\n1\n'));
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Zdenek Philipp', position: { x: 5, y: 7 } });
+  });
+
   it('expands INSERT row/column arrays and nested block references', () => {
     const result = importAsciiDxf(new Document(), dxfWithBlocks(
       '0\nBLOCK\n2\nChild\n10\n0\n20\n0\n'
