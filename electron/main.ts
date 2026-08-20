@@ -147,9 +147,13 @@ function buildMenu(win: BrowserWindow): void {
         // canvas they do nothing. These route to the renderer, which copies the
         // selected objects on the canvas and falls back to the native clipboard
         // when a text field is focused.
-        { label: 'Cut', accelerator: 'CmdOrCtrl+X', click: send('cut') },
-        { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: send('copy') },
-        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: send('paste') },
+        // registerAccelerator:false shows the shortcut but leaves the key to the
+        // renderer, which intercepts the clipboard event so copy/paste act on the
+        // drawing (and cancels the native text paste into the command line). The
+        // click still drives them from the menu.
+        { label: 'Cut', accelerator: 'CmdOrCtrl+X', registerAccelerator: false, click: send('cut') },
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', registerAccelerator: false, click: send('copy') },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', registerAccelerator: false, click: send('paste') },
         { role: 'selectAll' },
         // On macOS Settings lives in the app menu; elsewhere it belongs here.
         ...(isMac ? [] : [{ type: 'separator' as const }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }]),

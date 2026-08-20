@@ -865,6 +865,23 @@ const removeMenuListener = window.mycadEvents?.onMenuAction((action) => {
   menuActions[action]?.();
 });
 
+// Intercept the clipboard events themselves — not just the keystroke — so an
+// object copy/paste wins no matter how it is triggered (native shortcut or the
+// Edit menu), and the browser's own text paste is cancelled before it can land
+// in the command line. A focused property/value input still keeps the native
+// clipboard, since it is a genuine text field.
+function handleClipboardEvent(kind: 'copy' | 'cut' | 'paste', event: Event): void {
+  if (isTextFieldFocused()) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (kind === 'copy') copySelectedObjects();
+  else if (kind === 'cut') { if (copySelectedObjects()) deleteSelectedObjects(); }
+  else pasteClipboard();
+}
+window.addEventListener('copy', (event) => handleClipboardEvent('copy', event), { capture: true });
+window.addEventListener('cut', (event) => handleClipboardEvent('cut', event), { capture: true });
+window.addEventListener('paste', (event) => handleClipboardEvent('paste', event), { capture: true });
+
 function syncTextOptions(): void {
   const selectingStyle = commands.active?.name === 'TEXT' && commands.active.stepIndex < 2;
   textOptions.hidden = !selectingStyle;
