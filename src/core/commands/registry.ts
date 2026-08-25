@@ -183,8 +183,15 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select object(s) to copy, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point (Escape to finish):' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
-  { name: 'SCALE', aliases: ['SC', 'SCALE'], execute: scaleObjects, help: 'scale objects from a base point', suggest: true, pointInput: true, transformsObjects: true,
-    steps: [{ kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify scale base point:' }, { kind: 'point', label: 'Specify scale factor or enter a number:' }, { kind: 'done' }],
+  { name: 'SCALE', aliases: ['SC', 'SCALE'], execute: scaleObjects, help: 'scale objects by a reference length, or a typed factor', suggest: true, pointInput: true, transformsObjects: true,
+    steps: [
+      { kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid'] },
+      { kind: 'point', label: 'Specify scale base point:' },
+      { kind: 'point', label: 'Reference length: pick first point, or type a scale factor:' },
+      { kind: 'point', label: 'Reference length: pick second point, or type the length:' },
+      { kind: 'point', label: 'New length: drag to shrink or grow, or type the length:' },
+      { kind: 'done' },
+    ],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify scale base point.`) },
   // Takes solids, like SCALE beside it. It used to say "2D object(s)" and mean

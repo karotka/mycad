@@ -85,9 +85,16 @@ export class PreviewController {
       this.setPreview({ type: 'copy', data: { start: base, end: cursor, entities } });
       return;
     }
-    if (active.name === 'SCALE' && active.stepIndex === 2 && active.data.basePoint) {
+    // Reference length being measured (step 3): a plain rubber-band line.
+    if (active.name === 'SCALE' && active.stepIndex === 3 && active.data.referenceStart) {
+      this.setPreview({ type: 'line', data: { start: active.data.referenceStart as Vec2, end: cursor } });
+      return;
+    }
+    // New length (step 4): scale live by new length ÷ reference length.
+    if (active.name === 'SCALE' && active.stepIndex === 4 && active.data.basePoint && active.data.referenceLength) {
       const base = active.data.basePoint as Vec2;
-      const factor = Math.hypot(cursor.x - base.x, cursor.y - base.y);
+      const reference = active.data.referenceLength as number;
+      const factor = Math.hypot(cursor.x - base.x, cursor.y - base.y) / reference;
       const entities = (active.data.entities as Entity[]).map((entity) => {
         const scaled = transformEntityPoints(entity, (point) => ({ x: base.x + (point.x - base.x) * factor, y: base.y + (point.y - base.y) * factor }));
         if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;

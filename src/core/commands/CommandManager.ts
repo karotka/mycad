@@ -354,15 +354,24 @@ export class CommandManager {
           await this.advanceStep(null);
           return;
         }
-        if (this.active?.name === 'SCALE' && this.active.stepIndex === 2) {
-          const factor = Number(input);
-          const base = this.active.data.basePoint as Vec2 | undefined;
-          if (base && Number.isFinite(factor) && factor > 0) {
-            this.active.data.enteredScaleFactor = factor;
-            await this.advanceStep({ x: base.x + factor, y: base.y });
+        if (this.active?.name === 'SCALE' && this.active.stepIndex >= 2 && this.active.stepIndex <= 4) {
+          const entered = Number(input);
+          if (Number.isFinite(entered)) {
+            if (entered <= 0) {
+              this.ctx.log(this.active.stepIndex === 2 ? 'Scale factor must be greater than zero.' : 'Length must be greater than zero.');
+              return;
+            }
+            const data = this.active.data;
+            // Step 2 typed → a direct factor (skips the reference); step 3 → the
+            // reference length; step 4 → the new length. The execute step reads
+            // these back, so the synthetic point it also gets is not used.
+            if (this.active.stepIndex === 2) data.enteredScaleFactor = entered;
+            else if (this.active.stepIndex === 3) data.enteredReferenceLength = entered;
+            else data.enteredNewLength = entered;
+            const anchor = (this.active.stepIndex === 3 ? data.referenceStart : data.basePoint) as Vec2 | undefined;
+            await this.advanceStep({ x: (anchor?.x ?? 0) + entered, y: anchor?.y ?? 0 });
             return;
           }
-          if (Number.isFinite(factor)) { this.ctx.log('Scale factor must be greater than zero.'); return; }
         }
         if (this.active?.name === 'ROTATE' && this.active.stepIndex === 2) {
           const degrees = Number(input);

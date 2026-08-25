@@ -907,6 +907,38 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 3, y: 2 }, radius: 2 });
   });
 
+  it('shrinks by a reference length picked on the drawing (new ÷ reference)', async () => {
+    const { doc, manager, history } = setup();
+    const circle = doc.createCircle({ x: 4, y: 0 }, 2);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+    manager.startCommand('SCALE');
+
+    await manager.handleClick({ x: 0, y: 0 }); // base
+    await manager.handleClick({ x: 0, y: 0 }); // reference length start
+    await manager.handleClick({ x: 4, y: 0 }); // reference length end → reference = 4
+    await manager.handleClick({ x: 2, y: 0 }); // new length 2 → factor 2/4 = 0.5 (shrinks)
+
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 2, y: 0 }, radius: 1 });
+    history.undo();
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 4, y: 0 }, radius: 2 });
+  });
+
+  it('scales by a typed reference and new length', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 4, y: 0 }, 2);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+    manager.startCommand('SCALE');
+
+    await manager.handleClick({ x: 0, y: 0 }); // base
+    await manager.handleClick({ x: 0, y: 0 }); // reference length start (a pick, so the number is a length not a factor)
+    await manager.submitInput('4');            // reference length = 4
+    await manager.submitInput('6');            // new length 6 → factor 1.5
+
+    expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 6, y: 0 }, radius: 3 });
+  });
+
   it('explodes a preselected rectangle into four undoable lines', async () => {
     const { doc, manager, history } = setup();
     const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 8, y: 3 });
