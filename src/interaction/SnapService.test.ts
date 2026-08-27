@@ -3,6 +3,7 @@ import { Document } from '../core/Document';
 import { measurementCandidates, nearestCandidate2d, nearestEdgeWorldPoint, objectSnapCandidates, type ObjectSnapMode } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
+import type { WorkPlane } from '../math/workplane';
 
 /** Candidates carry the snap that found them; these tests care about the points. */
 const points = (doc: CadDocument, mode: ObjectSnapMode, excluded?: string | null, reference?: { x: number; y: number; z: number } | null) =>
@@ -100,6 +101,32 @@ describe('SnapService', () => {
 
     expect(points(doc, 'intersection')).toContainEqual({ x: 5, y: 5, z: 0 });
     expect(points(doc, 'perpendicular', null, { x: 25, y: 8, z: 0 })).toContainEqual({ x: 25, y: 0, z: 0 });
+  });
+
+  it('finds an intersection across two different work planes, past an unrelated entity with a huge bounding box', () => {
+    // The bounding-box pre-check that skips most entity pairs projects each
+    // entity's box into the *other* one's plane before comparing — get that
+    // transform wrong and a real crossing on a rotated plane silently
+    // disappears instead of raising an error.
+    const diagonal = Math.SQRT1_2;
+    const rotated45: WorkPlane = {
+      origin: { x: 0, y: 0, z: 0 },
+      xAxis: { x: diagonal, y: diagonal, z: 0 },
+      yAxis: { x: -diagonal, y: diagonal, z: 0 },
+      zAxis: { x: 0, y: 0, z: 1 },
+    };
+    const doc = new Document();
+    const onWorldPlane = doc.createLine({ x: -10, y: 0 }, { x: 10, y: 0 });
+    // A "horizontal" segment in its own 45°-rotated plane, which runs diagonally
+    // through the world origin — crossing onWorldPlane's line only there.
+    const onRotatedPlane = doc.createLine({ x: -10, y: 0 }, { x: 10, y: 0 });
+    onRotatedPlane.workPlane = rotated45;
+    // Sits far from the real crossing but bounds a huge area, exactly the
+    // shape a decorative block dropped elsewhere in the drawing takes.
+    const decoy = doc.createLine({ x: 10_000, y: 10_000 }, { x: -10_000, y: 10_000 });
+    doc.entities.push(onWorldPlane, decoy, onRotatedPlane);
+
+    expect(points(doc, 'intersection')).toContainEqual({ x: 0, y: 0, z: 0 });
   });
 
   it('finds a perpendicular foot on a real 3D solid edge', () => {

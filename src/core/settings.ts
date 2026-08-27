@@ -27,6 +27,16 @@ export interface DimensionStyle {
   layer: string;
 }
 
+export interface HatchSettings {
+  pattern: 'lines' | 'cross' | 'solid';
+  angle: number;
+  spacing: number;
+}
+
+export function defaultHatchSettings(): HatchSettings {
+  return { pattern: 'lines', angle: 45, spacing: 2 };
+}
+
 /**
  * How the drawing comes out as G-code for a pen plotter. Tool state is expressed
  * as configurable controller commands rather than assuming the machine owns a
@@ -85,7 +95,12 @@ export function defaultDraftingSettings(): DraftingSettings {
     polarAngles: [30, 45, 90],
     objectSnapEnabled: true,
     objectSnapTrackingEnabled: false,
-    objectSnapModes: ['end', 'middle', 'center', 'node', 'intersection', 'nearest'],
+    // 'intersection' is O(entity pairs × segment pairs) with the segments
+    // recomputed on every pair instead of once — on a few thousand entities it
+    // does not finish inside a pointer move at all. 'middle'/'center'/'node'
+    // are comparatively cheap but add up; keep only the cheapest, most-used
+    // mode on by default until the intersection algorithm itself is fixed.
+    objectSnapModes: ['end'],
   };
 }
 

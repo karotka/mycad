@@ -225,19 +225,55 @@ function segmentIntersection(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | null {
   return { x: a.x + ab.x * t, y: a.y + ab.y * t };
 }
 
+interface XYBounds { minX: number; minY: number; maxX: number; maxY: number }
+
+function segmentsXYBounds(segments: Array<[Vec2, Vec2]>): XYBounds | null {
+  if (segments.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [a, b] of segments) {
+    minX = Math.min(minX, a.x, b.x); maxX = Math.max(maxX, a.x, b.x);
+    minY = Math.min(minY, a.y, b.y); maxY = Math.max(maxY, a.y, b.y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 function intersectionCandidates(doc: Document, excludedId?: string | null): Vec3[] {
   const entities = doc.entities.filter((entity) => entity.id !== excludedId && !doc.hiddenLayers.has(entity.layer));
+  // entitySegments() walks (and for an INSERT, expands) an entity's whole
+  // geometry; computed inside the pair loop it ran once per *pair* instead of
+  // once per entity — O(n) redundant work on top of the O(n^2) pairing itself,
+  // which is what turned a few thousand entities into a multi-minute hang.
+  const segmentsByEntity = entities.map((entity) => entitySegments(entity));
+  // A drawing's entities mostly sit nowhere near each other, so most of the n^2
+  // pairs can never intersect. A quick bounding-box overlap check (ignoring Z —
+  // a false positive there just means an unnecessary full check, never a missed
+  // intersection) skips the expensive segment-pair loop for those pairs. This is
+  // what makes a few thousand entities with a couple of huge nested blocks
+  // tractable instead of a multi-minute hang.
+  const boundsByEntity = segmentsByEntity.map(segmentsXYBounds);
   const candidates: Vec3[] = [];
   for (let first = 0; first < entities.length; first++) {
     const a = entities[first];
     const plane = a.workPlane ?? WORLD_WORK_PLANE;
+    const aSegments = segmentsByEntity[first];
+    const aBounds = boundsByEntity[first];
     for (let second = first + 1; second < entities.length; second++) {
       const b = entities[second];
-      const bSegments = entitySegments(b).map(([start, end]) => [
-        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, start, localPointZ(start) ?? entityPlaneOffset(b))),
-        worldToLocal(plane, localToWorld(b.workPlane ?? WORLD_WORK_PLANE, end, localPointZ(end) ?? entityPlaneOffset(b))),
-      ] as [Vec3, Vec3]);
-      for (const [aStart, aEnd] of entitySegments(a)) for (const [bStart, bEnd] of bSegments) {
+      const bPlane = b.workPlane ?? WORLD_WORK_PLANE;
+      const transformToA = (point: Vec2): Vec3 =>
+        worldToLocal(plane, localToWorld(bPlane, point, localPointZ(point) ?? entityPlaneOffset(b)));
+      const bBoundsLocal = boundsByEntity[second];
+      if (aBounds && bBoundsLocal) {
+        const corners = [
+          { x: bBoundsLocal.minX, y: bBoundsLocal.minY }, { x: bBoundsLocal.maxX, y: bBoundsLocal.minY },
+          { x: bBoundsLocal.maxX, y: bBoundsLocal.maxY }, { x: bBoundsLocal.minX, y: bBoundsLocal.maxY },
+        ].map(transformToA);
+        const bMinX = Math.min(...corners.map((c) => c.x)), bMaxX = Math.max(...corners.map((c) => c.x));
+        const bMinY = Math.min(...corners.map((c) => c.y)), bMaxY = Math.max(...corners.map((c) => c.y));
+        if (bMaxX < aBounds.minX || bMinX > aBounds.maxX || bMaxY < aBounds.minY || bMinY > aBounds.maxY) continue;
+      }
+      const bSegments = segmentsByEntity[second].map(([start, end]) => [transformToA(start), transformToA(end)] as [Vec3, Vec3]);
+      for (const [aStart, aEnd] of aSegments) for (const [bStart, bEnd] of bSegments) {
         const point = segmentIntersection(aStart, aEnd, bStart, bEnd);
         if (point) candidates.push(localToWorld(plane, point, entityPlaneOffset(a)));
       }
