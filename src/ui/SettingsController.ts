@@ -36,6 +36,13 @@ export class SettingsController {
     this.show(this.active ?? this.tabs[0]);
   }
 
+  /** Opens the window directly on a specific tab, e.g. a menu action that
+      means one particular tab rather than "whichever was open last". */
+  openTab(tab: SettingsTab): void {
+    this.window.hidden = false;
+    this.show(tab);
+  }
+
   hide(): void { this.window.hidden = true; }
 
   toggle(): void { this.isOpen ? this.hide() : this.open(); }

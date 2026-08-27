@@ -41,6 +41,13 @@ describe('PreviewController', () => {
     expect(previewOf(active('POLYLINE', 0, { vertices: [] }), { x: 4, y: 5 })).toBeUndefined();
   });
 
+  it('previews PRINTAREA as a rectangle, the same way RECTANGLE does', () => {
+    expect(previewOf(active('PRINTAREA', 1, { start: { x: 0, y: 0 } }), { x: 12, y: 8 })).toEqual({
+      type: 'rectangle',
+      data: { start: { x: 0, y: 0 }, end: { x: 12, y: 8 } },
+    });
+  });
+
   it('previews the radial base of every round primitive, including TORUS', () => {
     for (const name of ['CYLINDER', 'SPHERE', 'CONE', 'PYRAMID', 'TORUS']) {
       expect(previewOf(
@@ -64,6 +71,16 @@ describe('PreviewController', () => {
     expect(data.entities[0].start).toEqual({ x: 5, y: 3 });
     expect(data.entities[0].end).toEqual({ x: 15, y: 3 });
     expect(data.entities[0].selected).toBe(false);
+  });
+
+  it('previews SCALE with one factor and the original entities instead of cloning every curve', () => {
+    const bezier = { id: 'b1', type: 'bezier', layer: '0', aci: 256, color: 0xffffff, selected: true, start: { x: 0, y: 0 }, control1: { x: 1, y: 0 }, control2: { x: 2, y: 0 }, end: { x: 3, y: 0 } };
+    const preview = previewOf(active('SCALE', 3, {
+      basePoint: { x: 0, y: 0 }, referenceLength: 2, entities: [bezier],
+    }), { x: 1, y: 0 });
+
+    expect(preview).toMatchObject({ type: 'scale', data: { factor: 0.5 } });
+    expect((preview?.data as { entities: unknown[] }).entities[0]).toBe(bezier);
   });
 
   it('shows the saved block geometry at the pending INSERT point', () => {

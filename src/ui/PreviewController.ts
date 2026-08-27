@@ -25,6 +25,10 @@ export class PreviewController {
   update(active: ActiveCommand | null, cursor: Vec2, ucsHoverPoint: { x: number; y: number; z: number } | null): void {
     this.clearPreview();
     if (!active) return;
+    // A first snap outside the UCS establishes a parallel drawing plane.  The
+    // preview must carry that plane too; otherwise the final entity is correct
+    // but its rubber-band preview is drawn back on the active UCS.
+    const drawingPlane = active.data.drawingPlane as WorkPlane | undefined;
     if (active.name === 'UCS') {
       this.setPreview({
         type: 'ucs',
@@ -32,12 +36,12 @@ export class PreviewController {
       });
       return;
     }
-    if (active.name === 'POLYLINE') {
+    if (active.name === 'POLYLINE' || active.name === 'AREA') {
       // The whole chain so far, not just the segment being dragged: the vertices
       // are only a polyline once the command ends, so until then this preview is
       // the only thing that shows what has been drawn.
       const vertices = (active.data.vertices as Vec2[]) ?? [];
-      if (vertices.length > 0) this.setPreview({ type: 'polyline', data: { vertices, cursor } });
+      if (vertices.length > 0) this.setPreview({ type: active.name === 'AREA' ? 'area' : 'polyline', data: { vertices, cursor, workPlane: drawingPlane } });
       return;
     }
     if (active.name === 'ELLIPSE' && active.data.center) {
@@ -52,8 +56,8 @@ export class PreviewController {
       return;
     }
     if (active.name === 'ARC') {
-      if (active.stepIndex === 1 && active.data.center) this.setPreview({ type: 'circle', data: { center: active.data.center, cursor } });
-      else if (active.stepIndex === 2 && active.data.center && active.data.start) this.setPreview({ type: 'arc', data: { center: active.data.center, start: active.data.start, cursor } });
+      if (active.stepIndex === 1 && active.data.center) this.setPreview({ type: 'circle', data: { center: active.data.center, cursor, workPlane: drawingPlane } });
+      else if (active.stepIndex === 2 && active.data.center && active.data.start) this.setPreview({ type: 'arc', data: { center: active.data.center, start: active.data.start, cursor, workPlane: drawingPlane } });
       return;
     }
     if (active.name === 'BEZIER' && active.data.start) {
@@ -85,25 +89,20 @@ export class PreviewController {
       this.setPreview({ type: 'copy', data: { start: base, end: cursor, entities } });
       return;
     }
-    // Reference length being measured (step 3): a plain rubber-band line.
-    if (active.name === 'SCALE' && active.stepIndex === 3 && active.data.referenceStart) {
-      this.setPreview({ type: 'line', data: { start: active.data.referenceStart as Vec2, end: cursor } });
+    // The base point is also the reference origin, so only one reference click
+    // is needed before live scaling begins.
+    if (active.name === 'SCALE' && active.stepIndex === 2 && active.data.basePoint) {
+      this.setPreview({ type: 'line', data: { start: active.data.basePoint as Vec2, end: cursor } });
       return;
     }
-    // New length (step 4): scale live by new length ÷ reference length.
-    if (active.name === 'SCALE' && active.stepIndex === 4 && active.data.basePoint && active.data.referenceLength) {
+    // No transformed entity clones are made here. The renderer applies one
+    // canvas transform to the originals, keeping pointermove cheap for hundreds
+    // of Bezier curves.
+    if (active.name === 'SCALE' && active.stepIndex === 3 && active.data.basePoint && active.data.referenceLength) {
       const base = active.data.basePoint as Vec2;
       const reference = active.data.referenceLength as number;
       const factor = Math.hypot(cursor.x - base.x, cursor.y - base.y) / reference;
-      const entities = (active.data.entities as Entity[]).map((entity) => {
-        const scaled = transformEntityPoints(entity, (point) => ({ x: base.x + (point.x - base.x) * factor, y: base.y + (point.y - base.y) * factor }));
-        if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
-        if (scaled.type === 'text') scaled.height *= factor;
-        scaled.color = 0xe6f4ff;
-        scaled.selected = false;
-        return scaled;
-      });
-      this.setPreview({ type: 'scale', data: { start: base, end: cursor, entities, factor } });
+      this.setPreview({ type: 'scale', data: { start: base, end: cursor, entities: active.data.entities as Entity[], factor } });
       return;
     }
     if (active.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
@@ -221,10 +220,11 @@ export class PreviewController {
       return;
     }
     if (active.stepIndex !== 1) return;
-    if (active.name === 'LINE' && active.data.start) this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor } });
+    if (active.name === 'LINE' && active.data.start) this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor, workPlane: drawingPlane } });
     else if (active.name === 'RECTANGLE' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
-    else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) this.setPreview({ type: active.name === 'CIRCLE' ? 'circle' : 'circleDiameter', data: { center: active.data.center, cursor } });
+    else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) this.setPreview({ type: active.name === 'CIRCLE' ? 'circle' : 'circleDiameter', data: { center: active.data.center, cursor, workPlane: drawingPlane } });
     else if (active.name === 'OCTAGON' && active.data.center) this.setPreview({ type: 'octagon', data: { center: active.data.center, cursor } });
+    else if (active.name === 'PRINTAREA' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
   }
 
   /**
