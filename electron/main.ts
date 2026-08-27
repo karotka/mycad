@@ -71,6 +71,14 @@ function validateFilePath(filePath: unknown): asserts filePath is string {
   if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('A valid absolute file path is required.');
 }
 
+function validatePdfExport(options: unknown): asserts options is { svg: string; widthMm: number; heightMm: number; defaultPath: string } {
+  const value = options as { svg?: unknown; widthMm?: unknown; heightMm?: unknown; defaultPath?: unknown } | null;
+  validateContent(value?.svg);
+  if (typeof value?.widthMm !== 'number' || !Number.isFinite(value.widthMm) || value.widthMm <= 0) throw new Error('Invalid page width.');
+  if (typeof value.heightMm !== 'number' || !Number.isFinite(value.heightMm) || value.heightMm <= 0) throw new Error('Invalid page height.');
+  if (typeof value.defaultPath !== 'string') throw new Error('A default file name is required.');
+}
+
 function validateMcpFilePath(filePath: unknown, extension: '.mycad' | '.stl'): asserts filePath is string {
   validateFilePath(filePath);
   if (path.extname(filePath).toLowerCase() !== extension) throw new Error(`Expected a ${extension} file path.`);
@@ -86,7 +94,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'print' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -133,6 +141,8 @@ function buildMenu(win: BrowserWindow): void {
             { label: 'G-code…', accelerator: 'Shift+CmdOrCtrl+G', click: send('export-gcode') },
           ],
         },
+        { type: 'separator' },
+        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: send('print') },
         ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const }]),
       ],
     },
@@ -277,6 +287,53 @@ ipcMain.handle('save-file', async (event, options: {
   });
   if (result.canceled || !result.filePath) return { canceled: true };
   await fs.writeFile(result.filePath, options.content, 'utf8');
+  writableFiles.add(result.filePath);
+  await rememberDirectory(result.filePath);
+  return { canceled: false, filePath: result.filePath };
+});
+
+ipcMain.handle('export-pdf', async (event, options: unknown) => {
+  assertTrustedSender(event);
+  validatePdfExport(options);
+  await loadPrefs();
+  const result = await dialog.showSaveDialog({
+    defaultPath: saveDefaultPath(options.defaultPath),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+
+  // An offscreen window is the only way to hand Chromium's real print
+  // pipeline a vector page to rasterize: it gives true ISO paper dimensions
+  // and font/path rendering identical to a normal browser print, which a
+  // hand-rolled PDF writer would have to reimplement from scratch. A large
+  // architectural plot's SVG is tens of megabytes — well past Chromium's
+  // loadURL data: URI limit — so it goes through a temp file, not a data URL.
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, offscreen: true } });
+  const tempHtmlPath = path.join(app.getPath('temp'), `mycad-print-${randomUUID()}.html`);
+  try {
+    // pageSize+landscape converts through Chromium's own inch-rounded named
+    // sizes (A3 is stored as 11.7x16.54in, not exactly 297x420mm) separately
+    // from how the HTML layout measures the SVG's declared mm size; the two
+    // disagree by a few millimetres, enough to spill onto a near-blank second
+    // page. preferCSSPageSize + an explicit @page rule makes the PDF page and
+    // the laid-out content agree exactly, because both come from the same CSS.
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page { size: ${options.widthMm}mm ${options.heightMm}mm; margin: 0; }
+      html, body { margin: 0; padding: 0; }
+      svg { display: block; }
+    </style></head><body>${options.svg}</body></html>`;
+    await fs.writeFile(tempHtmlPath, html, 'utf8');
+    await printWindow.loadFile(tempHtmlPath);
+    const pdf = await printWindow.webContents.printToPDF({
+      preferCSSPageSize: true,
+      printBackground: true,
+      margins: { marginType: 'none' },
+    });
+    await fs.writeFile(result.filePath, pdf);
+  } finally {
+    printWindow.destroy();
+    await fs.unlink(tempHtmlPath).catch(() => {});
+  }
   writableFiles.add(result.filePath);
   await rememberDirectory(result.filePath);
   return { canceled: false, filePath: result.filePath };

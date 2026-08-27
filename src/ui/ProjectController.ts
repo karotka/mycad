@@ -2,7 +2,7 @@ import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit, CompositeEdit, SetBlockDefinitionsEdit, SetWorkPlanesEdit, captureWorkPlanes, worldWorkPlaneState } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions } from '../core/settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings } from '../core/settings';
 import { importAsciiDxf } from '../io/DxfImport';
 import { importExcellon } from '../io/ExcellonImport';
 import { exportAsciiDxf } from '../io/DxfExport';
@@ -10,7 +10,8 @@ import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
-import { cloneBlockDefinition, type Solid } from '../core/entities/types';
+import { clearInsertExpansionCache, cloneBlockDefinition, type Solid } from '../core/entities/types';
+import { buildPrintSvg, paperPage, type PrintStyle, type PrintWindow } from '../render/SvgExport';
 
 export interface ProjectControllerCallbacks {
   captureView(): ProjectViewState;
@@ -46,6 +47,7 @@ export class ProjectController {
   openProjectContent(content: string, filePath: string): void {
     if (!content) throw new Error('The file is empty.');
     this.callbacks.cancelInteraction();
+    clearInsertExpansionCache();
     const savedView = loadProject(this.doc, content);
     this.setCurrentFile(filePath);
     this.callbacks.applyView(savedView);
@@ -89,6 +91,7 @@ export class ProjectController {
     if (confirmDiscard && (this.doc.entities.length > 0 || this.doc.solids.length > 0 || this.doc.namedWorkPlanes.length > 0)
       && !window.confirm('Create a new project? Unsaved changes will be lost.')) return false;
     this.callbacks.cancelInteraction();
+    clearInsertExpansionCache();
     this.doc.transaction(() => {
       this.doc.entities = [];
       this.doc.blockDefinitions = [];
@@ -109,6 +112,7 @@ export class ProjectController {
       this.doc.drafting = defaultDraftingSettings();
       this.doc.dimensionStyle = defaultDimensionStyle();
       this.doc.gcode = defaultGcodeOptions();
+      this.doc.hatch = defaultHatchSettings();
       this.doc.viewMode = '2d';
       this.doc.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
       this.doc.namedWorkPlanes = [];
@@ -228,6 +232,23 @@ export class ProjectController {
     }
     this.callbacks.log(`STL: ${solids.length} selected solid(s).`);
     await this.saveText(exportAsciiStl(solids), this.exportDefaultPath('stl'), 'STL model', 'stl');
+  }
+
+  async exportPdf(win: PrintWindow, paper: string, landscape: boolean, style: PrintStyle): Promise<void> {
+    if (this.doc.entities.length === 0) {
+      this.callbacks.log('Print: the document contains no 2D geometry.');
+      return;
+    }
+    if (!window.mycadAPI) {
+      this.callbacks.log('Print to PDF requires the desktop app.');
+      return;
+    }
+    try {
+      const page = paperPage(paper, landscape);
+      const svg = buildPrintSvg(this.doc, win, page, style);
+      const result = await window.mycadAPI.exportPdf({ svg, widthMm: page.widthMm, heightMm: page.heightMm, defaultPath: this.exportDefaultPath('pdf') });
+      if (!result.canceled) this.callbacks.log(`Printed: ${result.filePath}`);
+    } catch (error) { this.report('Print failed', error); }
   }
 
   async exportDxf(): Promise<void> {

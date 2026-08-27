@@ -128,7 +128,7 @@ export function shellHtml(tools: ShellTools): string {
         <div class="layer-list" id="layer-list"></div>
       </section>
       <section class="layer-panel block-panel" id="block-panel" hidden>
-        <header><strong>Blocks</strong><span class="panel-header-actions"><button id="block-create" title="Create block from selection">+</button><button id="block-close" title="Close">×</button></span></header>
+        <header><strong>Blocks</strong><span class="panel-header-actions"><button id="block-create" title="Create block from selection">+</button><button id="block-purge" title="Delete every block definition not reachable from anything placed in the drawing">Purge</button><button id="block-close" title="Close">×</button></span></header>
         <div class="block-list" id="block-list"></div>
       </section>
       <section class="properties-panel" id="properties-panel" hidden>
@@ -141,7 +141,9 @@ export function shellHtml(tools: ShellTools): string {
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab" id="settings-tab-drafting" role="tab">Drafting</button>
             <button class="settings-tab" id="settings-tab-dimension" role="tab">Dimensions</button>
+            <button class="settings-tab" id="settings-tab-hatch" role="tab">Hatch</button>
             <button class="settings-tab" id="settings-tab-gcode" role="tab">G-code</button>
+            <button class="settings-tab" id="settings-tab-print" role="tab">Print</button>
           </div>
           <button id="settings-close" title="Close">×</button>
         </header>
@@ -163,6 +165,11 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Scale</span><input id="dimension-scale" type="number" min="0.01" step="0.1"></label>
           <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
         </form>
+        <form class="properties-content settings-tab-panel" id="hatch-settings-form" hidden>
+          <label class="property-row"><span>Pattern</span><select id="hatch-pattern"><option value="lines">Lines</option><option value="cross">Cross</option><option value="solid">Solid</option></select></label>
+          <label class="property-row"><span>Angle</span><input id="hatch-angle" type="number" step="1"></label>
+          <label class="property-row"><span>Spacing</span><input id="hatch-spacing" type="number" min="0.001" step="0.1"></label>
+        </form>
         <form class="properties-content settings-tab-panel" id="gcode-settings-form" hidden>
           <label class="property-row"><span>Homing code</span><input id="gcode-homing-code" type="text" spellcheck="false" title="Controller command emitted before the first move"></label>
           <label class="property-row"><span>Pen up code</span><input id="gcode-pen-up-code" type="text" spellcheck="false" title="Controller command that lifts or disables the pen"></label>
@@ -180,29 +187,51 @@ export function shellHtml(tools: ShellTools): string {
             <option value="drill">Drill point (drilling machine)</option>
           </select></label>
         </form>
+        <form class="properties-content settings-tab-panel" id="print-settings-form" hidden>
+          <label class="property-row"><span>Paper size</span><select id="print-paper">
+            <option value="A4">A4</option>
+            <option value="A3">A3</option>
+            <option value="A2">A2</option>
+            <option value="A1">A1</option>
+            <option value="A0">A0</option>
+          </select></label>
+          <label class="property-row"><span>Orientation</span><select id="print-orientation">
+            <option value="landscape">Landscape</option>
+            <option value="portrait">Portrait</option>
+          </select></label>
+          <label class="property-row"><span>Output</span><select id="print-color-mode">
+            <option value="color">Color</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="black">Black &amp; white</option>
+          </select></label>
+          <label class="property-row"><span>Lineweights</span><input id="print-keep-lineweights" type="checkbox" checked title="Keep each layer's pen width; unchecked prints every object at the same hairline width"></label>
+          <p class="property-hint">The picked window is fit to the page and centred, keeping its proportions. Pure white always prints as black.</p>
+          <button type="button" id="print-select">Select area &amp; export to PDF…</button>
+        </form>
       </section>
     </footer>
   </main>
   <div class="context-menu" id="grip-menu" hidden>
     <section class="one-shot-snaps">
       <div class="context-menu-title">Object snap override</div>
+      <button data-grip-mode="end">Endpoint</button>
+      <button data-grip-mode="middle">Midpoint</button>
+      <button data-grip-mode="perpendicular">Perpendicular</button>
+      <button data-grip-mode="intersection">Intersection</button>
+      <button data-grip-mode="center">Center</button>
+      <button data-grip-mode="apparent-intersection">Apparent intersection</button>
       <button data-grip-mode="mid2p">Mid between 2P</button>
       <button data-grip-mode="node">Node</button>
-      <button data-grip-mode="end">Endpoint</button>
-      <button data-grip-mode="intersection">Intersection</button>
-      <button data-grip-mode="apparent-intersection">Apparent intersection</button>
-      <button data-grip-mode="center">Center</button>
-      <button data-grip-mode="perpendicular">Perpendicular</button>
     </section>
     <section class="persistent-snaps">
       <div class="context-menu-title">Running object snaps · F3</div>
       <button data-persistent-snap="end">Endpoint</button>
       <button data-persistent-snap="middle">Midpoint</button>
-      <button data-persistent-snap="center">Center</button>
-      <button data-persistent-snap="node">Node</button>
-      <button data-persistent-snap="intersection">Intersection</button>
-      <button data-persistent-snap="apparent-intersection">Apparent intersection</button>
       <button data-persistent-snap="perpendicular">Perpendicular</button>
+      <button data-persistent-snap="intersection">Intersection</button>
+      <button data-persistent-snap="center">Center</button>
+      <button data-persistent-snap="apparent-intersection">Apparent intersection</button>
+      <button data-persistent-snap="node">Node</button>
       <button data-persistent-snap="nearest">Nearest</button>
     </section>
   </div>

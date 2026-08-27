@@ -23,6 +23,10 @@ export interface CommandContext {
   workPlaneChanged?: () => void;
   /** Opens the STL save flow for exactly the solids gathered by EXPORTSTL. */
   exportStl?: (solids: readonly Solid[]) => void | Promise<void>;
+  /** Opens the PDF print flow for the window PRINTAREA's two corners picked. */
+  exportPdf?: (win: { min: Vec2; max: Vec2 }) => void | Promise<void>;
+  /** Replaces and selects the command-line text, used by in-place text editing. */
+  prefillCommandInput?: (value: string) => void;
 }
 
 /**

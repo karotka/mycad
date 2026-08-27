@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('mycadAPI', {
     ipcRenderer.invoke('write-file', options),
   quickSave: (options: { filePath?: string; defaultPath?: string; content: string }) =>
     ipcRenderer.invoke('quick-save', options),
+  exportPdf: (options: { svg: string; widthMm: number; heightMm: number; defaultPath: string }) =>
+    ipcRenderer.invoke('export-pdf', options),
   setTitle: (title: string) => ipcRenderer.invoke('set-title', title),
   mcpReady: () => ipcRenderer.invoke('mycad-mcp-ready'),
   mcpReadProject: (requestId: string, filePath: string) =>

@@ -27,6 +27,7 @@ import { DimensionStyleController } from './ui/DimensionStyleController';
 import { ModelTreeController } from './ui/ModelTreeController';
 import { GcodeSettingsController } from './ui/GcodeSettingsController';
 import { SettingsController } from './ui/SettingsController';
+import { HatchSettingsController } from './ui/HatchSettingsController';
 import { NamedUcsController } from './ui/NamedUcsController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
@@ -42,6 +43,7 @@ import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction
 import { createToolActions } from './interaction/ToolActions';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
+import type { PrintColorMode } from './render/SvgExport';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -173,15 +175,27 @@ const gcodeSettingsController = new GcodeSettingsController(
   get<HTMLFormElement>('gcode-settings-form'),
   redraw,
 );
+const hatchSettingsController = new HatchSettingsController(
+  cadDocument,
+  get<HTMLFormElement>('hatch-settings-form'),
+  redraw,
+);
+const printTab = { button: get('settings-tab-print'), panel: get('print-settings-form'), render: () => {} };
 const settingsController = new SettingsController(
   get('settings-window'),
   get('settings-close'),
   [
     { button: get('settings-tab-drafting'), panel: get('drafting-settings-form'), render: () => draftingSettingsController.render() },
     { button: get('settings-tab-dimension'), panel: get('dimension-style-form'), render: () => dimensionStyleController.render() },
+    { button: get('settings-tab-hatch'), panel: get('hatch-settings-form'), render: () => hatchSettingsController.render() },
     { button: get('settings-tab-gcode'), panel: get('gcode-settings-form'), render: () => gcodeSettingsController.render() },
+    printTab,
   ],
 );
+get('print-select').addEventListener('click', () => {
+  settingsController.hide();
+  commands.startCommand('PRINTAREA');
+});
 const modelTreeController = new ModelTreeController(
   cadDocument,
   history,
@@ -537,6 +551,11 @@ const commands = new CommandManager({
     return renderer2d.screenToWorld(cursor.x, cursor.y, width, height);
   },
   redraw,
+  prefillCommandInput: (value) => {
+    input.value = value;
+    input.focus({ preventScroll: true });
+    input.select();
+  },
 });
 const blockController = new BlockController(
   cadDocument,
@@ -561,6 +580,7 @@ const blockController = new BlockController(
     redraw,
   },
 );
+get('block-purge').addEventListener('click', () => commands.startCommand('PURGEBLOCKS'));
 const drawingInteraction = new DrawingInteractionController(commands);
 const pointResolver = createPointResolver({
   doc: cadDocument,
@@ -682,7 +702,18 @@ const projectController = new ProjectController(cadDocument, history, {
   redraw,
   focusInput: () => input.focus(),
 });
-commands.updateContext({ exportStl: (solids) => projectController.exportStl(solids) });
+commands.updateContext({
+  exportStl: (solids) => projectController.exportStl(solids),
+  exportPdf: (win) => projectController.exportPdf(
+    win,
+    get<HTMLSelectElement>('print-paper').value,
+    get<HTMLSelectElement>('print-orientation').value === 'landscape',
+    {
+      colorMode: get<HTMLSelectElement>('print-color-mode').value as PrintColorMode,
+      keepLineweights: get<HTMLInputElement>('print-keep-lineweights').checked,
+    },
+  ),
+});
 
 const cadMcp = new CadModelApi(cadDocument, history, () => projectController.currentFilePath ?? null);
 
@@ -840,6 +871,7 @@ const menuActions: Record<string, () => void> = {
   'export-stl': startStlExport,
   'export-dxf': () => { void projectController.exportDxf(); },
   'export-gcode': () => { void projectController.exportGcode(); },
+  print: () => settingsController.openTab(printTab),
   settings: () => settingsController.toggle(),
   undo: () => { log(history.undo() ? 'Undo complete.' : 'Nothing to undo.'); redraw(); },
   redo: () => { log(history.redo() ? 'Redo complete.' : 'Nothing to redo.'); redraw(); },

@@ -499,7 +499,7 @@ html, body, #app {
   right: 8px;
   bottom: 31px;
   z-index: 310;
-  width: 300px;
+  width: 340px;
   max-height: min(620px, calc(100vh - 150px));
   overflow: hidden;
   border: 1px solid #56616d;
@@ -522,7 +522,7 @@ html, body, #app {
   bottom: 40px;
   transform: translateX(-50%);
   z-index: 320;
-  width: 320px;
+  width: min(400px, calc(100vw - 24px));
   border: 1px solid #56616d;
   border-radius: 4px;
   background: #1b2026;
@@ -548,6 +548,7 @@ html, body, #app {
   color: #8b949e;
   font: 600 9px 'SF Mono', monospace;
   cursor: pointer;
+  white-space: nowrap;
 }
 .settings-tab:hover { color: #dce4eb; }
 .settings-tab.active { background: #094771; border-color: #67c9ff; color: #fff; }
@@ -615,6 +616,9 @@ html, body, #app {
 .property-row output { padding: 0 6px; color: #7fcef5; font: 11px 'SF Mono', monospace; }
 .property-row output.property-id { color: #9aa6b1; user-select: text; overflow-wrap: anywhere; cursor: text; }
 .property-row.readonly { background: rgba(255,255,255,.018); }
+.property-hint { margin: 8px 6px; color: #8f9aa4; font-size: 11px; line-height: 1.4; }
+#print-select { width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid #168bd0; border-radius: 2px; background: #0b6fa8; color: white; font: 11px 'SF Mono', monospace; cursor: pointer; }
+#print-select:hover { background: #0d7fbe; }
 .layer-toggle:hover { background: rgba(255, 255, 255, 0.14); }
 .layer-toggle svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .layer-toggle span { max-width: 72px; overflow: hidden; text-overflow: ellipsis; }
@@ -637,6 +641,7 @@ html, body, #app {
 .layer-panel header strong { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; }
 .layer-panel header button { width: 24px; height: 20px; border: 1px solid #52606c; background: #28313a; color: #fff; cursor: pointer; }
 .panel-header-actions { display: flex; gap: 4px; }
+#block-purge { width: auto; padding: 0 6px; font-size: 10px; }
 .layer-list { max-height: 210px; overflow-y: auto; border-top: 1px solid #343d46; }
 .layer-row { display: grid; grid-template-columns: 18px 24px 24px 25px 54px 50px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
 .layer-row .layer-lineweight, .layer-row .layer-linetype { display: flex; align-items: center; justify-content: center; height: 21px; min-width: 0; margin: 0 2px; padding: 0; border: 1px solid #3a444d; border-radius: 2px; background: #12171c; color: #cbd5df; font: 10px 'SF Mono', monospace; cursor: pointer; }

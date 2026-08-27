@@ -13,6 +13,12 @@ declare global {
       }): Promise<{ canceled: boolean; filePath?: string; content?: string }>;
       writeFile(options: { filePath: string; content: string }): Promise<{ filePath: string }>;
       quickSave(options: { filePath?: string; defaultPath?: string; content: string }): Promise<{ filePath: string }>;
+      exportPdf(options: {
+        svg: string;
+        widthMm: number;
+        heightMm: number;
+        defaultPath: string;
+      }): Promise<{ canceled: boolean; filePath?: string }>;
       setTitle(title: string): Promise<void>;
       mcpReady(): Promise<void>;
       mcpReadProject(requestId: string, filePath: string): Promise<{ filePath: string; content: string }>;

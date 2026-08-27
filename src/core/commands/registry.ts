@@ -7,7 +7,7 @@
  * itself is inferred from it, so adding an entry here is what makes a command
  * exist; forgetting to register one is a type error rather than a silent gap.
  */
-import { expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
+import { cloneEntity, expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
 import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
@@ -20,9 +20,15 @@ import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edi
 import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
+import { selectPrintArea } from './steps/print';
 import { sliceSolids } from './steps/slice';
-import { createBlock, insertBlock } from './steps/blocks';
+import { createBlock, insertBlock, purgeUnreachableBlocks } from './steps/blocks';
+import { removeGeometricDuplicates } from './steps/overkill';
 import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
+import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
+import { createHatch } from './steps/hatch';
+import { editText } from './steps/textEdit';
+import { measureArea } from './steps/area';
 
 /**
  * Dragging the text off the middle of the dimension line, for when the line is
@@ -150,6 +156,20 @@ export const COMMANDS = [
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
   { name: 'BEZIER', aliases: ['BEZ', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
   { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
+  { name: 'TEXTEDIT', aliases: ['ED', 'DDEDIT', 'TEXTEDIT'], execute: editText, help: 'edit TEXT, DTEXT or MTEXT content', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select text object:' }, { kind: 'text', label: 'Edit text:' }, { kind: 'done' }],
+    data: () => ({}),
+    onStart: (active, ctx) => {
+      const text = ctx.doc.getSelectedEntities().find((entity) => entity.type === 'text');
+      if (!text) return;
+      active.data.textEntity = cloneEntity(text);
+      active.stepIndex = 1;
+      ctx.prefillCommandInput?.(text.text);
+      ctx.log('Text selected for editing.');
+    } },
+  { name: 'AREA', aliases: ['AA', 'AREA'], execute: measureArea, help: 'measure polygon area and perimeter', suggest: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify first corner point:' }, { kind: 'point', label: 'Specify next point (Enter or click first point to finish):', optional: true }, { kind: 'done' }],
+    data: () => ({ vertices: [] }) },
   { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], execute: measureDistance, help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
@@ -187,8 +207,7 @@ export const COMMANDS = [
     steps: [
       { kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid'] },
       { kind: 'point', label: 'Specify scale base point:' },
-      { kind: 'point', label: 'Reference length: pick first point, or type a scale factor:' },
-      { kind: 'point', label: 'Reference length: pick second point, or type the length:' },
+      { kind: 'point', label: 'Specify reference length from the base point:' },
       { kind: 'point', label: 'New length: drag to shrink or grow, or type the length:' },
       { kind: 'done' },
     ],
@@ -218,6 +237,10 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },
+  { name: 'HATCH', aliases: ['HA', 'HATCH'], execute: createHatch, help: 'hatch closed boundaries using the current Hatch settings', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select closed boundaries, then press Enter:', multi: true }, { kind: 'done' }],
+    data: () => ({ entities: [] }),
+    onStart: preselectObjects((count) => `${count} boundary object(s) preselected. Press Enter to hatch.`, { skipStep: false }) },
   { name: 'BLOCK', aliases: ['B', 'BLOCK'], execute: createBlock, help: 'create a named reusable block from 2D objects and 3D solids', suggest: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select objects for block, then press Enter:', multi: true, accepts: ['entity', 'solid'] },
@@ -243,6 +266,8 @@ export const COMMANDS = [
       { kind: 'number', label: 'Enter rotation in degrees (Enter = 0):', optional: true },
       { kind: 'done' },
     ] },
+  { name: 'PURGEBLOCKS', aliases: ['PURGEBLOCKS'], run: purgeUnreachableBlocks, help: 'delete block definitions not reachable from anything placed in the drawing' },
+  { name: 'OVERKILL', aliases: ['OVERKILL', 'OK'], run: removeGeometricDuplicates, help: 'delete objects that exactly duplicate another object’s geometry' },
   { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend lines to boundaries', suggest: true,
     steps: [{ kind: 'entity', label: 'Select boundary edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to extend (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({}) },
@@ -360,17 +385,21 @@ export const COMMANDS = [
       active.data.entities = [...entities];
       ctx.log(`${solids.length + entities.length} object(s) preselected for STL export.`);
     } },
+  { name: 'PRINTAREA', aliases: ['PRINTAREA', 'PLOT'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
+    steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
+  { name: 'OPTIMIZEPATHS', aliases: ['OP', 'OPTIMIZEPATHS'], help: 'refit and join curves using a geometric tolerance', suggest: true, execute: optimizeDrawingPathsCommand,
+    steps: [{ kind: 'number', label: 'Enter fitting and endpoint-joining tolerance in mm (try 0.2, 0.5, or 1):', remember: true }, { kind: 'done' }] },
   { name: 'VIEW2D', aliases: ['V2', 'VIEW2D'], help: '2D view', run: (ctx) => { ctx.doc.viewMode = '2d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 2D'); } },
   { name: 'VIEW3D', aliases: ['V3', 'VIEW3D'], help: '3D view', run: (ctx) => { ctx.doc.viewMode = '3d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 3D'); } },
   { name: 'ZOOM', aliases: ['Z', 'ZOOM'], run: (ctx) => ctx.log('Zoom extents aktivujte tlacitkem ZOOM nebo koleckem mysi.') },
   { name: 'SNAP', aliases: ['SN', 'SNAP'], help: 'toggle snap', run: (ctx) => { ctx.doc.snapEnabled = !ctx.doc.snapEnabled; ctx.log(`Snap: ${ctx.doc.snapEnabled ? 'ON' : 'OFF'}`); } },
   { name: 'UNDO', aliases: ['UNDO'], help: 'undo last edit', run: (ctx) => { ctx.log(ctx.history.undo() ? 'Undo complete.' : 'Nothing to undo.'); ctx.redraw(); } },
   { name: 'REDO', aliases: ['REDO'], help: 'redo last edit', run: (ctx) => { ctx.log(ctx.history.redo() ? 'Redo complete.' : 'Nothing to redo.'); ctx.redraw(); } },
-  { name: 'HELP', aliases: ['H', 'HELP'], run: (ctx) => { for (const line of helpText()) ctx.log(line); } },
+  { name: 'HELP', aliases: ['?', 'H', 'HELP'], help: 'list all commands', run: (ctx) => { for (const line of helpText()) ctx.log(line); } },
   { name: 'HIDEOBJECTS', aliases: ['HIDEOBJECTS', 'HIDE'], help: 'hide selected objects', run: hideSelectedObjects },
   { name: 'ISOLATEOBJECTS', aliases: ['ISOLATEOBJECTS', 'ISOLATE'], help: 'hide all but the selected objects', run: isolateSelectedObjects },
   { name: 'SHOWALL', aliases: ['SHOWALL', 'UNISOLATE'], help: 'show all hidden objects', run: showAllObjects },
@@ -410,10 +439,10 @@ export const SUGGESTED_COMMANDS: readonly CommandName[] = COMMAND_LIST
 export function helpText(): string[] {
   return [
     '=== MyCAD — available commands ===',
-    ...COMMAND_LIST.filter((command) => command.help).map((command) => {
+    ...[...COMMAND_LIST].sort((a, b) => a.name.localeCompare(b.name)).map((command) => {
       const short = command.aliases[0];
       const label = !short || short === command.name ? command.name : `${command.name} (${short})`;
-      return `${label.padEnd(14)} — ${command.help}`;
+      return command.help ? `${label.padEnd(22)} — ${command.help}` : label;
     }),
     'Command+drag = orbit 3D, wheel / trackpad = zoom',
   ];
