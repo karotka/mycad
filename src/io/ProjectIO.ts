@@ -1,9 +1,9 @@
 import type { Document } from '../core/Document';
-import { ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneBlockDefinition, ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
 import type { AffineTransform3 } from '../core/geometry/GeometryKernel';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions, type ObjectSnapMode } from '../core/settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type ObjectSnapMode } from '../core/settings';
 import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 
 export interface ProjectViewState {
@@ -19,10 +19,47 @@ export interface ProjectViewState {
   };
 }
 
+/**
+ * Every INSERT owns a private snapshot of its block's definition — deliberately,
+ * so redefining a block in the library does not retroactively change instances
+ * already placed (see SetBlockDefinitionsEdit) — but that means a symbol placed
+ * 80 times across a drawing writes its whole geometry 80 times over on save.
+ * This collapses byte-identical definitions into one pooled entry referenced by
+ * index, without changing what a loaded project looks like in memory: load still
+ * hands every INSERT its own independent clone (see resolvePoolReference below).
+ * Keyed by content rather than name, since two same-named instances can have
+ * genuinely diverged after one was edited post-placement.
+ */
+interface DefinitionPool { list: unknown[]; byKey: Map<string, number> }
+
+function pooledDefinitionRef(definition: BlockDefinition, pool: DefinitionPool): { $block: number } {
+  const pooled = { ...definition, entities: pooledEntities(definition.entities, pool) };
+  const key = JSON.stringify(pooled);
+  let index = pool.byKey.get(key);
+  if (index === undefined) {
+    index = pool.list.length;
+    pool.list.push(pooled);
+    pool.byKey.set(key, index);
+  }
+  return { $block: index };
+}
+
+function pooledEntities(entities: Entity[], pool: DefinitionPool): unknown[] {
+  return entities.map((entity) => entity.type === 'insert'
+    ? { ...entity, definition: pooledDefinitionRef(entity.definition, pool) }
+    : entity);
+}
+
 export function serializeProject(doc: Document, view?: ProjectViewState): string {
+  const definitionPool: DefinitionPool = { list: [], byKey: new Map() };
+  const entities = pooledEntities(doc.entities, definitionPool);
+  const blockDefinitions = doc.blockDefinitions.map((definition) => ({
+    ...definition,
+    entities: pooledEntities(definition.entities, definitionPool),
+  }));
   return JSON.stringify({
     format: 'mycad',
-    version: 1,
+    version: 2,
     units: 'mm',
     settings: {
       currentLayer: doc.currentLayer,
@@ -41,10 +78,12 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       drafting: doc.drafting,
       dimensionStyle: doc.dimensionStyle,
       gcode: doc.gcode,
+      hatch: doc.hatch,
       view,
     },
-    blockDefinitions: doc.blockDefinitions,
-    entities: doc.entities,
+    blockDefinitions,
+    definitionPool: definitionPool.list,
+    entities,
     solids: doc.solids.map((solid) => ({
       ...solid,
       selected: false,
@@ -134,7 +173,11 @@ function loadAffineTransform(value: unknown): AffineTransform3 | undefined {
   return [...value] as unknown as AffineTransform3;
 }
 
-function loadBlockDefinition(value: unknown): BlockDefinition {
+/** Resolves one INSERT's stored `definition` field, whichever shape it is in
+    (see resolvePoolReference below). */
+type DefinitionResolver = (value: unknown) => BlockDefinition;
+
+function loadBlockDefinition(value: unknown, resolveDefinition: DefinitionResolver): BlockDefinition {
   const raw = value as Record<string, unknown>;
   if (!raw || typeof raw.name !== 'string' || !raw.basePoint || !Array.isArray(raw.entities)) {
     throw new Error('The project contains an invalid block definition.');
@@ -143,19 +186,47 @@ function loadBlockDefinition(value: unknown): BlockDefinition {
     name: raw.name,
     basePoint: { ...(raw.basePoint as BlockDefinition['basePoint']) },
     workPlane: validWorkPlane(raw.workPlane) ? cloneWorkPlane(raw.workPlane) : undefined,
-    entities: raw.entities.map(loadEntityValue),
+    entities: raw.entities.map((entity) => loadEntityValue(entity, resolveDefinition)),
     solids: Array.isArray(raw.solids) ? raw.solids.map(loadSolidValue) : [],
   };
 }
 
-function loadEntityValue(value: unknown): Entity {
+/**
+ * A pooled reference (`{$block: index}`, written by serializeProject) resolves
+ * from the shared pool and is cloned so this INSERT still gets an independent
+ * snapshot in memory, same as before pooling existed. A plain object is an
+ * older file (or an unpooled definition) and loads directly. `resolving`
+ * guards a corrupt file's circular reference the way DxfImport guards a
+ * circular BLOCK the same way.
+ */
+function resolvePoolReference(rawPool: unknown[]): DefinitionResolver {
+  const resolved = new Map<number, BlockDefinition>();
+  const resolving = new Set<number>();
+  const resolveDefinition: DefinitionResolver = (value) => {
+    if (value && typeof value === 'object' && typeof (value as { $block?: unknown }).$block === 'number') {
+      const index = (value as { $block: number }).$block;
+      const cached = resolved.get(index);
+      if (cached) return cloneBlockDefinition(cached);
+      if (resolving.has(index)) throw new Error('Circular block definition reference in project file.');
+      resolving.add(index);
+      const definition = loadBlockDefinition(rawPool[index], resolveDefinition);
+      resolving.delete(index);
+      resolved.set(index, definition);
+      return cloneBlockDefinition(definition);
+    }
+    return loadBlockDefinition(value, resolveDefinition);
+  };
+  return resolveDefinition;
+}
+
+function loadEntityValue(value: unknown, resolveDefinition: DefinitionResolver): Entity {
   const raw = value as Record<string, unknown>;
   let result: Record<string, unknown> = { ...raw, selected: false, aci: legacyAci(raw) };
   if (raw.type === 'insert') {
     result = {
       ...result,
       scaleZ: typeof raw.scaleZ === 'number' && Math.abs(raw.scaleZ) > 1e-12 ? raw.scaleZ : 1,
-      definition: loadBlockDefinition(raw.definition),
+      definition: resolveDefinition(raw.definition),
     };
   }
   if (raw.type === 'dimension') {
@@ -184,16 +255,19 @@ function loadEntityValue(value: unknown): Entity {
 
 export function loadProject(doc: Document, content: string): ProjectViewState | undefined {
   const value = JSON.parse(content) as Record<string, unknown>;
-  if (value.format !== 'mycad' || value.version !== 1) throw new Error('Unsupported project format.');
+  if (value.format !== 'mycad' || (value.version !== 1 && value.version !== 2)) throw new Error('Unsupported project format.');
   if (!Array.isArray(value.entities) || !Array.isArray(value.solids)) throw new Error('The project does not contain valid CAD data.');
   const entities = value.entities as unknown[];
   const solids = value.solids as unknown[];
-  const blockDefinitions = Array.isArray(value.blockDefinitions) ? value.blockDefinitions as Document['blockDefinitions'] : [];
+  const blockDefinitions = Array.isArray(value.blockDefinitions) ? value.blockDefinitions as unknown[] : [];
+  // Version 1 has no pool: every INSERT's `definition` is already a full
+  // object, and resolveDefinition's fallback branch loads it as such.
+  const resolveDefinition = resolvePoolReference(Array.isArray(value.definitionPool) ? value.definitionPool : []);
   const settings = (value.settings ?? {}) as Record<string, unknown>;
   const view = validViewState(settings.view) ? settings.view : undefined;
   doc.transaction(() => {
-    doc.blockDefinitions = blockDefinitions.map(loadBlockDefinition);
-    doc.entities = entities.map(loadEntityValue);
+    doc.blockDefinitions = blockDefinitions.map((definition) => loadBlockDefinition(definition, resolveDefinition));
+    doc.entities = entities.map((entity) => loadEntityValue(entity, resolveDefinition));
     doc.solids = solids.map(loadSolidValue);
     doc.currentLayer = typeof settings.currentLayer === 'string' ? settings.currentLayer : '0';
     doc.layers = Array.isArray(settings.layers)
@@ -219,6 +293,7 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.drafting = loadDraftingSettings(settings.drafting);
     doc.dimensionStyle = loadDimensionStyle(settings.dimensionStyle);
     doc.gcode = loadGcodeOptions(settings.gcode);
+    doc.hatch = loadHatchSettings(settings.hatch);
     doc.namedWorkPlanes = loadNamedWorkPlanes(settings.namedWorkPlanes);
     const activeNamed = typeof settings.activeNamedWorkPlaneId === 'string'
       ? doc.namedWorkPlanes.find((item) => item.id === settings.activeNamedWorkPlaneId)
@@ -377,6 +452,17 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
     frameOriginY: finite(raw.frameOriginY, defaults.frameOriginY),
     segments: typeof raw.segments === 'number' && Number.isInteger(raw.segments) && raw.segments >= 3 ? raw.segments : defaults.segments,
     holeMode: raw.holeMode === 'drill' || raw.holeMode === 'contour' ? raw.holeMode : defaults.holeMode,
+  };
+}
+
+function loadHatchSettings(value: unknown): HatchSettings {
+  const defaults = defaultHatchSettings();
+  if (!value || typeof value !== 'object') return defaults;
+  const raw = value as Record<string, unknown>;
+  return {
+    pattern: raw.pattern === 'cross' || raw.pattern === 'solid' || raw.pattern === 'lines' ? raw.pattern : defaults.pattern,
+    angle: typeof raw.angle === 'number' && Number.isFinite(raw.angle) ? raw.angle : defaults.angle,
+    spacing: typeof raw.spacing === 'number' && Number.isFinite(raw.spacing) && raw.spacing > 0 ? raw.spacing : defaults.spacing,
   };
 }
 

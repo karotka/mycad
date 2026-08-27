@@ -23,6 +23,95 @@ describe('ProjectIO', () => {
     expect(target.entities[0]).toMatchObject({ type: 'insert', blockName: 'Part', position: { x: 10, y: 20 }, scaleX: 2 });
   });
 
+  it('pools one definition across many placements instead of writing it once per INSERT', () => {
+    // A symbol placed 80 times used to write its whole geometry 80 times over —
+    // this is the file-size bug PURGEBLOCKS' neighbour issue was about.
+    const source = new Document();
+    const definition = { name: 'Fixture', basePoint: { x: 0, y: 0 }, entities: [source.createCircle({ x: 0, y: 0 }, 1)] };
+    for (let i = 0; i < 80; i++) source.addEntity(source.createInsert(definition, { x: i, y: 0 }));
+
+    const saved = JSON.parse(serializeProject(source));
+    expect(saved.definitionPool).toHaveLength(1);
+    expect(saved.entities.every((e: { definition: unknown }) => e.definition && '$block' in (e.definition as object))).toBe(true);
+
+    const target = new Document();
+    loadProject(target, JSON.stringify(saved));
+    expect(target.entities).toHaveLength(80);
+    expect(target.entities[79]).toMatchObject({ type: 'insert', blockName: 'Fixture', position: { x: 79, y: 0 } });
+  });
+
+  it('keeps two same-named definitions separate once one has diverged from the other', () => {
+    // Placed, then one was edited after the fact — INSERTs snapshot on purpose
+    // (see SetBlockDefinitionsEdit), so this must not collapse them into one.
+    const source = new Document();
+    const definitionA = { name: 'Widget', basePoint: { x: 0, y: 0 }, entities: [source.createLine({ x: 0, y: 0 }, { x: 1, y: 0 })] };
+    const definitionB = { name: 'Widget', basePoint: { x: 0, y: 0 }, entities: [source.createLine({ x: 0, y: 0 }, { x: 5, y: 0 })] };
+    source.addEntity(source.createInsert(definitionA, { x: 0, y: 0 }));
+    source.addEntity(source.createInsert(definitionB, { x: 10, y: 0 }));
+
+    const saved = JSON.parse(serializeProject(source));
+    expect(saved.definitionPool).toHaveLength(2);
+
+    const target = new Document();
+    loadProject(target, JSON.stringify(saved));
+    const first = target.entities[0] as { type: 'insert'; definition: { entities: Array<{ end: { x: number } }> } };
+    const second = target.entities[1] as typeof first;
+    expect(first.definition.entities[0].end.x).toBe(1);
+    expect(second.definition.entities[0].end.x).toBe(5);
+  });
+
+  it('gives every loaded INSERT its own independent definition, even sharing one pool entry', () => {
+    const source = new Document();
+    const definition = { name: 'Shared', basePoint: { x: 0, y: 0 }, entities: [source.createLine({ x: 0, y: 0 }, { x: 1, y: 0 })] };
+    source.addEntity(source.createInsert(definition, { x: 0, y: 0 }));
+    source.addEntity(source.createInsert(definition, { x: 10, y: 0 }));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    const [first, second] = target.entities as Array<{ type: 'insert'; definition: { entities: Array<{ end: { x: number } }> } }>;
+    first.definition.entities[0].end.x = 999;
+    expect(second.definition.entities[0].end.x).toBe(1); // unaffected by mutating the sibling's snapshot
+  });
+
+  it('pools a definition nested inside another block, and round-trips a definition reachable only from the block library', () => {
+    const source = new Document();
+    const hinge = { name: 'Hinge', basePoint: { x: 0, y: 0 }, entities: [source.createCircle({ x: 0, y: 0 }, 0.5)] };
+    const cabinetInsert = source.createInsert(hinge, { x: 1, y: 1 });
+    const cabinet = { name: 'Cabinet', basePoint: { x: 0, y: 0 }, entities: [cabinetInsert] };
+    source.blockDefinitions = [cabinet];
+    source.addEntity(source.createInsert(cabinet, { x: 0, y: 0 }));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    const placedCabinet = target.entities[0] as { type: 'insert'; definition: { entities: Array<{ type: 'insert'; blockName: string }> } };
+    expect(placedCabinet.definition.entities[0]).toMatchObject({ type: 'insert', blockName: 'Hinge' });
+    expect(target.blockDefinitions[0].entities[0]).toMatchObject({ type: 'insert', blockName: 'Hinge' });
+  });
+
+  it('still loads a pre-pooling save where every INSERT carries its definition inline', () => {
+    const legacy = {
+      format: 'mycad', version: 1, units: 'mm',
+      settings: {}, blockDefinitions: [],
+      entities: [{
+        id: 'insert_1', type: 'insert', layer: '0', aci: 256, color: 0xffffff, selected: false,
+        blockName: 'Old', position: { x: 3, y: 4 }, scaleX: 1, scaleY: 1, scaleZ: 1, rotation: 0,
+        columns: 1, rows: 1, columnSpacing: 0, rowSpacing: 0,
+        definition: {
+          name: 'Old', basePoint: { x: 0, y: 0 },
+          entities: [{ id: 'line_1', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false, start: { x: 0, y: 0 }, end: { x: 2, y: 0 } }],
+        },
+      }],
+      solids: [],
+    };
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(legacy));
+
+    expect(target.entities[0]).toMatchObject({ type: 'insert', blockName: 'Old', position: { x: 3, y: 4 } });
+  });
+
   it('round-trips typed 3D meshes stored inside block definitions and INSERT snapshots', () => {
     const source = new Document();
     const solid = source.createSolid(primitiveMesh({
@@ -65,7 +154,7 @@ describe('ProjectIO', () => {
     );
     doc.addSolid(solid);
     const saved = JSON.parse(serializeProject(doc));
-    expect(saved).toMatchObject({ format: 'mycad', version: 1, units: 'mm' });
+    expect(saved).toMatchObject({ format: 'mycad', version: 2, units: 'mm' });
     expect(saved.settings).toMatchObject({ gridSize: 1, gridVisible: true, snapSize: 0.5 });
     expect(saved.entities[0].type).toBe('rectangle');
     expect(saved.solids[0].mesh.positions).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 1]);
@@ -389,6 +478,19 @@ describe('ProjectIO', () => {
     expect(target.gcode).toEqual(source.gcode);
   });
 
+  it('round-trips native hatches and their drawing defaults', () => {
+    const source = new Document();
+    source.hatch = { pattern: 'cross', angle: 60, spacing: 4 };
+    source.addEntity(source.createHatch([[{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 6 }, { x: 0, y: 6 }]]));
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.hatch).toEqual(source.hatch);
+    expect(target.entities[0]).toMatchObject({ type: 'hatch', pattern: 'cross', angle: 60, spacing: 4 });
+    expect(target.entities[0].type === 'hatch' && target.entities[0].patternLines).toHaveLength(2);
+  });
+
   it('refuses plotter settings a machine could not use', () => {
     const source = new Document();
     const saved = JSON.parse(serializeProject(source));
@@ -448,7 +550,7 @@ describe('ProjectIO', () => {
     loadProject(target, JSON.stringify(saved));
 
     expect(target.drafting.orthoEnabled).toBe(false);
-    expect(target.drafting.objectSnapModes).toEqual(['end', 'middle', 'center', 'node', 'intersection', 'nearest']);
+    expect(target.drafting.objectSnapModes).toEqual(['end']);
     expect(target.dimensionStyle.precision).toBe(2);
   });
 
