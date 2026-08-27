@@ -4,7 +4,8 @@ import { cloneEntity, cloneSolidValue, type BlockDefinition, type Entity, type I
 import { AddEntityEdit, CompositeEdit, ReplaceObjectsEdit, SetBlockDefinitionsEdit } from '../../history/edits';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import type { Vec2, Vec3 } from '../../../math/geometry';
-import type { CommandRun, StepOutcome } from '../types';
+import type { CommandContext, CommandRun, StepOutcome } from '../types';
+import type { Document } from '../../Document';
 
 type SpatialPoint = Vec2 & { z?: number };
 
@@ -144,4 +145,38 @@ export function insertBlock(run: CommandRun): StepOutcome {
   selectOnlyInsert(run, insert);
   ctx.log(`Inserted block ${definition.name}.`);
   return 'advance';
+}
+
+/**
+ * Block definitions can reference each other (a fixture block nesting a hinge
+ * block, say), so a definition can show zero direct placements yet still be
+ * kept alive by another definition that is itself dead — a chain unreachable
+ * from anything actually in the drawing, each link "in use" only by the next.
+ * This walks out from the real placements to find every definition that
+ * chain can reach, and purges whatever is left over in one undoable step.
+ */
+function reachableBlockKeys(doc: Document): Set<string> {
+  const reachable = new Set<string>();
+  const visit = (entities: Entity[]): void => {
+    for (const entity of entities) {
+      if (entity.type !== 'insert') continue;
+      const key = entity.blockName.trim().toUpperCase();
+      if (reachable.has(key)) continue; // already walked — also guards a reference cycle
+      reachable.add(key);
+      const definition = namedDefinition(doc.blockDefinitions, entity.blockName);
+      if (definition) visit(definition.entities);
+    }
+  };
+  visit(doc.entities);
+  return reachable;
+}
+
+export function purgeUnreachableBlocks(ctx: CommandContext): void {
+  const reachable = reachableBlockKeys(ctx.doc);
+  const before = ctx.doc.blockDefinitions;
+  const after = before.filter((definition) => reachable.has(definition.name.trim().toUpperCase()));
+  const removed = before.length - after.length;
+  if (removed === 0) { ctx.log('PURGEBLOCKS: every block definition is reachable from the drawing.'); return; }
+  ctx.history.execute(new SetBlockDefinitionsEdit(`Purge ${removed} unreachable block(s)`, before, after));
+  ctx.log(`PURGEBLOCKS: removed ${removed} block definition(s) not reachable from anything placed in the drawing.`);
 }

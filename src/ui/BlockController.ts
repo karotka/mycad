@@ -86,7 +86,12 @@ export class BlockController {
   }
 
   render(): void {
+    // The status-bar badge stays live even while the panel is closed, but
+    // rebuilding 1000+ rows (each with an SVG preview) on every document edit
+    // regardless is the difference between an edit and a second-long stall —
+    // same guard as ModelTreeController, just past the cheap part.
     this.countLabel.textContent = String(this.doc.blockDefinitions.length);
+    if (this.panel.hidden) return;
     if (this.doc.blockDefinitions.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'block-empty';
@@ -114,9 +119,14 @@ export class BlockController {
     input.maxLength = 64;
     input.setAttribute('aria-label', 'Block name');
     const placed = directReferenceCount(this.doc, definition.name);
+    const nested = nestedReferenceCount(this.doc, definition.name);
     const meta = document.createElement('small');
     const objectCount = definition.entities.length + (definition.solids?.length ?? 0);
-    meta.textContent = `${objectCount} object${objectCount === 1 ? '' : 's'} · ${placed} placed`;
+    // "0 placed" alone reads as "unused" — misleading for a block that is only
+    // ever reached by nesting inside another one, which is just as much a
+    // reason the delete button below is (rightly) disabled.
+    meta.textContent = `${objectCount} object${objectCount === 1 ? '' : 's'} · ${placed} placed`
+      + (nested > 0 ? ` · ${nested} nested` : '');
     copy.append(input, meta);
 
     const insert = document.createElement('button');
@@ -126,7 +136,7 @@ export class BlockController {
     insert.setAttribute('aria-label', `Insert block ${definition.name}`);
     insert.textContent = '↳';
 
-    const references = placed + nestedReferenceCount(this.doc, definition.name);
+    const references = placed + nested;
     const remove = document.createElement('button');
     remove.className = 'block-delete';
     remove.type = 'button';
@@ -194,22 +204,26 @@ export class BlockController {
         ? [new ReplaceObjectsEdit(`Rename references to ${nextName}`, beforeEntities, [], afterEntities, [])]
         : []),
     ];
+    // history.execute() already ends the transaction and notifies, which
+    // re-renders this panel (see main.ts) — a second call here would rebuild
+    // every row, SVG previews included, twice for one edit.
     this.history.execute(new CompositeEdit(`Rename block ${currentName} to ${nextName}`, edits));
     this.callbacks.log(`Renamed block ${currentName} to ${nextName}.`);
-    this.render();
     this.callbacks.redraw();
   }
 
   private remove(name: string): void {
     const key = keyOf(name);
     if (directReferenceCount(this.doc, name) + nestedReferenceCount(this.doc, name) > 0) return;
+    // history.execute() already ends the transaction and notifies, which
+    // re-renders this panel (see main.ts) — a second call here would rebuild
+    // every row, SVG previews included, twice for one edit.
     this.history.execute(new SetBlockDefinitionsEdit(
       `Delete block ${name}`,
       this.doc.blockDefinitions,
       this.doc.blockDefinitions.filter((definition) => keyOf(definition.name) !== key),
     ));
     this.callbacks.log(`Deleted unused block ${name}.`);
-    this.render();
     this.callbacks.redraw();
   }
 

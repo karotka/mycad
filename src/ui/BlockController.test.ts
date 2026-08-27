@@ -18,7 +18,7 @@ function setup() {
     document.getElementById('toggle')!, document.getElementById('create')!, document.getElementById('close')!,
     callbacks,
   );
-  return { doc, history, callbacks, controller };
+  return { doc, history, callbacks, controller, countLabel: document.getElementById('count')! };
 }
 
 function addBlock(doc: Document, name = 'Bracket') {
@@ -31,10 +31,22 @@ function addBlock(doc: Document, name = 'Bracket') {
 }
 
 describe('BlockController', () => {
+  it('skips rebuilding rows while the panel is closed, but keeps the status-bar count live', () => {
+    // Rebuilding every row's SVG preview on every document edit regardless of
+    // whether anyone is looking at the panel is what turned a library of a
+    // thousand blocks into a stall on every unrelated edit.
+    const { doc, countLabel, controller } = setup();
+    addBlock(doc);
+    controller.render();
+
+    expect(countLabel.textContent).toBe('1');
+    expect(document.querySelector('.block-row')).toBeNull();
+  });
+
   it('shows block geometry and starts insertion from its row action', () => {
     const { doc, callbacks, controller } = setup();
     addBlock(doc);
-    controller.render();
+    controller.toggle(); // opens the panel, which is what actually renders it
 
     expect(document.getElementById('count')?.textContent).toBe('1');
     expect(document.querySelector('.block-thumbnail path')).not.toBeNull();
@@ -48,7 +60,7 @@ describe('BlockController', () => {
     const solid = doc.createSolid(createBoxMesh(4, 6, 8), 'Box', 8, []);
     doc.blockDefinitions.push({ name: 'SolidPart', basePoint: { x: 0, y: 0 }, entities: [], solids: [solid] });
 
-    controller.render();
+    controller.toggle(); // opens the panel, which is what actually renders it
 
     expect(document.querySelector('.block-thumbnail path')).not.toBeNull();
     expect(document.querySelector('.block-copy small')?.textContent).toBe('1 object · 0 placed');
@@ -59,7 +71,7 @@ describe('BlockController', () => {
     const definition = addBlock(doc);
     const insert = doc.createInsert(definition, { x: 20, y: 10 });
     doc.addEntity(insert);
-    controller.render();
+    controller.toggle(); // opens the panel, which is what actually renders it
 
     const input = document.querySelector<HTMLInputElement>('.block-name')!;
     input.value = 'Support';
@@ -75,7 +87,7 @@ describe('BlockController', () => {
   it('deletes only an unused definition and restores it with Undo', () => {
     const { doc, history, controller } = setup();
     addBlock(doc, 'Unused');
-    controller.render();
+    controller.toggle(); // opens the panel, which is what actually renders it
     const remove = document.querySelector<HTMLButtonElement>('.block-delete')!;
     expect(remove.disabled).toBe(false);
 
@@ -90,10 +102,25 @@ describe('BlockController', () => {
     const definition = addBlock(doc);
     doc.addEntity(doc.createInsert(definition, { x: 0, y: 0 }));
     doc.addEntity(doc.createInsert(definition, { x: 20, y: 0 }));
-    controller.render();
+    controller.toggle(); // opens the panel, which is what actually renders it
 
     expect(document.querySelector<HTMLButtonElement>('.block-delete')!.disabled).toBe(true);
     document.querySelector<HTMLElement>('.block-row')!.click();
     expect(doc.getSelectedEntities()).toHaveLength(2);
+  });
+
+  it('shows nested usage in the row so "0 placed" is not read as unused', () => {
+    // Hinge is never placed directly (0 placed) but lives inside Cabinet,
+    // which is — the old text just said "0 placed" and left the delete
+    // button disabled with no visible reason on the row itself.
+    const { doc, controller } = setup();
+    const hinge = addBlock(doc, 'Hinge');
+    doc.blockDefinitions.push({ name: 'Cabinet', basePoint: { x: 0, y: 0 }, entities: [doc.createInsert(hinge, { x: 0, y: 0 })] });
+    controller.toggle();
+
+    const rows = [...document.querySelectorAll<HTMLElement>('.block-row')];
+    const hingeRow = rows.find((row) => row.dataset.block === 'Hinge')!;
+    expect(hingeRow.querySelector('small')?.textContent).toBe('2 objects · 0 placed · 1 nested');
+    expect(hingeRow.querySelector<HTMLButtonElement>('.block-delete')!.disabled).toBe(true);
   });
 });
