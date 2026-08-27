@@ -3,8 +3,9 @@ import type { Document } from '../core/Document';
 import type { GcodeOptions } from '../core/settings';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
-import type { DimensionEntity, Entity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
+import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
+import type { UcsHandleName } from '../math/ucsAxisRotation';
 import { isStrokeFont, strokeText } from '../core/text/strokeFont';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
@@ -15,6 +16,7 @@ import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
+import { hatchPatternSegments } from '../io/DxfHatch';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
@@ -40,7 +42,10 @@ export class Canvas2DRenderer {
       read by drawEntity, since an entity draws in its layer's style. */
   private layerLineweight: Record<string, number> = {};
   private layerLinetype: Record<string, string> = {};
-
+  /** hatchPatternSegments() reprojects every pattern line against every boundary
+      edge; too expensive to redo for each render() call, so cache it per entity
+      and invalidate by content since entities mutate in place (see entityRenderKey). */
+  private hatchSegmentCache = new Map<string, { key: string; segments: Array<[Vec2, Vec2]> }>();
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D not supported');
@@ -136,6 +141,7 @@ export class Canvas2DRenderer {
     this.drawCutAreaFrame(doc.gcode, w, h);
     this.layerLineweight = doc.layerLineweight;
     this.layerLinetype = doc.layerLinetype;
+    this.pruneHatchCache(doc.entities);
 
     for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
       this.drawSolidProjection(solid, w, h);
@@ -147,6 +153,24 @@ export class Canvas2DRenderer {
 
     if (preview) this.drawPreview(preview, w, h);
     this.drawGrips(grips, w, h);
+  }
+
+  private pruneHatchCache(entities: Entity[]): void {
+    if (this.hatchSegmentCache.size > 0) {
+      const ids = new Set(entities.map((entity) => entity.id));
+      for (const id of this.hatchSegmentCache.keys()) {
+        if (!ids.has(id)) this.hatchSegmentCache.delete(id);
+      }
+    }
+  }
+
+  private hatchSegments(entity: HatchEntity): Array<[Vec2, Vec2]> {
+    const key = entityRenderKey(entity);
+    const cached = this.hatchSegmentCache.get(entity.id);
+    if (cached && cached.key === key) return cached.segments;
+    const segments = hatchPatternSegments(entity.loops, entity.patternLines);
+    this.hatchSegmentCache.set(entity.id, { key, segments });
+    return segments;
   }
 
   /** A non-entity overlay: visible for layout, absent from picking and export. */
@@ -270,6 +294,31 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
+      case 'hatch': {
+        if (entity.pattern === 'solid') {
+          this.ctx.save();
+          this.ctx.globalAlpha = selected ? 0.55 : 0.3;
+          this.ctx.beginPath();
+          for (const loop of entity.loops) {
+            loop.forEach((point, index) => {
+              const p = toScreen(point);
+              if (index === 0) this.ctx.moveTo(p.x, p.y); else this.ctx.lineTo(p.x, p.y);
+            });
+            this.ctx.closePath();
+          }
+          this.ctx.fillStyle = selected ? '#65c7ff' : `#${entity.color.toString(16).padStart(6, '0')}`;
+          this.ctx.fill('evenodd');
+          this.ctx.restore();
+        } else {
+          this.ctx.beginPath();
+          for (const [start, end] of this.hatchSegments(entity)) {
+            const a = toScreen(start), b = toScreen(end);
+            this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y);
+          }
+          this.ctx.stroke();
+        }
+        break;
+      }
       case 'circle': {
         const c = toScreen(entity.center);
         const r = entity.radius * this.zoom;
@@ -309,8 +358,21 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
-      case 'arc':
-      case 'bezier': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
+      case 'arc': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
+      case 'bezier': {
+        // Canvas already rasterizes cubic Beziers adaptively. Sampling every
+        // curve into 65 JS points made a selected illustration cost tens of
+        // thousands of point calculations twice per SCALE frame.
+        const start = toScreen(entity.start);
+        const control1 = toScreen(entity.control1);
+        const control2 = toScreen(entity.control2);
+        const end = toScreen(entity.end);
+        this.ctx.beginPath();
+        this.ctx.moveTo(start.x, start.y);
+        this.ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+        this.ctx.stroke();
+        break;
+      }
       case 'text': {
         // The single-stroke font is drawn as the strokes it is, from the same
         // function the exporter uses — so what is on the screen is what the pen
@@ -383,7 +445,7 @@ export class Canvas2DRenderer {
       this.ctx.setLineDash([5, 4]);
       inserted.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
       this.ctx.restore();
-    } else if (preview.type === 'copy' || preview.type === 'scale') {
+    } else if (preview.type === 'copy') {
       const copy = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       this.ctx.save();
       this.ctx.globalAlpha = 0.9;
@@ -394,10 +456,24 @@ export class Canvas2DRenderer {
       const b = worldToScreen(copy.end, w, h, this.pan, this.zoom);
       this.ctx.strokeStyle = '#67c9ff';
       this.ctx.beginPath(); this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y); this.ctx.stroke();
-      label = preview.type === 'scale'
-        ? `Scale ${(preview.data as { factor?: number }).factor?.toFixed(3) ?? ''}`
-        : `Copy ${Math.hypot(copy.end.x - copy.start.x, copy.end.y - copy.start.y).toFixed(2)} mm`;
+      label = `Copy ${Math.hypot(copy.end.x - copy.start.x, copy.end.y - copy.start.y).toFixed(2)} mm`;
       labelPoint = copy.end;
+    } else if (preview.type === 'scale') {
+      const scale = preview.data as { start: Vec2; end: Vec2; entities: Entity[]; factor: number };
+      const pivot = worldToScreen(scale.start, w, h, this.pan, this.zoom);
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.75;
+      this.ctx.translate(pivot.x, pivot.y);
+      this.ctx.scale(scale.factor, scale.factor);
+      this.ctx.translate(-pivot.x, -pivot.y);
+      scale.entities.forEach((entity) => this.drawEntity(entity, w, h, false));
+      this.ctx.restore();
+      const a = pivot;
+      const b = worldToScreen(scale.end, w, h, this.pan, this.zoom);
+      this.ctx.strokeStyle = '#67c9ff';
+      this.ctx.beginPath(); this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y); this.ctx.stroke();
+      label = `Scale ${scale.factor.toFixed(3)}`;
+      labelPoint = scale.end;
     } else if (preview.type === 'rotate') {
       const rotation = preview.data as { start: Vec2; end: Vec2; entities: Entity[] };
       this.ctx.save();
@@ -454,7 +530,7 @@ export class Canvas2DRenderer {
       const delta = { x: d.end.x - d.start.x, y: d.end.y - d.start.y };
       label = `ΔX ${delta.x.toFixed(2)} · ΔY ${delta.y.toFixed(2)} · ${Math.hypot(delta.x, delta.y).toFixed(2)} mm`;
       labelPoint = d.end;
-    } else if (preview.type === 'polyline') {
+    } else if (preview.type === 'polyline' || preview.type === 'area') {
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
       const screen = chain.vertices.map((vertex) => worldToScreen(vertex, w, h, this.pan, this.zoom));
       const last = chain.vertices[chain.vertices.length - 1];
@@ -475,6 +551,14 @@ export class Canvas2DRenderer {
       this.ctx.beginPath();
       this.ctx.moveTo(a.x, a.y);
       this.ctx.lineTo(b.x, b.y);
+      if (preview.type === 'area' && screen.length >= 2) {
+        this.ctx.lineTo(screen[0].x, screen[0].y);
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.16;
+        this.ctx.fillStyle = '#4fd17b';
+        this.ctx.fill();
+        this.ctx.restore();
+      }
       this.ctx.stroke();
       label = `L = ${Math.hypot(chain.cursor.x - last.x, chain.cursor.y - last.y).toFixed(2)} mm`;
       labelPoint = chain.cursor;
@@ -641,6 +725,8 @@ export class Viewport3D {
   private grid: THREE.GridHelper;
   private gridState = { size: 0, divisions: 0 };
   private axisTriad: THREE.Group;
+  private readonly ucsHandleMeshes = new Map<UcsHandleName, THREE.Mesh>();
+  private ucsHandlesVisible = false;
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -823,26 +909,69 @@ export class Viewport3D {
       { name: 'Y', direction: new THREE.Vector3(0, 1, 0), color: 0x35d94c },
       { name: 'Z', direction: new THREE.Vector3(0, 0, 1), color: 0x4d9bff },
     ];
+    const originHandle = new THREE.Mesh(
+      new THREE.BoxGeometry(0.58, 0.58, 0.58),
+      new THREE.MeshBasicMaterial({ color: 0x00aaff, wireframe: true, depthTest: false, depthWrite: false, transparent: true, opacity: 0, toneMapped: false }),
+    );
+    originHandle.userData.ucsHandle = 'origin';
+    originHandle.renderOrder = 7;
+    this.ucsHandleMeshes.set('origin', originHandle);
+    group.add(originHandle);
     for (const axis of axes) {
       const material = new THREE.MeshBasicMaterial({ color: axis.color, depthTest: false, toneMapped: false });
       const quaternion = new THREE.Quaternion().setFromUnitVectors(up, axis.direction);
       const shaftLength = length - headLength;
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12), material);
+      shaft.userData.ucsAxis = axis.name.toLowerCase();
       shaft.quaternion.copy(quaternion);
       shaft.position.copy(axis.direction.clone().multiplyScalar(shaftLength / 2));
       shaft.renderOrder = 5;
       group.add(shaft);
       const head = new THREE.Mesh(new THREE.ConeGeometry(headRadius, headLength, 16), material);
+      head.userData.ucsAxis = axis.name.toLowerCase();
       head.quaternion.copy(quaternion);
       head.position.copy(axis.direction.clone().multiplyScalar(length - headLength / 2));
       head.renderOrder = 5;
       group.add(head);
       const label = this.createAxisLabel(axis.name, axis.color);
+      label.userData.ucsAxis = axis.name.toLowerCase();
       label.position.copy(axis.direction.clone().multiplyScalar(length + 1));
       label.renderOrder = 6;
       group.add(label);
+      const handle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.52, 0.52, 0.52),
+        new THREE.MeshBasicMaterial({ color: 0x00aaff, wireframe: true, depthTest: false, depthWrite: false, transparent: true, opacity: 0, toneMapped: false }),
+      );
+      const handleName = axis.name.toLowerCase() as UcsHandleName;
+      handle.userData.ucsHandle = handleName;
+      handle.position.copy(axis.direction.clone().multiplyScalar(length));
+      handle.renderOrder = 7;
+      this.ucsHandleMeshes.set(handleName, handle);
+      group.add(handle);
     }
     return group;
+  }
+
+  pickUcsHandle(canvas: HTMLCanvasElement, sx: number, sy: number): UcsHandleName | null {
+    const hit = this.picking.firstIntersection(canvas, sx, sy, [this.axisTriad]);
+    const value = hit?.object.userData.ucsHandle ?? hit?.object.userData.ucsAxis;
+    return value === 'origin' || value === 'x' || value === 'y' || value === 'z' ? value : null;
+  }
+
+  highlightUcsHandle(handle: UcsHandleName | null): void {
+    for (const [name, mesh] of this.ucsHandleMeshes) {
+      const active = name === handle;
+      mesh.scale.setScalar(active ? 1.3 : 1);
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.color.set(active ? 0xffffff : 0x00aaff);
+      material.opacity = this.ucsHandlesVisible ? 1 : 0;
+    }
+  }
+
+  showUcsHandles(visible: boolean, highlighted: UcsHandleName | null = null): void {
+    this.ucsHandlesVisible = visible;
+    this.highlightUcsHandle(highlighted);
+    this.render();
   }
 
   private createAxisLabel(text: string, color: number): THREE.Sprite {
@@ -1544,15 +1673,17 @@ export class Viewport3D {
       this.scene.add(group);
       return;
     }
-    const data = preview.data as Record<string, Vec2> & { sides?: number };
+    const data = preview.data as Record<string, Vec2> & { sides?: number; workPlane?: WorkPlane };
+    const previewWorkPlane = data.workPlane ?? this.activeWorkPlane;
     const points: Vec2[] = [];
     let loop = false;
     let previewPlaneOffset = 0;
     if (preview.type === 'line' && data.start && data.end) {
       points.push(data.start, data.end);
-    } else if (preview.type === 'polyline') {
+    } else if (preview.type === 'polyline' || preview.type === 'area') {
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
       points.push(...chain.vertices, chain.cursor);
+      loop = preview.type === 'area';
     } else if (preview.type === 'rectangle' && data.start && data.end) {
       previewPlaneOffset = ((localPointZ(data.start) ?? 0) + (localPointZ(data.end) ?? 0)) / 2;
       points.push(
@@ -1590,7 +1721,7 @@ export class Viewport3D {
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(
       points.map((point) => {
-        const world = localToWorld(this.activeWorkPlane, point, (localPointZ(point) ?? previewPlaneOffset) + 0.025);
+        const world = localToWorld(previewWorkPlane, point, (localPointZ(point) ?? previewPlaneOffset) + 0.025);
         return new THREE.Vector3(world.x, world.z, -world.y);
       })
     );
@@ -1712,6 +1843,7 @@ export class Viewport3D {
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
         case 'octagon': points = entity.vertices; closed = true; break;
         case 'polyline': points = entity.vertices; closed = entity.closed; break;
+        case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
         case 'arc':
         case 'bezier': points = curvePoints(entity, 64); break;
         case 'text': {
@@ -1806,6 +1938,46 @@ export class Viewport3D {
         else addLine([arrow[1], arrow[0], arrow[2]], entity.arrowType === 'closed');
       });
       group.add(this.textToObject(geometry.textPoint, geometry.text, entity.textHeight * entity.scale, 'Arial', entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, geometry.textAngle, true));
+      return group;
+    }
+    if (entity.type === 'hatch') {
+      const group = new THREE.Group();
+      const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+      const material = new THREE.LineBasicMaterial({ color: entity.selected ? 0x65c7ff : entity.color, transparent: entity.pattern === 'solid', opacity: entity.pattern === 'solid' ? 0.45 : 1 });
+      if (entity.pattern === 'solid' && entity.loops[0]?.length >= 3) {
+        const path = (loop: Vec2[], target: THREE.Shape | THREE.Path): void => {
+          target.moveTo(loop[0].x, loop[0].y);
+          loop.slice(1).forEach((point) => target.lineTo(point.x, point.y));
+          target.closePath();
+        };
+        const shape = new THREE.Shape();
+        path(entity.loops[0], shape);
+        for (const loop of entity.loops.slice(1)) {
+          if (loop.length < 3) continue;
+          const hole = new THREE.Path(); path(loop, hole); shape.holes.push(hole);
+        }
+        const geometry = new THREE.ShapeGeometry(shape);
+        const positions = geometry.getAttribute('position');
+        for (let index = 0; index < positions.count; index++) {
+          const world = localToWorld(plane, { x: positions.getX(index), y: positions.getY(index) }, 0.012);
+          positions.setXYZ(index, world.x, world.z, -world.y);
+        }
+        group.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+          color: entity.selected ? 0x65c7ff : entity.color,
+          transparent: true, opacity: entity.selected ? 0.55 : 0.3,
+          side: THREE.DoubleSide, depthWrite: false,
+        })));
+      }
+      const paths = entity.pattern === 'solid'
+        ? entity.loops.map((loop) => ({ points: loop, loop: true }))
+        : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], loop: false }));
+      for (const path of paths) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(path.points.map((point) => {
+          const world = localToWorld(plane, point, 0.015);
+          return new THREE.Vector3(world.x, world.z, -world.y);
+        }));
+        group.add(path.loop ? new THREE.LineLoop(geometry, material) : new THREE.Line(geometry, material));
+      }
       return group;
     }
     const points: Vec2[] = [];

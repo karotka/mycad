@@ -3,7 +3,7 @@ import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '..
 import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
 import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
 
-export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'text' | 'dimension' | 'insert';
+export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert';
 
 export interface EntityBase {
   id: string;
@@ -74,6 +74,17 @@ export interface PolylineEntity extends EntityBase {
 }
 export interface ArcEntity extends EntityBase { type: 'arc'; center: Vec2; radius: number; startAngle: number; sweepAngle: number; }
 export interface BezierEntity extends EntityBase { type: 'bezier'; start: Vec2; control1: Vec2; control2: Vec2; end: Vec2; }
+export interface HatchPatternLine { angle: number; base: Vec2; offset: Vec2; }
+export interface HatchEntity extends EntityBase {
+  type: 'hatch';
+  loops: Vec2[][];
+  pattern: 'solid' | 'lines' | 'cross' | string;
+  /** User-facing primary angle in degrees. */
+  angle: number;
+  spacing: number;
+  /** Exact pattern families, including those read from DXF. */
+  patternLines: HatchPatternLine[];
+}
 export interface TextEntity extends EntityBase { type: 'text'; position: Vec2; text: string; height: number; font?: string; rotation?: number; }
 export interface DimensionEntity extends EntityBase {
   type: 'dimension';
@@ -155,7 +166,7 @@ export interface InsertEntity extends EntityBase {
   definition: BlockDefinition;
 }
 
-export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | TextEntity | DimensionEntity | InsertEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | HatchEntity | TextEntity | DimensionEntity | InsertEntity;
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -678,7 +689,7 @@ export function cloneBlockDefinition(definition: BlockDefinition): BlockDefiniti
  * Expands an INSERT into drawing primitives while keeping the INSERT itself as
  * the object stored in Document. Array rows/columns are expanded here too.
  */
-export function expandedInsertEntities(insert: InsertEntity): Entity[] {
+function computeExpandedInsertEntities(insert: InsertEntity): Entity[] {
   const result: Entity[] = [];
   const scaleZ = insert.scaleZ ?? 1;
   const cos = Math.cos(insert.rotation), sin = Math.sin(insert.rotation);
@@ -748,6 +759,16 @@ export function expandedInsertEntities(insert: InsertEntity): Entity[] {
       case 'bezier': entity = {
         ...cloneEntity(source), start: at(source.start), control1: at(source.control1), control2: at(source.control2), end: at(source.end),
       }; break;
+      case 'hatch': entity = {
+        ...cloneEntity(source),
+        loops: source.loops.map((loop) => loop.map(at)),
+        patternLines: source.patternLines.map((line) => ({
+          angle: Math.atan2(transformVector({ x: Math.cos(line.angle), y: Math.sin(line.angle) }).y, transformVector({ x: Math.cos(line.angle), y: Math.sin(line.angle) }).x),
+          base: at(line.base),
+          offset: transformVector(line.offset),
+        })),
+        spacing: source.spacing * Math.max(Math.abs(insert.scaleX), Math.abs(insert.scaleY)),
+      }; break;
       case 'text': {
         const textAxis = transformVector({ x: Math.cos(source.rotation ?? 0), y: Math.sin(source.rotation ?? 0) });
         entity = {
@@ -791,7 +812,7 @@ export function expandedInsertEntities(insert: InsertEntity): Entity[] {
  * owned by the INSERT — the derived ids exist only for rendering/snaps and are
  * never stored in Document.solids or selected independently.
  */
-export function expandedInsertSolids(insert: InsertEntity): Solid[] {
+function computeExpandedInsertSolids(insert: InsertEntity): Solid[] {
   const sourcePlane = insert.definition.workPlane ?? WORLD_WORK_PLANE;
   const targetPlane = insert.workPlane ?? WORLD_WORK_PLANE;
   const baseZ = insert.definition.basePoint.z ?? 0;
@@ -852,6 +873,45 @@ export function expandedInsertSolids(insert: InsertEntity): Solid[] {
   }
   return result;
 }
+
+/**
+ * Expanding a nested block (rendering, snapping, bounds, picking — every
+ * caller below) walks and clones its whole subtree; for a deeply nested
+ * symbol that is expensive enough to stutter the pointer on every move, so
+ * the result is cached per INSERT. `definition` is treated as replace-only
+ * (renaming a block swaps in a new object rather than mutating in place — see
+ * BlockController), so identity is enough to catch that without hashing the
+ * potentially huge nested geometry; only the small transform fields are
+ * actually re-stringified on every call.
+ */
+interface InsertExpansion { definitionRef: BlockDefinition; transformKey: string; entities: Entity[]; solids: Solid[] }
+const insertExpansionCache = new Map<string, InsertExpansion>();
+
+function insertTransformKey(insert: InsertEntity): string {
+  const { definition: _definition, ...rest } = insert;
+  return JSON.stringify(rest);
+}
+
+function expandInsert(insert: InsertEntity): InsertExpansion {
+  const cached = insertExpansionCache.get(insert.id);
+  const transformKey = insertTransformKey(insert);
+  if (cached && cached.definitionRef === insert.definition && cached.transformKey === transformKey) return cached;
+  const entry: InsertExpansion = {
+    definitionRef: insert.definition,
+    transformKey,
+    entities: computeExpandedInsertEntities(insert),
+    solids: computeExpandedInsertSolids(insert),
+  };
+  insertExpansionCache.set(insert.id, entry);
+  return entry;
+}
+
+export function expandedInsertEntities(insert: InsertEntity): Entity[] { return expandInsert(insert).entities; }
+export function expandedInsertSolids(insert: InsertEntity): Solid[] { return expandInsert(insert).solids; }
+
+/** Call when swapping documents (new/open project) so inserts from a previous
+    document don't linger in the cache for the rest of the session. */
+export function clearInsertExpansionCache(): void { insertExpansionCache.clear(); }
 
 export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
   switch (e.type) {
@@ -919,6 +979,14 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
         maxY = Math.max(maxY, v.y);
       }
       return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+    }
+    case 'hatch': {
+      const points = e.loops.flat();
+      if (points.length === 0) return { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+      return {
+        min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
+        max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
+      };
     }
     case 'arc':
     case 'bezier': { const p = curvePoints(e); return { min: { x: Math.min(...p.map(v => v.x)), y: Math.min(...p.map(v => v.y)) }, max: { x: Math.max(...p.map(v => v.x)), y: Math.max(...p.map(v => v.y)) } }; }
@@ -990,6 +1058,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
       return e.vertices;
     case 'polyline':
       return e.vertices;
+    case 'hatch': return e.loops.flat();
     case 'arc': return [e.center, ...curvePoints(e, 2)];
     case 'bezier': return [e.start, e.control1, e.control2, e.end];
     case 'text': return [e.position];
@@ -1035,6 +1104,10 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
       break;
     case 'polyline':
       copy.vertices = copy.vertices.map(fn);
+      break;
+    case 'hatch':
+      copy.loops = copy.loops.map((loop) => loop.map(fn));
+      copy.patternLines = copy.patternLines.map((line) => ({ ...line, base: fn(line.base) }));
       break;
     case 'arc': copy.center = fn(copy.center); break;
     case 'bezier': copy.start = fn(copy.start); copy.control1 = fn(copy.control1); copy.control2 = fn(copy.control2); copy.end = fn(copy.end); break;
