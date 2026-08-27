@@ -147,6 +147,16 @@ describe('exportGcode', () => {
     expect(gcode.endsWith('M5\nM2 ; end\n')).toBe(true);
   });
 
+  it('draws connected entities as one uninterrupted stroke', () => {
+    const doc = setup();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    doc.addEntity(doc.createLine({ x: 20, y: 0 }, { x: 10, y: 0 }));
+    const { gcode } = exportGcode(doc);
+    expect(gcode.split('\n').filter((line) => line.startsWith('G0 X'))).toHaveLength(1);
+    expect(gcode.split('\n').filter((line) => line === 'M3 S19')).toHaveLength(1);
+    expect(gcode).toContain('G1 X10 Y0 F4000\nG1 X20 Y0 F4000');
+  });
+
   it('traces a circle outline by default (plotter mode)', () => {
     const doc = setup();
     doc.addEntity(doc.createCircle({ x: 5, y: 5 }, 2));

@@ -68,6 +68,19 @@ describe('exportAsciiDxf structure', () => {
 });
 
 describe('exportAsciiDxf entities round-trip through the importer', () => {
+  it('keeps a hatch as one native DXF HATCH with its pattern definition', () => {
+    const doc = new Document();
+    const hatch = doc.createHatch([[{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]], 'cross', 30, 3);
+    doc.addEntity(hatch);
+    const exported = exportAsciiDxf(doc);
+    expect(exported.dxf).toContain('\nHATCH\n');
+    const result = importAsciiDxf(new Document(), exported.dxf);
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].type).toBe('hatch');
+    expect(result.entities[0].type === 'hatch' && result.entities[0].angle).toBeCloseTo(30);
+    expect(result.entities[0].type === 'hatch' && result.entities[0].spacing).toBeCloseTo(3);
+    expect(result.entities[0].type === 'hatch' && result.entities[0].patternLines).toHaveLength(2);
+  });
   it('keeps a BLOCK and transformed INSERT reference native', () => {
     const doc = new Document();
     const definition = {

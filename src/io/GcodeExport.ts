@@ -13,6 +13,7 @@ import type { Entity } from '../core/entities/types';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
 import type { Vec2 } from '../math/geometry';
 import type { GcodeOptions } from '../core/settings';
+import { optimizePlotterPaths, type PlotterPath } from './PlotterPathOptimizer';
 
 export interface GcodeResult {
   gcode: string;
@@ -52,6 +53,7 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
     if (entities.length === 0) continue;
 
     const passes: string[] = [];
+    const drawablePaths: PlotterPath[] = [];
     for (const entity of entities) {
       // On a drilling machine a circle is a hole to plunge, not an outline to
       // follow: one tap at the centre instead of a lap around the rim.
@@ -71,17 +73,17 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
       }
       const flat = toWorldXY(entity, paths);
       if (!flat) { offPlane++; continue; }
-      for (const path of flat) {
-        if (path.points.length < 2) continue;
-        const points = path.closed ? [...path.points, path.points[0]] : path.points;
-        passes.push(`G0 X${format(points[0].x)} Y${format(points[0].y)} F${format(options.travelRate)}`);
-        passes.push(...codeLines(options.penDownCode));
-        for (const point of points.slice(1)) {
-          passes.push(`G1 X${format(point.x)} Y${format(point.y)} F${format(options.feedRate)}`);
-          moveCount++;
-        }
-        passes.push(...codeLines(options.penUpCode));
+      drawablePaths.push(...flat);
+    }
+    for (const path of optimizePlotterPaths(drawablePaths)) {
+      const points = path.closed ? [...path.points, path.points[0]] : path.points;
+      passes.push(`G0 X${format(points[0].x)} Y${format(points[0].y)} F${format(options.travelRate)}`);
+      passes.push(...codeLines(options.penDownCode));
+      for (const point of points.slice(1)) {
+        passes.push(`G1 X${format(point.x)} Y${format(point.y)} F${format(options.feedRate)}`);
+        moveCount++;
       }
+      passes.push(...codeLines(options.penUpCode));
     }
     if (passes.length === 0) continue;
     lines.push(`; --- layer: ${layer} ---`, ...passes);

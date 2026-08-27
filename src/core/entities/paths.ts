@@ -10,6 +10,7 @@
 import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
+import { hatchPatternSegments } from '../../io/DxfHatch';
 
 export interface EntityPath {
   points: Vec2[];
@@ -65,6 +66,10 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
     case 'arc':
     case 'bezier':
       return [{ points: curvePoints(entity, segments), closed: false }];
+    case 'hatch':
+      return entity.pattern === 'solid'
+        ? entity.loops.filter((loop) => loop.length >= 2).map((points) => ({ points: [...points], closed: true }))
+        : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], closed: false }));
     case 'dimension': {
       // Drawn, not cut — but a plotter putting a drawing on paper wants it, and
       // it is made of lines like everything else. The arrowheads are outlines.

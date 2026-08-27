@@ -1,10 +1,7 @@
 /**
- * DXF HATCH → plottable geometry. mycad has no fill primitive and a pen plotter
- * cannot fill, so a hatch is imported as lines: a SOLID fill gives back its
- * boundary loops (the region outline), and a pattern gives back the actual hatch
- * lines — each pattern-line family generated from the definition the DXF carries
- * (angle, base, offset) and clipped to the boundary. That is the geometry you
- * would draw or plot.
+ * DXF HATCH parsing and lazy stroke generation. The importer keeps the boundary
+ * and pattern definition as one native entity; rendering, EXPLODE and plotting
+ * call the generator only when they need clipped line segments.
  */
 import type { Vec2 } from '../math/geometry';
 
@@ -18,7 +15,7 @@ export interface HatchGeometry {
   lines: Array<[Vec2, Vec2]>;
 }
 
-interface PatternLine { angle: number; base: Vec2; offset: Vec2 }
+export interface PatternLine { angle: number; base: Vec2; offset: Vec2 }
 
 const num = (value: string): number => { const n = Number(value); return Number.isFinite(n) ? n : 0; };
 
@@ -241,13 +238,29 @@ function familyLines(loops: Vec2[][], line: PatternLine, box: { min: Vec2; max: 
   return out;
 }
 
+/** Generate clipped strokes without creating drawing entities. */
+export function hatchPatternSegments(loops: Vec2[][], families: PatternLine[]): Array<[Vec2, Vec2]> {
+  if (loops.length === 0 || families.length === 0) return [];
+  const box = bbox(loops);
+  return families.flatMap((family) => familyLines(loops, family, box));
+}
+
 /** Turn one HATCH entity's fields into loops (always) and hatch lines (patterns only). */
 export function hatchGeometry(fields: DxfPair[], scale: number): HatchGeometry {
   const solid = num(fields.find((f) => f.code === 70)?.value ?? '0') === 1;
   const loops = readBoundaries(fields, scale);
   if (solid || loops.length === 0) return { loops, solid, lines: [] };
-  const box = bbox(loops);
-  const lines: Array<[Vec2, Vec2]> = [];
-  for (const family of readPatternLines(fields, scale)) lines.push(...familyLines(loops, family, box));
+  const lines = hatchPatternSegments(loops, readPatternLines(fields, scale));
   return { loops, solid, lines };
+}
+
+/** Native definition retained by the importer instead of exploding to LINEs. */
+export function hatchDefinition(fields: DxfPair[], scale: number): { loops: Vec2[][]; solid: boolean; pattern: string; lines: PatternLine[] } {
+  const solid = num(fields.find((f) => f.code === 70)?.value ?? '0') === 1;
+  return {
+    loops: readBoundaries(fields, scale),
+    solid,
+    pattern: fields.find((field) => field.code === 2)?.value || (solid ? 'solid' : 'lines'),
+    lines: solid ? [] : readPatternLines(fields, scale),
+  };
 }

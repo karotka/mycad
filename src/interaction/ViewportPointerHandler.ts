@@ -1,5 +1,5 @@
 import type { Vec2 } from '../math/geometry';
-import { worldToLocal } from '../math/workplane';
+import { localToWorld, worldToLocal, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity, Solid, SolidFaceSelection } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
@@ -21,6 +21,7 @@ import { createPointResolver, type PointResolverState } from './PointResolver';
 import { createSolidDragPreview } from './DragEditing';
 import { createDynamicUcsCoordinator } from './DynamicUcsCoordinator';
 import { createToolActions } from './ToolActions';
+import { pointWorkPlaneAxisAt, type UcsHandleName } from '../math/ucsAxisRotation';
 
 /**
  * The handful of small preview/selection helpers that still live in main.ts and
@@ -107,6 +108,28 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
 
   /** Set by a right-button press: a release that never moved opens the menu. */
   let menuOnStillRelease = false;
+  let ucsAxisDrag: {
+    handle: UcsHandleName;
+    basePlane: WorkPlane;
+    startedWithoutNamedUcs: boolean;
+    changed: boolean;
+  } | null = null;
+  let ucsHandlesArmed = false;
+
+  function finishUcsAxisDrag(): void {
+    if (!ucsAxisDrag) return;
+    const createNamed = ucsAxisDrag.startedWithoutNamedUcs && ucsAxisDrag.changed;
+    const changed = ucsAxisDrag.changed;
+    ucsAxisDrag = null;
+    snapMarker.hidden = true;
+    if (createNamed) {
+      const named = cadDocument.addNamedWorkPlane(cadDocument.activeWorkPlane);
+      log(`UCS axis rotated; ${named.name} created.`);
+    } else if (changed) {
+      cadDocument.notify();
+      log('UCS axis rotated.');
+    }
+  }
 
   viewport.addEventListener('pointermove', (event) => {
     if (gripMenu.hidden) viewport.classList.remove('context-menu-cursor-pending');
@@ -117,6 +140,43 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // (selection window, pan, etc.) returns before geometric hover processing.
     crosshair.style.left = `${sx}px`;
     crosshair.style.top = `${sy}px`;
+    if (ucsAxisDrag) {
+      // Prefer an exact model vertex, but keep the grip following the pointer
+      // between snap points as well.  The projection must use the plane captured
+      // at pointer-down; projecting against the plane while we rotate it creates
+      // a feedback loop and makes the grip appear stuck or jittery.
+      const snappedTarget = nearestMeasurementPoint(event);
+      const planarTarget = renderer3d.workPlanePoint(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        ucsAxisDrag.basePlane,
+      );
+      const target = snappedTarget
+        ?? (planarTarget ? localToWorld(ucsAxisDrag.basePlane, planarTarget) : null);
+      if (target) {
+        const plane = ucsAxisDrag.handle === 'origin'
+          ? { ...ucsAxisDrag.basePlane, origin: { ...target } }
+          : pointWorkPlaneAxisAt(ucsAxisDrag.basePlane, ucsAxisDrag.handle, target);
+        if (plane) {
+          ucsAxisDrag.changed = true;
+          cadDocument.activeWorkPlane = plane;
+          const named = cadDocument.namedWorkPlanes.find((item) => item.id === cadDocument.activeNamedWorkPlaneId);
+          if (named) named.workPlane = { ...plane, origin: { ...plane.origin }, xAxis: { ...plane.xAxis }, yAxis: { ...plane.yAxis }, zAxis: { ...plane.zAxis } };
+          renderer3d.setWorkPlane(plane);
+          positionSnapMarker(target, sx, sy);
+          showDimension(ucsAxisDrag.handle === 'origin' ? 'UCS origin' : `UCS ${ucsAxisDrag.handle.toUpperCase()} axis`, sx, sy);
+          redraw();
+        }
+      }
+      event.preventDefault();
+      return;
+    }
+    if (ucsHandlesArmed && cadDocument.viewMode === '3d' && !commands.active) {
+      const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
+      renderer3d.highlightUcsHandle(handle);
+      viewport.classList.toggle('object-pick', handle !== null);
+    } else if (ucsHandlesArmed) renderer3d.highlightUcsHandle(null);
     const choosingCircularDimensionEdge = cadDocument.viewMode === '3d'
       && (commands.active?.name === 'DIMRADIUS' || commands.active?.name === 'DIMDIAMETER')
       && commands.active.stepIndex === 0;
@@ -344,6 +404,30 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   });
 
   viewport.addEventListener('pointerdown', async (event) => {
+    if (event.button === 0 && ucsAxisDrag) {
+      finishUcsAxisDrag();
+      event.preventDefault();
+      return;
+    }
+    if (event.button === 0 && ucsHandlesArmed && cadDocument.viewMode === '3d' && !commands.active) {
+      const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
+      if (handle) {
+        const plane = cadDocument.activeWorkPlane;
+        ucsAxisDrag = {
+          handle,
+          basePlane: {
+            origin: { ...plane.origin },
+            xAxis: { ...plane.xAxis },
+            yAxis: { ...plane.yAxis },
+            zAxis: { ...plane.zAxis },
+          },
+          startedWithoutNamedUcs: cadDocument.activeNamedWorkPlaneId === null,
+          changed: false,
+        };
+        event.preventDefault();
+        return;
+      }
+    }
     const gesture = resolvePointerGesture({
       button: event.button,
       metaKey: event.metaKey,
@@ -848,7 +932,60 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     input.focus();
   });
 
+  viewport.addEventListener('dblclick', (event) => {
+    if (commands.active) return;
+    const text = cadDocument.viewMode === '2d'
+      ? pickEntityAt(cadDocument, rawWorldPoint(event), 8 / renderer2d.zoom)
+      : renderer3d.pickEntity(
+        renderer3d.renderer.domElement,
+        cadDocument.entities.filter((entity) => !cadDocument.hiddenLayers.has(entity.layer)),
+        event.clientX,
+        event.clientY,
+      );
+    if (text?.type === 'text') {
+      cadDocument.clearSelection();
+      cadDocument.selectEntity(text.id);
+      commands.startCommand('TEXTEDIT');
+      event.preventDefault();
+      return;
+    }
+    if (cadDocument.viewMode !== '3d') return;
+    const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    if (!handle) return;
+    ucsHandlesArmed = true;
+    renderer3d.showUcsHandles(true, handle);
+    log('UCS grips active. Drag a square grip; Escape hides them.');
+    event.preventDefault();
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !ucsHandlesArmed) return;
+    ucsHandlesArmed = false;
+    if (ucsAxisDrag?.changed) {
+      const plane = ucsAxisDrag.basePlane;
+      cadDocument.activeWorkPlane = plane;
+      const named = cadDocument.namedWorkPlanes.find((item) => item.id === cadDocument.activeNamedWorkPlaneId);
+      if (named) named.workPlane = {
+        ...plane,
+        origin: { ...plane.origin },
+        xAxis: { ...plane.xAxis },
+        yAxis: { ...plane.yAxis },
+        zAxis: { ...plane.zAxis },
+      };
+      renderer3d.setWorkPlane(plane);
+    }
+    ucsAxisDrag = null;
+    renderer3d.showUcsHandles(false);
+    snapMarker.hidden = true;
+    event.preventDefault();
+    redraw();
+  }, { capture: true });
+
   window.addEventListener('pointerup', (event) => {
+    if (ucsAxisDrag) {
+      if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+      return;
+    }
     if (selectionController.finishWindow(event.pointerId)) return;
     // A right-button press that never moved was a click, not a pan, so it opens
     // the menu. Deciding on the movement is what lets a pan start anywhere.

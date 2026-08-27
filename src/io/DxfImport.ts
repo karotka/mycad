@@ -3,7 +3,7 @@ import type { BlockDefinition, Entity, InsertEntity } from '../core/entities/typ
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { expandBulges, type BulgeVertex } from './DxfBulge';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
-import { hatchGeometry } from './DxfHatch';
+import { hatchDefinition } from './DxfHatch';
 
 type Pair = { code: number; value: string };
 
@@ -30,7 +30,12 @@ function pairsFromText(text: string): Pair[] {
   const pairs: Pair[] = [];
   for (let index = 0; index + 1 < lines.length; index += 2) {
     const code = Number.parseInt(lines[index].trim(), 10);
-    if (Number.isFinite(code)) pairs.push({ code, value: lines[index + 1].trim() });
+    if (Number.isFinite(code)) {
+      // TEXT/MTEXT chunks own their leading and trailing spaces. Trimming every
+      // DXF value joined words split between repeated code 3 and final code 1.
+      const rawValue = lines[index + 1];
+      pairs.push({ code, value: code === 1 || code === 3 ? rawValue : rawValue.trim() });
+    }
   }
   return pairs;
 }
@@ -152,11 +157,45 @@ function readLayerTable(pairs: Pair[]): LayerTable {
 function mtextPlainText(fields: Pair[]): string {
   const raw = fields.filter((pair) => pair.code === 3).map((pair) => pair.value).join('')
     + (fields.find((pair) => pair.code === 1)?.value ?? '');
+  // Protect escaped literal characters before consuming formatting commands.
+  // MTEXT's underline/overline/strike toggles (\L...\l etc.) notably have no
+  // trailing semicolon, unlike font, height and colour controls.
+  const slash = '\uE000', openBrace = '\uE001', closeBrace = '\uE002';
   return raw
-    .replace(/\\P/g, ' ')
+    .replace(/\\\\/g, slash)
+    .replace(/\\\{/g, openBrace)
+    .replace(/\\\}/g, closeBrace)
+    .replace(/\\U\+([0-9A-Fa-f]{4})/g, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\S([^;]*);/gi, (_match, stacked: string) => stacked.replace(/[\^#]/g, '/'))
+    .replace(/\\[LlOoKk]/g, '')
+    .replace(/\\[PX]/gi, ' ')
+    .replace(/\\~/g, ' ')
     .replace(/\\[A-Za-z][^;\\]*;/g, '')
     .replace(/[{}]/g, '')
+    .replaceAll(slash, '\\')
+    .replaceAll(openBrace, '{')
+    .replaceAll(closeBrace, '}')
+    .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Reverse DXF SAVEAS caret notation for embedded ASCII control characters. */
+function dxfControlText(value: string): string {
+  let result = '';
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] !== '^' || index + 1 >= value.length) { result += value[index]; continue; }
+    const marker = value[index + 1];
+    // A literal caret is written as caret + space.
+    if (marker === ' ') { result += '^'; index++; continue; }
+    const upper = marker.toUpperCase();
+    if (upper < 'A' || upper > 'Z') { result += '^'; continue; }
+    const code = upper.charCodeAt(0) - 64;
+    index++;
+    if (code === 8) result = result.slice(0, -1); // ^H = backspace
+    else if (code === 9 || code === 10 || code === 13) result += ' '; // tab/newline/return
+    // Other C0 controls have no printable representation and are dropped.
+  }
+  return result;
 }
 
 export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
@@ -247,8 +286,9 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   };
 
   const addText = (fields: Pair[], layer: string, value: string, position: { x: number; y: number }, type: string): void => {
-    if (!value) { skip(type); return; }
-    const entity = doc.createText(position, value, (number(fields, 40, 2.5) || 2.5) * scale);
+    const plain = dxfControlText(value);
+    if (!plain) { skip(type); return; }
+    const entity = doc.createText(position, plain, (number(fields, 40, 2.5) || 2.5) * scale);
     entity.rotation = number(fields, 50, 0) * Math.PI / 180;
     finish(entity, fields, layer);
   };
@@ -462,16 +502,20 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       while (cursor < pairs.length && !(pairs[cursor].code === 0 && pairs[cursor].value.toUpperCase() === 'SEQEND')) cursor++;
       end = Math.min(pairs.length, cursor + 1);
     } else if (type === 'HATCH') {
-      // We have no fill primitive and a pen plotter cannot fill, so a hatch is
-      // imported as the lines you would actually draw: a SOLID fill becomes its
-      // boundary loops, a pattern fill becomes its generated hatch lines. Either
-      // way the fill is approximated by strokes, so it is reported, never silent.
       noteFlattened(fields, 30);
-      const hatch = hatchGeometry(fields, scale);
-      if (hatch.solid) for (const loop of hatch.loops) { if (loop.length >= 2) finish(doc.createPolyline(loop, true), fields, layer); }
-      for (const [a, b] of hatch.lines) finish(doc.createLine(a, b), fields, layer);
-      if ((hatch.solid && hatch.loops.length) || hatch.lines.length) approximated++;
-      else skip(type);
+      const definition = hatchDefinition(fields, scale);
+      if (definition.loops.length) {
+        const first = definition.lines[0];
+        const angle = first ? first.angle * 180 / Math.PI : 0;
+        const spacing = first ? Math.hypot(first.offset.x, first.offset.y) : doc.hatch.spacing;
+        finish(doc.createHatch(
+          definition.loops,
+          definition.solid ? 'solid' : definition.pattern,
+          angle,
+          spacing,
+          definition.lines,
+        ), fields, layer);
+      } else skip(type);
     } else if (!['VERTEX', 'SEQEND'].includes(type)) skip(type);
     index = end;
   }

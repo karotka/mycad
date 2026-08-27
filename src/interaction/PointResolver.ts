@@ -1,7 +1,7 @@
 import type { Vec2 } from '../math/geometry';
 import { snapPoint2, worldToScreen } from '../math/geometry';
 import type { WorkPlane } from '../math/workplane';
-import { localToWorld, WORLD_WORK_PLANE, worldToLocal } from '../math/workplane';
+import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
@@ -148,7 +148,26 @@ export function createPointResolver(ctx: PointResolverContext) {
         // it, so a line drawn in 3D lands on the point it snapped to even when that
         // point belongs to another UCS. The line keeps the active plane; only the
         // endpoint's z rides along.
-        return { ...targetedSnap.point, z: worldToLocal(doc.activeWorkPlane, targetedSnap.world).z } as Vec2;
+        let plane = active.data.drawingPlane as WorkPlane | undefined;
+        if (!plane) {
+          const local = worldToLocal(doc.activeWorkPlane, targetedSnap.world);
+          if (Math.abs(local.z) > 1e-8) {
+            plane = cloneWorkPlane(doc.activeWorkPlane);
+            plane.origin.x += plane.zAxis.x * local.z;
+            plane.origin.y += plane.zAxis.y * local.z;
+            plane.origin.z += plane.zAxis.z * local.z;
+            active.data.drawingPlane = plane;
+          }
+        }
+        const local = worldToLocal(plane ?? doc.activeWorkPlane, targetedSnap.world);
+        return { x: local.x, y: local.y };
+      }
+      // Once an off-plane first point established a parallel drawing plane,
+      // every free point and every Ortho constraint must stay in that plane.
+      const plane = active.data.drawingPlane as WorkPlane | undefined;
+      if (plane && doc.viewMode === '3d') {
+        const point = renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY, plane);
+        return point ? constrainedPoint(point) : null;
       }
     }
     // Defining a cutting plane by points must not depend on whether End happens
@@ -266,8 +285,9 @@ export function createPointResolver(ctx: PointResolverContext) {
       start = worldToScreen(state.activeTracking.base, width, height, renderer2d.pan, renderer2d.zoom);
       end = worldToScreen(state.activeTracking.point, width, height, renderer2d.pan, renderer2d.zoom);
     } else {
-      start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(doc.activeWorkPlane, state.activeTracking.base));
-      end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(doc.activeWorkPlane, state.activeTracking.point));
+      const guidePlane = commands.active?.data.drawingPlane as WorkPlane | undefined ?? doc.activeWorkPlane;
+      start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, state.activeTracking.base));
+      end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, state.activeTracking.point));
     }
     if (!start || !end) { trackingLine.hidden = true; return; }
     const dx = end.x - start.x, dy = end.y - start.y;
@@ -334,7 +354,18 @@ export function createPointResolver(ctx: PointResolverContext) {
     const reference = referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue
       ? localToWorld(doc.activeWorkPlane, referenceValue as Vec2)
       : null;
-    const candidates = doc.drafting.objectSnapModes.flatMap((mode) =>
+    // Intersection snapping is quadratic in entity count (and curves expand to
+    // segments). While a large selection is transformed, intersections among
+    // the objects riding together cannot help place the transform, but used to
+    // consume nearly the whole pointer frame for illustrations. Keep endpoint,
+    // midpoint, centre and the other linear modes available.
+    const transformSelection = active && transformsObjects(active.name)
+      ? doc.selectedEntityIds.size + doc.selectedSolidIds.size
+      : 0;
+    const modes = transformSelection > 1
+      ? doc.drafting.objectSnapModes.filter((mode) => mode !== 'intersection' && mode !== 'apparent-intersection')
+      : doc.drafting.objectSnapModes;
+    const candidates = modes.flatMap((mode) =>
       objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference));
     const rect = viewport.getBoundingClientRect();
     const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -351,7 +382,7 @@ export function createPointResolver(ctx: PointResolverContext) {
     // in when none of them is under the cursor, so ending a line on an edge keeps
     // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
     // takes a tighter aperture so a nearby endpoint or midpoint clearly wins.
-    if (discrete || doc.viewMode !== '3d' || !doc.drafting.objectSnapModes.includes('nearest')) return discrete;
+    if (discrete || doc.viewMode !== '3d' || !modes.includes('nearest')) return discrete;
     const world = nearestEdgeWorldPoint(
       doc,
       cursor,

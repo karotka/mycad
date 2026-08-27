@@ -158,6 +158,28 @@ describe('DXF import keeps what the drawing says', () => {
     expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Bold line two' });
   });
 
+  it('removes MTEXT underline toggles instead of displaying \\L and \\l', () => {
+    const result = importAsciiDxf(new Document(), dxf(
+      '0\nMTEXT\n8\nA\n10\n0\n20\n0\n40\n2.5\n'
+      + '3\nPrefix {\\Lunder\n3\nlined\\l} and \\Oover\\o\n1\n text\\Pnext \\S1#2;\\~\\U+00B0\n',
+    ));
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Prefix underlined and over text next 1/2 °' });
+  });
+
+  it('keeps a literal backslash in ordinary TEXT/DTEXT', () => {
+    const result = importAsciiDxf(new Document(), dxf('0\nTEXT\n10\n0\n20\n0\n40\n2.5\n1\nPath\\Label\n'));
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Path\\Label' });
+  });
+
+  it('decodes DXF caret control notation in TEXT and MTEXT', () => {
+    const result = importAsciiDxf(new Document(), dxf(
+      '0\nTEXT\n10\n0\n20\n0\n40\n2.5\n1\nA^I^IB^ C\n'
+      + '0\nMTEXT\n10\n0\n20\n5\n40\n2.5\n1\nFirst^MSecond\n',
+    ));
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'A  B^C' });
+    expect(result.entities[1]).toMatchObject({ type: 'text', text: 'First Second' });
+  });
+
   it('names what it skipped instead of only counting it', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf(
@@ -367,29 +389,26 @@ describe('DXF ELLIPSE', () => {
     expect(result.ignoredTypes).toEqual({ ELLIPSE: 1 });
   });
 
-  it('imports a SOLID hatch as its boundary loop', () => {
-    // A solid-filled 10×10 square (polyline boundary path) → one closed polyline.
+  it('imports a SOLID hatch as one native hatch with its boundary loop', () => {
     const result = importAsciiDxf(new Document(), dxf(
       '0\nHATCH\n8\nFill\n70\n1\n91\n1\n92\n3\n72\n0\n73\n1\n93\n4\n'
       + '10\n0\n20\n0\n10\n10\n20\n0\n10\n10\n20\n10\n10\n0\n20\n10\n',
     ));
-    const polylines = result.entities.filter((entity) => entity.type === 'polyline');
-    expect(polylines).toHaveLength(1);
-    expect(polylines[0].type === 'polyline' && polylines[0].closed).toBe(true);
+    const hatches = result.entities.filter((entity) => entity.type === 'hatch');
+    expect(hatches).toHaveLength(1);
+    expect(hatches[0]).toMatchObject({ pattern: 'solid', loops: [expect.any(Array)] });
     expect(result.ignored).toBe(0);
-    expect(result.approximated).toBe(1);
+    expect(result.approximated).toBe(0);
   });
 
-  it('imports a pattern hatch as its generated hatch lines', () => {
-    // Horizontal pattern (angle 0, offset 0,2) over the 10×10 square → line strokes.
+  it('keeps a pattern hatch and its DXF angle and spacing as one native object', () => {
     const result = importAsciiDxf(new Document(), dxf(
       '0\nHATCH\n8\nFill\n70\n0\n91\n1\n92\n3\n72\n0\n73\n1\n93\n4\n'
       + '10\n0\n20\n0\n10\n10\n20\n0\n10\n10\n20\n10\n10\n0\n20\n10\n'
       + '78\n1\n53\n0\n43\n0\n44\n0\n45\n0\n46\n2\n79\n0\n',
     ));
-    const lines = result.entities.filter((entity) => entity.type === 'line');
-    expect(lines.length).toBeGreaterThanOrEqual(4);
-    // No boundary polyline is emitted for a pattern fill — the outline lives elsewhere.
-    expect(result.entities.some((entity) => entity.type === 'polyline')).toBe(false);
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]).toMatchObject({ type: 'hatch', angle: 0, spacing: 2 });
+    expect(result.entities[0].type === 'hatch' && result.entities[0].patternLines).toHaveLength(1);
   });
 });

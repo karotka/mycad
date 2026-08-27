@@ -118,6 +118,7 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
     }
     case 'octagon': return { points: entity.vertices, closed: true };
     case 'polyline': return { points: entity.vertices, closed: entity.closed };
+    case 'hatch': return { points: entity.loops[0] ?? [], closed: true };
     case 'arc':
     case 'bezier': return { points: curvePoints(entity, 64), closed: false };
     case 'insert':
@@ -253,6 +254,10 @@ export function pickEntityAt(doc: Document, point: Vec2, tolerance: number): Ent
   const edge = hitTestEntity(unselected, point, tolerance) ?? hitTestEntity(visible, point, tolerance);
   if (edge) return edge;
   const contains = (entity: Entity): boolean => {
+    if (entity.type === 'hatch') {
+      return Boolean(entity.loops[0] && pointInPolygon(point, entity.loops[0]))
+        && !entity.loops.slice(1).some((hole) => pointInPolygon(point, hole));
+    }
     if (entity.type === 'circle') return Math.hypot(point.x - entity.center.x, point.y - entity.center.y) <= entity.radius;
     if (entity.type === 'ellipse') return pointInEllipse(point, entity);
     if (entity.type === 'rectangle') {

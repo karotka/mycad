@@ -220,6 +220,9 @@ function writeEntity(pair: Pair, entity: Entity): void {
     case 'bezier':
       writeBezier(pair, entity);
       break;
+    case 'hatch':
+      writeHatch(pair, entity);
+      break;
     case 'text':
       start(pair, 'TEXT', entity);
       point(pair, 10, 20, entity.position);
@@ -230,6 +233,28 @@ function writeEntity(pair: Pair, entity: Entity): void {
     case 'dimension':
       writeDimension(pair, entity);
       break;
+  }
+}
+
+function writeHatch(pair: Pair, entity: Extract<Entity, { type: 'hatch' }>): void {
+  start(pair, 'HATCH', entity);
+  pair(2, entity.pattern === 'solid' ? 'SOLID' : entity.pattern);
+  pair(70, entity.pattern === 'solid' ? 1 : 0);
+  pair(71, 0);
+  pair(91, entity.loops.length);
+  for (const loop of entity.loops) {
+    pair(92, 3); pair(72, 0); pair(73, 1); pair(93, loop.length);
+    for (const vertex of loop) point(pair, 10, 20, vertex);
+  }
+  pair(75, 0); pair(76, 1);
+  if (entity.pattern !== 'solid') {
+    pair(78, entity.patternLines.length);
+    for (const line of entity.patternLines) {
+      pair(53, num(degrees(line.angle)));
+      pair(43, num(line.base.x)); pair(44, num(line.base.y));
+      pair(45, num(line.offset.x)); pair(46, num(line.offset.y));
+      pair(79, 0);
+    }
   }
 }
 

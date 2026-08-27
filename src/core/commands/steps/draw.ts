@@ -14,13 +14,21 @@
 import { AddEntityEdit } from '../../history/edits';
 import { dist2, formatPoint, type Vec2 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
+import type { Entity } from '../../entities/types';
+import type { WorkPlane } from '../../../math/workplane';
+
+function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<string, unknown>): T {
+  const plane = data.drawingPlane as WorkPlane | undefined;
+  if (plane) entity.workPlane = plane;
+  return entity;
+}
 
 export function drawLine({ ctx, active, data, value }: CommandRun): StepOutcome {
   if (active.stepIndex === 0) {
     data.start = value;
     return 'advance';
   }
-  const line = ctx.doc.createLine(data.start as Vec2, value as Vec2);
+  const line = keepCommandDrawingPlane(ctx.doc.createLine(data.start as Vec2, value as Vec2), data);
   ctx.history.execute(new AddEntityEdit('Line', line));
   ctx.log(`Line created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
   return 'advance';
@@ -44,7 +52,7 @@ export function drawCircle({ ctx, active, data, value }: CommandRun): StepOutcom
   }
   const center = data.center as Vec2;
   const radius = dist2(center, value as Vec2);
-  ctx.history.execute(new AddEntityEdit('Circle', ctx.doc.createCircle(center, radius)));
+  ctx.history.execute(new AddEntityEdit('Circle', keepCommandDrawingPlane(ctx.doc.createCircle(center, radius), data)));
   ctx.log(`Circle created: center ${formatPoint(center)}, r=${radius.toFixed(4)}`);
   return 'advance';
 }
@@ -62,7 +70,7 @@ export function drawCircleByDiameter({ ctx, active, data, value }: CommandRun): 
     ctx.log('Diameter must be greater than zero.');
     return 'stay';
   }
-  ctx.history.execute(new AddEntityEdit('Circle', ctx.doc.createCircle(center, diameter / 2)));
+  ctx.history.execute(new AddEntityEdit('Circle', keepCommandDrawingPlane(ctx.doc.createCircle(center, diameter / 2), data)));
   ctx.log(`Circle created: center ${formatPoint(center)}, Ø${diameter.toFixed(4)}`);
   return 'advance';
 }
@@ -221,7 +229,7 @@ export function drawPolyline(run: CommandRun): StepOutcome {
     delete data.closing;
     return 'stay';
   }
-  const polyline = ctx.doc.createPolyline(vertices.map((vertex) => ({ ...vertex })), closing);
+  const polyline = keepCommandDrawingPlane(ctx.doc.createPolyline(vertices.map((vertex) => ({ ...vertex })), closing), data);
   ctx.history.execute(new AddEntityEdit('Polyline', polyline));
   ctx.log(`Polyline created: ${vertices.length} vertices${closing ? ', closed' : ''}.`);
   return 'advance';

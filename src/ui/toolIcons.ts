@@ -15,6 +15,7 @@ export function toolIcon(command: ToolbarIcon): string {
     POLYGON: '<path d="M12 3l8 6-3 10H7L4 9l8-6z"/><circle cx="12" cy="12" r="1"/>',
     ARC: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/>',
     BEZIER: '<path d="M3 18C8 3 16 21 21 6"/><path d="M3 18L8 6M21 6l-5 10" stroke-dasharray="2 2"/>',
+    HATCH: '<path d="M4 5h16v14H4z"/><path d="M3 16L12 7M7 20L20 7M14 20l7-7"/>',
     TEXT: '<path d="M4 20L11 4h2l7 16M7 14h10"/>',
     MOVE: '<path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M22 12l-3-3M22 12l-3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3"/>',
     COPY: '<rect x="7" y="7" width="13" height="13"/><path d="M4 16V4h12M4 4l3 3M4 4l3-3"/>',

@@ -15,6 +15,7 @@ import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
+import { hatchPatternSegments } from '../../../io/DxfHatch';
 
 function explodeEntity(entity: Entity, doc: Document): Entity[] {
   if (entity.type === 'insert') return expandedInsertEntities(entity).map((child) => ({
@@ -22,6 +23,17 @@ function explodeEntity(entity: Entity, doc: Document): Entity[] {
     id: genId(child.type),
     selected: false,
   }));
+  if (entity.type === 'hatch') {
+    const segments = entity.pattern === 'solid'
+      ? entity.loops.flatMap((loop) => loop.map((point, index) => [point, loop[(index + 1) % loop.length]] as [Vec2, Vec2]))
+      : hatchPatternSegments(entity.loops, entity.patternLines);
+    return segments.map(([start, end]) => {
+      const line = doc.createLine(start, end);
+      line.layer = entity.layer; line.aci = entity.aci; line.color = entity.color;
+      line.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
+      return line;
+    });
+  }
   let points: Vec2[] = [];
   let closed = false;
   if (entity.type === 'rectangle') { points = closedVertices(entity)!; closed = true; }

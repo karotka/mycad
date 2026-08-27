@@ -526,7 +526,17 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
   // planar heal below cannot select at all.
   if (face.hitPoint) {
     run.ctx.log('Finding the feature under the cursor…');
-    const removal = await featureRemovalForPoint(solid, face.hitPoint, face.normal);
+    let removal = await featureRemovalForPoint(solid, face.hitPoint, face.normal);
+    // A raw curved hit comes from a rendered triangle rather than a planar face
+    // region. Boolean subtraction can expose that triangle with the opposite
+    // orientation to the cutter stored in the feature tree. Retry only this
+    // curved-surface case; doing it for planar rim faces could mistake the top
+    // of a block for the cap of the cylinder that cut its hole.
+    if (!removal && face.vertexIndices.length === 0 && !face.region) {
+      removal = await featureRemovalForPoint(solid, face.hitPoint, {
+        x: -face.normal.x, y: -face.normal.y, z: -face.normal.z,
+      });
+    }
     if (removal) {
       const after = cloneSolid(solid);
       const exact = await buildExactFeature(removal.feature, solid.revision + 1);

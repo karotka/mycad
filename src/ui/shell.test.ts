@@ -30,4 +30,13 @@ describe('drafting controls', () => {
     expect(document.querySelector<HTMLButtonElement>('#ducs-save')?.hidden).toBe(true);
     expect(document.querySelector<HTMLButtonElement>('#area-toggle')?.textContent).toContain('⇧F7');
   });
+
+  it('orders one-shot OSNAP modes and includes Midpoint', () => {
+    document.body.innerHTML = shellHtml({ primitive: 'BOX', circle: 'CIRCLE', dimension: 'MEASURE', zoom: 'ZOOM_ALL' });
+    const modes = [...document.querySelectorAll<HTMLButtonElement>('.one-shot-snaps [data-grip-mode]')]
+      .map((button) => button.dataset.gripMode);
+    expect(modes.slice(0, 7)).toEqual([
+      'end', 'middle', 'perpendicular', 'intersection', 'center', 'apparent-intersection', 'mid2p',
+    ]);
+  });
 });

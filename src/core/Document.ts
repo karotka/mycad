@@ -15,6 +15,7 @@ import {
   type InsertEntity,
   type Entity,
   type LineEntity,
+  type HatchEntity,
   type OctagonEntity,
   type PolylineEntity,
   type RectangleEntity,
@@ -22,7 +23,7 @@ import {
   type SolidFeature,
   type SolidMesh,
 } from './entities/types';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, type DimensionStyle, type DraftingSettings, type GcodeOptions } from './settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings } from './settings';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci, rgbToAci } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from './lineStyles';
 
@@ -48,6 +49,7 @@ export interface DocumentState {
   drafting: DraftingSettings;
   dimensionStyle: DimensionStyle;
   gcode: GcodeOptions;
+  hatch: HatchSettings;
 }
 
 export class Document {
@@ -88,6 +90,7 @@ export class Document {
   drafting: DraftingSettings = defaultDraftingSettings();
   dimensionStyle: DimensionStyle = defaultDimensionStyle();
   gcode: GcodeOptions = defaultGcodeOptions();
+  hatch: HatchSettings = defaultHatchSettings();
 
   private listeners: Array<(doc: Document) => void> = [];
   private transactionDepth = 0;
@@ -338,6 +341,21 @@ export class Document {
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       start,
       end,
+    };
+  }
+
+  createHatch(loops: Vec2[][], pattern: HatchEntity['pattern'] = this.hatch.pattern, angle = this.hatch.angle, spacing = this.hatch.spacing, patternLines: HatchEntity['patternLines'] = []): HatchEntity {
+    const radians = angle * Math.PI / 180;
+    const families = patternLines.length ? patternLines : pattern === 'solid' ? [] : [
+      { angle: radians, base: { x: 0, y: 0 }, offset: { x: -Math.sin(radians) * spacing, y: Math.cos(radians) * spacing } },
+      ...(pattern === 'cross' ? [{ angle: radians + Math.PI / 2, base: { x: 0, y: 0 }, offset: { x: -Math.cos(radians) * spacing, y: -Math.sin(radians) * spacing } }] : []),
+    ];
+    return {
+      id: genId('hatch'), type: 'hatch', layer: this.currentLayer,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane),
+      loops: loops.map((loop) => loop.map((point) => ({ ...point }))),
+      pattern, angle, spacing, patternLines: families,
     };
   }
 

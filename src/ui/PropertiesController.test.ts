@@ -10,6 +10,20 @@ import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
 const element = (hidden = true) => ({ hidden, addEventListener: vi.fn() }) as unknown as HTMLElement;
 
 describe('PropertiesController', () => {
+  it('offers hatch pattern as a select and exposes editable spacing', () => {
+    const doc = new Document();
+    const hatch = doc.createHatch([[{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]]);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+    const fields = (controller as unknown as { fields(object: typeof hatch): Array<{ key: string; kind?: string }> }).fields(hatch);
+    const fieldHtml = (controller as unknown as { fieldHtml(field: { key: string; label: string; value: string | number; kind?: string }): string }).fieldHtml.bind(controller);
+
+    const pattern = fields.find((field) => field.key === 'pattern')!;
+    const spacing = fields.find((field) => field.key === 'spacing')!;
+    expect(pattern.kind).toBe('hatchPattern');
+    expect(fieldHtml({ ...pattern, label: 'Pattern', value: hatch.pattern })).toContain('<select data-field="pattern">');
+    expect(spacing.kind).toBe('hatchSpacing');
+    expect(fieldHtml({ ...spacing, label: 'Spacing', value: hatch.spacing })).toContain('data-field="spacing"');
+  });
   it('edits a point position through undoable properties', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

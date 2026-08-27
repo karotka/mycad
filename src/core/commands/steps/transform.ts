@@ -260,10 +260,9 @@ export function rotateObjects(run: CommandRun): StepOutcome {
 
 /**
  * AutoCAD-style scaling. Picking a factor by distance can only ever grow (any
- * point is more than one unit from the base), so this works by reference: pick a
- * length that exists now, then a new length, and the factor is their ratio —
- * which shrinks or grows freely. Typing a number at the reference prompt is the
- * shortcut back to a direct factor.
+ * point is more than one unit from the base), so this works by reference: the
+ * base is also the reference origin, the next point sets the current length,
+ * and the final point sets its new length. The factor is new/reference.
  */
 export function scaleObjects(run: CommandRun): StepOutcome {
   const { active, data, value, ctx } = run;
@@ -275,24 +274,18 @@ export function scaleObjects(run: CommandRun): StepOutcome {
     return 'advance';
   }
   if (active.stepIndex === 2) {
-    // A typed factor short-circuits the reference and is the scale directly.
-    if (data.enteredScaleFactor !== undefined) return applyScale(run, data.enteredScaleFactor as number);
-    data.referenceStart = value;
-    return 'advance';
-  }
-  if (active.stepIndex === 3) {
-    const start = data.referenceStart as Vec2;
-    const length = (data.enteredReferenceLength as number | undefined) ?? dist2(start, value as Vec2);
+    const base = data.basePoint as Vec2;
+    const length = (data.enteredReferenceLength as number | undefined) ?? dist2(base, value as Vec2);
     delete data.enteredReferenceLength;
     if (!Number.isFinite(length) || length <= 1e-9) {
-      ctx.log('Reference length must be greater than zero. Pick a point away from the first.');
+      ctx.log('Reference length must be greater than zero. Pick a point away from the base point.');
       return 'stay';
     }
     data.referenceLength = length;
     return 'advance';
   }
 
-  // New length (step 4): the factor is new length ÷ reference length.
+  // New length (step 3): the factor is new length ÷ reference length.
   const base = data.basePoint as Vec2;
   const reference = data.referenceLength as number;
   const newLength = (data.enteredNewLength as number | undefined) ?? dist2(base, value as Vec2);
@@ -300,10 +293,9 @@ export function scaleObjects(run: CommandRun): StepOutcome {
   return applyScale(run, newLength / reference);
 }
 
-/** Commit a scale by `factor` and end the command whether or not the reference steps ran. */
+/** Commit a scale by `factor`. */
 function applyScale(run: CommandRun, factor: number): StepOutcome {
-  const { active, data, ctx } = run;
-  delete data.enteredScaleFactor;
+  const { data, ctx } = run;
   if (!Number.isFinite(factor) || factor <= 1e-9) {
     ctx.log('Scale factor must be greater than zero.');
     return 'stay';
@@ -312,9 +304,6 @@ function applyScale(run: CommandRun, factor: number): StepOutcome {
   const entities = data.entities as Entity[];
   const solids = data.solids as Solid[];
   const baseWorld = (data.baseWorldPoint as Vec3 | undefined) ?? localToWorld(ctx.doc.activeWorkPlane, base);
-  // The factor shortcut fires from the reference step; land the next advance on
-  // the command's 'done' step so the shortcut and the full flow both finish here.
-  active.stepIndex = active.steps.length - 2;
   return applyTo(run, 'Scale',
     { entities, solids },
     {

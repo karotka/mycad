@@ -13,7 +13,7 @@ type PropertyField = {
   key: string;
   label: string;
   value: string | number;
-  kind?: 'layer' | 'color' | 'readonly' | 'arrowType' | 'unitSuffix' | 'toleranceMode';
+  kind?: 'layer' | 'color' | 'readonly' | 'arrowType' | 'unitSuffix' | 'toleranceMode' | 'hatchPattern' | 'hatchSpacing';
 };
 
 export class PropertiesController {
@@ -87,6 +87,12 @@ export class PropertiesController {
       case 'ellipse': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radiusX', label: 'Radius X', value: object.radiusX }, { key: 'radiusY', label: 'Radius Y', value: object.radiusY }, { key: 'rotation', label: 'Rotation °', value: object.rotation * 180 / Math.PI }];
       case 'rectangle': return [...common, ...pointFields('first', 'First', object.first), ...pointFields('opposite', 'Opposite', object.opposite), { key: '_width', label: 'Width', value: Math.abs(object.opposite.x - object.first.x), kind: 'readonly' }, { key: '_height', label: 'Height', value: Math.abs(object.opposite.y - object.first.y), kind: 'readonly' }];
       case 'arc': return [...common, ...pointFields('center', 'Center', object.center), { key: 'radius', label: 'Radius', value: object.radius }, { key: 'startAngle', label: 'Start angle °', value: object.startAngle * 180 / Math.PI }, { key: 'sweepAngle', label: 'Sweep angle °', value: object.sweepAngle * 180 / Math.PI }];
+      case 'hatch': return [...common,
+        { key: 'pattern', label: 'Pattern', value: object.pattern, kind: 'hatchPattern' },
+        { key: 'angle', label: 'Angle °', value: object.angle },
+        { key: 'spacing', label: 'Spacing', value: object.spacing, kind: 'hatchSpacing' },
+        { key: '_loops', label: 'Boundary loops', value: object.loops.length, kind: 'readonly' },
+      ];
       case 'text': return [...common, ...pointFields('position', 'Position', object.position), { key: 'height', label: 'Text height', value: object.height }, { key: 'text', label: 'Text', value: object.text }];
       case 'insert': return [
         ...common,
@@ -160,6 +166,12 @@ export class PropertiesController {
     if (field.kind === 'arrowType') return selectHtml(field, [['closed', 'Closed filled'], ['open', 'Open'], ['tick', 'Architectural tick']]);
     if (field.kind === 'unitSuffix') return selectHtml(field, [['none', 'No suffix'], ['mm', 'mm']]);
     if (field.kind === 'toleranceMode') return selectHtml(field, [['none', 'None'], ['symmetric', 'Symmetric ±'], ['deviation', 'Upper / lower']]);
+    if (field.kind === 'hatchPattern') {
+      const options: Array<[string, string]> = [['lines', 'Lines'], ['cross', 'Cross'], ['solid', 'Solid']];
+      if (!options.some(([value]) => value === field.value)) options.unshift([String(field.value), `${field.value} (DXF)`]);
+      return selectHtml(field, options);
+    }
+    if (field.kind === 'hatchSpacing') return `<label class="property-row"><span>${field.label}</span><input data-field="${field.key}" type="number" min="0.001" step="0.1" value="${format(field.value)}"></label>`;
     const type = typeof field.value === 'number' ? 'number' : 'text';
     return `<label class="property-row"><span>${field.label}</span><input data-field="${field.key}" type="${type}" value="${format(field.value)}" ${type === 'number' ? 'step="any"' : ''}></label>`;
   }
@@ -229,6 +241,11 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
   else if (entity.type === 'insert' && (key === 'columnSpacing' || key === 'rowSpacing')) entity[key] = Number(value);
   else if (key === 'startAngle' && entity.type === 'arc') entity.startAngle = Number(value) * Math.PI / 180;
   else if (key === 'sweepAngle' && entity.type === 'arc') entity.sweepAngle = Number(value) * Math.PI / 180;
+  else if (entity.type === 'hatch' && key === 'pattern' && typeof value === 'string' && value.trim()) {
+    entity.pattern = value.trim(); rebuildHatchPattern(entity);
+  }
+  else if (entity.type === 'hatch' && key === 'angle') { entity.angle = Number(value); rebuildHatchPattern(entity); }
+  else if (entity.type === 'hatch' && key === 'spacing' && Number(value) > 0) { entity.spacing = Number(value); rebuildHatchPattern(entity); }
   else if (entity.type === 'dimension' && key === 'arrowType' && (value === 'closed' || value === 'open' || value === 'tick')) entity.arrowType = value;
   else if (entity.type === 'dimension' && key === 'unitSuffix' && (value === 'none' || value === 'mm')) entity.unitSuffix = value;
   else if (entity.type === 'dimension' && key === 'toleranceMode' && (value === 'none' || value === 'symmetric' || value === 'deviation')) entity.toleranceMode = value;
@@ -247,6 +264,15 @@ function updateEntity(entity: Entity, key: string, value: string | number): void
     const number = Number(value);
     if (number >= 0 && (key !== 'textHeight' && key !== 'arrowSize' && key !== 'scale' || number > 0)) (entity as unknown as Record<string, number>)[key] = number;
   }
+}
+
+function rebuildHatchPattern(entity: Extract<Entity, { type: 'hatch' }>): void {
+  if (entity.pattern === 'solid') { entity.patternLines = []; return; }
+  const angle = entity.angle * Math.PI / 180;
+  entity.patternLines = [
+    { angle, base: { x: 0, y: 0 }, offset: { x: -Math.sin(angle) * entity.spacing, y: Math.cos(angle) * entity.spacing } },
+    ...(entity.pattern === 'cross' ? [{ angle: angle + Math.PI / 2, base: { x: 0, y: 0 }, offset: { x: -Math.cos(angle) * entity.spacing, y: -Math.sin(angle) * entity.spacing } }] : []),
+  ];
 }
 
 function updateSolid(solid: Solid, key: string, value: number): Promise<void> | void {

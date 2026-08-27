@@ -19,6 +19,7 @@ import {
 } from '../history/edits';
 import { translatedFeature } from '../solids/featureTransform';
 import { rotateSolidAroundPlane } from './steps/transform';
+import { hatchPatternSegments } from '../../io/DxfHatch';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -354,7 +355,7 @@ export class CommandManager {
           await this.advanceStep(null);
           return;
         }
-        if (this.active?.name === 'SCALE' && this.active.stepIndex >= 2 && this.active.stepIndex <= 4) {
+        if (this.active?.name === 'SCALE' && this.active.stepIndex >= 2 && this.active.stepIndex <= 3) {
           const entered = Number(input);
           if (Number.isFinite(entered)) {
             if (entered <= 0) {
@@ -362,13 +363,11 @@ export class CommandManager {
               return;
             }
             const data = this.active.data;
-            // Step 2 typed → a direct factor (skips the reference); step 3 → the
-            // reference length; step 4 → the new length. The execute step reads
-            // these back, so the synthetic point it also gets is not used.
-            if (this.active.stepIndex === 2) data.enteredScaleFactor = entered;
-            else if (this.active.stepIndex === 3) data.enteredReferenceLength = entered;
+            // Step 2 is the reference length from the base; step 3 is its new
+            // length. The synthetic point only carries the typed distance.
+            if (this.active.stepIndex === 2) data.enteredReferenceLength = entered;
             else data.enteredNewLength = entered;
-            const anchor = (this.active.stepIndex === 3 ? data.referenceStart : data.basePoint) as Vec2 | undefined;
+            const anchor = data.basePoint as Vec2 | undefined;
             await this.advanceStep({ x: (anchor?.x ?? 0) + entered, y: anchor?.y ?? 0 });
             return;
           }
@@ -650,6 +649,16 @@ function hitsChain(point: Vec2, vertices: Vec2[], tolerance: number): boolean {
   return false;
 }
 
+function insidePolygon(point: Vec2, vertices: Vec2[]): boolean {
+  let inside = false;
+  for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
+    const a = vertices[index], b = vertices[previous];
+    if ((a.y > point.y) !== (b.y > point.y)
+      && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
 export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5): Entity | null {
   for (let i = entities.length - 1; i >= 0; i--) {
     const e = entities[i];
@@ -700,6 +709,15 @@ export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5):
       case 'arc':
       case 'bezier': {
         if (hitsChain(point, curvePoints(e), tolerance)) return e;
+        break;
+      }
+      case 'hatch': {
+        const hitsBoundary = e.loops.some((loop) => hitsChain(point, closePolyline(loop), tolerance));
+        const hitsPattern = e.pattern !== 'solid' && hatchPatternSegments(e.loops, e.patternLines)
+          .some(([start, end]) => distanceToSegment(point, start, end) <= tolerance);
+        const inside = Boolean(e.loops[0] && insidePolygon(point, e.loops[0]))
+          && !e.loops.slice(1).some((hole) => insidePolygon(point, hole));
+        if (hitsBoundary || hitsPattern || inside) return e;
         break;
       }
       case 'text':

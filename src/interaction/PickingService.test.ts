@@ -105,6 +105,21 @@ describe('window selection', () => {
   });
 });
 
+describe('picking a native hatch', () => {
+  it('returns the whole hatch by its pattern or region, but not inside a hole', () => {
+    const doc = new Document();
+    const hatch = doc.createHatch([
+      [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }],
+      [{ x: 8, y: 8 }, { x: 12, y: 8 }, { x: 12, y: 12 }, { x: 8, y: 12 }],
+    ], 'lines', 0, 2);
+    doc.addEntity(hatch);
+
+    expect(pickEntityAt(doc, { x: 4, y: 5 }, 0.2)).toMatchObject({ id: hatch.id, type: 'hatch' });
+    expect(pickEntityAt(doc, { x: 4, y: 4 }, 0.2)).toMatchObject({ id: hatch.id, type: 'hatch' });
+    expect(pickEntityAt(doc, { x: 10, y: 10 }, 0.2)).toBeNull();
+  });
+});
+
 describe('picking a line along its length', () => {
   it('returns the INSERT owner when its transformed child is picked', () => {
     const doc = new Document();

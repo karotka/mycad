@@ -32,6 +32,37 @@ function setup() {
 }
 
 describe('CommandManager history integration', () => {
+  it('measures AREA after three points by Enter or by clicking the first point', async () => {
+    const { manager, log } = setup();
+    manager.startCommand('AREA');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.submitInput('');
+    expect(log).toHaveBeenCalledWith('Area = 25.000 mm², Perimeter = 26.180 mm');
+    expect(manager.active).toBeNull();
+
+    manager.startCommand('AREA');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 4, y: 0 });
+    await manager.handleClick({ x: 4, y: 3 });
+    await manager.handleClick({ x: 0, y: 0 });
+    expect(log).toHaveBeenCalledWith('Area = 6.000 mm², Perimeter = 12.000 mm');
+    expect(manager.active).toBeNull();
+  });
+  it('edits imported-style text through TEXTEDIT and undo', async () => {
+    const { doc, manager, history } = setup();
+    const text = doc.createText({ x: 2, y: 3 }, 'Old text', 2.5);
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+
+    manager.startCommand('TEXTEDIT');
+    expect(manager.active).toMatchObject({ name: 'TEXTEDIT', stepIndex: 1 });
+    await manager.submitInput('New text');
+    expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'New text' });
+    history.undo();
+    expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'Old text' });
+  });
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
     expect(manager.commandSuggestions('m')).toEqual(['MEASURE', 'MOVE', 'MIRROR']);
@@ -553,6 +584,27 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0].end.y).toBeCloseTo(0, 10);
   });
 
+  it('keeps LINE and CIRCLE on the parallel plane established by an off-UCS endpoint snap', async () => {
+    const { doc, manager } = setup();
+    const plane = { ...cloneWorkPlane(WORLD_WORK_PLANE), origin: { x: 0, y: 0, z: 8 } };
+
+    manager.startCommand('LINE');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 });
+    await manager.handleClick({ x: 6, y: 3 });
+    manager.cancelActive();
+
+    manager.startCommand('CIRCLE');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 });
+    await manager.handleClick({ x: 4, y: 3 });
+
+    const line = doc.entities.find((entity) => entity.type === 'line')!;
+    const circle = doc.entities.find((entity) => entity.type === 'circle')!;
+    expect(localToWorld(line.workPlane!, line.start)).toEqual({ x: 2, y: 3, z: 8 });
+    expect(localToWorld(circle.workPlane!, circle.center)).toEqual({ x: 2, y: 3, z: 8 });
+  });
+
   it('keeps line and rectangle tools active for repeated drawing', async () => {
     const { doc, manager } = setup();
     manager.startCommand('LINE');
@@ -891,7 +943,7 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0]).toMatchObject({ type: 'polyline' });
   });
 
-  it('scales a preselected entity around a base point by a numeric factor', async () => {
+  it('scales a preselected entity from a unit reference length', async () => {
     const { doc, manager, history } = setup();
     const circle = doc.createCircle({ x: 3, y: 2 }, 2);
     doc.addEntity(circle);
@@ -900,7 +952,8 @@ describe('CommandManager history integration', () => {
     expect(manager.active).toMatchObject({ name: 'SCALE', stepIndex: 1 });
 
     await manager.handleClick({ x: 1, y: 2 });
-    await manager.submitInput('2');
+    await manager.handleClick({ x: 2, y: 2 }); // unit reference from base
+    await manager.handleClick({ x: 3, y: 2 }); // new length 2
 
     expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 5, y: 2 }, radius: 4 });
     history.undo();
@@ -915,8 +968,7 @@ describe('CommandManager history integration', () => {
     manager.startCommand('SCALE');
 
     await manager.handleClick({ x: 0, y: 0 }); // base
-    await manager.handleClick({ x: 0, y: 0 }); // reference length start
-    await manager.handleClick({ x: 4, y: 0 }); // reference length end → reference = 4
+    await manager.handleClick({ x: 4, y: 0 }); // reference length from base = 4
     await manager.handleClick({ x: 2, y: 0 }); // new length 2 → factor 2/4 = 0.5 (shrinks)
 
     expect(doc.entities[0]).toMatchObject({ type: 'circle', center: { x: 2, y: 0 }, radius: 1 });
@@ -932,7 +984,6 @@ describe('CommandManager history integration', () => {
     manager.startCommand('SCALE');
 
     await manager.handleClick({ x: 0, y: 0 }); // base
-    await manager.handleClick({ x: 0, y: 0 }); // reference length start (a pick, so the number is a length not a factor)
     await manager.submitInput('4');            // reference length = 4
     await manager.submitInput('6');            // new length 6 → factor 1.5
 
@@ -953,6 +1004,27 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0].type).toBe('rectangle');
+  });
+
+  it('creates one native hatch and materialises its strokes only on EXPLODE', async () => {
+    const { doc, manager } = setup();
+    doc.hatch = { pattern: 'lines', angle: 0, spacing: 2 };
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 10 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+    manager.startCommand('HATCH');
+    await manager.submitInput('');
+
+    const hatch = doc.entities.find((entity) => entity.type === 'hatch');
+    expect(hatch).toMatchObject({ type: 'hatch', angle: 0, spacing: 2 });
+    expect(doc.entities.filter((entity) => entity.type === 'line')).toHaveLength(0);
+
+    doc.clearSelection();
+    doc.selectEntity(hatch!.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+    expect(doc.entities.some((entity) => entity.type === 'hatch')).toBe(false);
+    expect(doc.entities.filter((entity) => entity.type === 'line').length).toBeGreaterThanOrEqual(4);
   });
 
   it('explodes one INSERT into its transformed drawing entities', async () => {
@@ -2146,7 +2218,8 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
     ball(kit);
     kit.manager.startCommand('SCALE');
     await kit.manager.handleClick({ x: 0, y: 0 });
-    await kit.manager.submitInput('2');
+    await kit.manager.handleClick({ x: 1, y: 0 });
+    await kit.manager.handleClick({ x: 2, y: 0 });
 
     const solid = kit.doc.solids[0];
     expect(solid.feature.kind).toBe('primitive');
@@ -2207,7 +2280,11 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
       await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
       await kit.manager.submitInput(''); // Enter: finished selecting
       await kit.manager.handleClick({ x: 0, y: 0 });
-      await kit.manager.submitInput(command === 'ROTATE' ? '90' : '2');
+      if (command === 'ROTATE') await kit.manager.submitInput('90');
+      else {
+        await kit.manager.handleClick({ x: 1, y: 0 });
+        await kit.manager.handleClick({ x: 2, y: 0 });
+      }
 
       expect(kit.doc.solids, `${command} lost the solid`).toHaveLength(1);
       expect(kit.log, `${command} failed`).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
@@ -2682,7 +2759,9 @@ describe('DELETEFACE', () => {
     doc.addSolid(solid);
     // A curved hole wall gives no planar face — the pointer handler hands Delete
     // Face the raw surface point instead (empty vertexIndices + a hitPoint).
-    const selection = { solidId: solid.id, vertexIndices: [], normal: { x: -1, y: 0, z: 0 }, hitPoint: { x: 3, y: 0, z: 10 } };
+    // A rendered curved triangle may expose the cutter-side orientation. The
+    // command must still identify and remove the complete cylinder feature.
+    const selection = { solidId: solid.id, vertexIndices: [], normal: { x: 1, y: 0, z: 0 }, hitPoint: { x: 3, y: 0, z: 10 } };
     manager.startCommand('DELETEFACE');
     await manager.handleClick({ x: 3, y: 0, z: 10 }, undefined, undefined, selection);
 

@@ -10,6 +10,7 @@ import {
   isStickyCommand,
   takesPointInput,
   transformsObjects,
+  helpText,
 } from './registry';
 
 /** Just enough context for the data factories, which only read the document. */
@@ -58,6 +59,12 @@ describe('command registry', () => {
     for (const command of COMMAND_LIST) {
       for (const alias of command.aliases) expect(COMMAND_ALIASES[alias]).toBe(command.name);
     }
+  });
+
+  it('lists every command alphabetically and accepts ? for HELP', () => {
+    expect(COMMAND_ALIASES['?']).toBe('HELP');
+    const listed = helpText().slice(1, -1).map((line) => line.match(/^[A-Z0-9_]+/)?.[0]);
+    expect(listed).toEqual(COMMAND_LIST.map((command) => command.name).sort());
   });
 
   it('suggests only registered commands and keeps the declared order', () => {
