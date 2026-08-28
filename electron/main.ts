@@ -436,7 +436,18 @@ ipcMain.handle('mycad-mcp-write-file', async (event, options: { requestId?: unkn
 });
 
 app.whenReady().then(async () => {
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  // Chromium gates a genuine Cmd/Ctrl+V paste — even one typed straight into a
+  // focused textarea — behind the 'clipboard-read' permission; copy/cut need
+  // no such grant. Denying everything by default broke paste everywhere in
+  // the app (the MTEXT editor, property inputs, the command line) with no
+  // visible error. Everything else (camera, microphone, geolocation, ...)
+  // stays denied.
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'clipboard-read');
+  });
+  // The synchronous counterpart Chromium consults for some permission checks
+  // instead of (or ahead of) the async request above — same grant, same reason.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'clipboard-read');
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
