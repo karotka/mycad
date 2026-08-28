@@ -4,13 +4,24 @@ import { Document } from '../core/Document';
 import { exportGcode } from '../io/GcodeExport';
 import { GcodeSettingsController } from './GcodeSettingsController';
 
+function stubLocalStorage() {
+  const store = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+  });
+  return store;
+}
+
 function setup() {
+  const store = stubLocalStorage();
   document.body.innerHTML = `
     <section id="panel" hidden></section>
     <form id="form">
       <input id="gcode-homing-code" type="text">
       <input id="gcode-pen-up-code" type="text">
       <input id="gcode-pen-down-code" type="text">
+      <input id="gcode-pen-delay" type="number">
       <input id="gcode-feed-rate" type="number">
       <input id="gcode-travel-rate" type="number">
       <input id="gcode-frame-visible" type="checkbox">
@@ -28,7 +39,7 @@ function setup() {
   const controller = new GcodeSettingsController(doc, element('form') as HTMLFormElement, vi.fn());
   // Wired the way main.ts wires it: the document tells the panel to redraw.
   doc.subscribe(() => controller.render());
-  return { doc, controller };
+  return { doc, controller, store };
 }
 
 const field = (id: string) => document.getElementById(id) as HTMLInputElement;
@@ -48,6 +59,7 @@ describe('GcodeSettingsController', () => {
     expect(field('gcode-homing-code').value).toBe('$H');
     expect(field('gcode-pen-up-code').value).toBe('M5');
     expect(field('gcode-pen-down-code').value).toBe('M3 S19');
+    expect(field('gcode-pen-delay').value).toBe('100');
     expect(field('gcode-travel-rate').value).toBe('6000');
     expect(field('gcode-feed-rate').value).toBe('4000');
     expect(field('gcode-frame-visible').checked).toBe(false);
@@ -65,7 +77,7 @@ describe('GcodeSettingsController', () => {
     type('gcode-pen-down-code', 'M3 S30');
 
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
-    expect(exportGcode(doc).gcode).toContain('M3 S30\nG1 X10 Y0 F1200');
+    expect(exportGcode(doc).gcode).toContain('M3 S30\nG4 P0.1\nG1 X10 Y0 F1200');
   });
 
   it('lets a field be cleared and retyped', () => {
@@ -102,6 +114,28 @@ describe('GcodeSettingsController', () => {
     expect(field('gcode-pen-up-code').value).toBe('  ');
     type('gcode-pen-up-code', 'M9');
     expect(doc.gcode.penUpCode).toBe('M9');
+  });
+
+  it('accepts a zero pen delay but rejects a negative one', () => {
+    const { doc, controller } = setup();
+    controller.render();
+
+    type('gcode-pen-delay', '0');
+    expect(doc.gcode.penDelayMs).toBe(0);
+    type('gcode-pen-delay', '-50');
+    expect(doc.gcode.penDelayMs).toBe(0); // kept the last good value, not a negative pause
+    type('gcode-pen-delay', '250');
+    expect(doc.gcode.penDelayMs).toBe(250);
+  });
+
+  it('remembers a changed setting as the global default for the next new project', () => {
+    const { store, controller } = setup();
+    controller.render();
+
+    type('gcode-pen-delay', '250');
+
+    const saved = JSON.parse(store.get('mycad.defaults.gcode')!);
+    expect(saved.penDelayMs).toBe(250);
   });
 
   it('updates the saved print area dimensions, origin and visibility', () => {

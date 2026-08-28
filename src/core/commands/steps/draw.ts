@@ -13,9 +13,10 @@
  */
 import { AddEntityEdit } from '../../history/edits';
 import { dist2, formatPoint, type Vec2 } from '../../../math/geometry';
-import type { CommandRun, StepOutcome } from '../types';
+import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { Entity } from '../../entities/types';
 import type { WorkPlane } from '../../../math/workplane';
+import { fitCubicBeziers } from '../../../math/bezierFit';
 
 function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<string, unknown>): T {
   const plane = data.drawingPlane as WorkPlane | undefined;
@@ -188,7 +189,8 @@ export function drawText({ ctx, active, data, value }: CommandRun): StepOutcome 
   }
   if (active.stepIndex === 2) { data.position = value; return 'advance'; }
 
-  const text = ctx.doc.createText(data.position as Vec2, String(value), data.height as number, data.font as string);
+  const { text: content, height, font } = textStepValue(value);
+  const text = ctx.doc.createText(data.position as Vec2, content, height ?? (data.height as number), font ?? (data.font as string));
   ctx.history.execute(new AddEntityEdit('Text', text));
   ctx.log(`Text created: "${text.text}" in ${text.font}`);
   return 'advance';
@@ -232,5 +234,45 @@ export function drawPolyline(run: CommandRun): StepOutcome {
   const polyline = keepCommandDrawingPlane(ctx.doc.createPolyline(vertices.map((vertex) => ({ ...vertex })), closing), data);
   ctx.history.execute(new AddEntityEdit('Polyline', polyline));
   ctx.log(`Polyline created: ${vertices.length} vertices${closing ? ', closed' : ''}.`);
+  return 'advance';
+}
+
+/** Tight enough that the fitted curve passes through every clicked point for
+ *  all but a hand's-width jitter — a fit point is a place asked to be on the
+ *  curve, not a hint the way OPTIMIZEPATHS' resampled source points are. */
+const SPLINE_FIT_TOLERANCE = 0.01;
+
+export function drawSpline(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  const points = data.points as Vec2[];
+  const point = value as Vec2 | null;
+
+  if (point) {
+    points.push({ x: point.x, y: point.y });
+    // Same reason drawPolyline keeps this current: it is what ortho, polar
+    // and the rubber-band preview track from.
+    data.start = { x: point.x, y: point.y };
+    if (active.stepIndex === 0) return 'advance';
+    ctx.log(`Point ${points.length} added. Enter to finish.`);
+    return 'stay';
+  }
+
+  if (points.length < 2) {
+    ctx.log('A spline needs at least two points.');
+    run.cancel();
+    return 'advance';
+  }
+  const fits = fitCubicBeziers(points, SPLINE_FIT_TOLERANCE);
+  if (fits.length === 0) {
+    ctx.log('SPLINE failed to fit a curve through these points.');
+    run.cancel();
+    return 'advance';
+  }
+  const spline = keepCommandDrawingPlane(
+    ctx.doc.createSpline(fits[0].start, fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end }))),
+    data,
+  );
+  ctx.history.execute(new AddEntityEdit('Spline', spline));
+  ctx.log(`Spline created: ${points.length} fit point(s), ${fits.length} segment(s).`);
   return 'advance';
 }

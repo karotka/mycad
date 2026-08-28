@@ -250,6 +250,12 @@ function loadEntityValue(value: unknown, resolveDefinition: DefinitionResolver):
       toleranceLower: typeof raw.toleranceLower === 'number' && raw.toleranceLower >= 0 ? raw.toleranceLower : 0,
     };
   }
+  if (raw.type === 'bezier' && !Array.isArray(raw.segments) && raw.control1 && raw.control2 && raw.end) {
+    // Pre-multi-segment save: the single cubic's own fields are now the one
+    // entry a `segments` array holds instead.
+    const { control1, control2, end } = raw;
+    result = { ...result, segments: [{ control1, control2, end }] };
+  }
   return result as unknown as Entity;
 }
 
@@ -438,12 +444,14 @@ function loadGcodeOptions(value: unknown): GcodeOptions {
   const raw = value as Partial<Record<keyof GcodeOptions, unknown>>;
   const positive = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
   const finite = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : fallback;
+  const nonNegative = (candidate: unknown, fallback: number): number => typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0 ? candidate : fallback;
   const command = (candidate: unknown, fallback: string): string => typeof candidate === 'string' && candidate.trim() ? candidate.trim() : fallback;
   return {
     feedRate: positive(raw.feedRate, defaults.feedRate),
     travelRate: positive(raw.travelRate, defaults.travelRate),
     penUpCode: command(raw.penUpCode, defaults.penUpCode),
     penDownCode: command(raw.penDownCode, defaults.penDownCode),
+    penDelayMs: nonNegative(raw.penDelayMs, defaults.penDelayMs),
     homingCode: command(raw.homingCode, defaults.homingCode),
     frameVisible: typeof raw.frameVisible === 'boolean' ? raw.frameVisible : defaults.frameVisible,
     frameWidth: positive(raw.frameWidth, defaults.frameWidth),

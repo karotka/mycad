@@ -52,6 +52,8 @@ export interface GcodeOptions {
   penUpCode: string;
   /** Controller command that lowers or enables the pen. */
   penDownCode: string;
+  /** Pause after raising or lowering the pen, so a servo has time to actually move. */
+  penDelayMs: number;
   /** Controller-specific homing sequence emitted before any coordinate move. */
   homingCode: string;
   /** Whether the non-exported print/cut area overlay is visible. */
@@ -77,6 +79,7 @@ export function defaultGcodeOptions(): GcodeOptions {
     travelRate: 6000,
     penUpCode: 'M5',
     penDownCode: 'M3 S19',
+    penDelayMs: 100,
     homingCode: '$H',
     frameVisible: false,
     frameWidth: 297,

@@ -47,14 +47,17 @@ export function optimizeDrawingPaths(ctx: CommandContext, tolerance = DEFAULT_TO
     // from the sampled source by at most that amount.
     for (const path of optimizePlotterPaths(paths, tolerance)) {
       const points = path.closed ? [...path.points, path.points[0]] : path.points;
-      for (const fit of fitCubicBeziers(points, tolerance)) {
-        const bezier = ctx.doc.createBezier(fit.start, fit.control1, fit.control2, fit.end);
-        bezier.layer = first.layer;
-        bezier.aci = first.aci;
-        bezier.color = first.color;
-        bezier.workPlane = first.workPlane;
-        replacements.push(bezier);
-      }
+      const fits = fitCubicBeziers(points, tolerance);
+      if (fits.length === 0) continue;
+      // One continuous stroke becomes one spline, however many cubic segments
+      // it needed — not one separate Bezier entity per segment, which used to
+      // turn "fewer objects" into "just as many, only shorter."
+      const bezier = ctx.doc.createSpline(fits[0].start, fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end })));
+      bezier.layer = first.layer;
+      bezier.aci = first.aci;
+      bezier.color = first.color;
+      bezier.workPlane = first.workPlane;
+      replacements.push(bezier);
     }
   }
 

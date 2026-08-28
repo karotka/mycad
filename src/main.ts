@@ -1,9 +1,9 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, type CommandName } from './core/commands/CommandManager';
-import { entityBounds, type Entity, type Solid } from './core/entities/types';
+import { entityBounds, type Entity, type Solid, type TextEntity } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
-import { type Vec2 } from './math/geometry';
+import { worldToScreen, type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
@@ -31,7 +31,7 @@ import { HatchSettingsController } from './ui/HatchSettingsController';
 import { NamedUcsController } from './ui/NamedUcsController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
-  arrayFlyout, circleFlyout, circleTools, dimensionFlyout, dimensionTools, drawTools, editTools,
+  arrayFlyout, circleFlyout, circleTools, curveTools, dimensionFlyout, dimensionTools, drawTools, editTools,
   extrudeFlyout, modifyTools, primitiveFlyout, primitiveTools, solidTools, toolButtons, zoomFlyout, zoomTools,
 } from './ui/toolbar';
 import { toolIcon } from './ui/toolIcons';
@@ -44,6 +44,8 @@ import { createToolActions } from './interaction/ToolActions';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 import type { PrintColorMode } from './render/SvgExport';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings } from './core/settings';
+import { loadStoredDefault, SETTINGS_DEFAULT_KEYS } from './ui/settingsDefaults';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app element');
@@ -54,15 +56,31 @@ const savedPrimitive = localStorage.getItem('mycad.lastPrimitive') as CommandNam
 const initialPrimitive: CommandName = primitiveTools.some(([, command]) => command === savedPrimitive) ? savedPrimitive! : 'BOX';
 const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | null;
 const initialCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
+const savedCurve = localStorage.getItem('mycad.lastCurve') as CommandName | null;
+const initialCurve: CommandName = curveTools.some(([, , command]) => command === savedCurve) ? savedCurve! : 'BEZIER';
 const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandName | null;
 const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
 const initialZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
 const dynamicUcsController = new DynamicUcsController(localStorage.getItem('mycad.dynamicUcs') !== 'off');
 
+// A brand new document starts from whatever Settings was last changed to, not
+// always the hardcoded factory defaults — opening a project right after this
+// still overwrites every one of these with what that file itself carries.
+const startupDrafting = loadStoredDefault(SETTINGS_DEFAULT_KEYS.drafting, () => ({
+  snapSize: cadDocument.snapSize, gridSize: cadDocument.gridSize, polarAngles: defaultDraftingSettings().polarAngles,
+}));
+cadDocument.snapSize = startupDrafting.snapSize;
+cadDocument.gridSize = startupDrafting.gridSize;
+cadDocument.drafting = { ...defaultDraftingSettings(), polarAngles: startupDrafting.polarAngles };
+cadDocument.dimensionStyle = loadStoredDefault(SETTINGS_DEFAULT_KEYS.dimensionStyle, defaultDimensionStyle);
+cadDocument.gcode = loadStoredDefault(SETTINGS_DEFAULT_KEYS.gcode, defaultGcodeOptions);
+cadDocument.hatch = loadStoredDefault(SETTINGS_DEFAULT_KEYS.hatch, defaultHatchSettings);
+
 app.innerHTML = shellHtml({
   primitive: initialPrimitive,
   circle: initialCircle,
+  curve: initialCurve,
   dimension: initialDimension,
   zoom: initialZoom,
 });
@@ -88,6 +106,10 @@ const dimensionToast = get<HTMLElement>('dimension-toast');
 const textOptions = get<HTMLElement>('text-options');
 const textFont = get<HTMLSelectElement>('text-font');
 const textHeight = get<HTMLInputElement>('text-height');
+const mtextEditor = get<HTMLElement>('mtext-editor');
+const mtextInput = get<HTMLTextAreaElement>('mtext-input');
+const mtextEditorHeight = get<HTMLInputElement>('mtext-editor-height');
+const mtextEditorFont = get<HTMLSelectElement>('mtext-editor-font');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -400,7 +422,13 @@ function drawFrame(): void {
   crosshair.style.display = 'block';
   viewport.classList.toggle('object-pick', isObjectPick);
   if (is2d) {
-    const grips = gripController.visibleGrips().map((grip) => ({
+    // A grip is computed in the selected entity's own work plane (its vertices,
+    // control points, ...) — the same as any other geometry drawn on a plane
+    // that isn't the world's. Skipping this lifted it to the screen as a raw
+    // local coordinate instead, which is invisible on a world-plane object (the
+    // two coincide) but warps a grip badly on anything drawn on a fitted plane,
+    // such as what JOIN produces.
+    const grips = visibleGripsInWorld().map((grip) => ({
       point: grip.point,
       shape: grip.shape,
       angle: grip.angle,
@@ -445,12 +473,13 @@ function drawChrome(): void {
   get<HTMLButtonElement>('array-main').classList.toggle('active', commands.active?.name === 'ARRAY_RECTANGULAR' || commands.active?.name === 'ARRAY_POLAR');
   get<HTMLButtonElement>('extrude-main').classList.toggle('active', commands.active?.name === 'EXTRUDE' || commands.active?.name === 'SWEEP');
   get<HTMLButtonElement>('circle-main').classList.toggle('active', circleTools.some(([, , command]) => command === commands.active?.name));
+  get<HTMLButtonElement>('curve-main').classList.toggle('active', curveTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
   prompt.textContent = activePromptText();
 }
 
-function visibleGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge' }> {
+function visibleGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge'; angle?: number }> {
   const entity = cadDocument.getSelectedEntities()[0];
   return gripController.visibleGrips().map((grip) => ({
     ...grip,
@@ -545,6 +574,7 @@ const commands = new CommandManager({
   prompt: (message) => {
     prompt.textContent = message;
     queueMicrotask(syncTextOptions);
+    queueMicrotask(syncMtextEditor);
   },
   getCursor: () => {
     const cursor = navigation.cursor;
@@ -651,7 +681,7 @@ const toolActions = createToolActions({
 });
 const {
   deleteSelectedObjects, copySelectedObjects, pasteClipboard, toggleDraftingMode, toggleGridSnap,
-  toggleGridDisplay, toggleCutArea, openContextMenu,
+  toggleGridDisplay, toggleCutArea, openContextMenu, deletePendingNode,
 } = toolActions;
 
 const namedUcsController = new NamedUcsController(
@@ -915,19 +945,96 @@ window.addEventListener('cut', (event) => handleClipboardEvent('cut', event), { 
 window.addEventListener('paste', (event) => handleClipboardEvent('paste', event), { capture: true });
 
 function syncTextOptions(): void {
-  const selectingStyle = commands.active?.name === 'TEXT' && commands.active.stepIndex < 2;
+  const active = commands.active;
+  const selectingStyle = (active?.name === 'TEXT' || active?.name === 'MTEXT') && active.stepIndex < 2;
   textOptions.hidden = !selectingStyle;
 }
 
+/**
+ * TEXT, MTEXT and TEXTEDIT all gather their content the same way now — this is
+ * the one window for it, so typing "a line" or "several lines" is the same
+ * gesture whichever command asked. Positioned once, at the world point the
+ * step itself carries, rather than tracked live through pan/zoom while open.
+ */
+function syncMtextEditor(): void {
+  const active = commands.active;
+  const creating = (active?.name === 'TEXT' || active?.name === 'MTEXT') && active.stepIndex === 3;
+  const editing = active?.name === 'TEXTEDIT' && active.stepIndex === 1;
+  if (!creating && !editing) {
+    mtextEditor.hidden = true;
+    return;
+  }
+  if (!mtextEditor.hidden) return; // already open for this step — don't steal focus back
+  const worldPosition = creating
+    ? active.data.position as Vec2 | undefined
+    : (active.data.textEntity as TextEntity | undefined)?.position;
+  if (!worldPosition) { mtextEditor.hidden = true; return; }
+  const screen = worldToScreen(worldPosition, width, height, renderer2d.pan, renderer2d.zoom);
+  mtextEditor.style.left = `${screen.x}px`;
+  mtextEditor.style.top = `${screen.y}px`;
+  mtextEditor.hidden = false;
+  mtextInput.value = editing ? (active.data.textEntity as TextEntity).text : '';
+  mtextEditorHeight.value = String(editing ? (active.data.textEntity as TextEntity).height : active!.data.height ?? 2.5);
+  mtextEditorFont.value = editing ? ((active.data.textEntity as TextEntity).font ?? 'Arial') : (active!.data.font as string ?? 'Arial');
+  mtextInput.focus();
+  mtextInput.select();
+  updateMtextPreview();
+}
+
+/** Shows what the overlay currently holds on the canvas itself, as it is typed,
+ *  resized and refonted — not just once Done is pressed. */
+function updateMtextPreview(): void {
+  const active = commands.active;
+  const creating = active && (active.name === 'TEXT' || active.name === 'MTEXT') && active.stepIndex === 3;
+  const editing = active && active.name === 'TEXTEDIT' && active.stepIndex === 1;
+  if (!creating && !editing) return;
+  const entity = editing ? active!.data.textEntity as TextEntity : undefined;
+  const position = creating ? active!.data.position as Vec2 | undefined : entity?.position;
+  if (!position) return;
+  const typedHeight = Number(mtextEditorHeight.value);
+  const height = Number.isFinite(typedHeight) && typedHeight > 0 ? typedHeight : (creating ? active!.data.height as number : entity!.height);
+  previewController.setPreview({ type: 'text', data: { position, text: mtextInput.value, font: mtextEditorFont.value, height } });
+  redraw();
+}
+mtextInput.addEventListener('input', updateMtextPreview);
+mtextEditorHeight.addEventListener('input', updateMtextPreview);
+mtextEditorFont.addEventListener('input', updateMtextPreview);
+
+async function submitMtext(): Promise<void> {
+  if (mtextEditor.hidden) return;
+  const value = mtextInput.value;
+  const height = Number(mtextEditorHeight.value);
+  const font = mtextEditorFont.value;
+  mtextEditor.hidden = true;
+  await commands.submitText(value, Number.isFinite(height) && height > 0 ? height : undefined, font);
+  if (!commands.active) previewController.clearPreview();
+  redraw();
+}
+
+mtextInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void submitMtext();
+  }
+});
+get<HTMLButtonElement>('mtext-done').addEventListener('click', () => void submitMtext());
+get<HTMLButtonElement>('mtext-cancel').addEventListener('click', () => {
+  mtextEditor.hidden = true;
+  commands.cancelActive();
+  previewController.clearPreview();
+  redraw();
+});
+
 get<HTMLButtonElement>('text-options-continue').addEventListener('click', async () => {
-  if (commands.active?.name !== 'TEXT' || commands.active.stepIndex >= 2) return;
+  const activeName = commands.active?.name;
+  if ((activeName !== 'TEXT' && activeName !== 'MTEXT') || commands.active!.stepIndex >= 2) return;
   const height = Number(textHeight.value);
   if (!Number.isFinite(height) || height <= 0) {
     textHeight.focus();
     return;
   }
-  if (commands.active.stepIndex === 0) await commands.submitInput(textFont.value);
-  if (commands.active?.name === 'TEXT' && commands.active.stepIndex === 1) await commands.submitInput(String(height));
+  if (commands.active!.stepIndex === 0) await commands.submitInput(textFont.value);
+  if ((commands.active?.name === 'TEXT' || commands.active?.name === 'MTEXT') && commands.active.stepIndex === 1) await commands.submitInput(String(height));
   syncTextOptions();
   redraw();
   input.focus();
@@ -1107,6 +1214,7 @@ new InputController(input, commandForm, {
     commandSuggestionsElement.replaceChildren();
     commandSuggestionsElement.hidden = true;
     textOptions.hidden = true;
+    mtextEditor.hidden = true;
     cadDocument.clearSelection();
     prompt.textContent = 'Command:';
     redraw();
@@ -1215,10 +1323,6 @@ input.addEventListener('keydown', (event) => {
 input.addEventListener('input', () => {
   suggestionIndex = 0;
   updateCommandSuggestions();
-  if (commands.active?.name === 'TEXT' && commands.active.stepIndex === 3 && commands.active.data.position) {
-    previewController.setPreview({ type: 'text', data: { position: commands.active.data.position, text: input.value, font: commands.active.data.font, height: commands.active.data.height } });
-    redraw();
-  }
 });
 
 /**
@@ -1249,6 +1353,11 @@ gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button
     gripMenu.hidden = true;
     redraw();
   });
+});
+
+gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]')?.addEventListener('click', () => {
+  deletePendingNode();
+  gripMenu.hidden = true;
 });
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {
@@ -1327,6 +1436,19 @@ const circleFlyoutTool = new FlyoutTool<CommandName>({
     attribute: 'data-circle-command',
     storageKey: 'mycad.lastCircle',
     labelOf: (value) => circleTools.find((tool) => tool[2] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
+});
+
+const curveFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('curve-main'),
+  flyout: get('curve-flyout'),
+  initial: initialCurve,
+  run: runTool,
+  memory: {
+    attribute: 'data-curve-command',
+    storageKey: 'mycad.lastCurve',
+    labelOf: (value) => curveTools.find((tool) => tool[2] === value)?.[0] ?? value,
     iconOf: toolIcon,
   },
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { isStrokeFont, STROKE_FONT, strokeText, strokeTextWidth } from './strokeFont';
+import {
+  DEFAULT_LINE_SPACING, isStrokeFont, STROKE_FONT, STROKE_FONT_DUPLEX, STROKE_FONT_GOTHIC,
+  STROKE_FONT_SCRIPT, STROKE_FONT_TRIPLEX, STROKE_FONTS, strokeText, strokeTextHeight, strokeTextWidth,
+} from './strokeFont';
 
 const bounds = (paths: Array<Array<{ x: number; y: number }>>) => {
   const points = paths.flat();
@@ -68,6 +71,23 @@ describe('strokeText', () => {
     expect(bounds(strokeText('o', at({ x: 0, y: 0 }, 10))).minY).toBeCloseTo(0, 6);
   });
 
+  it('drops a second line below the first by one line height, not beside it', () => {
+    const oneLine = bounds(strokeText('H', at({ x: 0, y: 0 }, 10)));
+    const twoLines = bounds(strokeText('H\nH', at({ x: 0, y: 0 }, 10)));
+    expect(twoLines.maxX).toBeCloseTo(oneLine.maxX, 6); // same width — second H, not beside it
+    expect(twoLines.maxY).toBeCloseTo(oneLine.maxY, 6); // first line's cap is still the top
+    expect(twoLines.minY).toBeCloseTo(-10 * DEFAULT_LINE_SPACING, 6); // second line dropped below
+  });
+
+  it('measures the widest line, not the first or the total length', () => {
+    expect(strokeTextWidth('A\nAAA\nAA', 21)).toBeCloseTo(strokeTextWidth('AAA', 21), 6);
+  });
+
+  it('measures the whole block down to the last line, not just one line', () => {
+    expect(strokeTextHeight('one', 10)).toBe(10);
+    expect(strokeTextHeight('one\ntwo\nthree', 10)).toBeCloseTo(10 + 2 * 10 * DEFAULT_LINE_SPACING, 6);
+  });
+
   it('has a drawing for every printable character', () => {
     for (let code = 33; code < 127; code++) {
       const character = String.fromCharCode(code);
@@ -79,6 +99,22 @@ describe('strokeText', () => {
     // Outside the font's range: better a visible gap than a wrong letter.
     expect(strokeText('č', at())).toEqual([]);
     expect(strokeText('AčA', at()).length).toBe(strokeText('AA', at()).length);
+  });
+
+  it('has a drawing for every printable character in every stroke font, not just the default', () => {
+    for (const font of STROKE_FONTS) {
+      for (let code = 33; code < 127; code++) {
+        const character = String.fromCharCode(code);
+        expect(strokeText(character, { ...at(), font }).length, `${font}: no strokes for ${character} (${code})`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('draws a different letterform per font, not the same Simplex glyph relabelled', () => {
+    const simplex = strokeText('A', at());
+    for (const font of [STROKE_FONT_DUPLEX, STROKE_FONT_TRIPLEX, STROKE_FONT_SCRIPT, STROKE_FONT_GOTHIC]) {
+      expect(strokeText('A', { ...at(), font })).not.toEqual(simplex);
+    }
   });
 });
 
@@ -98,9 +134,14 @@ describe('strokeTextWidth', () => {
 });
 
 describe('isStrokeFont', () => {
-  it('tells the one font that can be plotted from the ones that cannot', () => {
-    expect(isStrokeFont(STROKE_FONT)).toBe(true);
+  it('tells every plottable font from the ones that cannot be', () => {
+    for (const font of STROKE_FONTS) expect(isStrokeFont(font)).toBe(true);
     expect(isStrokeFont('Arial')).toBe(false);
     expect(isStrokeFont(undefined)).toBe(false);
+  });
+
+  it('lists the original single-stroke font among the plottable ones', () => {
+    expect(STROKE_FONTS).toContain(STROKE_FONT);
+    expect(STROKE_FONTS.length).toBeGreaterThan(1);
   });
 });

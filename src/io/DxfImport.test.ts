@@ -152,10 +152,10 @@ describe('DXF import keeps what the drawing says', () => {
     expect(text.type === 'text' && text.rotation).toBeCloseTo(Math.PI / 2);
   });
 
-  it('strips MTEXT formatting down to plain text', () => {
+  it('strips MTEXT formatting down to plain text, keeping \\P as a real line break', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf('0\nMTEXT\n8\nA\n10\n0\n20\n0\n40\n2.5\n1\n{\\fArial|b1;Bold}\\Pline two\n'));
-    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Bold line two' });
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Bold\nline two' });
   });
 
   it('removes MTEXT underline toggles instead of displaying \\L and \\l', () => {
@@ -163,7 +163,12 @@ describe('DXF import keeps what the drawing says', () => {
       '0\nMTEXT\n8\nA\n10\n0\n20\n0\n40\n2.5\n'
       + '3\nPrefix {\\Lunder\n3\nlined\\l} and \\Oover\\o\n1\n text\\Pnext \\S1#2;\\~\\U+00B0\n',
     ));
-    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Prefix underlined and over text next 1/2 °' });
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'Prefix underlined and over text\nnext 1/2 °' });
+  });
+
+  it('keeps every paragraph of a multi-line MTEXT as its own line', () => {
+    const result = importAsciiDxf(new Document(), dxf('0\nMTEXT\n10\n0\n20\n0\n40\n2.5\n1\nOne\\PTwo\\PThree\n'));
+    expect(result.entities[0]).toMatchObject({ type: 'text', text: 'One\nTwo\nThree' });
   });
 
   it('keeps a literal backslash in ordinary TEXT/DTEXT', () => {
@@ -216,22 +221,25 @@ describe('DXF SPLINE', () => {
     ));
     expect(result.entities[0]).toMatchObject({
       type: 'bezier',
-      start: { x: 0, y: 0 }, control1: { x: 1, y: 3 }, control2: { x: 4, y: 3 }, end: { x: 5, y: 0 },
+      start: { x: 0, y: 0 },
+      segments: [{ control1: { x: 1, y: 3 }, control2: { x: 4, y: 3 }, end: { x: 5, y: 0 } }],
     });
     expect(result.approximated).toBe(0);
   });
 
-  it('samples a longer spline into a polyline and reports the approximation', () => {
+  it('fits a longer spline to a Bezier chain and reports the approximation', () => {
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf(
       '0\nSPLINE\n8\nA\n70\n8\n71\n3\n'
       + '10\n0\n20\n0\n10\n1\n20\n4\n10\n3\n20\n-2\n10\n6\n20\n4\n10\n8\n20\n0\n10\n10\n20\n2\n',
     ));
     const entity = result.entities[0];
-    expect(entity.type).toBe('polyline');
-    if (entity.type !== 'polyline') return;
-    expect(entity.vertices.length).toBeGreaterThan(10);
-    expect(entity.vertices[0]).toMatchObject({ x: 0, y: 0 });
+    expect(entity.type).toBe('bezier');
+    if (entity.type !== 'bezier') return;
+    // A general NURBS gets a close-fitting smooth curve now, not the
+    // many-vertex polyline it used to fall back to.
+    expect(entity.segments.length).toBeGreaterThan(0);
+    expect(entity.start).toMatchObject({ x: 0, y: 0 });
     expect(result.approximated).toBe(1);
   });
 

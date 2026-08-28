@@ -67,6 +67,39 @@ describe('InputController', () => {
     controller.dispose();
   });
 
+  it('lets Delete reach the selection while the command line is focused but empty, not once something is typed into it', () => {
+    // The command line holds focus almost all the time by design — a click
+    // selects an object and returns focus to it, so a command can be typed
+    // right away. Treating that the same as any other focused text field
+    // meant Delete reached the (empty) command line instead of the selection
+    // nearly every time, since it was rarely genuinely unfocused.
+    const target = new EventTarget();
+    const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn() } as unknown as HTMLInputElement;
+    const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
+    const callbacks = {
+      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
+      commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
+    };
+    new InputController(input, form, callbacks, target);
+
+    const dispatchFocusedOnInput = (key: string): void => {
+      const event = keyboard(key);
+      Object.defineProperty(event, 'target', { value: input });
+      target.dispatchEvent(event);
+    };
+
+    dispatchFocusedOnInput('Delete');
+    expect(callbacks.deleteSelection).toHaveBeenCalledOnce();
+
+    input.value = 'LINE';
+    dispatchFocusedOnInput('Delete');
+    expect(callbacks.deleteSelection).toHaveBeenCalledOnce(); // still just the once
+  });
+
   it('routes Cmd/Ctrl+C and +V to copy and paste when not typing in a field', () => {
     const target = new EventTarget();
     const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn() } as unknown as HTMLInputElement;

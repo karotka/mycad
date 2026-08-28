@@ -29,6 +29,24 @@ describe('PreviewController', () => {
     return controller.preview;
   };
 
+  it('leaves an externally-set text preview alone while typing, instead of clearing it on every cursor move', () => {
+    const controller = new PreviewController(element(), element(), element(), element());
+    controller.setPreview({ type: 'text', data: { position: { x: 0, y: 0 }, text: 'hello', font: 'Arial', height: 5 } });
+
+    controller.update(active('TEXT', 3, { position: { x: 0, y: 0 } }), { x: 99, y: 99 }, null);
+    expect(controller.preview).toEqual({ type: 'text', data: { position: { x: 0, y: 0 }, text: 'hello', font: 'Arial', height: 5 } });
+
+    controller.update(active('MTEXT', 3, { position: { x: 0, y: 0 } }), { x: 99, y: 99 }, null);
+    expect(controller.preview).toBeDefined();
+
+    controller.update(active('TEXTEDIT', 1, { textEntity: { position: { x: 0, y: 0 } } }), { x: 99, y: 99 }, null);
+    expect(controller.preview).toBeDefined();
+
+    // A step that is not the text-content step still clears it, same as before.
+    controller.update(active('TEXT', 2, { position: { x: 0, y: 0 } }), { x: 99, y: 99 }, null);
+    expect(controller.preview).toBeUndefined();
+  });
+
   it('previews every settled polyline segment, not only the one being dragged', () => {
     const vertices = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }];
     const preview = previewOf(active('POLYLINE', 1, { vertices, start: vertices[2] }), { x: 4, y: 5 });

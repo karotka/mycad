@@ -1,6 +1,7 @@
 import type { Document } from '../core/Document';
 import type { DimensionStyle } from '../core/settings';
 import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
+import { SETTINGS_DEFAULT_KEYS, storeDefault } from './settingsDefaults';
 
 export class DimensionStyleController {
   constructor(
@@ -94,6 +95,7 @@ export class DimensionStyleController {
       entity.unitSuffix = style.unitSuffix;
       entity.scale = style.scale;
     }
+    storeDefault(SETTINGS_DEFAULT_KEYS.dimensionStyle, style);
     this.doc.notify();
     this.changed();
   }

@@ -340,6 +340,23 @@ describe('GripController', () => {
   });
 });
 
+describe('nearest2d', () => {
+  it('finds a grip by its real, on-screen position, not its coordinate local to a rotated work plane', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const polyline = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false);
+    // A work plane turned 90° about Z: local (10, 0) actually sits at world (0, 10).
+    polyline.workPlane = {
+      origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 0, y: 1, z: 0 }, yAxis: { x: -1, y: 0, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+    };
+    doc.entities.push(polyline);
+    doc.selectEntity(polyline.id);
+
+    expect(grips.nearest2d({ x: 0, y: 10 }, 0.5)).toBe(1); // where the vertex actually is on screen
+    expect(grips.nearest2d({ x: 10, y: 0 }, 0.5)).toBe(-1); // its local number, not a screen position at all
+  });
+});
+
 describe('endpoint alignment tracking', () => {
   // Acquiring an endpoint lays an alignment line through it. The dragged point
   // locks onto that line and slides along it — it must not be placeable off it.

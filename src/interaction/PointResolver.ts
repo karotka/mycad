@@ -298,7 +298,14 @@ export function createPointResolver(ctx: PointResolverContext) {
     trackingLine.hidden = false;
   }
 
-  function nearestMeasurementPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, pixelTolerance = 14): { x: number; y: number; z: number } | null {
+  /**
+   * The default aperture (10px, AutoCAD's own default) — small enough that
+   * the marker only lights up close enough to the point that clicking really
+   * does land on it. Wider than that, the marker still showing read as "this
+   * click will snap here" when the click could just as easily have landed a
+   * few pixels short, on the raw cursor position instead.
+   */
+  function nearestMeasurementPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, pixelTolerance = 10): { x: number; y: number; z: number } | null {
     const candidates = measurementCandidates(doc).map((world) => ({ world }));
     if (doc.viewMode === '3d') {
       const rect = viewport.getBoundingClientRect();
@@ -317,7 +324,7 @@ export function createPointResolver(ctx: PointResolverContext) {
   function nearestGripTargetSnap(
     event: Pick<PointerEvent, 'clientX' | 'clientY'>,
     mode: ObjectSnapMode | null = gripInteraction.targetSnapMode,
-    pixelTolerance = 14,
+    pixelTolerance = 10,
   ): GripSnapTarget | null {
     if (!mode) return null;
     const active = commands.active;
@@ -346,7 +353,7 @@ export function createPointResolver(ctx: PointResolverContext) {
 
   function nearestPersistentSnap(
     event: Pick<PointerEvent, 'clientX' | 'clientY'>,
-    pixelTolerance = 14,
+    pixelTolerance = 10,
   ): GripSnapTarget | null {
     if (!doc.drafting.objectSnapEnabled || doc.drafting.objectSnapModes.length === 0) return null;
     const active = commands.active;

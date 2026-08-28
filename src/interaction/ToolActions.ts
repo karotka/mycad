@@ -2,7 +2,7 @@ import type { Vec2 } from '../math/geometry';
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
-import { cloneEntity } from '../core/entities/types';
+import { cloneEntity, removeBezierNode, removePolylineVertex } from '../core/entities/types';
 import { clipboardSize, readClipboard, setClipboard } from './clipboard';
 import { hitTestEntity } from '../core/commands/CommandManager';
 import { hitTestSolid2d } from './PickingService';
@@ -139,6 +139,10 @@ export function createToolActions(ctx: ToolActionsContext) {
   function openContextMenu(event: PointerEvent): void {
     const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
     const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
+    const vertexSection = gripMenu.querySelector<HTMLElement>('.vertex-actions');
+    const vertexButton = gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]');
+    pendingNodeDelete = null;
+    if (vertexSection) vertexSection.hidden = true;
     const showPersistentSnaps = (): void => {
       gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {
         const mode = button.dataset.persistentSnap as ObjectSnapMode;
@@ -215,8 +219,65 @@ export function createToolActions(ctx: ToolActionsContext) {
       button.hidden = !allowed.has(mode as GripMode);
       button.classList.toggle('active', gripController.mode === mode);
     });
-    if (allowed.size === 0) return;
+    // A vertex or a Bezier joint right-clicked directly is offered for
+    // deletion, provided what is left still is one: a triangle cannot lose a
+    // corner and remain a polyline, and a curve's own first or final point has
+    // nothing on its far side to reconnect to.
+    if (validEntity?.type === 'polyline' && doc.viewMode === '2d') {
+      const gripIndex = gripController.nearest2d(point, tolerance);
+      const uniqueCount = validEntity.closed ? validEntity.vertices.length - 1 : validEntity.vertices.length;
+      const minCount = validEntity.closed ? 4 : 3;
+      if (gripIndex >= 0 && uniqueCount >= minCount) {
+        pendingNodeDelete = { entityId: validEntity.id, kind: 'polyline-vertex', index: gripIndex };
+        if (vertexSection) { vertexSection.hidden = false; if (vertexButton) vertexButton.textContent = 'Delete vertex'; }
+      }
+    } else if (validEntity?.type === 'bezier' && doc.viewMode === '2d' && validEntity.segments.length >= 2) {
+      const gripIndex = gripController.nearest2d(point, tolerance);
+      // Grip layout: 0 is the shared start, then each segment contributes
+      // control1, control2, end at 1 + 3*segmentIndex — see GripController's
+      // activeGrips(). Only a grip landing exactly on some segment's own end
+      // (field 2 of that layout) is an internal joint; a control handle
+      // cannot be "removed" without breaking its segment's cubic definition.
+      if (gripIndex >= 1) {
+        const field = (gripIndex - 1) % 3;
+        const segmentBoundary = (gripIndex - 1 - field) / 3;
+        if (field === 2 && segmentBoundary < validEntity.segments.length - 1) {
+          pendingNodeDelete = { entityId: validEntity.id, kind: 'bezier-node', segmentBoundary };
+          if (vertexSection) { vertexSection.hidden = false; if (vertexButton) vertexButton.textContent = 'Delete node'; }
+        }
+      }
+    }
+    if (allowed.size === 0 && !pendingNodeDelete) return;
     showMenu();
+  }
+
+  /** What a right-clicked vertex or Bezier joint grip is waiting to have done
+   *  to it, set by `openContextMenu` and read once the menu's own button is
+   *  clicked. */
+  let pendingNodeDelete:
+    | { entityId: string; kind: 'polyline-vertex'; index: number }
+    | { entityId: string; kind: 'bezier-node'; segmentBoundary: number }
+    | null = null;
+
+  /** Removes whatever `openContextMenu` found under the click, if anything is
+   *  still pending — closing the menu without a click leaves nothing to do. */
+  function deletePendingNode(): void {
+    const pending = pendingNodeDelete;
+    pendingNodeDelete = null;
+    if (!pending) return;
+    const entity = doc.getEntity(pending.entityId);
+    if (!entity) return;
+    const after = pending.kind === 'polyline-vertex'
+      ? (entity.type === 'polyline' ? removePolylineVertex(entity, pending.index) : null)
+      : (entity.type === 'bezier' ? removeBezierNode(entity, pending.segmentBoundary) : null);
+    if (!after) return;
+    history.execute(new ReplaceObjectsEdit('Delete node', [cloneEntity(entity)], [], [after], []));
+    doc.clearSelection();
+    doc.selectEntity(after.id);
+    gripController.mode = null;
+    gripController.hoveredGrip = -1;
+    log(pending.kind === 'polyline-vertex' ? 'Vertex deleted.' : 'Node deleted.');
+    redraw();
   }
 
   return {
@@ -228,5 +289,6 @@ export function createToolActions(ctx: ToolActionsContext) {
     toggleGridDisplay,
     toggleCutArea,
     openContextMenu,
+    deletePendingNode,
   };
 }

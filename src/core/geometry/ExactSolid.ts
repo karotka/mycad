@@ -250,11 +250,17 @@ function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | n
         startAngle: 0,
         sweepAngle: Math.PI * 2,
       }];
-    case 'bezier':
-      return [{
-        kind: 'bezier',
-        poles: [path.start, path.control1, path.control2, path.end].map((point) => localToWorld(plane, point)),
-      }];
+    case 'bezier': {
+      let segmentStart = path.start;
+      return path.segments.map((segment) => {
+        const poles: SweepPathSegment3 = {
+          kind: 'bezier',
+          poles: [segmentStart, segment.control1, segment.control2, segment.end].map((point) => localToWorld(plane, point)),
+        };
+        segmentStart = segment.end;
+        return poles;
+      });
+    }
     default:
       return null;
   }
@@ -289,16 +295,18 @@ function pathStartAndTangent(path: Entity): { start: { x: number; y: number }; t
       start = { x: path.center.x + path.radius, y: path.center.y };
       tangent = { x: 0, y: 1 };
       break;
-    case 'bezier':
+    case 'bezier': {
       start = path.start;
-      tangent = { x: path.control1.x - path.start.x, y: path.control1.y - path.start.y };
+      const first = path.segments[0];
+      tangent = { x: first.control1.x - path.start.x, y: first.control1.y - path.start.y };
       if (Math.hypot(tangent.x, tangent.y) <= 1e-9) {
-        tangent = { x: path.control2.x - path.start.x, y: path.control2.y - path.start.y };
+        tangent = { x: first.control2.x - path.start.x, y: first.control2.y - path.start.y };
       }
       if (Math.hypot(tangent.x, tangent.y) <= 1e-9) {
-        tangent = { x: path.end.x - path.start.x, y: path.end.y - path.start.y };
+        tangent = { x: first.end.x - path.start.x, y: first.end.y - path.start.y };
       }
       break;
+    }
     default:
       return null;
   }

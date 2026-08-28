@@ -9,14 +9,14 @@
  */
 import { cloneEntity, expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawText } from './steps/draw';
+import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
 import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
-import { extendEntity, joinObjects, offsetEntity, trimEntity } from './steps/edit2d';
+import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStlSelection } from './steps/export';
@@ -155,7 +155,14 @@ export const COMMANDS = [
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
   { name: 'BEZIER', aliases: ['BEZ', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
+  { name: 'SPLINE', aliases: ['SPL', 'SPLINE'], execute: drawSpline, help: 'draw a smooth curve through clicked points', suggest: true, sticky: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify next point (Enter to finish):', optional: true }, { kind: 'done' }],
+    data: () => ({ points: [] }) },
   { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
+  // Same entity, same steps as TEXT — creating one is only different in that
+  // the final step answers from the on-canvas multi-line editor (see
+  // syncMtextEditor in main.ts) instead of the single-line command input.
+  { name: 'MTEXT', aliases: ['MT', 'MTEXT'], execute: drawText, help: 'draw multi-line text', suggest: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   { name: 'TEXTEDIT', aliases: ['ED', 'DDEDIT', 'TEXTEDIT'], execute: editText, help: 'edit TEXT, DTEXT or MTEXT content', suggest: true,
     steps: [{ kind: 'entity', label: 'Select text object:' }, { kind: 'text', label: 'Edit text:' }, { kind: 'done' }],
     data: () => ({}),
@@ -275,9 +282,13 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select cutting edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to trim (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({}) },
   { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], execute: offsetEntity, help: 'create an equidistant parallel line', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:' }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
+    steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:', remember: true }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },
+  { name: 'SIMPLIFY', aliases: ['SIMPLIFY', 'REDUCE'], execute: simplifyEntity, help: 'reduce a polyline’s vertex count within a tolerance', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select polyline to simplify:' }, { kind: 'number', label: 'Enter tolerance in mm:' }, { kind: 'done' }],
+    data: () => ({ entity: undefined }),
+    onStart: preselectOne('entity', (entity) => entity.type === 'polyline', 'Object preselected. Enter tolerance.') },
   { name: 'CHAMFER', aliases: ['CHA', 'CHAMFER'], execute: modifyEdgeStep, help: 'chamfer a solid edge, or the corner between two 2D lines', suggest: true,
     steps: [
       { kind: 'entity', label: 'Select solid edge, or first 2D side (line/polyline) to chamfer:', accepts: ['entity', 'edge'] },

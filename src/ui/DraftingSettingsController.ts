@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { SETTINGS_DEFAULT_KEYS, storeDefault } from './settingsDefaults';
 
 /**
  * The drafting values behind the status-bar toggles: how far the cursor steps,
@@ -52,6 +53,9 @@ export class DraftingSettingsController {
     // An empty or unreadable list would silently turn polar tracking into
     // nothing but the four quadrants, so keep the last good one instead.
     if (angles.length > 0) this.doc.drafting.polarAngles = angles;
+    storeDefault(SETTINGS_DEFAULT_KEYS.drafting, {
+      snapSize: this.doc.snapSize, gridSize: this.doc.gridSize, polarAngles: this.doc.drafting.polarAngles,
+    });
     this.doc.notify();
     this.changed();
   }

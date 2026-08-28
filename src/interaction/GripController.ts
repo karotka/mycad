@@ -3,6 +3,7 @@ import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, typ
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
 import { midpoint2, type Vec2 } from '../math/geometry';
+import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
 import { solidBounds } from './PickingService';
 import { translatedFeature } from '../core/solids/featureTransform';
 import { scaleAffine, transformedExactGeometry, translationAffine } from '../core/geometry/ExactTransform';
@@ -246,7 +247,12 @@ export class GripController {
         : entity.vertices;
       return vertices.map((point, index) => ({ point, index, shape: 'square' }));
     }
-    if (entity?.type === 'bezier' && !this.mode) return [entity.start,entity.control1,entity.control2,entity.end].map((point,index)=>({point,index,shape:'square'}));
+    if (entity?.type === 'bezier' && !this.mode) {
+      // Index 0 is the shared start; each segment after it contributes three
+      // more grips (its own control1, control2, end) at 1 + 3*segmentIndex.
+      const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+      return points.map((point, index) => ({ point, index, shape: 'square' as const }));
+    }
     if (entity?.type === 'arc' && !this.mode) { const z=(entity.center as Vec2 & {z?:number}).z; const point=(a:number):Vec2=>{const p:Vec2={x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}; return z===undefined?p:{...p,z} as Vec2;}; return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (entity?.type === 'dimension' && !this.mode) {
@@ -347,10 +353,15 @@ export class GripController {
   }
 
   nearest2d(point: Vec2, tolerance: number): number {
+    // `point` is a real world position; a grip's own point is local to the
+    // selected entity's work plane, same as its vertices or control points —
+    // which is the world position only when that plane is the world's.
+    const plane = this.doc.getSelectedEntities()[0]?.workPlane ?? WORLD_WORK_PLANE;
     let result = -1;
     let best = tolerance;
     for (const grip of this.activeGrips()) {
-      const distance = Math.hypot(point.x - grip.point.x, point.y - grip.point.y);
+      const world = localToWorld(plane, grip.point, grip.point.z ?? 0);
+      const distance = Math.hypot(point.x - world.x, point.y - world.y);
       if (distance <= best) { best = distance; result = grip.index; }
     }
     return result;
@@ -465,7 +476,19 @@ export class GripController {
       if (entity.closed && this.drag.gripIndex === 0) {
         entity.vertices[entity.vertices.length - 1] = { ...cursor };
       }
-    } else if(entity.type==='bezier'&&original.type==='bezier'){ if(this.drag.gripIndex===0)entity.start={...cursor};else if(this.drag.gripIndex===1)entity.control1={...cursor};else if(this.drag.gripIndex===2)entity.control2={...cursor};else entity.end={...cursor};
+    } else if (entity.type === 'bezier' && original.type === 'bezier') {
+      // Index 0 is the shared start; grip i>0 is field (i-1)%3 of segment
+      // floor((i-1)/3) — the same layout activeGrips() lays the points out in.
+      const gripIndex = this.drag.gripIndex;
+      if (gripIndex === 0) entity.start = { ...cursor };
+      else {
+        const segmentIndex = Math.floor((gripIndex - 1) / 3);
+        const field = (gripIndex - 1) % 3;
+        const segment = entity.segments[segmentIndex];
+        if (field === 0) segment.control1 = { ...cursor };
+        else if (field === 1) segment.control2 = { ...cursor };
+        else segment.end = { ...cursor };
+      }
     } else if(entity.type==='arc'&&original.type==='arc'){ if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
     else if (entity.type === 'dimension' && original.type === 'dimension') {

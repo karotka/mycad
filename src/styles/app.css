@@ -213,14 +213,16 @@ html, body, #app {
 
 /* Object snap marker. The shape says which snap was found, as in AutoCAD:
    square = endpoint, triangle = midpoint, circle = centre, X = intersection,
-   right angle = perpendicular. */
+   right angle = perpendicular. Colour reinforces it a second way — endpoint
+   cyan, any centre/midpoint yellow, perpendicular orange, intersection green —
+   since the shape alone is easy to mistake for a nearby one at a glance. */
 .snap-marker {
   position: absolute;
   z-index: 46;
   width: 11px;
   height: 11px;
   transform: translate(-50%, -50%);
-  border: 2px solid #65ff9a;
+  border: 2px solid #4de1ff;
   background: rgba(13, 17, 23, 0.88);
   pointer-events: none;
   box-shadow: 0 0 0 2px rgba(13, 17, 23, 0.7);
@@ -233,8 +235,8 @@ html, body, #app {
   box-shadow: none;
   width: 13px;
   height: 13px;
-  border-left: 2px solid #65ff9a;
-  border-bottom: 2px solid #65ff9a;
+  border-left: 2px solid #ff9f43;
+  border-bottom: 2px solid #ff9f43;
 }
 .snap-marker[data-snap='perpendicular']::before {
   content: '';
@@ -243,16 +245,18 @@ html, body, #app {
   top: 0;
   width: 2px;
   height: 8px;
-  background: #65ff9a;
+  background: #ff9f43;
 }
 
 .snap-marker[data-snap='center'] {
   border-radius: 50%;
+  border-color: #ffd84d;
 }
 
 /* Node: a circle crossed through its centre, for a POINT entity. */
 .snap-marker[data-snap='node'] {
   border-radius: 50%;
+  border-color: #65ff9a;
 }
 .snap-marker[data-snap='node']::before,
 .snap-marker[data-snap='node']::after {
@@ -278,7 +282,7 @@ html, body, #app {
   box-shadow: none;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-bottom: 11px solid #65ff9a;
+  border-bottom: 11px solid #ffd84d;
 }
 
 /* Nearest: an hourglass (⋈) — two triangles meeting at a point. */
@@ -642,7 +646,7 @@ html, body, #app {
 .layer-panel header button { width: 24px; height: 20px; border: 1px solid #52606c; background: #28313a; color: #fff; cursor: pointer; }
 .panel-header-actions { display: flex; gap: 4px; }
 #block-purge { width: auto; padding: 0 6px; font-size: 10px; }
-.layer-list { max-height: 210px; overflow-y: auto; border-top: 1px solid #343d46; }
+.layer-list { max-height: calc(min(620px, 100vh - 150px) - 38px); overflow-y: auto; border-top: 1px solid #343d46; }
 .layer-row { display: grid; grid-template-columns: 18px 24px 24px 25px 54px 50px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
 .layer-row .layer-lineweight, .layer-row .layer-linetype { display: flex; align-items: center; justify-content: center; height: 21px; min-width: 0; margin: 0 2px; padding: 0; border: 1px solid #3a444d; border-radius: 2px; background: #12171c; color: #cbd5df; font: 10px 'SF Mono', monospace; cursor: pointer; }
 .layer-row .layer-lineweight:hover, .layer-row .layer-linetype:hover { border-color: #67c9ff; color: #fff; }
@@ -1151,7 +1155,8 @@ html, body, #app {
   font-size: 10px;
   text-transform: uppercase;
 }
-.persistent-snaps {
+.persistent-snaps,
+.vertex-actions {
   margin-top: 5px;
   padding-top: 3px;
   border-top: 1px solid #3b4653;
@@ -1221,6 +1226,70 @@ html, body, #app {
 }
 
 .text-options button:hover { background: #1383c3; }
+
+.mtext-editor {
+  position: absolute;
+  z-index: 45;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid #52606c;
+  border-radius: 4px;
+  background: rgba(27, 33, 39, 0.98);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.mtext-editor-font,
+.mtext-editor-height {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #aeb9c3;
+  font-size: 11px;
+}
+
+.mtext-editor-font select,
+.mtext-editor-height input {
+  min-width: 0;
+  height: 26px;
+  padding: 3px 7px;
+  border: 1px solid #596672;
+  border-radius: 2px;
+  background: #11171c;
+  color: #eef4f8;
+  font: 12px Arial, sans-serif;
+}
+
+.mtext-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  padding: 6px 7px;
+  border: 1px solid #596672;
+  border-radius: 2px;
+  background: #11171c;
+  color: #eef4f8;
+  font: 12px 'SF Mono', monospace;
+  resize: vertical;
+}
+
+.mtext-editor-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+.mtext-editor-actions button {
+  flex: 1;
+  padding: 6px 9px;
+  border: 1px solid #596672;
+  border-radius: 2px;
+  background: #28313a;
+  color: #eef4f8;
+  font: 600 11px Arial, sans-serif;
+  cursor: pointer;
+}
+
+#mtext-done { border-color: #168bd0; background: #0b6fa8; color: white; }
+#mtext-done:hover { background: #1383c3; }
+#mtext-cancel:hover { background: #384049; }
 
 .context-menu button {
   display: block;

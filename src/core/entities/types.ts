@@ -1,6 +1,6 @@
-import { dist2, type Vec2, type Vec3 } from '../../math/geometry';
+import { closePolyline, dist2, type Vec2, type Vec3 } from '../../math/geometry';
 import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
-import { isStrokeFont, strokeTextWidth } from '../text/strokeFont';
+import { isStrokeFont, strokeTextHeight, strokeTextWidth } from '../text/strokeFont';
 import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
 
 export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert';
@@ -73,7 +73,15 @@ export interface PolylineEntity extends EntityBase {
   closed: boolean;
 }
 export interface ArcEntity extends EntityBase { type: 'arc'; center: Vec2; radius: number; startAngle: number; sweepAngle: number; }
-export interface BezierEntity extends EntityBase { type: 'bezier'; start: Vec2; control1: Vec2; control2: Vec2; end: Vec2; }
+/** One cubic run: `control1`/`control2` shape it, `end` is where it meets the
+ *  next segment (or the curve's own end, for the last one). */
+export interface BezierSegment { control1: Vec2; control2: Vec2; end: Vec2; }
+/**
+ * A chain of one or more cubic Bezier segments sharing a single start point —
+ * a plain cubic curve is the one-segment case, and JOIN, a fitted multi-point
+ * SPLINE, or an imported multi-span DXF spline are the general one.
+ */
+export interface BezierEntity extends EntityBase { type: 'bezier'; start: Vec2; segments: BezierSegment[]; }
 export interface HatchPatternLine { angle: number; base: Vec2; offset: Vec2; }
 export interface HatchEntity extends EntityBase {
   type: 'hatch';
@@ -423,27 +431,47 @@ export function ellipseAxisPoints(e: EllipseEntity): Vec2[] {
   return [at(e.radiusX, 0), at(0, e.radiusY), at(-e.radiusX, 0), at(0, -e.radiusY)];
 }
 
-export function curvePoints(e: ArcEntity | BezierEntity, segments = 64): Vec2[] {
-  const points: Vec2[] = [];
-  // The reference point may sit off the work plane (drawn in another UCS); carry
-  // its Z so the sampled curve keeps its depth for picking, grips and drawing.
-  const arcZ = e.type === 'arc' ? pointZ(e.center) : undefined;
-  const bz = e.type === 'bezier'
-    ? [pointZ(e.start), pointZ(e.control1), pointZ(e.control2), pointZ(e.end)]
-    : null;
-  const bezierHasZ = bz ? bz.some((z) => z !== undefined) : false;
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    if (e.type === 'arc') {
+/**
+ * A sampled arc, or a sampled Bezier chain — each segment gets its own share
+ * of `resolution`, so a JOINed multi-segment curve keeps the same per-length
+ * smoothness a single cubic gets, rather than spreading one fixed point count
+ * across however many pieces happen to make it up. The join between two
+ * segments is one point, not two: each segment after the first starts
+ * sampling past its own t = 0, which is exactly where the previous one ended.
+ */
+export function curvePoints(e: ArcEntity | BezierEntity, resolution = 64): Vec2[] {
+  if (e.type === 'arc') {
+    const arcZ = pointZ(e.center);
+    const points: Vec2[] = [];
+    for (let i = 0; i <= resolution; i++) {
+      const t = i / resolution;
       const a = e.startAngle + e.sweepAngle * t;
       points.push(withZ({ x: e.center.x + Math.cos(a) * e.radius, y: e.center.y + Math.sin(a) * e.radius }, arcZ));
-    } else {
+    }
+    return points;
+  }
+  const steps = Math.max(1, Math.round(resolution / e.segments.length));
+  const points: Vec2[] = [];
+  let segmentStart = e.start;
+  let startZ = pointZ(e.start);
+  e.segments.forEach((segment, segmentIndex) => {
+    const controlZ1 = pointZ(segment.control1), controlZ2 = pointZ(segment.control2), endZ = pointZ(segment.end);
+    const hasZ = startZ !== undefined || controlZ1 !== undefined || controlZ2 !== undefined || endZ !== undefined;
+    for (let i = segmentIndex === 0 ? 0 : 1; i <= steps; i++) {
+      const t = i / steps;
       const u = 1 - t;
-      const point: Vec2 = { x: u ** 3 * e.start.x + 3 * u ** 2 * t * e.control1.x + 3 * u * t ** 2 * e.control2.x + t ** 3 * e.end.x, y: u ** 3 * e.start.y + 3 * u ** 2 * t * e.control1.y + 3 * u * t ** 2 * e.control2.y + t ** 3 * e.end.y };
-      if (bezierHasZ) (point as Vec2 & { z: number }).z = u ** 3 * (bz![0] ?? 0) + 3 * u ** 2 * t * (bz![1] ?? 0) + 3 * u * t ** 2 * (bz![2] ?? 0) + t ** 3 * (bz![3] ?? 0);
+      const point: Vec2 = {
+        x: u ** 3 * segmentStart.x + 3 * u ** 2 * t * segment.control1.x + 3 * u * t ** 2 * segment.control2.x + t ** 3 * segment.end.x,
+        y: u ** 3 * segmentStart.y + 3 * u ** 2 * t * segment.control1.y + 3 * u * t ** 2 * segment.control2.y + t ** 3 * segment.end.y,
+      };
+      if (hasZ) {
+        (point as Vec2 & { z: number }).z = u ** 3 * (startZ ?? 0) + 3 * u ** 2 * t * (controlZ1 ?? 0) + 3 * u * t ** 2 * (controlZ2 ?? 0) + t ** 3 * (endZ ?? 0);
+      }
       points.push(point);
     }
-  }
+    segmentStart = segment.end;
+    startZ = endZ;
+  });
   return points;
 }
 
@@ -757,7 +785,8 @@ function computeExpandedInsertEntities(insert: InsertEntity): Entity[] {
         entity = { ...cloneEntity(source), type: 'polyline', vertices: curvePoints(source).map(at), closed: false } as PolylineEntity;
         break;
       case 'bezier': entity = {
-        ...cloneEntity(source), start: at(source.start), control1: at(source.control1), control2: at(source.control2), end: at(source.end),
+        ...cloneEntity(source), start: at(source.start),
+        segments: source.segments.map((segment) => ({ control1: at(segment.control1), control2: at(segment.control2), end: at(segment.end) })),
       }; break;
       case 'hatch': entity = {
         ...cloneEntity(source),
@@ -991,17 +1020,23 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     case 'arc':
     case 'bezier': { const p = curvePoints(e); return { min: { x: Math.min(...p.map(v => v.x)), y: Math.min(...p.map(v => v.y)) }, max: { x: Math.max(...p.map(v => v.x)), y: Math.max(...p.map(v => v.y)) } }; }
     case 'text': {
+      const lines = e.text.split('\n');
       // A stroke font knows its own width exactly, so the box is the letters
       // rather than a guess at them — which is what picking and zoom-extents
       // work off. The .62 stays for system fonts, where measuring the glyphs
       // needs a canvas this has no business holding.
-      const width = isStrokeFont(e.font) ? strokeTextWidth(e.text, e.height) : e.text.length * e.height * .62;
+      const width = isStrokeFont(e.font)
+        ? strokeTextWidth(e.text, e.height, e.font)
+        : Math.max(...lines.map((line) => line.length)) * e.height * .62;
+      // Line 1 sits between its baseline (y=0) and cap height above it; the
+      // block extends below that by however far the rest of the lines drop.
+      const bottom = e.height - strokeTextHeight(e.text, e.height);
       const angle = e.rotation ?? 0;
       const rotate = (point: Vec2): Vec2 => ({
         x: e.position.x + point.x * Math.cos(angle) - point.y * Math.sin(angle),
         y: e.position.y + point.x * Math.sin(angle) + point.y * Math.cos(angle),
       });
-      const points = [rotate({ x: 0, y: 0 }), rotate({ x: width, y: 0 }), rotate({ x: width, y: e.height }), rotate({ x: 0, y: e.height })];
+      const points = [rotate({ x: 0, y: bottom }), rotate({ x: width, y: bottom }), rotate({ x: width, y: e.height }), rotate({ x: 0, y: e.height })];
       return {
         min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
         max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
@@ -1037,6 +1072,41 @@ export function closedVertices(entity: Entity): Vec2[] | null {
   return null;
 }
 
+/**
+ * Removes one vertex from a polyline, keeping a closed one closed (and its
+ * closing duplicate in sync) — or null if there are too few left for it to
+ * still be a shape: a triangle cannot lose a corner and remain a polyline, nor
+ * a line its one other end.
+ */
+export function removePolylineVertex(entity: PolylineEntity, index: number): PolylineEntity | null {
+  const closingDuplicate = entity.closed && entity.vertices.length > 1
+    && dist2(entity.vertices[0], entity.vertices.at(-1)!) < 1e-6;
+  const unique = closingDuplicate ? entity.vertices.slice(0, -1) : entity.vertices;
+  if (index < 0 || index >= unique.length) return null;
+  const minCount = entity.closed ? 3 : 2;
+  if (unique.length <= minCount) return null;
+  const remaining = unique.filter((_, vertexIndex) => vertexIndex !== index);
+  return { ...cloneEntity(entity), vertices: entity.closed ? closePolyline(remaining) : remaining };
+}
+
+/**
+ * Removes one internal joint from a Bezier chain — where segment
+ * `segmentBoundary` meets the next one — merging the two into a single
+ * segment that keeps each survivor's own tangent handle (its `control1` from
+ * the first segment, its `control2` from the second) rather than refitting
+ * the curve. The curve's own first and final point cannot be removed this
+ * way: there is nothing on the far side of either to reconnect it to.
+ */
+export function removeBezierNode(entity: BezierEntity, segmentBoundary: number): BezierEntity | null {
+  if (entity.segments.length < 2) return null;
+  if (segmentBoundary < 0 || segmentBoundary >= entity.segments.length - 1) return null;
+  const before = entity.segments[segmentBoundary];
+  const after = entity.segments[segmentBoundary + 1];
+  const merged: BezierSegment = { control1: before.control1, control2: after.control2, end: after.end };
+  const segments = [...entity.segments.slice(0, segmentBoundary), merged, ...entity.segments.slice(segmentBoundary + 2)];
+  return { ...cloneEntity(entity), segments };
+}
+
 export function getEntityPoints(e: Entity): Vec2[] {
   switch (e.type) {
     case 'insert': return [e.position, ...expandedInsertEntities(e).flatMap(getEntityPoints)];
@@ -1060,7 +1130,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
       return e.vertices;
     case 'hatch': return e.loops.flat();
     case 'arc': return [e.center, ...curvePoints(e, 2)];
-    case 'bezier': return [e.start, e.control1, e.control2, e.end];
+    case 'bezier': return [e.start, ...e.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
     case 'text': return [e.position];
     case 'dimension': return [e.start, e.end, e.offset, ...(e.arcPoint ? [e.arcPoint] : []), ...(e.textPosition ? [e.textPosition] : [])];
   }
@@ -1110,7 +1180,10 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
       copy.patternLines = copy.patternLines.map((line) => ({ ...line, base: fn(line.base) }));
       break;
     case 'arc': copy.center = fn(copy.center); break;
-    case 'bezier': copy.start = fn(copy.start); copy.control1 = fn(copy.control1); copy.control2 = fn(copy.control2); copy.end = fn(copy.end); break;
+    case 'bezier':
+      copy.start = fn(copy.start);
+      copy.segments = copy.segments.map((segment) => ({ control1: fn(segment.control1), control2: fn(segment.control2), end: fn(segment.end) }));
+      break;
     case 'text': copy.position = fn(copy.position); break;
     // A dragged text is an absolute point like the rest, so it has to travel
     // with them — left behind, it would drift off its own dimension on a move.
@@ -1126,8 +1199,8 @@ export function isLineLikeEntity(entity: Entity): entity is Extract<Entity, { ty
 
 /** Something OFFSET can make a parallel copy of. */
 export function isOffsetEntity(entity: Entity): boolean {
-  return entity.type === 'line' || entity.type === 'circle' || entity.type === 'rectangle'
-    || entity.type === 'octagon' || (entity.type === 'polyline' && entity.closed);
+  return entity.type === 'line' || entity.type === 'arc' || entity.type === 'circle' || entity.type === 'ellipse'
+    || entity.type === 'rectangle' || entity.type === 'octagon' || entity.type === 'polyline';
 }
 
 /** A closed shape that can be swept or extruded into a solid. */

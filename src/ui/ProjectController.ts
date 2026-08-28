@@ -3,6 +3,7 @@ import type { CommandHistory } from '../core/history/CommandHistory';
 import { AddEntitiesEdit, CompositeEdit, SetBlockDefinitionsEdit, SetWorkPlanesEdit, captureWorkPlanes, worldWorkPlaneState } from '../core/history/edits';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings } from '../core/settings';
+import { SETTINGS_DEFAULT_KEYS, loadStoredDefault } from './settingsDefaults';
 import { importAsciiDxf } from '../io/DxfImport';
 import { importExcellon } from '../io/ExcellonImport';
 import { exportAsciiDxf } from '../io/DxfExport';
@@ -105,14 +106,17 @@ export class ProjectController {
       this.doc.layerLineweight = { '0': DEFAULT_LINE_WEIGHT_MM };
       this.doc.layerLinetype = { '0': DEFAULT_LINE_TYPE };
       this.doc.hiddenLayers.clear();
-      this.doc.gridSize = 1;
+      const draftingDefaults = loadStoredDefault(SETTINGS_DEFAULT_KEYS.drafting, () => ({
+        snapSize: 0.5, gridSize: 1, polarAngles: defaultDraftingSettings().polarAngles,
+      }));
+      this.doc.gridSize = draftingDefaults.gridSize;
       this.doc.gridVisible = true;
-      this.doc.snapSize = 0.5;
+      this.doc.snapSize = draftingDefaults.snapSize;
       this.doc.snapEnabled = true;
-      this.doc.drafting = defaultDraftingSettings();
-      this.doc.dimensionStyle = defaultDimensionStyle();
-      this.doc.gcode = defaultGcodeOptions();
-      this.doc.hatch = defaultHatchSettings();
+      this.doc.drafting = { ...defaultDraftingSettings(), polarAngles: draftingDefaults.polarAngles };
+      this.doc.dimensionStyle = loadStoredDefault(SETTINGS_DEFAULT_KEYS.dimensionStyle, defaultDimensionStyle);
+      this.doc.gcode = loadStoredDefault(SETTINGS_DEFAULT_KEYS.gcode, defaultGcodeOptions);
+      this.doc.hatch = loadStoredDefault(SETTINGS_DEFAULT_KEYS.hatch, defaultHatchSettings);
       this.doc.viewMode = '2d';
       this.doc.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
       this.doc.namedWorkPlanes = [];

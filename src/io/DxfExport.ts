@@ -297,16 +297,24 @@ function writePolyline(pair: Pair, entity: { layer: string; aci: number }, verti
 
 function writeBezier(pair: Pair, entity: Extract<Entity, { type: 'bezier' }>): void {
   start(pair, 'SPLINE', entity);
-  // A single clamped cubic: degree 3, four control points, the knot vector that
-  // makes it pass through its ends. The importer reads exactly this back into a
-  // bezier without loss.
+  // A clamped, degree-3 Bezier spline: one span per segment, each fully
+  // independent of its neighbours (knot multiplicity 3 at every internal
+  // joint — the same "no smoothing across the join" our own grips give it).
+  // One segment is exactly the [0,0,0,0,1,1,1,1] single-cubic case this wrote
+  // before there were ever more than one; the importer reads either back
+  // without loss.
+  const segmentCount = entity.segments.length;
+  const controlPoints = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
   pair(70, 8); // planar
   pair(71, 3);
   pair(72, 8);
-  pair(73, 4);
+  pair(73, controlPoints.length);
   pair(74, 0);
-  for (const knot of [0, 0, 0, 0, 1, 1, 1, 1]) pair(40, num(knot));
-  for (const control of [entity.start, entity.control1, entity.control2, entity.end]) point(pair, 10, 20, control);
+  const knots: number[] = [0, 0, 0, 0];
+  for (let joint = 1; joint < segmentCount; joint++) knots.push(joint, joint, joint);
+  knots.push(segmentCount, segmentCount, segmentCount, segmentCount);
+  for (const knot of knots) pair(40, num(knot));
+  for (const control of controlPoints) point(pair, 10, 20, control);
 }
 
 /**

@@ -38,6 +38,7 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
     'G21 ; mm',
     'G90 ; absolute',
     ...codeLines(options.penUpCode),
+    ...dwellLines(options.penDelayMs),
     ...codeLines(options.homingCode),
   ];
   const skipped: Record<string, number> = {};
@@ -62,7 +63,9 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
         if (Math.abs(centre.z) > 1e-6) { offPlane++; continue; }
         passes.push(`G0 X${format(centre.x)} Y${format(centre.y)} F${format(options.travelRate)}`);
         passes.push(...codeLines(options.penDownCode));
+        passes.push(...dwellLines(options.penDelayMs));
         passes.push(...codeLines(options.penUpCode));
+        passes.push(...dwellLines(options.penDelayMs));
         moveCount++;
         continue;
       }
@@ -79,11 +82,13 @@ export function exportGcode(doc: Document, options: GcodeOptions = doc.gcode): G
       const points = path.closed ? [...path.points, path.points[0]] : path.points;
       passes.push(`G0 X${format(points[0].x)} Y${format(points[0].y)} F${format(options.travelRate)}`);
       passes.push(...codeLines(options.penDownCode));
+      passes.push(...dwellLines(options.penDelayMs));
       for (const point of points.slice(1)) {
         passes.push(`G1 X${format(point.x)} Y${format(point.y)} F${format(options.feedRate)}`);
         moveCount++;
       }
       passes.push(...codeLines(options.penUpCode));
+      passes.push(...dwellLines(options.penDelayMs));
     }
     if (passes.length === 0) continue;
     lines.push(`; --- layer: ${layer} ---`, ...passes);
@@ -124,4 +129,9 @@ function format(value: number): string {
 /** A setting is one line in the UI, but imported project data may use a sequence. */
 function codeLines(code: string): string[] {
   return code.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+/** Grbl's dwell takes seconds, not milliseconds — the setting stays in ms since that is what a servo datasheet gives. */
+function dwellLines(delayMs: number): string[] {
+  return delayMs > 0 ? [`G4 P${format(delayMs / 1000)}`] : [];
 }

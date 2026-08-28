@@ -3,7 +3,7 @@ import type { Entity } from '../core/entities/types';
 import { curvePoints, dimensionGeometry, expandedInsertEntities } from '../core/entities/types';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray } from '../core/lineStyles';
 import { hatchPatternSegments } from '../io/DxfHatch';
-import { isStrokeFont, strokeText } from '../core/text/strokeFont';
+import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import type { Vec2 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 
@@ -143,13 +143,17 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         drawPolyline(entity, curvePoints(entity), false);
         break;
       case 'bezier': {
-        const start = toPage(entity.start), c1 = toPage(entity.control1), c2 = toPage(entity.control2), end = toPage(entity.end);
-        parts.push(`<path d="M${fmt(start.x)},${fmt(start.y)} C${fmt(c1.x)},${fmt(c1.y)} ${fmt(c2.x)},${fmt(c2.y)} ${fmt(end.x)},${fmt(end.y)}" ${strokeAttrs(entity)}/>`);
+        const start = toPage(entity.start);
+        const curves = entity.segments.map((segment) => {
+          const c1 = toPage(segment.control1), c2 = toPage(segment.control2), end = toPage(segment.end);
+          return `C${fmt(c1.x)},${fmt(c1.y)} ${fmt(c2.x)},${fmt(c2.y)} ${fmt(end.x)},${fmt(end.y)}`;
+        });
+        parts.push(`<path d="M${fmt(start.x)},${fmt(start.y)} ${curves.join(' ')}" ${strokeAttrs(entity)}/>`);
         break;
       }
       case 'text': {
         if (isStrokeFont(entity.font)) {
-          for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })) {
+          for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })) {
             drawPolyline(entity, stroke, false);
           }
           break;
@@ -157,7 +161,15 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         const p = toPage(entity.position);
         const deg = (-(entity.rotation ?? 0) * 180) / Math.PI;
         const heightMm = Math.max(0.1, entity.height * scale);
-        parts.push(`<text x="${fmt(p.x)}" y="${fmt(p.y)}" transform="rotate(${fmt(deg)} ${fmt(p.x)} ${fmt(p.y)})" font-family="${esc(entity.font ?? 'Arial')}" font-size="${fmt(heightMm)}" fill="${printColorHex(entity.color, style.colorMode)}">${esc(entity.text)}</text>`);
+        const lineStepMm = heightMm * DEFAULT_LINE_SPACING;
+        const fontAttrs = `font-family="${esc(entity.font ?? 'Arial')}" font-size="${fmt(heightMm)}" fill="${printColorHex(entity.color, style.colorMode)}"`;
+        // Every line rotates rigidly around the first line's anchor, same as
+        // the stroke font and the canvas renderer, rather than each around
+        // its own (would tilt each line off the last instead of as a block).
+        entity.text.split('\n').forEach((line, index) => {
+          const y = p.y + index * lineStepMm;
+          parts.push(`<text x="${fmt(p.x)}" y="${fmt(y)}" transform="rotate(${fmt(deg)} ${fmt(p.x)} ${fmt(p.y)})" ${fontAttrs}>${esc(line)}</text>`);
+        });
         break;
       }
       case 'dimension': {

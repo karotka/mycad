@@ -41,6 +41,31 @@ describe('ProjectController', () => {
     expect(callbacks.redraw).toHaveBeenCalledOnce();
   });
 
+  it('seeds a new project from a setting changed earlier, not the hardcoded factory default', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+    });
+    store.set('mycad.defaults.gcode', JSON.stringify({ penDelayMs: 250 }));
+    store.set('mycad.defaults.drafting', JSON.stringify({ snapSize: 2, gridSize: 20, polarAngles: [15, 75] }));
+    const doc = new Document();
+    const callbacks = {
+      captureView: vi.fn(), cancelInteraction: vi.fn(), resetView: vi.fn(), applyView: vi.fn(),
+      zoomExtents: vi.fn(), renderLayers: vi.fn(), log: vi.fn(), clearLog: vi.fn(),
+      redraw: vi.fn(), focusInput: vi.fn(),
+    } as unknown as ProjectControllerCallbacks;
+    const controller = new ProjectController(doc, new CommandHistory(doc), callbacks);
+
+    controller.newProject(false);
+
+    expect(doc.gcode.penDelayMs).toBe(250);
+    expect(doc.snapSize).toBe(2);
+    expect(doc.gridSize).toBe(20);
+    expect(doc.drafting.polarAngles).toEqual([15, 75]);
+    vi.unstubAllGlobals();
+  });
+
   it('remembers an opened path and quick-saves back to it without a dialog', async () => {
     const doc = new Document();
     const opened = new Document();

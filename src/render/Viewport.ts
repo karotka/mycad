@@ -6,7 +6,7 @@ import { entityRenderKey } from './entityRenderKey';
 import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import type { UcsHandleName } from '../math/ucsAxisRotation';
-import { isStrokeFont, strokeText } from '../core/text/strokeFont';
+import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
@@ -364,12 +364,14 @@ export class Canvas2DRenderer {
         // curve into 65 JS points made a selected illustration cost tens of
         // thousands of point calculations twice per SCALE frame.
         const start = toScreen(entity.start);
-        const control1 = toScreen(entity.control1);
-        const control2 = toScreen(entity.control2);
-        const end = toScreen(entity.end);
         this.ctx.beginPath();
         this.ctx.moveTo(start.x, start.y);
-        this.ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+        for (const segment of entity.segments) {
+          const control1 = toScreen(segment.control1);
+          const control2 = toScreen(segment.control2);
+          const end = toScreen(segment.end);
+          this.ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+        }
         this.ctx.stroke();
         break;
       }
@@ -379,7 +381,7 @@ export class Canvas2DRenderer {
         // will draw. A system font has no strokes and is still filled.
         if (isStrokeFont(entity.font)) {
           this.ctx.beginPath();
-          for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })) {
+          for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })) {
             stroke.forEach((point, index) => {
               const screen = toScreen(point);
               if (index === 0) this.ctx.moveTo(screen.x, screen.y); else this.ctx.lineTo(screen.x, screen.y);
@@ -393,7 +395,8 @@ export class Canvas2DRenderer {
         this.ctx.translate(p.x, p.y);
         this.ctx.rotate(-(entity.rotation ?? 0));
         this.ctx.font=`${Math.max(0.5,entity.height*this.zoom)}px ${JSON.stringify(entity.font ?? 'Arial')}`;
-        this.ctx.fillText(entity.text,0,0);
+        const lineHeightPx = entity.height * DEFAULT_LINE_SPACING * this.zoom;
+        entity.text.split('\n').forEach((line, index) => this.ctx.fillText(line, 0, index * lineHeightPx));
         this.ctx.restore();
         break;
       }
@@ -630,7 +633,16 @@ export class Canvas2DRenderer {
     } else if (preview.type === 'bezier') {
       const q=preview.data as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2}; const a=worldToScreen(q.start,w,h,this.pan,this.zoom),b=worldToScreen(q.control1,w,h,this.pan,this.zoom),c=worldToScreen(q.control2,w,h,this.pan,this.zoom),d2=worldToScreen(q.end,w,h,this.pan,this.zoom);this.ctx.beginPath();this.ctx.moveTo(a.x,a.y);this.ctx.bezierCurveTo(b.x,b.y,c.x,c.y,d2.x,d2.y);this.ctx.stroke();
     } else if (preview.type === 'text') {
-      const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const p=worldToScreen(q.position,w,h,this.pan,this.zoom);this.ctx.setLineDash([]);this.ctx.font=`${Math.max(0.5,(q.height ?? 2.5)*this.zoom)}px ${JSON.stringify(q.font ?? 'Arial')}`;this.ctx.fillStyle='#888';this.ctx.fillText(q.text,p.x,p.y);
+      const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const previewHeight=q.height ?? 2.5;this.ctx.setLineDash([]);
+      if (isStrokeFont(q.font)) {
+        this.ctx.strokeStyle='#888';this.ctx.beginPath();
+        for (const stroke of strokeText(q.text,{position:q.position,height:previewHeight,font:q.font})) {
+          stroke.forEach((point,index)=>{const screen=worldToScreen(point,w,h,this.pan,this.zoom);if(index===0)this.ctx.moveTo(screen.x,screen.y);else this.ctx.lineTo(screen.x,screen.y);});
+        }
+        this.ctx.stroke();
+      } else {
+        const p=worldToScreen(q.position,w,h,this.pan,this.zoom);this.ctx.font=`${Math.max(0.5,previewHeight*this.zoom)}px ${JSON.stringify(q.font ?? 'Arial')}`;this.ctx.fillStyle='#888';const previewLineHeightPx=previewHeight*DEFAULT_LINE_SPACING*this.zoom;q.text.split('\n').forEach((line,index)=>this.ctx.fillText(line,p.x,p.y+index*previewLineHeightPx));
+      }
     }
 
     this.ctx.setLineDash([]);
@@ -2056,17 +2068,22 @@ export class Viewport3D {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d')!;
     const pixelHeight = 192;
+    const lines = text.split('\n');
     context.font = `${pixelHeight}px ${JSON.stringify(font)}`;
-    const measuredWidth = Math.max(1, Math.ceil(context.measureText(text).width));
+    const measuredWidth = Math.max(1, Math.ceil(Math.max(...lines.map((line) => context.measureText(line).width))));
+    const lineStepPx = pixelHeight * DEFAULT_LINE_SPACING;
     canvas.width = measuredWidth + 16;
-    canvas.height = pixelHeight + 32;
+    canvas.height = pixelHeight + 32 + (lines.length - 1) * lineStepPx;
+    // Resizing the canvas resets its 2D state, so the font has to be set again.
     context.font = `${pixelHeight}px ${JSON.stringify(font)}`;
     context.textBaseline = 'alphabetic';
     context.fillStyle = '#ffffff';
-    context.fillText(text, 8, pixelHeight + 8);
+    lines.forEach((line, index) => context.fillText(line, 8, pixelHeight + 8 + index * lineStepPx));
 
     const aspect = canvas.width / canvas.height;
-    const objectHeight = Math.max(0.001, height);
+    // The canvas-to-world scale a single line would use, so extra lines grow
+    // the plane proportionally instead of squashing every line to fit `height`.
+    const objectHeight = Math.max(0.001, height) * (canvas.height / (pixelHeight + 32));
     const objectWidth = objectHeight * aspect;
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;

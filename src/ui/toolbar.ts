@@ -8,12 +8,18 @@ import { toolIcon } from './toolIcons';
  */
 
 export const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Bezier', 'BEZIER'], ['Hatch', 'HATCH'], ['Text', 'TEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
 ];
 export const circleTools: Array<[string, string, CommandName]> = [
   ['Circle', 'Circle by radius', 'CIRCLE'],
   ['Diameter', 'Circle by diameter', 'CIRCLE_DIAMETER'],
   ['Ellipse', 'Ellipse', 'ELLIPSE'],
+];
+// Both draw the same entity — a Bezier chain — one segment at a time from
+// explicit control points, or all at once fitted through clicked points.
+export const curveTools: Array<[string, string, CommandName]> = [
+  ['Bezier', 'Bezier — explicit control points', 'BEZIER'],
+  ['Spline', 'Spline — fit through clicked points', 'SPLINE'],
 ];
 export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
 export const solidTools: Array<[string, CommandName]> = [
@@ -67,6 +73,12 @@ export function circleFlyout(currentCircle: CommandName): string {
   const current = circleTools.find(([, , command]) => command === currentCircle) ?? ['Circle', 'Circle by radius', 'CIRCLE'] as const;
   const [label, tooltip] = current;
   return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="circle-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentCircle)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="circle-flyout" hidden>${circleTools.map(([name, tooltipText, command]) => `<button data-circle-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
+}
+
+export function curveFlyout(currentCurve: CommandName): string {
+  const current = curveTools.find(([, , command]) => command === currentCurve) ?? curveTools[0];
+  const [label, tooltip] = current;
+  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="curve-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentCurve)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="curve-flyout" hidden>${curveTools.map(([name, tooltipText, command]) => `<button data-curve-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
 }
 
 export function dimensionFlyout(currentDimension: CommandName): string {

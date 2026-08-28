@@ -23,6 +23,24 @@ describe('ProjectIO', () => {
     expect(target.entities[0]).toMatchObject({ type: 'insert', blockName: 'Part', position: { x: 10, y: 20 }, scaleX: 2 });
   });
 
+  it('migrates a bezier saved before multi-segment splines into a one-segment chain', () => {
+    // Old shape: control1/control2/end sat directly on the entity, not inside
+    // a `segments` array — a project saved before BezierEntity grew one.
+    const source = new Document();
+    source.addEntity(source.createBezier({ x: 0, y: 0 }, { x: 1, y: 5 }, { x: 8, y: 5 }, { x: 10, y: 0 }));
+    const saved = JSON.parse(serializeProject(source));
+    const [start, control1, control2, end] = [saved.entities[0].start, saved.entities[0].segments[0].control1, saved.entities[0].segments[0].control2, saved.entities[0].segments[0].end];
+    saved.entities[0] = { ...saved.entities[0], start, control1, control2, end, segments: undefined };
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.entities[0]).toMatchObject({
+      type: 'bezier', start: { x: 0, y: 0 },
+      segments: [{ control1: { x: 1, y: 5 }, control2: { x: 8, y: 5 }, end: { x: 10, y: 0 } }],
+    });
+  });
+
   it('pools one definition across many placements instead of writing it once per INSERT', () => {
     // A symbol placed 80 times used to write its whole geometry 80 times over —
     // this is the file-size bug PURGEBLOCKS' neighbour issue was about.
@@ -462,6 +480,7 @@ describe('ProjectIO', () => {
       travelRate: 3000,
       penUpCode: 'M9',
       penDownCode: 'M8',
+      penDelayMs: 200,
       homingCode: 'G28',
       frameVisible: true,
       frameWidth: 420,
@@ -504,6 +523,7 @@ describe('ProjectIO', () => {
       travelRate: 6000,
       penUpCode: 'M5',
       penDownCode: 'M3 S19',
+      penDelayMs: 100,
       homingCode: '$H',
       frameVisible: false,
       frameWidth: 297,
@@ -528,6 +548,7 @@ describe('ProjectIO', () => {
       travelRate: 1800,
       penUpCode: 'M5',
       penDownCode: 'M3 S19',
+      penDelayMs: 100,
       homingCode: '$H',
       frameVisible: false,
       frameWidth: 297,

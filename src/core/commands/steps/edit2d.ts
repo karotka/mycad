@@ -6,7 +6,7 @@
  * had been sitting in the command manager, which is a place, not a home.
  */
 import { AddEntityEdit, ReplaceObjectsEdit, UpdateEntityEdit } from '../../history/edits';
-import { cloneEntity, closedVertices, curvePoints, isLineLikeEntity, isOffsetEntity, type ArcEntity, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
+import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
 import { closePolyline, dist2, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import { localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
@@ -275,6 +275,70 @@ const forwardSpan = (from: number, to: number, n: number): number => {
 };
 
 /**
+ * Trimming a line removes the span you clicked, same idea as a polyline: every
+ * crossing with every cutting edge is found first, then whichever two bracket
+ * the click bound what goes. A crossing on only one side shortens that end —
+ * the ordinary trim. A crossing on *both* sides means the click landed between
+ * two cutting edges, and there is no single line that is both pieces at once,
+ * so the line splits into the two that are left after the middle is cut away.
+ */
+function trimLineTarget(run: CommandRun, target: LineEntity, boundaries: Entity[], click: Vec2 | null): StepOutcome {
+  const { ctx } = run;
+  const segment: LineLikeSegment = { start: target.start, end: target.end, startIndex: 0, endIndex: 1 };
+  const hits = boundaries.flatMap((boundary) => boundaryIntersections(segment, boundary))
+    .filter((hit) => hit.t >= -1e-8 && hit.t <= 1 + 1e-8 && hit.u >= -1e-8 && hit.u <= 1 + 1e-8);
+  if (hits.length === 0) {
+    ctx.log('TRIM failed: the line does not cross the cutting edge.');
+    return 'stay';
+  }
+  const crossings: Array<{ t: number; point: Vec2 }> = [];
+  for (const hit of hits) {
+    if (!crossings.some((existing) => Math.abs(existing.t - hit.t) < 1e-6)) crossings.push({ t: hit.t, point: hit.point });
+  }
+  crossings.sort((a, b) => a.t - b.t);
+
+  const dx = segment.end.x - segment.start.x, dy = segment.end.y - segment.start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const point = click ?? segment.start;
+  const clickT = lengthSquared < 1e-12 ? 0
+    : ((point.x - segment.start.x) * dx + (point.y - segment.start.y) * dy) / lengthSquared;
+
+  const below = [...crossings].reverse().find((cross) => cross.t < clickT - 1e-9) ?? null;
+  const above = crossings.find((cross) => cross.t > clickT + 1e-9) ?? null;
+  if (!below && !above) {
+    ctx.log('TRIM failed: the line does not cross the cutting edge on the side you picked.');
+    return 'stay';
+  }
+  const pieces: Array<{ start: Vec2; end: Vec2 }> = [];
+  if (below) pieces.push({ start: segment.start, end: below.point });
+  if (above) pieces.push({ start: above.point, end: segment.end });
+  const kept = pieces.filter((piece) => dist2(piece.start, piece.end) > 1e-9);
+  if (kept.length === 0) {
+    ctx.log('TRIM failed: nothing would be left of the line.');
+    return 'stay';
+  }
+
+  if (kept.length === 1) {
+    const updated = cloneEntity(target);
+    updated.start = kept[0].start;
+    updated.end = kept[0].end;
+    ctx.history.execute(new UpdateEntityEdit('Trim', target, updated));
+    ctx.doc.selectEntity(updated.id);
+  } else {
+    const added = kept.map((piece) => {
+      const line = ctx.doc.createLine(piece.start, piece.end);
+      line.workPlane = cloneEntity(target).workPlane;
+      line.layer = target.layer; line.aci = target.aci; line.color = target.color;
+      return line;
+    });
+    ctx.history.execute(new ReplaceObjectsEdit('Trim', [target], [], added, []));
+    added.forEach((entity, index) => ctx.doc.selectEntity(entity.id, index > 0));
+  }
+  ctx.log('Line trimmed at cutting edge. Select another object or press Enter.');
+  return 'stay';
+}
+
+/**
  * Trimming a polyline cuts it where it crosses the cutting edge and removes the
  * span you clicked. A closed polyline opens up, kept as the run of vertices the
  * other way round between the two bracketing crossings. An open one is truncated
@@ -401,37 +465,121 @@ export function pointInClosedPolygon(point: Vec2, vertices: Vec2[]): boolean {
   return inside;
 }
 
+/**
+ * A real corner gets a sharp miter; a smooth loop sampled into many barely-
+ * turning segments — an ellipse, a JOINed closed curve — falls back to the
+ * average of its two normals past the same miter limit `offsetOpenPolyline`
+ * uses, for the same reason: two nearly-parallel offset edges can meet many
+ * times farther out than the offset distance itself.
+ */
 export function offsetPolygon(vertices: Vec2[], distance: number): Vec2[] | null {
-  if (vertices.length < 3) return null;
+  const n = vertices.length;
+  if (n < 3) return null;
   let twiceArea = 0;
-  for (let index = 0; index < vertices.length; index++) {
-    const a = vertices[index], b = vertices[(index + 1) % vertices.length];
+  for (let index = 0; index < n; index++) {
+    const a = vertices[index], b = vertices[(index + 1) % n];
     twiceArea += a.x * b.y - b.x * a.y;
   }
   if (Math.abs(twiceArea) < 1e-9) return null;
   const orientation = twiceArea > 0 ? 1 : -1;
-  const shiftedEdges = vertices.map((start, index) => {
-    const end = vertices[(index + 1) % vertices.length];
+  const normals: Array<Vec2 | null> = vertices.map((start, index) => {
+    const end = vertices[(index + 1) % n];
     const dx = end.x - start.x, dy = end.y - start.y;
     const length = Math.hypot(dx, dy);
     if (length < 1e-9) return null;
-    const normal = orientation > 0 ? { x: dy / length, y: -dx / length } : { x: -dy / length, y: dx / length };
-    const offset = { x: normal.x * distance, y: normal.y * distance };
-    return {
-      start: { x: start.x + offset.x, y: start.y + offset.y },
-      end: { x: end.x + offset.x, y: end.y + offset.y },
-    };
+    return orientation > 0 ? { x: dy / length, y: -dx / length } : { x: -dy / length, y: dx / length };
   });
-  if (shiftedEdges.some((edge) => !edge)) return null;
-  const result: Vec2[] = [];
-  for (let index = 0; index < vertices.length; index++) {
-    const previous = shiftedEdges[(index - 1 + vertices.length) % vertices.length]!;
-    const current = shiftedEdges[index]!;
-    const intersection = lineIntersectionParameters(previous.start, previous.end, current.start, current.end);
-    if (!intersection) return null;
-    result.push(intersection.point);
+  if (normals.some((normal) => !normal)) return null;
+
+  const miterLimit = 4 * Math.abs(distance);
+  return vertices.map((vertex, index) => {
+    const n1 = normals[(index - 1 + n) % n]!, n2 = normals[index]!;
+    const prev = vertices[(index - 1 + n) % n], next = vertices[(index + 1) % n];
+    const edgeA = { start: offsetPoint(prev, n1, distance), end: offsetPoint(vertex, n1, distance) };
+    const edgeB = { start: offsetPoint(vertex, n2, distance), end: offsetPoint(next, n2, distance) };
+    const intersection = lineIntersectionParameters(edgeA.start, edgeA.end, edgeB.start, edgeB.end);
+    return intersection && dist2(intersection.point, vertex) <= miterLimit
+      ? intersection.point
+      : offsetPoint(vertex, averageUnitNormal(n1, n2), distance);
+  });
+}
+
+function offsetPoint(point: Vec2, normal: Vec2, signedDistance: number): Vec2 {
+  return { x: point.x + normal.x * signedDistance, y: point.y + normal.y * signedDistance };
+}
+
+/** The unit bisector of two unit normals — the fallback join, which never
+ *  moves farther from the vertex than `signedDistance` itself. */
+function averageUnitNormal(a: Vec2, b: Vec2): Vec2 {
+  const sum = { x: a.x + b.x, y: a.y + b.y };
+  const length = Math.hypot(sum.x, sum.y);
+  // Exactly opposite normals (the chain doubles straight back on itself) have
+  // no single bisector; either one is as good as the other for how rare and
+  // degenerate that is.
+  return length < 1e-9 ? a : { x: sum.x / length, y: sum.y / length };
+}
+
+/**
+ * The open counterpart of `offsetPolygon`: no wraparound edge, and the two
+ * ends are the plain perpendicular-shifted endpoints rather than a miter —
+ * there is no neighbouring edge there to miter against. `signedDistance`
+ * carries which side to offset toward, since an open chain has no inside to
+ * test the way a closed one does; the caller works that out once, from which
+ * side of the chain the pick point fell on, and it holds for every edge.
+ *
+ * A real corner (two hand-drawn segments meeting at a clear angle) gets a
+ * sharp miter, same as a closed polygon. A curve sampled into many almost-
+ * straight-through segments — a JOINed Bezier, mainly — does not: two edges
+ * barely turning are nearly parallel, and their *exact* intersection can land
+ * many times farther out than the offset itself, which reads as the offset
+ * "not working" (a spike flying off toward infinity). Past a miter limit —
+ * the same idea SVG's stroke-linejoin uses — this falls back to the average
+ * of the two normals instead, which stays close to the source by construction
+ * and keeps a smooth curve smooth.
+ */
+export function offsetOpenPolyline(vertices: Vec2[], signedDistance: number): Vec2[] | null {
+  if (vertices.length < 2) return null;
+  const normals: Vec2[] = [];
+  for (let index = 0; index < vertices.length - 1; index++) {
+    const start = vertices[index], end = vertices[index + 1];
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-9) return null;
+    normals.push({ x: -dy / length, y: dx / length });
   }
-  return result;
+  const miterLimit = 4 * Math.abs(signedDistance);
+  return vertices.map((vertex, index) => {
+    if (index === 0) return offsetPoint(vertex, normals[0], signedDistance);
+    if (index === vertices.length - 1) return offsetPoint(vertex, normals.at(-1)!, signedDistance);
+    const n1 = normals[index - 1], n2 = normals[index];
+    const edgeA = { start: offsetPoint(vertices[index - 1], n1, signedDistance), end: offsetPoint(vertex, n1, signedDistance) };
+    const edgeB = { start: offsetPoint(vertex, n2, signedDistance), end: offsetPoint(vertices[index + 1], n2, signedDistance) };
+    const intersection = lineIntersectionParameters(edgeA.start, edgeA.end, edgeB.start, edgeB.end);
+    return intersection && dist2(intersection.point, vertex) <= miterLimit
+      ? intersection.point
+      : offsetPoint(vertex, averageUnitNormal(n1, n2), signedDistance);
+  });
+}
+
+/** Which side of an open polyline the pick point falls on, from whichever
+ *  segment it is actually nearest — the same question a line's offset asks,
+ *  answered once and then held for the whole chain. */
+function openPolylineOffsetSign(vertices: Vec2[], sidePoint: Vec2): number {
+  let bestIndex = 0;
+  let bestDistanceSquared = Infinity;
+  for (let index = 0; index < vertices.length - 1; index++) {
+    const start = vertices[index], end = vertices[index + 1];
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    const t = lengthSquared < 1e-12 ? 0 : Math.max(0, Math.min(1, ((sidePoint.x - start.x) * dx + (sidePoint.y - start.y) * dy) / lengthSquared));
+    const projected = { x: start.x + t * dx, y: start.y + t * dy };
+    const distanceSquared = (sidePoint.x - projected.x) ** 2 + (sidePoint.y - projected.y) ** 2;
+    if (distanceSquared < bestDistanceSquared) { bestDistanceSquared = distanceSquared; bestIndex = index; }
+  }
+  const start = vertices[bestIndex], end = vertices[bestIndex + 1];
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const mid = midpoint2(start, end);
+  return dx * (sidePoint.y - mid.y) - dy * (sidePoint.x - mid.x) >= 0 ? 1 : -1;
 }
 
 export function isSweepPathEntity(entity: Entity): boolean {
@@ -513,6 +661,12 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
   if (trimming && target.type === 'polyline') {
     return trimPolylineTarget(run, target, usable, localClick);
   }
+  // A line trimmed between two cutting edges splits in two, same as a polyline
+  // does above — dragging just one end (what the shared code below still does,
+  // for extend) only ever accounts for the one crossing nearest the click.
+  if (trimming && target.type === 'line') {
+    return trimLineTarget(run, target, usable, localClick);
+  }
   if (!isLineLikeEntity(target)) {
     ctx.log(trimming ? 'Select a line, polyline, or circle to trim.' : 'Select a line or polyline to extend.');
     return 'stay';
@@ -541,10 +695,6 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
       : 'EXTEND failed: the boundary does not intersect an extension of this line or polyline.');
     return 'stay';
   }
-  const hit = click
-    ? hits.reduce((best, candidate) => dist2(candidate.point, click) < dist2(best.point, click) ? candidate : best)
-    : hits[0];
-
   // Where along the segment the click was, so the end nearer the click is the
   // one that moves — trimming takes off the side you pointed at, extending
   // reaches out from it.
@@ -554,6 +704,19 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
   const clickT = click && lengthSquared > 1e-12
     ? ((click.x - segment.start.x) * dx + (click.y - segment.start.y) * dy) / lengthSquared
     : 1;
+
+  // Extending only ever moves the end nearest the click; a boundary that only
+  // reaches past the *other* end must not win just for being close in space,
+  // or that far end gets yanked across the whole line, wiping out the span
+  // between the two original endpoints instead of extending it.
+  const candidates = trimming ? hits : hits.filter((candidate) => (clickT < 0.5 ? candidate.t < 0 : candidate.t > 1));
+  if (candidates.length === 0) {
+    ctx.log('EXTEND failed: no boundary reaches past the end nearest your pick.');
+    return 'stay';
+  }
+  const hit = click
+    ? candidates.reduce((best, candidate) => dist2(candidate.point, click) < dist2(best.point, click) ? candidate : best)
+    : candidates[0];
   const useStart = trimming ? clickT < hit.t : clickT < 0.5;
 
   const updated = cloneEntity(target);
@@ -798,7 +961,7 @@ export function offsetEntity({ active, data, value, ctx }: CommandRun): StepOutc
   if (active.stepIndex === 0) {
     const entity = value as Entity;
     if (!isOffsetEntity(entity)) {
-      ctx.log('OFFSET accepts lines, circles, rectangles, and closed polylines.');
+      ctx.log('OFFSET accepts lines, arcs, circles, ellipses, rectangles, and polylines.');
       return 'stay';
     }
     data.entity = entity;
@@ -843,6 +1006,34 @@ export function offsetEntity({ active, data, value, ctx }: CommandRun): StepOutc
       return 'stay';
     }
     parallel = ctx.doc.createCircle(entity.center, radius);
+  } else if (entity.type === 'arc') {
+    const outward = dist2(sidePoint, entity.center) >= entity.radius;
+    const radius = entity.radius + (outward ? distance : -distance);
+    if (radius <= 1e-6) {
+      ctx.log('The inward offset is larger than the arc radius.');
+      return 'stay';
+    }
+    parallel = ctx.doc.createArc(entity.center, radius, entity.startAngle, entity.sweepAngle);
+  } else if (entity.type === 'ellipse') {
+    // Unlike a circle, an ellipse offset at a constant distance is not itself
+    // an ellipse — no closed form gives one — so it is sampled into a polygon
+    // dense enough to look smooth and offset the same way a closed polyline is.
+    const vertices = ellipsePoints(entity, 96).slice(0, -1);
+    const outward = !pointInClosedPolygon(sidePoint, vertices);
+    const offsetVertices = offsetPolygon(vertices, outward ? distance : -distance);
+    if (!offsetVertices) {
+      ctx.log('OFFSET failed for this shape and distance.');
+      return 'stay';
+    }
+    parallel = ctx.doc.createPolyline(offsetVertices, true);
+  } else if (entity.type === 'polyline' && !entity.closed) {
+    const sign = openPolylineOffsetSign(entity.vertices, sidePoint);
+    const offsetVertices = offsetOpenPolyline(entity.vertices, distance * sign);
+    if (!offsetVertices) {
+      ctx.log('OFFSET failed for this shape and distance.');
+      return 'stay';
+    }
+    parallel = ctx.doc.createPolyline(offsetVertices, false);
   } else {
     const vertices = closedVertices(entity);
     if (!vertices) return 'stay';
@@ -863,6 +1054,85 @@ export function offsetEntity({ active, data, value, ctx }: CommandRun): StepOutc
   return 'advance';
 }
 
+function perpendicularDistance(point: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-9) return Math.hypot(point.x - a.x, point.y - a.y);
+  return Math.abs(dy * point.x - dx * point.y + b.x * a.y - b.y * a.x) / length;
+}
+
+/**
+ * Ramer–Douglas–Peucker: keeps a run's two ends, and recursively keeps
+ * whichever interior point sits farthest from the straight line between
+ * whatever currently bounds it, as long as that farthest point is still
+ * outside `tolerance` — everything closer than that is redundant, since the
+ * straight line already stands in for it within the asked-for accuracy.
+ */
+function simplifyRun(points: Vec2[], tolerance: number): Vec2[] {
+  if (points.length < 3) return points;
+  const start = points[0], end = points[points.length - 1];
+  let maxDistance = 0;
+  let splitIndex = -1;
+  for (let index = 1; index < points.length - 1; index++) {
+    const distance = perpendicularDistance(points[index], start, end);
+    if (distance > maxDistance) { maxDistance = distance; splitIndex = index; }
+  }
+  if (maxDistance <= tolerance) return [start, end];
+  const left = simplifyRun(points.slice(0, splitIndex + 1), tolerance);
+  const right = simplifyRun(points.slice(splitIndex), tolerance);
+  return [...left.slice(0, -1), ...right];
+}
+
+/**
+ * The same reduction for a polyline, open or closed — a JOINed curve's own
+ * problem, not just OFFSET's: two sampled Beziers leave dozens of points a
+ * plotter, a G-code file or a saved project all have to carry for no visual
+ * gain. A closed loop has no two ends to run Douglas-Peucker between, so it
+ * is split at the vertex farthest from the first one — an approximate "far
+ * side" — into two open runs, each simplified on its own and stitched back
+ * into a loop.
+ */
+export function simplifyPolyline(vertices: Vec2[], tolerance: number, closed: boolean): Vec2[] {
+  if (!closed) return simplifyRun(vertices, tolerance);
+  const unique = vertices.length > 1 && dist2(vertices[0], vertices.at(-1)!) < 1e-9 ? vertices.slice(0, -1) : vertices;
+  if (unique.length < 4) return closePolyline(unique);
+  let splitIndex = 1;
+  let maxDistanceSquared = 0;
+  for (let index = 1; index < unique.length; index++) {
+    const dx = unique[index].x - unique[0].x, dy = unique[index].y - unique[0].y;
+    const distanceSquared = dx * dx + dy * dy;
+    if (distanceSquared > maxDistanceSquared) { maxDistanceSquared = distanceSquared; splitIndex = index; }
+  }
+  const runA = simplifyRun(unique.slice(0, splitIndex + 1), tolerance);
+  const runB = simplifyRun([...unique.slice(splitIndex), unique[0]], tolerance);
+  return closePolyline([...runA.slice(0, -1), ...runB.slice(0, -1)]);
+}
+
+export function simplifyEntity({ active, data, value, ctx }: CommandRun): StepOutcome {
+  if (active.stepIndex === 0) {
+    const entity = value as Entity;
+    if (entity.type !== 'polyline') {
+      ctx.log('SIMPLIFY accepts polylines.');
+      return 'stay';
+    }
+    data.entity = entity;
+    ctx.doc.selectEntity(entity.id);
+    return 'advance';
+  }
+  const entity = data.entity as PolylineEntity;
+  const tolerance = value as number;
+  if (tolerance <= 0) {
+    ctx.log('Tolerance must be greater than zero.');
+    return 'stay';
+  }
+  const vertices = simplifyPolyline(entity.vertices, tolerance, entity.closed);
+  const after: PolylineEntity = { ...cloneEntity(entity), vertices };
+  ctx.history.execute(new ReplaceObjectsEdit('Simplify', [entity], [], [after], []));
+  ctx.doc.selectEntity(after.id);
+  ctx.log(`Simplified: ${entity.vertices.length} → ${vertices.length} vertices.`);
+  return 'advance';
+}
+
 /** How close two ends must be to count as the same point, in millimetres. */
 const JOIN_TOLERANCE = 0.5;
 
@@ -874,6 +1144,91 @@ function chainPoints(entity: Entity): Vec2[] {
     return entity.closed ? closePolyline(entity.vertices).slice(0, -1) : [...entity.vertices];
   }
   return [];
+}
+
+/** A straight run, as the degenerate cubic that draws it exactly. */
+function straightBezierSegment(start: Vec2, end: Vec2): BezierSegment {
+  return {
+    control1: { x: start.x + (end.x - start.x) / 3, y: start.y + (end.y - start.y) / 3 },
+    control2: { x: start.x + (end.x - start.x) * 2 / 3, y: start.y + (end.y - start.y) * 2 / 3 },
+    end,
+  };
+}
+
+/**
+ * The standard circular-arc-to-cubic-Bezier approximation (the same one SVG
+ * and PDF renderers use for arcs): split into spans of at most 90°, each
+ * matched to its arc by position and tangent at both ends, closely enough
+ * that the difference is not something a plotter — or a JOINed exact-Bezier
+ * neighbour it isn't allowed to look worse than — would ever show.
+ */
+function arcToBezierSegments(center: Vec2, radius: number, startAngle: number, sweepAngle: number): BezierSegment[] {
+  const spanCount = Math.max(1, Math.ceil(Math.abs(sweepAngle) / (Math.PI / 2)));
+  const step = sweepAngle / spanCount;
+  const k = (4 / 3) * Math.tan(step / 4);
+  const segments: BezierSegment[] = [];
+  for (let index = 0; index < spanCount; index++) {
+    const a0 = startAngle + step * index;
+    const a1 = a0 + step;
+    const p0 = { x: center.x + radius * Math.cos(a0), y: center.y + radius * Math.sin(a0) };
+    const p3 = { x: center.x + radius * Math.cos(a1), y: center.y + radius * Math.sin(a1) };
+    segments.push({
+      control1: { x: p0.x - k * radius * Math.sin(a0), y: p0.y + k * radius * Math.cos(a0) },
+      control2: { x: p3.x + k * radius * Math.sin(a1), y: p3.y - k * radius * Math.cos(a1) },
+      end: p3,
+    });
+  }
+  return segments;
+}
+
+/** Walking a Bezier chain backward reverses this same flat point list end to
+ *  end — see the identical reasoning in OVERKILL's duplicate key. */
+function reverseBezierChain(start: Vec2, segments: BezierSegment[]): { start: Vec2; segments: BezierSegment[] } {
+  const points = [start, ...segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+  const reversed = [...points].reverse();
+  const reversedSegments: BezierSegment[] = [];
+  for (let index = 1; index < reversed.length; index += 3) {
+    reversedSegments.push({ control1: reversed[index], control2: reversed[index + 1], end: reversed[index + 2] });
+  }
+  return { start: reversed[0], segments: reversedSegments };
+}
+
+/**
+ * One joined piece's exact Bezier equivalent, in world space and in the
+ * direction the chain actually walks it — a line and an arc get an exact (or,
+ * for the arc, all-but-exact) cubic form instead of the many sampled points
+ * `chainPoints` uses for stitching the chain together in the first place; an
+ * already-Bezier piece needs no conversion at all, only carrying through.
+ */
+function worldBezierSegments(
+  entity: Extract<Entity, { type: 'line' | 'arc' | 'bezier' | 'polyline' }>,
+  reversed: boolean,
+): { start: Vec3; segments: Array<{ control1: Vec3; control2: Vec3; end: Vec3 }> } {
+  const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+  const toWorld = (point: Vec2): Vec3 => localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0);
+  let start: Vec2;
+  let segments: BezierSegment[];
+  if (entity.type === 'bezier') {
+    start = entity.start;
+    segments = entity.segments;
+  } else if (entity.type === 'arc') {
+    start = { x: entity.center.x + Math.cos(entity.startAngle) * entity.radius, y: entity.center.y + Math.sin(entity.startAngle) * entity.radius };
+    segments = arcToBezierSegments(entity.center, entity.radius, entity.startAngle, entity.sweepAngle);
+  } else if (entity.type === 'polyline') {
+    const verts = entity.closed ? closePolyline(entity.vertices) : entity.vertices;
+    start = verts[0];
+    segments = verts.slice(1).map((point, index) => straightBezierSegment(verts[index], point));
+  } else {
+    start = entity.start;
+    segments = [straightBezierSegment(entity.start, entity.end)];
+  }
+  const oriented = reversed ? reverseBezierChain(start, segments) : { start, segments };
+  return {
+    start: toWorld(oriented.start),
+    segments: oriented.segments.map((segment) => ({
+      control1: toWorld(segment.control1), control2: toWorld(segment.control2), end: toWorld(segment.end),
+    })),
+  };
 }
 
 export function joinObjects(run: CommandRun): StepOutcome {
@@ -893,8 +1248,10 @@ export function joinObjects(run: CommandRun): StepOutcome {
     return 'stay';
   }
 
-  const lines = (data.entities as Entity[]).filter((entity) =>
-    entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier' || entity.type === 'polyline');
+  const lines = (data.entities as Entity[]).filter(
+    (entity): entity is Extract<Entity, { type: 'line' | 'arc' | 'bezier' | 'polyline' }> =>
+      entity.type === 'line' || entity.type === 'arc' || entity.type === 'bezier' || entity.type === 'polyline',
+  );
   if (lines.length < 2) {
     ctx.log('JOIN requires at least two connected objects.');
     return 'stay';
@@ -917,6 +1274,10 @@ export function joinObjects(run: CommandRun): StepOutcome {
   // picks them.
   const near = (a: Vec3, b: Vec3): boolean => len3(sub3(a, b)) <= JOIN_TOLERANCE;
   const vertices: Vec3[] = worldChain(lines[0]);
+  // Tracked alongside `vertices`, in the same order and the same end each
+  // piece landed at — the exact Bezier reconstruction later needs the pieces
+  // themselves, not only the points they were stitched together with.
+  const orderedPieces: Array<{ entity: (typeof lines)[number]; reversed: boolean }> = [{ entity: lines[0], reversed: false }];
   const remaining = lines.slice(1);
   while (remaining.length > 0) {
     const start = vertices[0];
@@ -929,12 +1290,13 @@ export function joinObjects(run: CommandRun): StepOutcome {
       ctx.log('JOIN failed: the selected objects do not form one connected chain.');
       return 'stay';
     }
-    const points = worldChain(remaining.splice(index, 1)[0]);
+    const nextEntity = remaining.splice(index, 1)[0];
+    const points = worldChain(nextEntity);
     const a = points[0], b = points.at(-1)!;
-    if (near(a, end)) vertices.push(...points.slice(1));
-    else if (near(b, end)) vertices.push(...points.slice(0, -1).reverse());
-    else if (near(b, start)) vertices.unshift(...points.slice(0, -1));
-    else vertices.unshift(...points.slice(1).reverse());
+    if (near(a, end)) { vertices.push(...points.slice(1)); orderedPieces.push({ entity: nextEntity, reversed: false }); }
+    else if (near(b, end)) { vertices.push(...points.slice(0, -1).reverse()); orderedPieces.push({ entity: nextEntity, reversed: true }); }
+    else if (near(b, start)) { vertices.unshift(...points.slice(0, -1)); orderedPieces.unshift({ entity: nextEntity, reversed: false }); }
+    else { vertices.unshift(...points.slice(1).reverse()); orderedPieces.unshift({ entity: nextEntity, reversed: true }); }
   }
 
   const closed = vertices.length > 2 && near(vertices[0], vertices[vertices.length - 1]);
@@ -959,12 +1321,51 @@ export function joinObjects(run: CommandRun): StepOutcome {
     ctx.log('JOIN requires all objects to lie in one plane.');
     return 'stay';
   }
-  const plane = workPlaneFromXAxis(origin, { x: origin.x + axis.x, y: origin.y + axis.y, z: origin.z + axis.z }, normal);
-  const localVertices: Vec2[] = vertices.map((point) => { const local = worldToLocal(plane, point); return { x: local.x, y: local.y }; });
-  const joined = ctx.doc.createPolyline(localVertices, closed);
-  joined.workPlane = plane;
+  // A chain that already lies flat and parallel to the world XY plane — by far
+  // the ordinary case, two 2D objects joined on the ground plane — needs no
+  // work plane of its own: it can keep world coordinates directly, exactly
+  // like every other plain 2D entity. That matters because grip dragging and
+  // 2D grip hit-testing compare a grip's point straight against the mouse's
+  // world position, with no work-plane transform in between; a chain whose
+  // first leg does not run along world X still passes the "one plane" check
+  // above yet would get a plane rotated to match that leg, and every grip on
+  // it would then sit and drag in the wrong place, though the outline itself
+  // still draws correctly (that one goes through the transform).
+  const flat = Math.abs(normal.x) < 1e-6 * normalLength && Math.abs(normal.y) < 1e-6 * normalLength;
+  const fittedPlane = flat ? null : workPlaneFromXAxis(origin, { x: origin.x + axis.x, y: origin.y + axis.y, z: origin.z + axis.z }, normal);
+  const toLocal2d = (point: Vec3): Vec2 => {
+    if (!fittedPlane) {
+      const vertex: Vec2 & { z?: number } = { x: point.x, y: point.y };
+      if (Math.abs(point.z) > 1e-9) vertex.z = point.z;
+      return vertex;
+    }
+    const local = worldToLocal(fittedPlane, point);
+    return { x: local.x, y: local.y };
+  };
+  const hasCurve = orderedPieces.some(({ entity }) => entity.type === 'arc' || entity.type === 'bezier');
+  let joined: Entity;
+  let noun: string;
+  if (hasCurve) {
+    // A line's or a polyline's straight runs go in as the exact degenerate
+    // cubic that draws them; an arc goes in as its close cubic approximation;
+    // a Bezier piece already selected needs no conversion at all. Flattening
+    // every piece into 48 sampled points and calling it a polyline — which is
+    // what a mixed chain like this used to become — is what this replaces.
+    const worldSegments = orderedPieces.map(({ entity, reversed }) => worldBezierSegments(entity, reversed));
+    joined = ctx.doc.createSpline(
+      toLocal2d(worldSegments[0].start),
+      worldSegments.flatMap((piece) => piece.segments.map((segment) => ({
+        control1: toLocal2d(segment.control1), control2: toLocal2d(segment.control2), end: toLocal2d(segment.end),
+      }))),
+    );
+    noun = 'spline';
+  } else {
+    joined = ctx.doc.createPolyline(vertices.map(toLocal2d), closed);
+    noun = closed ? 'closed polyline' : 'polyline';
+  }
+  if (fittedPlane) joined.workPlane = fittedPlane;
   ctx.history.execute(new ReplaceObjectsEdit('Join', lines, [], [joined], []));
   ctx.doc.selectEntity(joined.id);
-  ctx.log(`Joined ${lines.length} objects into one ${closed ? 'closed ' : ''}polyline.`);
+  ctx.log(`Joined ${lines.length} objects into one ${noun}.`);
   return 'advance';
 }

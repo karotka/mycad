@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
-import { expandedInsertSolids, linearDimensionRotation } from '../entities/types';
+import { ellipsePoints, expandedInsertSolids, linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
@@ -63,9 +63,69 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'Old text' });
   });
+  it('carries a height alongside the text when TEXTEDIT answers through submitText, not just submitInput', async () => {
+    const { doc, manager } = setup();
+    const text = doc.createText({ x: 2, y: 3 }, 'Old text', 2.5);
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+
+    manager.startCommand('TEXTEDIT');
+    await manager.submitText('New text\nsecond line', 9);
+    expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'New text\nsecond line', height: 9 });
+  });
+  it('leaves height untouched when submitText is given none, same as a plain submitInput edit', async () => {
+    const { doc, manager } = setup();
+    const text = doc.createText({ x: 2, y: 3 }, 'Old text', 2.5);
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+
+    manager.startCommand('TEXTEDIT');
+    await manager.submitText('New text');
+    expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'New text', height: 2.5 });
+  });
+  it('creates multi-line MTEXT with the height submitText carries, overriding the step-1 height', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('MTEXT');
+    await manager.submitInput('Arial');
+    await manager.submitInput('2.5');
+    await manager.handleClick({ x: 1, y: 1 });
+    await manager.submitText('line one\nline two', 4);
+    expect(doc.entities[0]).toMatchObject({
+      type: 'text', text: 'line one\nline two', height: 4, font: 'Arial',
+    });
+  });
+  it('changes the font TEXTEDIT answers with through submitText, overriding the original', async () => {
+    const { doc, manager } = setup();
+    const text = doc.createText({ x: 2, y: 3 }, 'Old text', 2.5, 'Arial');
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+
+    manager.startCommand('TEXTEDIT');
+    await manager.submitText('New text', 4, 'Single-stroke');
+    expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'New text', height: 4, font: 'Single-stroke' });
+  });
+  it('overrides the font a fresh MTEXT was started with, from the on-canvas editor', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('MTEXT');
+    await manager.submitInput('Arial');
+    await manager.submitInput('2.5');
+    await manager.handleClick({ x: 1, y: 1 });
+    await manager.submitText('line one', 2.5, 'Single-stroke');
+    expect(doc.entities[0]).toMatchObject({ type: 'text', font: 'Single-stroke' });
+  });
+  it('ignores a submitText call for a step that is not currently asking for text', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('TEXT');
+    await manager.submitInput('Arial');
+    await manager.submitInput('2.5');
+    expect(manager.active).toMatchObject({ name: 'TEXT', stepIndex: 2 }); // now waiting on a point, not text
+    await manager.submitText('should be ignored', 5);
+    expect(manager.active).toMatchObject({ name: 'TEXT', stepIndex: 2 });
+    expect(doc.entities).toHaveLength(0);
+  });
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
-    expect(manager.commandSuggestions('m')).toEqual(['MEASURE', 'MOVE', 'MIRROR']);
+    expect(manager.commandSuggestions('m')).toEqual(['MTEXT', 'MEASURE', 'MOVE', 'MIRROR']);
     expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
@@ -208,7 +268,12 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices).toHaveLength(3);
   });
 
-  it('joins a Bezier curve to a connected line', async () => {
+  /**
+   * JOIN used to flatten every mixed chain into a many-point polyline, losing
+   * the curve's own exactness — a straight run and an original Bezier segment
+   * both have an exact cubic form, so there is no need to sample either one.
+   */
+  it('joins a Bezier curve to a connected line into one exact spline, not a flattened polyline', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
     const bezier = doc.createBezier({ x: 5, y: 0 }, { x: 7, y: 0 }, { x: 8, y: 4 }, { x: 10, y: 4 });
@@ -216,11 +281,74 @@ describe('CommandManager history integration', () => {
     doc.selectEntity(line.id, true); doc.selectEntity(bezier.id, true);
     manager.startCommand('JOIN');
     expect(doc.entities).toHaveLength(1);
-    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
-    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.length).toBeGreaterThan(40);
+    const joined = doc.entities[0];
+    expect(joined).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    if (joined.type === 'bezier') {
+      expect(joined.segments).toHaveLength(2);
+      expect(joined.segments[0].end).toMatchObject({ x: 5, y: 0 }); // the line's exact degenerate cubic
+      expect(joined.segments[1]).toEqual({ control1: { x: 7, y: 0 }, control2: { x: 8, y: 4 }, end: { x: 10, y: 4 } }); // carried through untouched
+    }
   });
 
-  it('joins an arc to a connected line', async () => {
+  /**
+   * The bug: joining two curves whose first leg does not run along world X
+   * (an ordinary pair of hand-drawn splines, not a straight horizontal line)
+   * used to fit the result a work plane rotated to match that leg. The outline
+   * still drew correctly — that goes through the work-plane transform — but
+   * every grip on it (drag, 2D hover hit-testing) compares straight against
+   * the mouse's world position with no such transform, so they landed nowhere
+   * near the curve. A flat, ordinary 2D chain needs no plane of its own at
+   * all: it can keep world coordinates directly, like every other 2D entity.
+   */
+  it('joins two non-axis-aligned Beziers into one exact spline without giving it a rotated plane of its own', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createBezier({ x: 0, y: 0 }, { x: 1, y: 3 }, { x: 3, y: 6 }, { x: 5, y: 8 });
+    const second = doc.createBezier({ x: 5, y: 8 }, { x: 7, y: 9 }, { x: 9, y: 5 }, { x: 12, y: 3 });
+    doc.entities.push(first, second);
+    doc.selectEntity(first.id, true); doc.selectEntity(second.id, true);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    const joined = doc.entities[0];
+    expect(joined).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    // The active (world) work plane, not one rotated to match either curve's
+    // own tangent — the same reasoning that already applied to a joined
+    // polyline applies here too, since grips still work in world coordinates.
+    expect(joined.workPlane).toEqual(doc.activeWorkPlane);
+    if (joined.type === 'bezier') {
+      // Both curves are carried through exactly — no resampling at all.
+      expect(joined.segments).toEqual([
+        { control1: { x: 1, y: 3 }, control2: { x: 3, y: 6 }, end: { x: 5, y: 8 } },
+        { control1: { x: 7, y: 9 }, control2: { x: 9, y: 5 }, end: { x: 12, y: 3 } },
+      ]);
+    }
+  });
+
+  it('splits a wide arc sweep into multiple Bezier spans, each closely matching the true circle', async () => {
+    const { doc, manager } = setup();
+    const center = { x: 0, y: 0 }, radius = 10;
+    // Two semicircles, closing a full circle — each 180° sweep needs more
+    // than one cubic span to stay a close match to the true arc.
+    const upper = doc.createArc(center, radius, 0, Math.PI);
+    const lower = doc.createArc(center, radius, Math.PI, Math.PI);
+    doc.entities.push(upper, lower);
+    doc.selectEntity(upper.id, true); doc.selectEntity(lower.id, true);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    const joined = doc.entities[0];
+    expect(joined).toMatchObject({ type: 'bezier', start: { x: 10, y: 0 } });
+    if (joined.type === 'bezier') {
+      expect(joined.segments).toHaveLength(4); // two spans per 180° sweep
+      // The loop closes back to its own start.
+      expect(joined.segments.at(-1)!.end.x).toBeCloseTo(10, 6);
+      expect(joined.segments.at(-1)!.end.y).toBeCloseTo(0, 6);
+      // Every span's own end sits on the true circle, not just near it.
+      for (const segment of joined.segments) {
+        expect(Math.hypot(segment.end.x - center.x, segment.end.y - center.y)).toBeCloseTo(radius, 6);
+      }
+    }
+  });
+
+  it('joins an arc to a connected line into one exact spline, approximating only the arc', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
     const arc = doc.createArc({ x: 5, y: 5 }, 5, -Math.PI / 2, Math.PI / 2);
@@ -230,9 +358,15 @@ describe('CommandManager history integration', () => {
     await manager.handleClick({ x: 7, y: 1 }, arc);
     await manager.submitInput('');
     expect(doc.entities).toHaveLength(1);
-    expect(doc.entities[0]).toMatchObject({ type: 'polyline', closed: false });
-    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.length).toBeGreaterThan(40);
-    expect(doc.entities[0].type === 'polyline' && doc.entities[0].vertices.at(-1)).toMatchObject({ x: 10, y: 5 });
+    const joined = doc.entities[0];
+    expect(joined).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    if (joined.type === 'bezier') {
+      expect(joined.segments).toHaveLength(2);
+      expect(joined.segments[0].end).toMatchObject({ x: 5, y: 0 }); // the line's exact degenerate cubic
+      const arcEnd = joined.segments.at(-1)!.end;
+      expect(arcEnd.x).toBeCloseTo(10, 6);
+      expect(arcEnd.y).toBeCloseTo(5, 6);
+    }
   });
 
   it('extends a line to a selected boundary', async () => {
@@ -249,6 +383,42 @@ describe('CommandManager history integration', () => {
     if (extended?.type === 'polyline') expect(extended.vertices[1]).toMatchObject({ x: 10, y: 0 });
   });
 
+  it('extends the start when clicked near the start, instead of always moving the far end', async () => {
+    // The target's click point was never recorded for EXTEND (only TRIM), so
+    // it always fell back to acting as if you had clicked at the far end —
+    // which yanked the untouched end onto the boundary and left the line
+    // collapsed or reversed instead of extended.
+    const { doc, manager } = setup();
+    const boundary = doc.createLine({ x: -5, y: -5 }, { x: -5, y: 5 });
+    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(boundary, target);
+    manager.startCommand('EXTEND');
+    await manager.handleClick({ x: -5, y: 0 }, boundary);
+    await manager.submitInput(''); // finish selecting boundaries
+    await manager.handleClick({ x: 1, y: 0 }, target); // clicked near the start
+    const extended = doc.getEntity(target.id);
+    expect(extended).toMatchObject({ type: 'line', start: { x: -5, y: 0 }, end: { x: 10, y: 0 } });
+  });
+
+  it('extends the end nearest the click, not whichever boundary happens to sit closer in space', async () => {
+    // A far boundary beyond the clicked end and a near boundary beyond the
+    // *opposite* end used to let proximity-to-click pick the near one, which
+    // then got assigned to the far end — collapsing the line instead of
+    // extending it, wiping out its original span.
+    const { doc, manager } = setup();
+    const farBoundary = doc.createLine({ x: 100, y: -5 }, { x: 100, y: 5 });
+    const nearWrongSideBoundary = doc.createLine({ x: -1, y: -5 }, { x: -1, y: 5 });
+    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(farBoundary, nearWrongSideBoundary, target);
+    manager.startCommand('EXTEND');
+    await manager.handleClick({ x: 100, y: 0 }, farBoundary);
+    await manager.handleClick({ x: -1, y: 0 }, nearWrongSideBoundary);
+    await manager.submitInput(''); // finish selecting boundaries
+    await manager.handleClick({ x: 9, y: 0 }, target); // clicked near the end
+    const extended = doc.getEntity(target.id);
+    expect(extended).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 100, y: 0 } });
+  });
+
   it('trims the clicked side of a line at a cutting edge', async () => {
     const { doc, manager } = setup();
     const cutter = doc.createPolyline([{ x: 5, y: -5 }, { x: 5, y: 5 }], false);
@@ -261,6 +431,71 @@ describe('CommandManager history integration', () => {
     const trimmed = doc.getEntity(target.id);
     expect(trimmed).toMatchObject({ type: 'polyline' });
     if (trimmed?.type === 'polyline') expect(trimmed.vertices[1]).toMatchObject({ x: 5, y: 0 });
+  });
+
+  it('shows the last offset distance in the prompt and reuses it on Enter', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(first);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 5, y: 0 }, first);
+    expect(manager.currentPrompt()).toBe('Enter offset distance:'); // nothing remembered yet
+    await manager.submitInput('2.5');
+    await manager.handleClick({ x: 5, y: 5 });
+    expect(doc.entities[1]).toMatchObject({ type: 'line', start: { x: 0, y: 2.5 } });
+
+    const second = doc.createLine({ x: 0, y: 20 }, { x: 10, y: 20 });
+    doc.entities.push(second);
+    doc.clearSelection(); // the previous offset's result is still selected otherwise
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 5, y: 20 }, second);
+    expect(manager.currentPrompt()).toBe('Enter offset distance (2.5):');
+    await manager.submitInput(''); // Enter alone reuses it
+    await manager.handleClick({ x: 5, y: 25 });
+    expect(doc.entities[3]).toMatchObject({ type: 'line', start: { x: 0, y: 22.5 } });
+  });
+
+  it('shortens a plain line to a single cutting edge, same as a polyline', async () => {
+    const { doc, manager } = setup();
+    const cutter = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(cutter, target);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 0 }, cutter);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 8, y: 0 }, target); // clicked side (x > 5) is the one removed
+    const trimmed = doc.getEntity(target.id);
+    expect(trimmed).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
+  });
+
+  /**
+   * The bug: with two parallel cutting edges selected, clicking the line
+   * segment *between* them removed everything from that crossing to whichever
+   * end the click happened to be nearer, using only the one edge closest to
+   * the click — the other selected boundary was silently ignored. TRIM should
+   * split the line into the two pieces left after cutting out just the middle.
+   */
+  it('splits a line into two pieces when the clicked span sits between two cutting edges', async () => {
+    const { doc, manager, history } = setup();
+    const left = doc.createLine({ x: 2, y: -5 }, { x: 2, y: 5 });
+    const right = doc.createLine({ x: 8, y: -5 }, { x: 8, y: 5 });
+    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(left, right, target);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 2, y: 0 }, left);
+    await manager.handleClick({ x: 8, y: 0 }, right);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: 0 }, target); // the middle span, between both edges
+
+    expect(doc.getEntity(target.id)).toBeUndefined();
+    const pieces = doc.entities.filter((entity) => entity.type === 'line' && entity.id !== left.id && entity.id !== right.id);
+    expect(pieces).toHaveLength(2);
+    expect(pieces).toContainEqual(expect.objectContaining({ start: { x: 0, y: 0 }, end: { x: 2, y: 0 } }));
+    expect(pieces).toContainEqual(expect.objectContaining({ start: { x: 8, y: 0 }, end: { x: 10, y: 0 } }));
+
+    history.undo();
+    expect(doc.entities.filter((entity) => entity.type === 'line')).toHaveLength(3);
+    expect(doc.getEntity(target.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 10, y: 0 } });
   });
 
   it('trims a line where it crosses a circle cutting edge', async () => {
@@ -548,6 +783,187 @@ describe('CommandManager history integration', () => {
     await manager.submitInput('1');
     await manager.handleClick({ x: 12, y: 3 });
     expect(doc.entities[1]).toMatchObject({ type: 'rectangle', first: { x: -1, y: -1 }, opposite: { x: 11, y: 6 } });
+  });
+
+  it('offsets an arc outward or inward according to the picked side, keeping its angles', async () => {
+    const { doc, manager } = setup();
+    const arc = doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI / 2);
+    doc.entities.push(arc);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 10, y: 0 }, arc);
+    await manager.submitInput('2');
+    await manager.handleClick({ x: 15, y: 0 });
+    expect(doc.entities[1]).toMatchObject({ type: 'arc', center: { x: 0, y: 0 }, radius: 12, startAngle: 0, sweepAngle: Math.PI / 2 });
+  });
+
+  /**
+   * An ellipse's true offset (a constant distance out along its own normal at
+   * every point) is not itself an ellipse — no closed form gives one, unlike a
+   * circle — so this samples it into a dense polygon and offsets that. The
+   * near-collinear samples the "smoothness" of that polygon depends on are
+   * exactly the case the closed-polygon miter join used to explode on, so this
+   * doubles as the regression test for that fix on a closed shape.
+   */
+  it('offsets an ellipse outward and inward as a densely-sampled closed polyline', async () => {
+    const { doc, manager } = setup();
+    const ellipse = doc.createEllipse({ x: 0, y: 0 }, 50, 20);
+    doc.entities.push(ellipse);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 50, y: 0 }, ellipse);
+    await manager.submitInput('1');
+    await manager.handleClick({ x: 60, y: 0 }); // clearly outside
+    const outward = doc.entities[1];
+    expect(outward).toMatchObject({ type: 'polyline', closed: true });
+    if (outward.type === 'polyline') {
+      // The rightmost and topmost sampled points sit where the ellipse's own
+      // normal runs along an axis, so the true offset there is exactly +1 mm
+      // along that axis — the closest thing to an exact check this shape has.
+      const rightmost = outward.vertices.reduce((a, b) => (a.x > b.x ? a : b));
+      const topmost = outward.vertices.reduce((a, b) => (a.y > b.y ? a : b));
+      expect(rightmost.x).toBeCloseTo(51, 0);
+      expect(topmost.y).toBeCloseTo(21, 0);
+      // Every sample stayed close to the source ellipse, not flung out by a
+      // degenerate miter — the near-collinear samples are exactly that case.
+      const sourcePoints = ellipsePoints(ellipse, 96);
+      for (const vertex of outward.vertices) {
+        const nearest = Math.min(...sourcePoints.map((p) => Math.hypot(p.x - vertex.x, p.y - vertex.y)));
+        expect(nearest).toBeLessThan(3);
+      }
+    }
+
+    doc.clearSelection();
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 50, y: 0 }, ellipse);
+    await manager.submitInput('1');
+    await manager.handleClick({ x: 40, y: 0 }); // clearly inside
+    const inward = doc.entities[2];
+    if (inward.type === 'polyline') {
+      const rightmost = inward.vertices.reduce((a, b) => (a.x > b.x ? a : b));
+      expect(rightmost.x).toBeCloseTo(49, 0);
+    }
+  });
+
+  it('offsets an open polyline to one side along its whole length', async () => {
+    const { doc, manager } = setup();
+    const polyline = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], false);
+    doc.entities.push(polyline);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 5, y: 0 }, polyline);
+    await manager.submitInput('1');
+    // Picked above the horizontal leg: the whole chain shifts to that side,
+    // including the vertical leg where it was never clicked.
+    await manager.handleClick({ x: 5, y: 5 });
+    expect(doc.entities[1]).toMatchObject({ type: 'polyline', closed: false });
+    const result = doc.entities[1];
+    if (result.type === 'polyline') {
+      expect(result.vertices[0]).toMatchObject({ x: 0, y: 1 });
+      expect(result.vertices[1]).toMatchObject({ x: 9, y: 1 });
+      expect(result.vertices[2]).toMatchObject({ x: 9, y: 10 });
+    }
+  });
+
+  /**
+   * The bug: a JOINed Bezier pair (or any curve flattened into many closely-
+   * spaced, barely-turning segments) offset into a chain with spikes flying
+   * off far from the source curve, which read as "OFFSET does not work" on
+   * anything but a simple, sharp-cornered shape. A true miter join extends
+   * each edge to its exact intersection with the next — fine for two clearly
+   * angled segments, but for two *almost* parallel ones (a smoothly sampled
+   * curve) that intersection can land many times farther out than the offset
+   * distance itself.
+   */
+  it('offsets a densely-sampled curve without its miter joints blowing up', async () => {
+    const { doc, manager } = setup();
+    const radius = 50;
+    const vertices = Array.from({ length: 49 }, (_, i) => {
+      const angle = (i / 48) * (Math.PI / 2);
+      return { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+    });
+    const polyline = doc.createPolyline(vertices, false);
+    doc.entities.push(polyline);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.submitInput('1');
+    await manager.handleClick({ x: (radius + 5) * Math.cos(Math.PI / 4), y: (radius + 5) * Math.sin(Math.PI / 4) });
+    expect(doc.entities).toHaveLength(2);
+    const result = doc.entities[1];
+    expect(result).toMatchObject({ type: 'polyline', closed: false });
+    if (result.type === 'polyline') {
+      expect(result.vertices).toHaveLength(vertices.length);
+      for (let i = 0; i < result.vertices.length; i++) {
+        const distance = Math.hypot(result.vertices[i].x - vertices[i].x, result.vertices[i].y - vertices[i].y);
+        expect(distance).toBeLessThan(2); // stays near the 1 mm offset, never a runaway miter spike
+      }
+    }
+  });
+
+  it('reduces a straight run of collinear points down to its two ends', async () => {
+    const { doc, manager } = setup();
+    const vertices = Array.from({ length: 20 }, (_, i) => ({ x: i * 0.5, y: 0 }));
+    const polyline = doc.createPolyline(vertices, false);
+    doc.entities.push(polyline);
+    manager.startCommand('SIMPLIFY');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.submitInput('0.01');
+    const result = doc.entities[0];
+    expect(result.type === 'polyline' && result.vertices).toEqual([{ x: 0, y: 0 }, { x: 9.5, y: 0 }]);
+  });
+
+  it('keeps a real corner regardless of how fine the tolerance is set', async () => {
+    const { doc, manager } = setup();
+    // A right angle, with extra collinear points along each leg that carry no
+    // shape of their own — those should go, but not the corner between them.
+    const vertices = [
+      { x: 0, y: 0 }, { x: 2, y: 0 }, { x: 4, y: 0 }, { x: 6, y: 0 },
+      { x: 6, y: 2 }, { x: 6, y: 4 }, { x: 6, y: 6 },
+    ];
+    const polyline = doc.createPolyline(vertices, false);
+    doc.entities.push(polyline);
+    manager.startCommand('SIMPLIFY');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.submitInput('0.01');
+    const result = doc.entities[0];
+    expect(result.type === 'polyline' && result.vertices).toEqual([{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 6, y: 6 }]);
+  });
+
+  it('collapses a densely-sampled curve to a handful of points, keeping its ends fixed', async () => {
+    const { doc, manager } = setup();
+    const radius = 50;
+    const vertices = Array.from({ length: 49 }, (_, i) => {
+      const angle = (i / 48) * (Math.PI / 2);
+      return { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+    });
+    const polyline = doc.createPolyline(vertices, false);
+    doc.entities.push(polyline);
+    manager.startCommand('SIMPLIFY');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.submitInput('0.1');
+    const result = doc.entities[0];
+    expect(result.type === 'polyline' && result.vertices.length).toBeLessThan(20);
+    expect(result.type === 'polyline' && result.vertices[0]).toMatchObject(vertices[0]);
+    expect(result.type === 'polyline' && result.vertices.at(-1)).toMatchObject(vertices.at(-1)!);
+  });
+
+  it('keeps a simplified closed polyline closed', async () => {
+    const { doc, manager } = setup();
+    // A square with an extra, shape-free point along each side.
+    const vertices = [
+      { x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 },
+      { x: 10, y: 5 }, { x: 10, y: 10 },
+      { x: 5, y: 10 }, { x: 0, y: 10 },
+      { x: 0, y: 5 },
+    ];
+    const polyline = doc.createPolyline(vertices, true);
+    doc.entities.push(polyline);
+    manager.startCommand('SIMPLIFY');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.submitInput('0.01');
+    const result = doc.entities[0];
+    if (result.type === 'polyline') {
+      expect(result.closed).toBe(true);
+      expect(result.vertices[0]).toEqual(result.vertices.at(-1));
+      expect(result.vertices).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }, { x: 0, y: 0 }]);
+    }
   });
 
   it('records a complete line as one undoable edit', async () => {
@@ -1004,6 +1420,35 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0].type).toBe('rectangle');
+  });
+
+  it('explodes single-stroke text into the line segments a pen would draw', async () => {
+    const { doc, manager, history } = setup();
+    const text = doc.createText({ x: 0, y: 0 }, 'HI', 10, 'Single-stroke');
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities.length).toBeGreaterThan(2); // several strokes for two letters
+    expect(doc.entities.every((entity) => entity.type === 'line')).toBe(true);
+    expect(doc.getSelectedEntities().length).toBe(doc.entities.length);
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0]).toMatchObject({ type: 'text', text: 'HI' });
+  });
+
+  it('refuses to explode text in an outline font, since it has no strokes to give', async () => {
+    const { doc, manager, log } = setup();
+    const text = doc.createText({ x: 0, y: 0 }, 'HI', 10, 'Arial');
+    doc.addEntity(text);
+    doc.selectEntity(text.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('text');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('outline font'));
   });
 
   it('creates one native hatch and materialises its strokes only on EXPLODE', async () => {
@@ -1830,6 +2275,49 @@ describe('POLYLINE command', () => {
     await manager.submitInput('C');
     expect(doc.entities).toHaveLength(0);
     expect(log).toHaveBeenCalledWith('A closed polyline needs at least three points.');
+  });
+});
+
+describe('SPLINE command', () => {
+  it('appends a fit point per pick and stays on the same step', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    expect(manager.active?.stepIndex).toBe(1);
+
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.handleClick({ x: 20, y: 0 });
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(doc.entities).toHaveLength(0);
+    expect(manager.active?.data.points).toHaveLength(3);
+  });
+
+  it('fits one smooth Bezier chain through the clicked points on Enter', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 8 });
+    await manager.handleClick({ x: 20, y: 0 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const spline = doc.entities[0];
+    expect(spline).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    if (spline.type === 'bezier') {
+      expect(spline.segments.length).toBeGreaterThan(0);
+      expect(spline.segments.at(-1)!.end).toMatchObject({ x: 20, y: 0 });
+    }
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('refuses to finish with only one point', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('A spline needs at least two points.');
   });
 });
 

@@ -6,7 +6,17 @@ function field(id: string) {
   return { id, value: '', addEventListener: vi.fn() } as unknown as HTMLInputElement;
 }
 
+function stubLocalStorage() {
+  const store = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+  });
+  return store;
+}
+
 function setup() {
+  const store = stubLocalStorage();
   const doc = new Document();
   const fields = new Map<string, HTMLInputElement>([
     ['drafting-snap-size', field('drafting-snap-size')],
@@ -24,7 +34,7 @@ function setup() {
   // Settings window decides when to render; here the tab is always showing.
   doc.subscribe(() => controller.render());
   return {
-    doc, controller, fields, changed,
+    doc, controller, fields, changed, store,
     type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); },
   };
 }
@@ -89,6 +99,14 @@ describe('DraftingSettingsController', () => {
     expect(doc.drafting.polarAngles).toEqual([15, 75]);
     type('drafting-polar-angles', '');
     expect(doc.drafting.polarAngles).toEqual([15, 75]);
+  });
+
+  it('remembers a changed snap step and grid spacing as the global default', () => {
+    const { store, type } = setup();
+    type('drafting-snap-size', '0.25');
+    type('drafting-grid-size', '5');
+    const saved = JSON.parse(store.get('mycad.defaults.drafting')!);
+    expect(saved).toMatchObject({ snapSize: 0.25, gridSize: 5 });
   });
 
   it('reads the document each time it is shown', () => {

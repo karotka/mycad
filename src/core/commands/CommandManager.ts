@@ -185,6 +185,14 @@ export class CommandManager {
       const pair = Array.isArray(remembered) ? remembered : step.defaultValue;
       return pair ? `${step.label} (${pair[0]}, ${pair[1]}):` : `${step.label} (x, y):`;
     }
+    if (step.kind === 'number' && step.remember) {
+      // Shown so the last value is something to look at and accept with
+      // Enter, rather than something to already know and retype — the same
+      // reason a number-pair step shows its own remembered pair above.
+      const remembered = this.rememberedStepValues.get(`${this.active.name}:${this.active.stepIndex}`);
+      const base = step.label.endsWith(':') ? step.label.slice(0, -1) : step.label;
+      return typeof remembered === 'number' ? `${base} (${remembered}):` : `${base}:`;
+    }
     return step.label;
   }
 
@@ -201,6 +209,21 @@ export class CommandManager {
   async submitInput(input: string): Promise<void> {
     try {
       await this.readInput(input);
+    } catch (error) {
+      this.reportFailure(error);
+    }
+  }
+
+  /**
+   * Answers a `text` step with a value the caller already holds structured —
+   * the on-canvas text editor, which can carry a font and height alongside the
+   * string — rather than something typed on the command line for `submitInput`
+   * to parse.
+   */
+  async submitText(text: string, height?: number, font?: string): Promise<void> {
+    try {
+      if (!this.active || this.active.steps[this.active.stepIndex].kind !== 'text') return;
+      await this.advanceStep(height === undefined && font === undefined ? text : { text, height, font });
     } catch (error) {
       this.reportFailure(error);
     }
@@ -289,7 +312,7 @@ export class CommandManager {
     } else if (step.kind === 'entity' && pickEntity && this.stepAccepts('entity')) {
       this.active.data.lastObjectPickPoint = { ...world };
       this.ctx.doc.selectEntity(pickEntity.id, this.isAdditiveStep);
-      if (this.active.name === 'TRIM' && this.active.stepIndex === 1) this.active.data.targetPickPoint = world;
+      if ((this.active.name === 'TRIM' || this.active.name === 'EXTEND') && this.active.stepIndex === 1) this.active.data.targetPickPoint = world;
       await this.advanceStep(pickEntity);
     } else if (step.kind === 'edge' && pickEdge) {
       this.ctx.doc.selectSolid(pickEdge.solidId);

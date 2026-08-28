@@ -144,6 +144,14 @@ export class InputController {
   }
 
   private isTextEntry(target: EventTarget | null): boolean {
+    // The command line is a text field too, and it holds focus almost all the
+    // time by design — a click selects an object and returns focus to it, so
+    // a command can be typed right away. Treating that the same as any other
+    // input meant Delete, Ctrl+C and the rest reached it instead of the
+    // selection nearly every time, since it was rarely genuinely unfocused.
+    // An *empty* command line is not being typed into — only a non-empty one
+    // still needs to keep these keys to itself.
+    if (target === this.commandInput) return this.commandInput.value.length > 0;
     const element = target as { tagName?: string; isContentEditable?: boolean } | null;
     const tag = element?.tagName?.toUpperCase();
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(element?.isContentEditable);

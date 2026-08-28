@@ -107,3 +107,20 @@ export type CommandStep =
   | { kind: 'edge'; label: string; optional?: boolean }
   | { kind: 'text'; label: string; optional?: boolean }
   | { kind: 'done' };
+
+/**
+ * A `text` step's answer: a plain string from the command line, or — from the
+ * on-canvas text editor, which shows font and height fields alongside the
+ * string — all three together.
+ */
+export function textStepValue(value: unknown): { text: string; height?: number; font?: string } {
+  if (value && typeof value === 'object' && 'text' in value) {
+    const { text, height, font } = value as { text: unknown; height?: unknown; font?: unknown };
+    return {
+      text: String(text),
+      height: typeof height === 'number' && height > 0 ? height : undefined,
+      font: typeof font === 'string' && font ? font : undefined,
+    };
+  }
+  return { text: String(value) };
+}

@@ -28,6 +28,11 @@ describe('DimensionStyleController', () => {
 
 describe('typing into an open dimension style panel', () => {
   function setup() {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+    });
     const doc = new Document();
     const ids = [
       'dimension-text-height', 'dimension-arrow-size', 'dimension-arrow-type', 'dimension-extension-beyond',
@@ -47,7 +52,7 @@ describe('typing into an open dimension style panel', () => {
     const controller = new DimensionStyleController(doc, form, vi.fn());
     doc.subscribe(() => controller.render());
     controller.render();
-    return { doc, fields, type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); } };
+    return { doc, fields, store, type: (id: string, value: string) => { fields.get(id)!.value = value; onInput(); } };
   }
 
   // The same round trip as the drafting panel: apply notifies, the notification
@@ -71,5 +76,12 @@ describe('typing into an open dimension style panel', () => {
     doc.dimensionStyle = { ...doc.dimensionStyle, textHeight: 9 };
     doc.notify();
     expect(fields.get('dimension-text-height')!.value).toBe('9');
+  });
+
+  it('remembers a changed style as the global default for the next new project', () => {
+    const { store, type } = setup();
+    type('dimension-text-height', '4');
+    const saved = JSON.parse(store.get('mycad.defaults.dimensionStyle')!);
+    expect(saved.textHeight).toBe(4);
   });
 });

@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { SETTINGS_DEFAULT_KEYS, storeDefault } from './settingsDefaults';
 
 export class HatchSettingsController {
   private applying = false;
@@ -22,6 +23,7 @@ export class HatchSettingsController {
     if (pattern === 'lines' || pattern === 'cross' || pattern === 'solid') this.doc.hatch.pattern = pattern;
     if (Number.isFinite(angle)) this.doc.hatch.angle = angle;
     if (Number.isFinite(spacing) && spacing > 0) this.doc.hatch.spacing = spacing;
+    storeDefault(SETTINGS_DEFAULT_KEYS.hatch, this.doc.hatch);
     this.doc.notify();
     this.changed();
     this.applying = false;

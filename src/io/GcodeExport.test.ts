@@ -15,7 +15,7 @@ describe('exportGcode', () => {
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
     const { gcode } = exportGcode(doc);
     const lines = gcode.split('\n');
-    expect(lines.slice(0, 5)).toEqual(['; MyCAD G-code', 'G21 ; mm', 'G90 ; absolute', 'M5', '$H']);
+    expect(lines.slice(0, 6)).toEqual(['; MyCAD G-code', 'G21 ; mm', 'G90 ; absolute', 'M5', 'G4 P0.1', '$H']);
     // Homing after a move would drag the tool across the work to reach it.
     expect(lines.findIndex((line) => line === '$H')).toBeLessThan(
       lines.findIndex((line) => line.startsWith('G0 X') || line.startsWith('G1 X')),
@@ -54,7 +54,7 @@ describe('exportGcode', () => {
       travelRate: 3000,
       feedRate: 1200,
     });
-    expect(gcode).toContain('G0 X0 Y0 F3000\nM8\nG1 X10 Y5 F1200\nM9');
+    expect(gcode).toContain('G0 X0 Y0 F3000\nM8\nG4 P0.1\nG1 X10 Y5 F1200\nM9');
   });
 
   it('closes a closed path by returning to its first point', () => {
@@ -144,7 +144,7 @@ describe('exportGcode', () => {
     const doc = setup();
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 }));
     const gcode = exportGcode(doc).gcode;
-    expect(gcode.endsWith('M5\nM2 ; end\n')).toBe(true);
+    expect(gcode.endsWith('M5\nG4 P0.1\nM2 ; end\n')).toBe(true);
   });
 
   it('draws connected entities as one uninterrupted stroke', () => {
@@ -166,6 +166,21 @@ describe('exportGcode', () => {
     expect(result.gcode).toContain('G1 X');
   });
 
+  it('dwells after each pen move so a servo has time to actually get there', () => {
+    const doc = setup();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 5 }));
+    const { gcode } = exportGcode(doc, { ...defaultGcodeOptions(), penDelayMs: 250 });
+    expect(gcode).toContain('M3 S19\nG4 P0.25\nG1');
+    expect(gcode).toContain('G4 P0.25\nM2 ; end');
+  });
+
+  it('emits no dwell at all when the pen delay is turned off', () => {
+    const doc = setup();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 5 }));
+    const { gcode } = exportGcode(doc, { ...defaultGcodeOptions(), penDelayMs: 0 });
+    expect(gcode).not.toContain('G4');
+  });
+
   it('plunges once at the centre when hole mode is drill', () => {
     const doc = setup();
     doc.addEntity(doc.createCircle({ x: 5, y: 5 }, 2));
@@ -173,7 +188,7 @@ describe('exportGcode', () => {
     const result = exportGcode(doc, { ...defaultGcodeOptions(), holeMode: 'drill' });
     // The circle becomes a single tap at its centre: travel there, pen down, pen up,
     // and no G1 rim moves for it.
-    expect(result.gcode).toContain('G0 X5 Y5 F6000\nM3 S19\nM5');
+    expect(result.gcode).toContain('G0 X5 Y5 F6000\nM3 S19\nG4 P0.1\nM5');
     // The line still cuts normally, so drill mode only changes circles.
     expect(result.gcode).toContain('G1 X10 Y0 F4000');
     // One drill tap, no circle-outline segments.

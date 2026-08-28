@@ -9,6 +9,7 @@ import {
   type EllipseEntity,
   type ArcEntity,
   type BezierEntity,
+  type BezierSegment,
   type TextEntity,
   type DimensionEntity,
   type BlockDefinition,
@@ -375,7 +376,12 @@ export class Document {
     return { id: genId('arc'), type: 'arc', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), center, radius, startAngle, sweepAngle };
   }
   createBezier(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2): BezierEntity {
-    return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, control1, control2, end };
+    return this.createSpline(start, [{ control1, control2, end }]);
+  }
+  /** The general case `createBezier` is the one-segment shorthand of: a chain
+   *  of cubics for JOIN, a fitted multi-point SPLINE, or an imported spline. */
+  createSpline(start: Vec2, segments: BezierSegment[]): BezierEntity {
+    return { id: genId('bezier'), type: 'bezier', layer: this.currentLayer, aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer), selected: false, workPlane: cloneWorkPlane(this.activeWorkPlane), start, segments };
   }
   createEllipse(center: Vec2, radiusX: number, radiusY: number, rotation = 0): EllipseEntity {
     return {

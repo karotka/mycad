@@ -4,8 +4,14 @@ import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { expandBulges, type BulgeVertex } from './DxfBulge';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
 import { hatchDefinition } from './DxfHatch';
+import { fitCubicBeziers } from '../math/bezierFit';
+import { closePolyline } from '../math/geometry';
 
 type Pair = { code: number; value: string };
+
+/** Close enough that fitting a Bezier chain to a sampled NURBS reads as the
+ *  same curve, not a visibly different approximation of it. */
+const SPLINE_FIT_TOLERANCE = 0.01;
 
 export interface DxfImportResult {
   entities: Entity[];
@@ -153,14 +159,15 @@ function readLayerTable(pairs: Pair[]): LayerTable {
   return table;
 }
 
-/** MTEXT carries inline formatting; our text entity is one plain line. */
+/** MTEXT carries inline formatting; our text entity keeps its line breaks
+    (\P is MTEXT's paragraph/new-line code) but drops everything else. */
 function mtextPlainText(fields: Pair[]): string {
   const raw = fields.filter((pair) => pair.code === 3).map((pair) => pair.value).join('')
     + (fields.find((pair) => pair.code === 1)?.value ?? '');
   // Protect escaped literal characters before consuming formatting commands.
   // MTEXT's underline/overline/strike toggles (\L...\l etc.) notably have no
   // trailing semicolon, unlike font, height and colour controls.
-  const slash = '\uE000', openBrace = '\uE001', closeBrace = '\uE002';
+  const slash = '\uE000', openBrace = '\uE001', closeBrace = '\uE002', newline = '\uE003';
   return raw
     .replace(/\\\\/g, slash)
     .replace(/\\\{/g, openBrace)
@@ -168,14 +175,15 @@ function mtextPlainText(fields: Pair[]): string {
     .replace(/\\U\+([0-9A-Fa-f]{4})/g, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
     .replace(/\\S([^;]*);/gi, (_match, stacked: string) => stacked.replace(/[\^#]/g, '/'))
     .replace(/\\[LlOoKk]/g, '')
-    .replace(/\\[PX]/gi, ' ')
+    .replace(/\\[PX]/gi, newline)
     .replace(/\\~/g, ' ')
     .replace(/\\[A-Za-z][^;\\]*;/g, '')
     .replace(/[{}]/g, '')
     .replaceAll(slash, '\\')
     .replaceAll(openBrace, '{')
     .replaceAll(closeBrace, '}')
-    .replace(/\s+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .split(newline).map((line) => line.trim()).join('\n')
     .trim();
 }
 
@@ -477,12 +485,16 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
         finish(doc.createBezier(start, control1, control2, splineEnd), fields, layer);
       } else {
         const points = sampleSpline(spline);
-        if (points.length < 2) skip(type);
+        // A general NURBS has no exact home in our model — fitting a close,
+        // multi-segment Bezier chain to the sampled curve keeps it a smooth
+        // curve instead of the many-vertex polyline this used to fall back
+        // to; still reported, since it is a numerical fit and not the same
+        // curve algebraically.
+        const fits = points.length >= 2 ? fitCubicBeziers(spline.closed ? closePolyline(points) : points, SPLINE_FIT_TOLERANCE) : [];
+        if (fits.length === 0) skip(type);
         else {
-          // A general NURBS has no exact home in our model, so it is kept as the
-          // polyline it samples to — reported, never silently.
           approximated++;
-          finish(doc.createPolyline(points, spline.closed), fields, layer);
+          finish(doc.createSpline(fits[0].start, fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end }))), fields, layer);
         }
       }
     } else if (type === 'LWPOLYLINE') {

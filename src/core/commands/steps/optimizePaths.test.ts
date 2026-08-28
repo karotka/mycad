@@ -43,6 +43,23 @@ describe('optimizeDrawingPaths', () => {
     expect(doc.entities.some((entity) => entity.id === untouched.id)).toBe(true);
   });
 
+  it('keeps one continuous stroke as one multi-segment spline instead of several separate curves', () => {
+    const { doc, ctx } = setup();
+    // A zigzag: sharp corners a single cubic cannot fit within tolerance, so
+    // the fit needs several segments — but it is still one continuous stroke.
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 }));
+    doc.addEntity(doc.createLine({ x: 5, y: 0 }, { x: 5, y: -5 }));
+    doc.addEntity(doc.createLine({ x: 5, y: -5 }, { x: 10, y: -5 }));
+    doc.addEntity(doc.createLine({ x: 10, y: -5 }, { x: 10, y: 0 }));
+
+    optimizeDrawingPaths(ctx, 0.05);
+
+    expect(doc.entities).toHaveLength(1);
+    const result = doc.entities[0];
+    expect(result.type).toBe('bezier');
+    if (result.type === 'bezier') expect(result.segments.length).toBeGreaterThan(1);
+  });
+
   it('joins endpoints whose gap is within the entered tolerance', () => {
     const { doc, ctx } = setup();
     doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 }));

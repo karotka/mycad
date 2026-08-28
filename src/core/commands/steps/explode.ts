@@ -1,6 +1,7 @@
 /**
  * Taking something apart: a rectangle into its four lines, an INSERT into the
- * drawing it stands for, and — like AutoCAD — a 3D solid into its faces.
+ * drawing it stands for, single-stroke TEXT into the line segments a pen would
+ * actually draw, and — like AutoCAD — a 3D solid into its faces.
  *
  * A solid explodes into one closed polyline per planar face (its outline, plus a
  * separate loop for each hole), laid on that face's own plane. Curved walls have
@@ -16,6 +17,7 @@ import { dist2, type Vec2 } from '../../../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
 import { hatchPatternSegments } from '../../../io/DxfHatch';
+import { isStrokeFont, strokeText } from '../../text/strokeFont';
 
 function explodeEntity(entity: Entity, doc: Document): Entity[] {
   if (entity.type === 'insert') return expandedInsertEntities(entity).map((child) => ({
@@ -23,6 +25,24 @@ function explodeEntity(entity: Entity, doc: Document): Entity[] {
     id: genId(child.type),
     selected: false,
   }));
+  if (entity.type === 'text') {
+    // Only a single-stroke font has a path a pen could follow — a system
+    // font's glyphs are filled outlines with no strokes to give back, same
+    // reason the plotter/G-code export leaves them out rather than tracing
+    // their edges. Each pen-up/pen-down run becomes its own line segments,
+    // exactly like an arc or Bezier does below.
+    if (!isStrokeFont(entity.font)) return [];
+    const result: Entity[] = [];
+    for (const stroke of strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })) {
+      for (let index = 0; index < stroke.length - 1; index++) {
+        const line = doc.createLine(stroke[index], stroke[index + 1]);
+        line.layer = entity.layer; line.aci = entity.aci; line.color = entity.color;
+        line.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
+        result.push(line);
+      }
+    }
+    return result;
+  }
   if (entity.type === 'hatch') {
     const segments = entity.pattern === 'solid'
       ? entity.loops.flatMap((loop) => loop.map((point, index) => [point, loop[(index + 1) % loop.length]] as [Vec2, Vec2]))
@@ -92,7 +112,9 @@ export function explodeObjects(run: CommandRun): StepOutcome {
       }))
       : [];
     if (pieces.length + solidPieces.length === 0) {
-      ctx.log(`EXPLODE: ${entity.type} is already a primitive object.`);
+      ctx.log(entity.type === 'text'
+        ? `EXPLODE: "${entity.font ?? 'Arial'}" is an outline font — only Single-stroke text has strokes to explode into.`
+        : `EXPLODE: ${entity.type} is already a primitive object.`);
       continue;
     }
     removedEntities.push(entity);

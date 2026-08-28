@@ -22,7 +22,18 @@ export class PreviewController {
 
   clearPreview(): void { this.frame = undefined; }
 
+  private isTextEntryStep(active: ActiveCommand): boolean {
+    return ((active.name === 'TEXT' || active.name === 'MTEXT') && active.stepIndex === 3)
+      || (active.name === 'TEXTEDIT' && active.stepIndex === 1);
+  }
+
   update(active: ActiveCommand | null, cursor: Vec2, ucsHoverPoint: { x: number; y: number; z: number } | null): void {
+    if (active && this.isTextEntryStep(active)) {
+      // The on-canvas text editor drives this preview itself, as the user types
+      // and edits height — the cursor has nothing to do with it, so a pointer
+      // move must leave it alone rather than clearing it back to nothing.
+      return;
+    }
     this.clearPreview();
     if (!active) return;
     // A first snap outside the UCS establishes a parallel drawing plane.  The
@@ -42,6 +53,14 @@ export class PreviewController {
       // the only thing that shows what has been drawn.
       const vertices = (active.data.vertices as Vec2[]) ?? [];
       if (vertices.length > 0) this.setPreview({ type: active.name === 'AREA' ? 'area' : 'polyline', data: { vertices, cursor, workPlane: drawingPlane } });
+      return;
+    }
+    if (active.name === 'SPLINE') {
+      // A straight rubber-band through the fit points so far — refitting the
+      // actual curve on every pointer move for a preview nobody holds still
+      // enough to read exactly would cost more than it would show.
+      const points = (active.data.points as Vec2[]) ?? [];
+      if (points.length > 0) this.setPreview({ type: 'polyline', data: { vertices: points, cursor, workPlane: drawingPlane } });
       return;
     }
     if (active.name === 'ELLIPSE' && active.data.center) {
@@ -311,7 +330,10 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
     case 'octagon': result.center = rotate(result.center); result.vertices = result.vertices.map(rotate); break;
     case 'polyline': result.vertices = result.vertices.map(rotate); break;
     case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
-    case 'bezier': result.start = rotate(result.start); result.control1 = rotate(result.control1); result.control2 = rotate(result.control2); result.end = rotate(result.end); break;
+    case 'bezier':
+      result.start = rotate(result.start);
+      result.segments = result.segments.map((segment) => ({ control1: rotate(segment.control1), control2: rotate(segment.control2), end: rotate(segment.end) }));
+      break;
     case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
     case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); if (result.textPosition) result.textPosition = rotate(result.textPosition); break;
     case 'insert': result.position = rotate(result.position); result.rotation += angle; break;

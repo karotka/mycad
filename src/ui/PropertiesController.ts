@@ -155,7 +155,7 @@ export class PropertiesController {
           { key: 'scale', label: 'Scale', value: object.scale },
         ];
       }
-      default: return [...common, { key: '_vertices', label: 'Vertices', value: object.type === 'bezier' ? 4 : object.vertices.length, kind: 'readonly' }];
+      default: return [...common, { key: '_vertices', label: 'Vertices', value: object.type === 'bezier' ? 1 + object.segments.length * 3 : object.vertices.length, kind: 'readonly' }];
     }
   }
 

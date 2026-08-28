@@ -1,13 +1,32 @@
 import type { CommandName } from '../core/commands/CommandManager';
 import {
-  arrayFlyout, circleFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
+  arrayFlyout, circleFlyout, curveFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
   modifyTools, primitiveFlyout, solidTools, toolButtons, zoomFlyout,
 } from './toolbar';
+import {
+  STROKE_FONT, STROKE_FONT_DUPLEX, STROKE_FONT_GOTHIC, STROKE_FONT_SCRIPT, STROKE_FONT_TRIPLEX,
+} from '../core/text/strokeFont';
+
+/** Shared by the pre-placement text-style panel and the on-canvas text editor,
+ *  so the two font pickers never drift apart. */
+const TEXT_FONT_OPTIONS = `
+  <option value="${STROKE_FONT}">Single-stroke (plottable)</option>
+  <option value="${STROKE_FONT_DUPLEX}">Single-stroke Duplex (plottable)</option>
+  <option value="${STROKE_FONT_TRIPLEX}">Single-stroke Triplex (plottable)</option>
+  <option value="${STROKE_FONT_SCRIPT}">Single-stroke Script (plottable)</option>
+  <option value="${STROKE_FONT_GOTHIC}">Single-stroke Gothic (plottable)</option>
+  <option value="Arial">Arial</option>
+  <option value="Helvetica">Helvetica</option>
+  <option value="Verdana">Verdana</option>
+  <option value="Times New Roman">Times New Roman</option>
+  <option value="Courier New">Courier New</option>
+`;
 
 /** Which tool each flyout last used, so it opens showing that one. */
 export interface ShellTools {
   primitive: CommandName;
   circle: CommandName;
+  curve: CommandName;
   dimension: CommandName;
   zoom: 'ZOOM_ALL' | 'ZOOM_WINDOW';
 }
@@ -21,7 +40,7 @@ export function shellHtml(tools: ShellTools): string {
   return `
   <main class="app">
     <nav class="toolbar" aria-label="CAD tools">
-      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout(tools.circle)}</div>
+      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout(tools.circle)}${curveFlyout(tools.curve)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="2D edit">${toolButtons(editTools)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
@@ -44,6 +63,15 @@ export function shellHtml(tools: ShellTools): string {
       <div class="snap-marker" id="snap-marker" hidden></div>
       <div class="tracking-line" id="tracking-line" hidden></div>
       <div class="dimension-toast" id="dimension-toast" hidden></div>
+      <section class="mtext-editor" id="mtext-editor" hidden>
+        <label class="mtext-editor-font">Font<select id="mtext-editor-font">${TEXT_FONT_OPTIONS}</select></label>
+        <label class="mtext-editor-height">Height (mm)<input id="mtext-editor-height" type="number" min="0.1" step="0.5" value="2.5" /></label>
+        <textarea id="mtext-input" spellcheck="false" rows="4" placeholder="Type the text…"></textarea>
+        <div class="mtext-editor-actions">
+          <button id="mtext-done" type="button" title="Finish (⌘/Ctrl+Enter)">Done</button>
+          <button id="mtext-cancel" type="button" title="Cancel (Esc)">Cancel</button>
+        </div>
+      </section>
       <div class="view-toggle">
         <div class="view-cube-stage">
           <svg class="view-compass" viewBox="0 0 132 118" aria-hidden="true">
@@ -174,6 +202,7 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Homing code</span><input id="gcode-homing-code" type="text" spellcheck="false" title="Controller command emitted before the first move"></label>
           <label class="property-row"><span>Pen up code</span><input id="gcode-pen-up-code" type="text" spellcheck="false" title="Controller command that lifts or disables the pen"></label>
           <label class="property-row"><span>Pen down code</span><input id="gcode-pen-down-code" type="text" spellcheck="false" title="Controller command that lowers or enables the pen"></label>
+          <label class="property-row"><span>Pen delay</span><input id="gcode-pen-delay" type="number" min="0" step="10" title="Pause in ms after raising or lowering the pen, so a servo has time to actually move"></label>
           <label class="property-row"><span>Travel feed</span><input id="gcode-travel-rate" type="number" min="1" step="50" title="mm/min while the pen is lifted"></label>
           <label class="property-row"><span>Draw feed</span><input id="gcode-feed-rate" type="number" min="1" step="50" title="mm/min while the pen is down"></label>
           <label class="property-row"><span>Show area</span><input id="gcode-frame-visible" type="checkbox" title="Show the non-exported print/cut area"></label>
@@ -223,6 +252,9 @@ export function shellHtml(tools: ShellTools): string {
       <button data-grip-mode="mid2p">Mid between 2P</button>
       <button data-grip-mode="node">Node</button>
     </section>
+    <section class="vertex-actions" hidden>
+      <button data-grip-action="delete-vertex">Delete vertex</button>
+    </section>
     <section class="persistent-snaps">
       <div class="context-menu-title">Running object snaps · F3</div>
       <button data-persistent-snap="end">Endpoint</button>
@@ -238,14 +270,7 @@ export function shellHtml(tools: ShellTools): string {
   <section class="text-options" id="text-options" hidden>
     <strong>Text style</strong>
     <label>Font
-      <select id="text-font">
-        <option value="Single-stroke">Single-stroke (plottable)</option>
-        <option value="Arial">Arial</option>
-        <option value="Helvetica">Helvetica</option>
-        <option value="Verdana">Verdana</option>
-        <option value="Times New Roman">Times New Roman</option>
-        <option value="Courier New">Courier New</option>
-      </select>
+      <select id="text-font">${TEXT_FONT_OPTIONS}</select>
     </label>
     <label>Height (mm)
       <input id="text-height" type="number" min="0.1" step="0.5" value="2.5" />

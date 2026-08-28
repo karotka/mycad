@@ -1,6 +1,6 @@
 import { cloneEntity, type TextEntity } from '../../entities/types';
 import { ReplaceObjectsEdit } from '../../history/edits';
-import type { CommandRun, StepOutcome } from '../types';
+import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 
 export function editText(run: CommandRun): StepOutcome {
   if (run.active.stepIndex === 0) {
@@ -16,7 +16,10 @@ export function editText(run: CommandRun): StepOutcome {
 
   const before = run.data.textEntity as TextEntity;
   const after = cloneEntity(before);
-  after.text = String(run.value ?? '');
+  const { text, height, font } = textStepValue(run.value ?? '');
+  after.text = text;
+  if (height !== undefined) after.height = height;
+  if (font !== undefined) after.font = font;
   if (!after.text) {
     run.ctx.log('TEXTEDIT: text cannot be empty; use ERASE to remove it.');
     run.ctx.prefillCommandInput?.(before.text);

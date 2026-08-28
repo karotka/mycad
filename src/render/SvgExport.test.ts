@@ -78,6 +78,16 @@ describe('buildPrintSvg', () => {
     expect(svg).toContain('stroke="#000000"');
   });
 
+  it('draws each line of multi-line text as its own <text> element', () => {
+    const doc = new Document();
+    doc.entities.push(doc.createText({ x: 0, y: 0 }, 'one\ntwo\nthree', 10, 'Arial'));
+    const svg = buildPrintSvg(doc, { min: { x: -5, y: -5 }, max: { x: 20, y: 20 } }, { widthMm: 100, heightMm: 100 });
+    expect(svg.match(/<text/g)?.length).toBe(3);
+    expect(svg).toContain('>one<');
+    expect(svg).toContain('>two<');
+    expect(svg).toContain('>three<');
+  });
+
   it('prints every object at the same hairline width when lineweights are not kept', () => {
     const doc = new Document();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });

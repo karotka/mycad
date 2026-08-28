@@ -72,9 +72,11 @@ export function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Doc
     case 'arc': result.center = rotatePoint(result.center, base, angle); result.startAngle += angle; break;
     case 'bezier':
       result.start = rotatePoint(result.start, base, angle);
-      result.control1 = rotatePoint(result.control1, base, angle);
-      result.control2 = rotatePoint(result.control2, base, angle);
-      result.end = rotatePoint(result.end, base, angle);
+      result.segments = result.segments.map((segment) => ({
+        control1: rotatePoint(segment.control1, base, angle),
+        control2: rotatePoint(segment.control2, base, angle),
+        end: rotatePoint(segment.end, base, angle),
+      }));
       break;
     case 'text': result.position = rotatePoint(result.position, base, angle); result.rotation = (result.rotation ?? 0) + angle; break;
     case 'dimension': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); result.offset = rotatePoint(result.offset, base, angle); break;

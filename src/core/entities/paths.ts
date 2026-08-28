@@ -90,7 +90,7 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
       // edges of each letter rather than the letter — so it stays empty here
       // and the caller reports it, which is the honest answer.
       return isStrokeFont(entity.font)
-        ? strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation })
+        ? strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })
           .map((points) => ({ points, closed: false }))
         : [];
   }

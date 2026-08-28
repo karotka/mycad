@@ -223,9 +223,7 @@ describe('exportAsciiDxf entities round-trip through the importer', () => {
     expect(bezier.type).toBe('bezier');
     if (bezier.type !== 'bezier') throw new Error('not a bezier');
     expect(bezier.start).toEqual({ x: 0, y: 0 });
-    expect(bezier.control1).toEqual({ x: 1, y: 5 });
-    expect(bezier.control2).toEqual({ x: 8, y: 5 });
-    expect(bezier.end).toEqual({ x: 10, y: 0 });
+    expect(bezier.segments).toEqual([{ control1: { x: 1, y: 5 }, control2: { x: 8, y: 5 }, end: { x: 10, y: 0 } }]);
   });
 
   it('keeps text and its height', () => {

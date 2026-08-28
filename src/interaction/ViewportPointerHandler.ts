@@ -1,5 +1,5 @@
 import type { Vec2 } from '../math/geometry';
-import { localToWorld, worldToLocal, type WorkPlane } from '../math/workplane';
+import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity, Solid, SolidFaceSelection } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
@@ -645,8 +645,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       });
 
       if (action.kind === 'dragGrip') {
+        // A grip's own point is local to the selected entity's work plane, same
+        // as its vertices or control points — lift it to world before it
+        // becomes the drag's origin, or the delta the drag computes from the
+        // (world) cursor position is measured from the wrong place entirely.
         const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
-        const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
+        const gripPoint = exactGrip
+          ? localToWorld(selected?.workPlane ?? WORLD_WORK_PLANE, exactGrip.point, exactGrip.point.z ?? 0)
+          : gripEditingPoint(event);
         if (!gripPoint) return;
         gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
         event.preventDefault();
