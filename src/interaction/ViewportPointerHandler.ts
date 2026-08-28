@@ -404,6 +404,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   });
 
   viewport.addEventListener('pointerdown', async (event) => {
+    // The MTEXT editor's own controls sit inside #viewport for layout, but a
+    // click there is ordinary HTML text editing. Letting it reach the CAD
+    // picking/selection logic below refocused the command line mid-drag,
+    // which broke selecting and copying text out of the editor.
+    if ((event.target as HTMLElement).closest('.mtext-editor')) return;
     if (event.button === 0 && ucsAxisDrag) {
       finishUcsAxisDrag();
       event.preventDefault();
@@ -951,6 +956,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   });
 
   viewport.addEventListener('dblclick', (event) => {
+    if ((event.target as HTMLElement).closest('.mtext-editor')) return;
     if (commands.active) return;
     const text = cadDocument.viewMode === '2d'
       ? pickEntityAt(cadDocument, rawWorldPoint(event), 8 / renderer2d.zoom)
