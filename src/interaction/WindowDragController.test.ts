@@ -29,4 +29,17 @@ describe('WindowDragController', () => {
     expect(element.hidden).toBe(true);
     expect(captured.size).toBe(0);
   });
+
+  it('carries a click fallback through from begin to finish, for a press that never turns into a drag', () => {
+    const viewport = {
+      setPointerCapture: () => {},
+      hasPointerCapture: () => false,
+      releasePointerCapture: () => {},
+    } as unknown as HTMLElement;
+    const element = { hidden: true, style: {}, classList: { remove: () => {}, toggle: () => {} } } as unknown as HTMLElement;
+    const controller = new WindowDragController(viewport, element);
+
+    controller.begin({ x: 50, y: 40 }, 3, 'select', true, { entity: null, solidId: 'solid-1' });
+    expect(controller.finish(3)?.clickFallback).toEqual({ entity: null, solidId: 'solid-1' });
+  });
 });

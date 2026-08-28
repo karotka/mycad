@@ -54,4 +54,48 @@ describe('SelectionController', () => {
     expect([...doc.selectedEntityIds]).toEqual(['inside']);
     expect(renderer2d.screenToWorld).not.toHaveBeenCalled();
   });
+
+  it('selects whatever was under a press that never moved far enough to be a drag', () => {
+    // Starting a window drag from directly on top of an object — the only way
+    // to let one begin there instead of just from empty space — must still
+    // land as an ordinary click-select when the press turns out to not have
+    // moved, rather than silently doing nothing.
+    const doc = new Document();
+    doc.entities = [line('under-the-press')];
+    const windowDrag = {
+      finish: () => ({
+        start: { x: 50, y: 50 }, current: { x: 51, y: 51 }, additive: true, pointerId: 7, purpose: 'select' as const,
+        clickFallback: { entity: doc.entities[0], solidId: null },
+      }),
+    } as unknown as WindowDragController;
+    const controller = new SelectionController(
+      doc, {} as HTMLElement, {} as Canvas2DRenderer, {} as Viewport3D, windowDrag,
+      { viewportSize: () => ({ width: 100, height: 100 }), selectionChanged: vi.fn(), zoomFinished: vi.fn(), redraw: vi.fn() },
+    );
+
+    expect(controller.finishWindow(7)).toBe(true);
+    expect([...doc.selectedEntityIds]).toEqual(['under-the-press']);
+  });
+
+  it('ignores the click fallback once the press moved enough to be a real selection window', () => {
+    const doc = new Document();
+    doc.entities = [line('under-the-press'), line('inside-the-window')];
+    doc.entities[1] = { ...doc.entities[1], start: { x: 60, y: 60 }, end: { x: 70, y: 60 } } as LineEntity;
+    const renderer2d = {
+      screenToWorld: (x: number, y: number) => ({ x, y }),
+    } as unknown as Canvas2DRenderer;
+    const windowDrag = {
+      finish: () => ({
+        start: { x: 55, y: 55 }, current: { x: 75, y: 65 }, additive: true, pointerId: 9, purpose: 'select' as const,
+        clickFallback: { entity: doc.entities[0], solidId: null },
+      }),
+    } as unknown as WindowDragController;
+    const controller = new SelectionController(
+      doc, {} as HTMLElement, renderer2d, {} as Viewport3D, windowDrag,
+      { viewportSize: () => ({ width: 100, height: 100 }), selectionChanged: vi.fn(), zoomFinished: vi.fn(), redraw: vi.fn() },
+    );
+
+    expect(controller.finishWindow(9)).toBe(true);
+    expect([...doc.selectedEntityIds]).toEqual(['inside-the-window']);
+  });
 });

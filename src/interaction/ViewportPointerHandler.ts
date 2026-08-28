@@ -667,11 +667,19 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       if (action.kind === 'commandClick') {
         await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
       } else if (action.kind === 'selectEntity' && entity) {
+        // Deferred rather than selected outright: a press that turns into a
+        // drag becomes a selection window instead, which is the only way to
+        // start one from on top of a busy cluster of objects rather than only
+        // from empty space.
         if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
-        selectionController.selectHit(entity, null, true);
+        selectionController.beginWindow(event, 'select', { entity, solidId: null });
+        event.preventDefault();
+        return;
       } else if (action.kind === 'selectSolid' && solid) {
         if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
-        selectionController.selectHit(null, solid.id, true);
+        selectionController.beginWindow(event, 'select', { entity: null, solidId: solid.id });
+        event.preventDefault();
+        return;
       }
     } else {
       const activeStep = commands.active?.steps[commands.active.stepIndex];
@@ -929,7 +937,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined);
         afterDynamicUcsAnswer(dynamicAnswer);
       } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid') {
-        selectionController.selectHit(entity, solidId, true);
+        // Same deferral as the 2D view: let a drag from here become a
+        // selection window instead of committing to this hit immediately.
+        selectionController.beginWindow(event, 'select', { entity: entity ?? null, solidId: solidId ?? null });
+        event.preventDefault();
+        return;
       } else if (action.kind === 'clearSelection') {
         cadDocument.clearSelection();
       }

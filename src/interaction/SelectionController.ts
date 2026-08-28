@@ -3,7 +3,7 @@ import type { Entity } from '../core/entities/types';
 import type { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { Viewport3D } from '../render/Viewport3D';
 import { applyProjectedWindowSelection, applyWindowSelection } from './PickingService';
-import type { WindowDragController, WindowDragPurpose } from './WindowDragController';
+import type { WindowDragClickFallback, WindowDragController, WindowDragPurpose } from './WindowDragController';
 
 export interface SelectionControllerCallbacks {
   viewportSize(): { width: number; height: number };
@@ -36,7 +36,11 @@ export class SelectionController {
     return false;
   }
 
-  beginWindow(event: Pick<PointerEvent, 'clientX' | 'clientY' | 'pointerId' | 'shiftKey'>, purpose: WindowDragPurpose): void {
+  beginWindow(
+    event: Pick<PointerEvent, 'clientX' | 'clientY' | 'pointerId' | 'shiftKey'>,
+    purpose: WindowDragPurpose,
+    clickFallback?: WindowDragClickFallback,
+  ): void {
     const rect = this.viewport.getBoundingClientRect();
     this.windowDrag.begin(
       { x: event.clientX - rect.left, y: event.clientY - rect.top },
@@ -45,6 +49,7 @@ export class SelectionController {
       // Ordinary picking is cumulative in both views. Escape is the one clear
       // selection action, so a selection window follows the same rule.
       purpose === 'select' ? true : event.shiftKey,
+      clickFallback,
     );
   }
 
@@ -85,6 +90,12 @@ export class SelectionController {
         applyProjectedWindowSelection(this.doc, box, crossing, selection.additive, (point) =>
           this.renderer3d.projectCadPoint(canvas, point));
       }
+    } else if (selection.clickFallback) {
+      // The press never moved far enough to be a drag, so it was really just a
+      // click on whatever sat directly under it — the thing starting the drag
+      // here in the first place was what let a window selection begin from on
+      // top of a busy cluster of objects instead of only from empty space.
+      this.selectHit(selection.clickFallback.entity, selection.clickFallback.solidId, selection.additive);
     }
     this.callbacks.selectionChanged();
     this.callbacks.redraw();

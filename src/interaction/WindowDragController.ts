@@ -1,6 +1,14 @@
+import type { Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 
 export type WindowDragPurpose = 'select' | 'zoom';
+
+/** What a press that turns out not to have moved should select instead — the
+ *  entity or solid that was directly under the cursor when it went down. */
+export interface WindowDragClickFallback {
+  entity: Entity | null;
+  solidId: string | null;
+}
 
 export interface WindowDragState {
   start: Vec2;
@@ -8,6 +16,7 @@ export interface WindowDragState {
   additive: boolean;
   pointerId: number;
   purpose: WindowDragPurpose;
+  clickFallback?: WindowDragClickFallback;
 }
 
 export class WindowDragController {
@@ -17,9 +26,15 @@ export class WindowDragController {
 
   get active(): WindowDragState | null { return this.state; }
 
-  begin(point: Vec2, pointerId: number, purpose: WindowDragPurpose, additive = false): void {
+  begin(
+    point: Vec2,
+    pointerId: number,
+    purpose: WindowDragPurpose,
+    additive = false,
+    clickFallback?: WindowDragClickFallback,
+  ): void {
     this.cancel();
-    this.state = { start: { ...point }, current: { ...point }, additive, pointerId, purpose };
+    this.state = { start: { ...point }, current: { ...point }, additive, pointerId, purpose, clickFallback };
     this.element.style.left = `${point.x}px`;
     this.element.style.top = `${point.y}px`;
     this.element.style.width = '0px';
