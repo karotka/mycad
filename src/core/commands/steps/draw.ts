@@ -16,7 +16,7 @@ import { dist2, formatPoint, type Vec2 } from '../../../math/geometry';
 import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { BezierSegment, Entity } from '../../entities/types';
 import type { WorkPlane } from '../../../math/workplane';
-import { fitCubicBeziers } from '../../../math/bezierFit';
+import { interpolatingBeziers } from '../../../math/bezierFit';
 
 function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<string, unknown>): T {
   const plane = data.drawingPlane as WorkPlane | undefined;
@@ -264,9 +264,11 @@ export function drawPolyline(run: CommandRun): StepOutcome {
   return 'advance';
 }
 
-/** Tight enough that the fitted curve passes through every clicked point for
- *  all but a hand's-width jitter — a fit point is a place asked to be on the
- *  curve, not a hint the way OPTIMIZEPATHS' resampled source points are. */
+/** How closely a DXF SPLINE import's Bezier-chain approximation must hug the
+ *  points sampled off the true NURBS curve — tight enough that the deviation
+ *  never reads as anything but the original curve. SPLINE drawn by hand uses
+ *  `interpolatingBeziers` instead, which passes through every point exactly
+ *  regardless of tolerance. */
 export const SPLINE_FIT_TOLERANCE = 0.01;
 
 export function drawSpline(run: CommandRun): StepOutcome {
@@ -289,7 +291,7 @@ export function drawSpline(run: CommandRun): StepOutcome {
     run.cancel();
     return 'advance';
   }
-  const fits = fitCubicBeziers(points, SPLINE_FIT_TOLERANCE);
+  const fits = interpolatingBeziers(points);
   if (fits.length === 0) {
     ctx.log('SPLINE failed to fit a curve through these points.');
     run.cancel();

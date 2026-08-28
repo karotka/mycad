@@ -58,10 +58,11 @@ export class PreviewController {
     if (active.name === 'SPLINE') {
       const points = (active.data.points as Vec2[]) ?? [];
       if (points.length === 0) return;
-      // Fit through every clicked point plus where the cursor sits now, so the
-      // preview is the actual curve a click here would produce — not a straight
-      // stand-in for it.
-      const fits = fitCubicBeziers([...points, cursor], SPLINE_FIT_TOLERANCE);
+      // Interpolated through every clicked point plus where the cursor sits
+      // now, so the preview is the actual curve a click here would produce —
+      // not a straight stand-in for it, and not a fit that can reshape an
+      // already-placed span once another point goes down further along.
+      const fits = interpolatingBeziers([...points, cursor]);
       this.setPreview(fits.length > 0
         ? { type: 'spline', data: { start: fits[0].start, segments: fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end })), workPlane: drawingPlane } }
         : { type: 'polyline', data: { vertices: points, cursor, workPlane: drawingPlane } });
@@ -362,5 +363,4 @@ import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
-import { fitCubicBeziers } from '../math/bezierFit';
-import { SPLINE_FIT_TOLERANCE } from '../core/commands/steps/draw';
+import { interpolatingBeziers } from '../math/bezierFit';

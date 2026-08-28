@@ -49,6 +49,39 @@ function leastSquaresCurve(points: Vec2[], parameters: number[]): CubicBezierFit
   };
 }
 
+/**
+ * One cubic Bezier segment per pair of consecutive points, always passing
+ * exactly through every one of them with a continuous tangent (Catmull-Rom).
+ *
+ * Unlike `fitCubicBeziers`, which is free to redraw its segment boundaries
+ * across the *whole* point set to keep their count down, each segment here
+ * depends only on its own two immediate neighbours on either side. Appending
+ * one more point to the chain reshapes at most the segment next to it —
+ * everything already drawn stays exactly as it was, which matters for a
+ * spline built by clicking one point at a time.
+ */
+export function interpolatingBeziers(input: readonly Vec2[]): CubicBezierFit[] {
+  const points = input.filter((point, index) => index === 0 || distance(point, input[index - 1]) > 1e-12);
+  if (points.length < 2) return [];
+  const tangentAt = (index: number): Vec2 => {
+    const previous = points[Math.max(0, index - 1)];
+    const next = points[Math.min(points.length - 1, index + 1)];
+    return { x: (next.x - previous.x) / 2, y: (next.y - previous.y) / 2 };
+  };
+  const segments: CubicBezierFit[] = [];
+  for (let index = 0; index < points.length - 1; index++) {
+    const start = points[index], end = points[index + 1];
+    const startTangent = tangentAt(index), endTangent = tangentAt(index + 1);
+    segments.push({
+      start: { ...start },
+      control1: { x: start.x + startTangent.x / 3, y: start.y + startTangent.y / 3 },
+      control2: { x: end.x - endTangent.x / 3, y: end.y - endTangent.y / 3 },
+      end: { ...end },
+    });
+  }
+  return segments;
+}
+
 function straightBezier(start: Vec2, end: Vec2): CubicBezierFit {
   return { start: { ...start }, control1: { x: start.x + (end.x - start.x) / 3, y: start.y + (end.y - start.y) / 3 }, control2: { x: start.x + 2 * (end.x - start.x) / 3, y: start.y + 2 * (end.y - start.y) / 3 }, end: { ...end } };
 }
