@@ -15,11 +15,12 @@ export const circleTools: Array<[string, string, CommandName]> = [
   ['Diameter', 'Circle by diameter', 'CIRCLE_DIAMETER'],
   ['Ellipse', 'Ellipse', 'ELLIPSE'],
 ];
-// Both draw the same entity — a Bezier chain — one segment at a time from
-// explicit control points, or all at once fitted through clicked points.
+// Both draw the same entity — a Bezier chain — as two different ways to place
+// it, the way AutoCAD's own SPLINE offers Fit and CV input: Fit passes the
+// curve through every clicked point, CV shapes it with control points instead.
 export const curveTools: Array<[string, string, CommandName]> = [
-  ['Bezier', 'Bezier — explicit control points', 'BEZIER'],
-  ['Spline', 'Spline — fit through clicked points', 'SPLINE'],
+  ['Spline (Fit)', 'Spline — the curve passes through every clicked point', 'SPLINE'],
+  ['Spline (CV)', 'Spline — control points shape the curve without it passing through them', 'BEZIER'],
 ];
 export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
 export const solidTools: Array<[string, CommandName]> = [

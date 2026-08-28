@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LINE_SPACING, STROKE_FONT } from '../text/strokeFont';
-import { dimensionGeometry, entityBounds, removeBezierNode, removePolylineVertex, type BezierEntity, type DimensionEntity, type PolylineEntity, type TextEntity } from './types';
+import { dimensionGeometry, entityBounds, isSweepProfileEntity, removeBezierNode, removePolylineVertex, type BezierEntity, type DimensionEntity, type PolylineEntity, type TextEntity } from './types';
 
 describe('entityBounds', () => {
   const text = (value: string): TextEntity => ({
@@ -85,6 +85,26 @@ describe('removeBezierNode', () => {
   it('refuses to leave a single-segment curve with no joint left to remove', () => {
     const oneSegment: BezierEntity = { ...spline(), segments: spline().segments.slice(0, 1) };
     expect(removeBezierNode(oneSegment, 0)).toBeNull();
+  });
+});
+
+describe('isSweepProfileEntity', () => {
+  const openSpline: BezierEntity = {
+    id: 'b', type: 'bezier', layer: '0', aci: 256, color: 0xffffff, selected: false,
+    start: { x: 0, y: 0 },
+    segments: [{ control1: { x: 1, y: 3 }, control2: { x: 3, y: 6 }, end: { x: 5, y: 8 } }],
+  };
+  const closedSpline: BezierEntity = {
+    ...openSpline,
+    segments: [
+      ...openSpline.segments,
+      { control1: { x: 3, y: 6 }, control2: { x: 1, y: 3 }, end: { x: 0, y: 0 } }, // back to start
+    ],
+  };
+
+  it('accepts a Bezier chain only once it loops back to its own start', () => {
+    expect(isSweepProfileEntity(openSpline)).toBe(false);
+    expect(isSweepProfileEntity(closedSpline)).toBe(true);
   });
 });
 

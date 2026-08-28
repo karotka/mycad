@@ -1,5 +1,6 @@
-import { closedVertices, getEntityPoints, type BooleanFeature, type Entity, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type Entity, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
+import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
 import type { AffineTransform3, Point3, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
@@ -208,10 +209,28 @@ function exactSweepProfile(profile: Entity, plane: WorkPlane): SweepProfile3 | n
       radius: profile.radius,
     };
   }
+  if (profile.type === 'bezier') {
+    return isClosedBezierEntity(profile)
+      ? { kind: 'wire', edges: bezierWireEdges(profile, (point) => localToWorld(plane, point)) }
+      : null;
+  }
   const vertices = closedVertices(profile);
   return vertices && vertices.length >= 3
     ? { kind: 'polygon', points: vertices.map((point) => localToWorld(plane, point)) }
     : null;
+}
+
+/** A closed Bezier chain as exact sweep/extrusion edges, each `point` carried
+ *  through `toPoint` so the caller can place it in world space (SWEEP) or keep
+ *  it local and let the feature's own placement step do that later (EXTRUDE). */
+function bezierWireEdges(entity: BezierEntity, toPoint: (point: Vec2) => Point3): SweepPathSegment3[] {
+  let previous = toPoint(entity.start);
+  return entity.segments.map((segment) => {
+    const end = toPoint(segment.end);
+    const edge: SweepPathSegment3 = { kind: 'bezier', poles: [previous, toPoint(segment.control1), toPoint(segment.control2), end] };
+    previous = end;
+    return edge;
+  });
 }
 
 function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | null {
@@ -353,6 +372,19 @@ function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKerne
         ? kernel.makeCone(farRadius, radius, feature.height, center)
         : kernel.makeCone(radius, farRadius, feature.height, center);
     }
+  } else if (feature.profile.type === 'bezier') {
+    if (!isClosedBezierEntity(feature.profile)) return null;
+    // Tapering means offsetting the profile inward by a distance that grows
+    // with height — well-defined for a polygon's straight edges (even if only
+    // by the bounding-box approximation below), not yet implemented for a
+    // curved boundary.
+    if (Math.abs(taperAngle) > 1e-12) return null;
+    const edges = bezierWireEdges(feature.profile, (point) => ({
+      x: point.x * transform.scaleX + transform.translateX,
+      y: point.y * transform.scaleY + transform.translateY,
+      z,
+    }));
+    local = kernel.extrudeWire(edges, vector);
   } else {
     const vertices = closedVertices(feature.profile);
     if (!vertices || vertices.length < 3) return null;

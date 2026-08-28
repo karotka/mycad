@@ -7,6 +7,7 @@ import type {
   TopoDS_Edge,
   TopoDS_Face,
   TopoDS_Shape,
+  TopoDS_Wire,
 } from 'opencascade.js';
 import type {
   GeometryKernel,
@@ -307,6 +308,41 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /** Extrudes a closed loop of exact edges — lines, arcs, Bezier curves, any mix
+   *  — the same way `extrudePolygon` extrudes a straight-edged one, so a closed
+   *  spline profile keeps its true curved boundary instead of being faceted. */
+  extrudeWire(edges: readonly SweepPathSegment3[], vector: Point3): OpenCascadeSolid {
+    if (edges.length === 0) throw new Error('Extrusion profile requires at least one edge.');
+    this.validateVector(vector, 'Extrusion');
+    const owned: Array<{ delete(): void }> = [];
+    let wire: TopoDS_Wire | null = null;
+    let faceMaker: InstanceType<typeof this.oc.BRepBuilderAPI_MakeFace_15> | null = null;
+    let face: ReturnType<InstanceType<typeof this.oc.BRepBuilderAPI_MakeFace_15>['Face']> | null = null;
+    let prismVector: InstanceType<typeof this.oc.gp_Vec_4> | null = null;
+    let prism: InstanceType<typeof this.oc.BRepPrimAPI_MakePrism_1> | null = null;
+    try {
+      wire = this.buildWireFromEdges(edges, owned, 'OpenCascade could not close the extrusion profile.');
+      faceMaker = new this.oc.BRepBuilderAPI_MakeFace_15(wire, true);
+      if (!faceMaker.IsDone()) throw new Error('OpenCascade could not create the extrusion face.');
+      face = faceMaker.Face();
+      prismVector = new this.oc.gp_Vec_4(vector.x, vector.y, vector.z);
+      prism = new this.oc.BRepPrimAPI_MakePrism_1(face, prismVector, true, true);
+      const shape = prism.Shape();
+      if (shape.IsNull() || !this.hasSolid(shape)) {
+        shape.delete();
+        throw new Error('OpenCascade failed to extrude the wire profile.');
+      }
+      return this.wrap(shape);
+    } finally {
+      prism?.delete();
+      prismVector?.delete();
+      face?.delete();
+      faceMaker?.delete();
+      wire?.delete();
+      for (let index = owned.length - 1; index >= 0; index--) owned[index].delete();
+    }
+  }
+
   extrudeRegion(loops: readonly (readonly Point3[])[], vector: Point3): OpenCascadeSolid {
     if (loops.length === 0 || loops.some((loop) => loop.length < 3)) {
       throw new Error('Extrusion region requires one outer loop and valid optional holes.');
@@ -439,21 +475,14 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     if (path.length === 0) throw new Error('Sweep path requires at least one segment.');
 
     const owned: Array<{ delete(): void }> = [];
-    const spineMaker = new this.oc.BRepBuilderAPI_MakeWire_1();
-    owned.push(spineMaker);
-    let spine: ReturnType<typeof spineMaker.Wire> | null = null;
-    let profileWire: ReturnType<typeof spineMaker.Wire> | null = null;
+    let spine: TopoDS_Wire | null = null;
+    let profileWire: TopoDS_Wire | null = null;
     let profileFaceMaker: InstanceType<typeof this.oc.BRepBuilderAPI_MakeFace_15> | null = null;
     let profileFace: ReturnType<InstanceType<typeof this.oc.BRepBuilderAPI_MakeFace_15>['Face']> | null = null;
     let pipe: InstanceType<typeof this.oc.BRepOffsetAPI_MakePipe_1> | null = null;
     let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
     try {
-      for (const segment of path) {
-        const edge = this.makeSweepEdge(segment, owned);
-        spineMaker.Add_1(edge);
-      }
-      if (!spineMaker.IsDone()) throw new Error('OpenCascade could not join the sweep path.');
-      spine = spineMaker.Wire();
+      spine = this.buildWireFromEdges(path, owned, 'OpenCascade could not join the sweep path.');
 
       profileWire = this.makeSweepProfileWire(profile, owned);
       profileFaceMaker = new this.oc.BRepBuilderAPI_MakeFace_15(profileWire, true);
@@ -1017,10 +1046,25 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     return edge;
   }
 
+  /** Joins exact edges — lines, arcs, Bezier curves, any mix — into one wire.
+   *  The common step behind a sweep's spine, a sweep's curved profile, and a
+   *  curved-profile extrusion. */
+  private buildWireFromEdges(
+    edges: readonly SweepPathSegment3[],
+    owned: Array<{ delete(): void }>,
+    errorMessage: string,
+  ): TopoDS_Wire {
+    const wireMaker = new this.oc.BRepBuilderAPI_MakeWire_1();
+    owned.push(wireMaker);
+    for (const segment of edges) wireMaker.Add_1(this.makeSweepEdge(segment, owned));
+    if (!wireMaker.IsDone()) throw new Error(errorMessage);
+    return wireMaker.Wire();
+  }
+
   private makeSweepProfileWire(
     profile: SweepProfile3,
     owned: Array<{ delete(): void }>,
-  ): ReturnType<InstanceType<typeof this.oc.BRepBuilderAPI_MakeWire_1>['Wire']> {
+  ): TopoDS_Wire {
     if (profile.kind === 'polygon') {
       if (profile.points.length < 3) throw new Error('Sweep polygon requires at least three points.');
       const polygon = new this.oc.BRepBuilderAPI_MakePolygon_1();
@@ -1033,6 +1077,10 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       polygon.Close();
       if (!polygon.IsDone()) throw new Error('OpenCascade could not close the sweep profile.');
       return polygon.Wire();
+    }
+
+    if (profile.kind === 'wire') {
+      return this.buildWireFromEdges(profile.edges, owned, 'OpenCascade could not close the sweep profile.');
     }
 
     if (profile.radius <= 0) throw new Error('Sweep circle radius must be positive.');

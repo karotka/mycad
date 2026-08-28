@@ -14,7 +14,7 @@
 import { AddEntityEdit } from '../../history/edits';
 import { dist2, formatPoint, type Vec2 } from '../../../math/geometry';
 import { textStepValue, type CommandRun, type StepOutcome } from '../types';
-import type { Entity } from '../../entities/types';
+import type { BezierSegment, Entity } from '../../entities/types';
 import type { WorkPlane } from '../../../math/workplane';
 import { fitCubicBeziers } from '../../../math/bezierFit';
 
@@ -131,14 +131,41 @@ export function drawArc({ ctx, active, data, value }: CommandRun): StepOutcome {
   return 'advance';
 }
 
-export function drawBezier({ ctx, active, data, value }: CommandRun): StepOutcome {
-  if (active.stepIndex === 0) { data.start = value; return 'advance'; }
-  if (active.stepIndex === 1) { data.control1 = value; return 'advance'; }
-  if (active.stepIndex === 2) { data.control2 = value; return 'advance'; }
+/**
+ * Spline (CV): every point after the start is a control point. The first four
+ * points make one cubic segment (start, control1, control2, end); each further
+ * run of three continues the chain onto a new one. Unlike SPLINE's fit points,
+ * these shape the curve without the curve passing through them — except at the
+ * anchors where segments join.
+ */
+export function drawBezier(run: CommandRun): StepOutcome {
+  const { data, value, ctx } = run;
+  const points = (data.points as Vec2[] | undefined) ?? (data.points = []);
+  const point = value as Vec2 | null;
 
-  const bezier = ctx.doc.createBezier(data.start as Vec2, data.control1 as Vec2, data.control2 as Vec2, value as Vec2);
+  if (point) {
+    points.push({ x: point.x, y: point.y });
+    // Same reason drawPolyline and drawSpline keep this current: it is what
+    // ortho, polar and the rubber-band preview track from.
+    data.start = { x: point.x, y: point.y };
+    if (points.length <= 4) return 'advance';
+    if ((points.length - 1) % 3 === 0) {
+      ctx.log(`Segment ${(points.length - 1) / 3} added. 3 more points to continue, or Enter to finish.`);
+    }
+    return 'stay';
+  }
+
+  // Enter only reaches here once the mandatory first segment (4 points) is
+  // already down — every point before that is on a mandatory step.
+  const leftover = (points.length - 1) % 3;
+  if (leftover > 0) ctx.log(`Ignored ${leftover} trailing point(s) — not enough left to complete another segment.`);
+  const segments: BezierSegment[] = [];
+  for (let index = 1; index + 2 <= points.length - 1 - leftover; index += 3) {
+    segments.push({ control1: points[index], control2: points[index + 1], end: points[index + 2] });
+  }
+  const bezier = keepCommandDrawingPlane(ctx.doc.createSpline(points[0], segments), data);
   ctx.history.execute(new AddEntityEdit('Bezier', bezier));
-  ctx.log(`Bezier created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
+  ctx.log(`Bezier created: ${segments.length} segment(s).`);
   return 'advance';
 }
 
@@ -240,7 +267,7 @@ export function drawPolyline(run: CommandRun): StepOutcome {
 /** Tight enough that the fitted curve passes through every clicked point for
  *  all but a hand's-width jitter — a fit point is a place asked to be on the
  *  curve, not a hint the way OPTIMIZEPATHS' resampled source points are. */
-const SPLINE_FIT_TOLERANCE = 0.01;
+export const SPLINE_FIT_TOLERANCE = 0.01;
 
 export function drawSpline(run: CommandRun): StepOutcome {
   const { active, data, value, ctx } = run;

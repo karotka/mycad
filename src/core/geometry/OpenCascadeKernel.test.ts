@@ -191,6 +191,32 @@ describe('OpenCascade exact-kernel spike', () => {
     });
   });
 
+  it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
+    const wire = keep(kernel.extrudeWire([
+      { kind: 'line', start: { x: -2, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },
+      {
+        kind: 'arc',
+        center: { x: 0, y: 0, z: 0 },
+        normal: { x: 0, y: 0, z: 1 },
+        xAxis: { x: 1, y: 0, z: 0 },
+        radius: 2,
+        startAngle: 0,
+        sweepAngle: Math.PI,
+      },
+    ], { x: 0, y: 0, z: 5 }));
+    expect(kernel.inspect(wire)).toMatchObject({
+      bounds: {
+        min: { x: expect.closeTo(-2, 6), y: expect.closeTo(0, 6), z: 0 },
+        max: { x: expect.closeTo(2, 6), y: expect.closeTo(2, 6), z: 5 },
+      },
+      // Two flat caps plus one flat and one genuinely curved side wall — a
+      // faceted approximation of the arc would instead show up as many.
+      faceCount: 4,
+      volume: expect.closeTo(10 * Math.PI, 6),
+      valid: true,
+    });
+  });
+
   it('sweeps exact polygon and circle profiles along analytic paths', () => {
     const straight = keep(kernel.sweep({
       kind: 'polygon',
@@ -239,6 +265,28 @@ describe('OpenCascade exact-kernel spike', () => {
       ],
     }]));
     expect(kernel.inspect(bezier)).toMatchObject({ solidCount: 1, valid: true });
+
+    // A closed loop of mixed edges — half straight, half curved — as the cross
+    // section, the same vocabulary a closed spline profile is built from.
+    const wireProfile = keep(kernel.sweep({
+      kind: 'wire',
+      edges: [
+        { kind: 'line', start: { x: 0, y: -2, z: 0 }, end: { x: 0, y: 2, z: 0 } },
+        {
+          kind: 'arc',
+          center: { x: 0, y: 0, z: 0 },
+          normal: { x: 1, y: 0, z: 0 },
+          xAxis: { x: 0, y: 1, z: 0 },
+          radius: 2,
+          startAngle: 0,
+          sweepAngle: Math.PI,
+        },
+      ],
+    }, [{ kind: 'line', start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }]));
+    expect(kernel.inspect(wireProfile)).toMatchObject({
+      volume: expect.closeTo(20 * Math.PI, 6),
+      valid: true,
+    });
   });
 
   it('extrudes a bounded region with a real inner hole', () => {

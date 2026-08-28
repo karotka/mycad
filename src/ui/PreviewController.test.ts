@@ -59,6 +59,22 @@ describe('PreviewController', () => {
     expect(previewOf(active('POLYLINE', 0, { vertices: [] }), { x: 4, y: 5 })).toBeUndefined();
   });
 
+  it('previews the actual fitted curve while drawing a SPLINE, not a straight rubber-band', () => {
+    const points = [{ x: 0, y: 0 }, { x: 10, y: 4 }];
+    const preview = previewOf(active('SPLINE', 0, { points }), { x: 20, y: 0 });
+    expect(preview?.type).toBe('spline');
+    const data = preview?.data as { start: { x: number; y: number }; segments: Array<{ end: { x: number; y: number } }> };
+    expect(data.start).toEqual({ x: 0, y: 0 });
+    expect(data.segments.length).toBeGreaterThan(0);
+    expect(data.segments.at(-1)?.end).toEqual({ x: 20, y: 0 });
+  });
+
+  it('falls back to a straight rubber-band if the SPLINE fit point is degenerate', () => {
+    const points = [{ x: 0, y: 0 }];
+    const preview = previewOf(active('SPLINE', 0, { points }), { x: 0, y: 0 }); // cursor on top of the only point
+    expect(preview).toEqual({ type: 'polyline', data: { vertices: points, cursor: { x: 0, y: 0 } } });
+  });
+
   it('previews PRINTAREA as a rectangle, the same way RECTANGLE does', () => {
     expect(previewOf(active('PRINTAREA', 1, { start: { x: 0, y: 0 } }), { x: 12, y: 8 })).toEqual({
       type: 'rectangle',

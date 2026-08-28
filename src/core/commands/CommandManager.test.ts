@@ -2321,6 +2321,62 @@ describe('SPLINE command', () => {
   });
 });
 
+describe('BEZIER command (Spline CV)', () => {
+  it('builds one cubic segment from four control points and Enter', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 10, y: 10 });
+    await manager.handleClick({ x: 10, y: 0 });
+    expect(doc.entities).toHaveLength(0); // waiting for more points or Enter, like SPLINE
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const bezier = doc.entities[0];
+    expect(bezier).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    if (bezier.type === 'bezier') {
+      expect(bezier.segments).toEqual([{ control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0 } }]);
+    }
+  });
+
+  it('continues the chain 3 points at a time for each further segment', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 10, y: 10 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 20, y: 0 });
+    await manager.handleClick({ x: 20, y: 10 });
+    await manager.handleClick({ x: 30, y: 10 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const bezier = doc.entities[0];
+    if (bezier.type === 'bezier') {
+      expect(bezier.segments).toHaveLength(2);
+      expect(bezier.segments.at(-1)!.end).toEqual({ x: 30, y: 10 });
+    }
+  });
+
+  it('drops incomplete trailing points that cannot finish another segment', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 10, y: 10 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 20, y: 0 }); // one stray extra control point
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const bezier = doc.entities[0];
+    if (bezier.type === 'bezier') expect(bezier.segments).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith('Ignored 1 trailing point(s) — not enough left to complete another segment.');
+  });
+});
+
 describe('commands built from the registry', () => {
   it('takes its steps from the registry definition', () => {
     const { manager } = setup();

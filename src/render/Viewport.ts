@@ -632,6 +632,18 @@ export class Canvas2DRenderer {
       const q=preview.data as {center:Vec2;start:Vec2;cursor:Vec2}; const c=worldToScreen(q.center,w,h,this.pan,this.zoom); const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y); let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);if(sweep<=0)sweep+=Math.PI*2; this.ctx.beginPath();this.ctx.arc(c.x,c.y,r*this.zoom,-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x),-(Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x)+sweep),true);this.ctx.stroke();
     } else if (preview.type === 'bezier') {
       const q=preview.data as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2}; const a=worldToScreen(q.start,w,h,this.pan,this.zoom),b=worldToScreen(q.control1,w,h,this.pan,this.zoom),c=worldToScreen(q.control2,w,h,this.pan,this.zoom),d2=worldToScreen(q.end,w,h,this.pan,this.zoom);this.ctx.beginPath();this.ctx.moveTo(a.x,a.y);this.ctx.bezierCurveTo(b.x,b.y,c.x,c.y,d2.x,d2.y);this.ctx.stroke();
+    } else if (preview.type === 'spline') {
+      const q = preview.data as { start: Vec2; segments: Array<{ control1: Vec2; control2: Vec2; end: Vec2 }> };
+      const start = worldToScreen(q.start, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.moveTo(start.x, start.y);
+      for (const segment of q.segments) {
+        const control1 = worldToScreen(segment.control1, w, h, this.pan, this.zoom);
+        const control2 = worldToScreen(segment.control2, w, h, this.pan, this.zoom);
+        const end = worldToScreen(segment.end, w, h, this.pan, this.zoom);
+        this.ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+      }
+      this.ctx.stroke();
     } else if (preview.type === 'text') {
       const q=preview.data as {position:Vec2;text:string;font?:string;height?:number};const previewHeight=q.height ?? 2.5;this.ctx.setLineDash([]);
       if (isStrokeFont(q.font)) {
@@ -1729,6 +1741,21 @@ export class Viewport3D {
       const q=preview.data as unknown as {center:Vec2;start:Vec2;cursor:Vec2};previewPlaneOffset=localPointZ(q.center)??0;const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y);const start=Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-start;if(sweep<=0)sweep+=Math.PI*2;for(let i=0;i<=64;i++){const a=start+sweep*i/64;points.push({x:q.center.x+Math.cos(a)*r,y:q.center.y+Math.sin(a)*r});}
     } else if (preview.type === 'bezier') {
       const q=preview.data as unknown as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2};previewPlaneOffset=localPointZ(q.start)??0;for(let i=0;i<=64;i++){const t=i/64,u=1-t;points.push({x:u**3*q.start.x+3*u*u*t*q.control1.x+3*u*t*t*q.control2.x+t**3*q.end.x,y:u**3*q.start.y+3*u*u*t*q.control1.y+3*u*t*t*q.control2.y+t**3*q.end.y});}
+    } else if (preview.type === 'spline') {
+      const q = preview.data as unknown as { start: Vec2; segments: Array<{ control1: Vec2; control2: Vec2; end: Vec2 }> };
+      previewPlaneOffset = localPointZ(q.start) ?? 0;
+      let segmentStart = q.start;
+      for (const segment of q.segments) {
+        for (let i = 1; i <= 32; i++) {
+          const t = i / 32, u = 1 - t;
+          points.push({
+            x: u ** 3 * segmentStart.x + 3 * u * u * t * segment.control1.x + 3 * u * t * t * segment.control2.x + t ** 3 * segment.end.x,
+            y: u ** 3 * segmentStart.y + 3 * u * u * t * segment.control1.y + 3 * u * t * t * segment.control2.y + t ** 3 * segment.end.y,
+          });
+        }
+        segmentStart = segment.end;
+      }
+      points.unshift(q.start);
     }
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(

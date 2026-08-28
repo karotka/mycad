@@ -154,7 +154,19 @@ export const COMMANDS = [
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
-  { name: 'BEZIER', aliases: ['BEZ', 'BEZIER'], execute: drawBezier, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify first control point:' }, { kind: 'point', label: 'Specify second control point:' }, { kind: 'point', label: 'Specify end point:' }, { kind: 'done' }] },
+  // Spline (CV): control points shape the curve without it passing through
+  // them, same idea as AutoCAD's control-vertex SPLINE — here as a chain of
+  // cubic Bezier segments, the first one 4 points, each further one 3 more.
+  { name: 'BEZIER', aliases: ['BEZ', 'BEZIER'], execute: drawBezier, help: 'draw a spline by control points (does not pass through them)', suggest: true, sticky: true, pointInput: true,
+    steps: [
+      { kind: 'point', label: 'Specify start point:' },
+      { kind: 'point', label: 'Specify first control point:' },
+      { kind: 'point', label: 'Specify second control point:' },
+      { kind: 'point', label: 'Specify end point:' },
+      { kind: 'point', label: 'Specify next control point (2 more to continue, Enter to finish):', optional: true },
+      { kind: 'done' },
+    ] },
+  // Spline (Fit): the curve passes through every clicked point.
   { name: 'SPLINE', aliases: ['SPL', 'SPLINE'], execute: drawSpline, help: 'draw a smooth curve through clicked points', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify next point (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({ points: [] }) },

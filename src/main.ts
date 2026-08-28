@@ -57,7 +57,7 @@ const initialPrimitive: CommandName = primitiveTools.some(([, command]) => comma
 const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | null;
 const initialCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
 const savedCurve = localStorage.getItem('mycad.lastCurve') as CommandName | null;
-const initialCurve: CommandName = curveTools.some(([, , command]) => command === savedCurve) ? savedCurve! : 'BEZIER';
+const initialCurve: CommandName = curveTools.some(([, , command]) => command === savedCurve) ? savedCurve! : 'SPLINE';
 const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandName | null;
 const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;

@@ -1203,8 +1203,17 @@ export function isOffsetEntity(entity: Entity): boolean {
     || entity.type === 'rectangle' || entity.type === 'octagon' || entity.type === 'polyline';
 }
 
+/** A Bezier/spline chain is a closed profile when its curve loops back to its
+ *  own start — the only way JOIN or SPLINE could produce a loop, since neither
+ *  carries an explicit closed flag the way a polyline does. */
+export function isClosedBezierEntity(entity: BezierEntity): boolean {
+  const last = entity.segments.at(-1);
+  return entity.segments.length > 0 && !!last && dist2(entity.start, last.end) < 1e-9;
+}
+
 /** A closed shape that can be swept or extruded into a solid. */
 export function isSweepProfileEntity(entity: Entity): boolean {
   return entity.type === 'circle' || entity.type === 'rectangle' || entity.type === 'octagon'
-    || (entity.type === 'polyline' && entity.closed);
+    || (entity.type === 'polyline' && entity.closed)
+    || (entity.type === 'bezier' && isClosedBezierEntity(entity));
 }

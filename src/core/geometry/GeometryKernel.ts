@@ -11,7 +11,11 @@ export interface Plane3 {
 
 export type SweepProfile3 =
   | { kind: 'polygon'; points: readonly Point3[] }
-  | { kind: 'circle'; center: Point3; normal: Point3; xAxis: Point3; radius: number };
+  | { kind: 'circle'; center: Point3; normal: Point3; xAxis: Point3; radius: number }
+  /** A closed loop of exact edges — the same vocabulary a sweep path uses — for
+   *  a profile bounded by a mix of lines, arcs and Bezier curves rather than a
+   *  straight-edged polygon. */
+  | { kind: 'wire'; edges: readonly SweepPathSegment3[] };
 
 export type SweepPathSegment3 =
   | { kind: 'line'; start: Point3; end: Point3 }
@@ -101,6 +105,7 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   makePyramid(radius: number, height: number, center?: Point3): Solid;
   fromMesh(positions: ArrayLike<number>, indices: ArrayLike<number>): Solid;
   extrudePolygon(profile: readonly Point3[], vector: Point3): Solid;
+  extrudeWire(edges: readonly SweepPathSegment3[], vector: Point3): Solid;
   extrudeRegion(loops: readonly (readonly Point3[])[], vector: Point3): Solid;
   extrudeCircle(radius: number, center: Point3, vector: Point3): Solid;
   loftPolygons(sections: readonly (readonly Point3[])[]): Solid;

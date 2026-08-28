@@ -56,11 +56,15 @@ export class PreviewController {
       return;
     }
     if (active.name === 'SPLINE') {
-      // A straight rubber-band through the fit points so far — refitting the
-      // actual curve on every pointer move for a preview nobody holds still
-      // enough to read exactly would cost more than it would show.
       const points = (active.data.points as Vec2[]) ?? [];
-      if (points.length > 0) this.setPreview({ type: 'polyline', data: { vertices: points, cursor, workPlane: drawingPlane } });
+      if (points.length === 0) return;
+      // Fit through every clicked point plus where the cursor sits now, so the
+      // preview is the actual curve a click here would produce — not a straight
+      // stand-in for it.
+      const fits = fitCubicBeziers([...points, cursor], SPLINE_FIT_TOLERANCE);
+      this.setPreview(fits.length > 0
+        ? { type: 'spline', data: { start: fits[0].start, segments: fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end })), workPlane: drawingPlane } }
+        : { type: 'polyline', data: { vertices: points, cursor, workPlane: drawingPlane } });
       return;
     }
     if (active.name === 'ELLIPSE' && active.data.center) {
@@ -79,8 +83,21 @@ export class PreviewController {
       else if (active.stepIndex === 2 && active.data.center && active.data.start) this.setPreview({ type: 'arc', data: { center: active.data.center, start: active.data.start, cursor, workPlane: drawingPlane } });
       return;
     }
-    if (active.name === 'BEZIER' && active.data.start) {
-      this.setPreview({ type: 'bezier', data: { start: active.data.start, control1: active.data.control1 ?? cursor, control2: active.data.control2 ?? cursor, end: cursor } });
+    if (active.name === 'BEZIER') {
+      // Every already-placed segment shown as the real curve it is, plus one
+      // more live segment following the cursor from wherever the chain — and
+      // whatever control points already exist for it — currently ends.
+      const points = (active.data.points as Vec2[]) ?? [];
+      if (points.length === 0) return;
+      const fullSegments = Math.floor((points.length - 1) / 3);
+      const pending = points.slice(1 + fullSegments * 3);
+      const segments = Array.from({ length: fullSegments }, (_unused, index) => ({
+        control1: points[1 + index * 3],
+        control2: points[2 + index * 3],
+        end: points[3 + index * 3],
+      }));
+      segments.push({ control1: pending[0] ?? cursor, control2: pending[1] ?? cursor, end: cursor });
+      this.setPreview({ type: 'spline', data: { start: points[0], segments, workPlane: drawingPlane } });
       return;
     }
     if (active.name === 'INSERT' && active.stepIndex === 1) {
@@ -345,3 +362,5 @@ import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
+import { fitCubicBeziers } from '../math/bezierFit';
+import { SPLINE_FIT_TOLERANCE } from '../core/commands/steps/draw';

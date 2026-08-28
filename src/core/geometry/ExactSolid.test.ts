@@ -88,6 +88,38 @@ describe('exact solid production placement', () => {
     }
   });
 
+  it('extrudes a closed spline profile into a real solid, not a facetted polygon', async () => {
+    const doc = new Document();
+    // A closed Bezier chain — the shape JOIN or SPLINE produces — with every
+    // segment a degenerate straight cubic, so its exact extruded volume is a
+    // plain rectangle's while still exercising the curved-edge extrusion path.
+    const loop = doc.createSpline({ x: 0, y: 0 }, [
+      { control1: { x: 0, y: 0 }, control2: { x: 4, y: 0 }, end: { x: 4, y: 0 } },
+      { control1: { x: 4, y: 0 }, control2: { x: 4, y: 2 }, end: { x: 4, y: 2 } },
+      { control1: { x: 4, y: 2 }, control2: { x: 0, y: 2 }, end: { x: 0, y: 2 } },
+      { control1: { x: 0, y: 2 }, control2: { x: 0, y: 0 }, end: { x: 0, y: 0 } },
+    ]);
+    const feature = extrusionFeature(loop, 10);
+    const geometry = await buildExactFeature(feature);
+    expect(geometry).not.toBeNull();
+    const solid = doc.createSolid(geometry!.mesh, 'Spline extrusion', 10, [loop.id], undefined, feature);
+    solid.exact = geometry!.exact;
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(solid, kernel);
+    try {
+      expect(kernel.inspect(shape!)).toMatchObject({
+        bounds: {
+          min: { x: expect.closeTo(0, 6), y: expect.closeTo(0, 6), z: expect.closeTo(0, 6) },
+          max: { x: expect.closeTo(4, 6), y: expect.closeTo(2, 6), z: expect.closeTo(10, 6) },
+        },
+        volume: expect.closeTo(80, 6),
+        valid: true,
+      });
+    } finally {
+      shape?.dispose();
+    }
+  });
+
   it('places and non-uniformly scales a curved primitive in an arbitrary UCS', async () => {
     const feature = {
       kind: 'primitive' as const, primitive: 'sphere' as const,
