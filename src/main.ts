@@ -921,7 +921,10 @@ const menuActions: Record<string, () => void> = {
   // keep working. Electron's execCommand handles that text case in the renderer.
   copy: () => { if (isTextFieldFocused()) document.execCommand('copy'); else copySelectedObjects(); },
   cut: () => { if (isTextFieldFocused()) document.execCommand('cut'); else if (copySelectedObjects()) deleteSelectedObjects(); },
-  paste: () => { if (isTextFieldFocused()) document.execCommand('paste'); else pasteClipboard(); },
+  // execCommand('paste') is blocked in current Chromium even for a genuine
+  // user action, unlike copy/cut — the reliable path is the browser process
+  // performing the edit command itself.
+  paste: () => { if (isTextFieldFocused()) void window.mycadAPI?.pasteNative(); else pasteClipboard(); },
 };
 
 function isTextFieldFocused(): boolean {
@@ -1241,6 +1244,7 @@ new InputController(input, commandForm, {
   deleteSelection: deleteSelectedObjects,
   copySelection: copySelectedObjects,
   pasteClipboard,
+  nativePaste: () => { void window.mycadAPI?.pasteNative(); },
   show2d: () => {
     releaseDynamicUcs();
     cadDocument.viewMode = '2d';

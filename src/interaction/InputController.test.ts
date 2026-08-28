@@ -22,7 +22,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -49,7 +49,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -78,7 +78,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => true), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -106,7 +106,7 @@ describe('InputController', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => true), pasteClipboard: vi.fn(() => true), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => true), pasteClipboard: vi.fn(() => true), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -123,13 +123,41 @@ describe('InputController', () => {
     controller.dispose();
   });
 
+  it('routes Cmd/Ctrl+V to the native paste bridge when typing in a field, not object paste', () => {
+    // document.execCommand('paste') is blocked in current Chromium even for a
+    // real keystroke, so a genuinely focused text field still needs an
+    // explicit native-paste call — it cannot just be left to the browser.
+    const target = new EventTarget();
+    const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn() } as unknown as HTMLInputElement;
+    const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
+    const callbacks = {
+      escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => true), nativePaste: vi.fn(), show2d: vi.fn(),
+      toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
+      toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
+      toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
+      commandActive: vi.fn(() => false), commandInputChanged: vi.fn(),
+    };
+    new InputController(input, form, callbacks, target);
+
+    const textarea = { tagName: 'TEXTAREA' };
+    const event = keyboard('v', { metaKey: true });
+    Object.defineProperty(event, 'target', { value: textarea });
+    const prevented = vi.spyOn(event, 'preventDefault');
+    target.dispatchEvent(event);
+
+    expect(callbacks.nativePaste).toHaveBeenCalledOnce();
+    expect(callbacks.pasteClipboard).not.toHaveBeenCalled();
+    expect(prevented).toHaveBeenCalledOnce();
+  });
+
   it('routes standard CAD drafting function keys even while the command input is focused', () => {
     const target = new EventTarget();
     const input = { value: '', focus: vi.fn(), setSelectionRange: vi.fn(), tagName: 'INPUT' } as unknown as HTMLInputElement;
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),
@@ -159,7 +187,7 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     const form = { requestSubmit: vi.fn() } as unknown as HTMLFormElement;
     const callbacks = {
       escape: vi.fn(), undo: vi.fn(), redo: vi.fn(), save: vi.fn(), saveAs: vi.fn(), newProject: vi.fn(),
-      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), show2d: vi.fn(),
+      open: vi.fn(), importDxf: vi.fn(), export: vi.fn(), deleteSelection: vi.fn(() => false), copySelection: vi.fn(() => false), pasteClipboard: vi.fn(() => false), nativePaste: vi.fn(), show2d: vi.fn(),
       toggleObjectSnap: vi.fn(), toggleDynamicUcs: vi.fn(), toggleGridDisplay: vi.fn(), toggleCutArea: vi.fn(), toggleOrtho: vi.fn(), togglePolar: vi.fn(),
       toggleGridSnap: vi.fn(), toggleObjectSnapTracking: vi.fn(),
       toggleProperties: vi.fn(), toggleTree: vi.fn(), toggleLayers: vi.fn(), toggleBlocks: vi.fn(),

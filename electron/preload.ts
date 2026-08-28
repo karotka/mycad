@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('mycadAPI', {
   exportPdf: (options: { svg: string; widthMm: number; heightMm: number; defaultPath: string }) =>
     ipcRenderer.invoke('export-pdf', options),
   setTitle: (title: string) => ipcRenderer.invoke('set-title', title),
+  pasteNative: () => ipcRenderer.invoke('paste-native'),
   mcpReady: () => ipcRenderer.invoke('mycad-mcp-ready'),
   mcpReadProject: (requestId: string, filePath: string) =>
     ipcRenderer.invoke('mycad-mcp-read-project', { requestId, filePath }),

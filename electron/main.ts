@@ -347,6 +347,16 @@ ipcMain.handle('set-title', (event, title: unknown) => {
   window?.setTitle(typeof title === 'string' && title.trim() ? title : APP_NAME);
 });
 
+// A scripted document.execCommand('paste') is a no-op in current Chromium —
+// blocked as a read of the clipboard the page didn't get a real user gesture
+// for, as far as the renderer's own JS can tell. webContents.paste() is the
+// browser process performing the same edit command the OS would for a native
+// Cmd/Ctrl+V, so it isn't subject to that restriction.
+ipcMain.handle('paste-native', (event) => {
+  assertTrustedSender(event);
+  event.sender.paste();
+});
+
 ipcMain.handle('open-file', async (event, options: {
   filters: Array<{ name: string; extensions: string[] }>;
 }) => {

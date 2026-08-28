@@ -11,6 +11,11 @@ export interface InputControllerCallbacks {
   deleteSelection(): boolean;
   copySelection(): boolean;
   pasteClipboard(): boolean;
+  /** Pastes into whatever text field currently has focus, via the browser
+   *  process — a scripted document.execCommand('paste') is blocked in current
+   *  Chromium even for a genuine keystroke, so the renderer can't just let
+   *  the browser handle it natively here. */
+  nativePaste(): void;
   show2d(): void;
   toggleObjectSnap(): void;
   toggleDynamicUcs(): void;
@@ -91,7 +96,8 @@ export class InputController {
       if (this.callbacks.copySelection()) { event.preventDefault(); event.stopPropagation(); }
       return;
     }
-    if (primaryModifier && key === 'v' && !isTextEntry) {
+    if (primaryModifier && key === 'v') {
+      if (isTextEntry) { event.preventDefault(); this.callbacks.nativePaste(); return; }
       if (this.callbacks.pasteClipboard()) { event.preventDefault(); event.stopPropagation(); }
       return;
     }

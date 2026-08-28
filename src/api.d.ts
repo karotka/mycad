@@ -20,6 +20,10 @@ declare global {
         defaultPath: string;
       }): Promise<{ canceled: boolean; filePath?: string }>;
       setTitle(title: string): Promise<void>;
+      /** Pastes into whatever the renderer currently has focused, via the
+       *  browser process — unlike document.execCommand('paste'), this isn't
+       *  blocked as a scripted clipboard read. */
+      pasteNative(): Promise<void>;
       mcpReady(): Promise<void>;
       mcpReadProject(requestId: string, filePath: string): Promise<{ filePath: string; content: string }>;
       mcpWriteFile(requestId: string, filePath: string, content: string): Promise<{ filePath: string }>;
