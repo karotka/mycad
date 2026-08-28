@@ -3,6 +3,8 @@ import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { ProjectController, type ProjectControllerCallbacks } from './ProjectController';
 import { serializeProject } from '../io/ProjectIO';
+import { buildExactBox } from '../core/geometry/ExactSolid';
+import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
 
 describe('ProjectController', () => {
   it('creates a clean millimetre project and resets transient application state', () => {
@@ -118,6 +120,58 @@ describe('ProjectController', () => {
     expect(request.content).toContain('vertex 10 0 0');
     expect(request.content).not.toContain('vertex 0 0 0');
     expect(callbacks.log).toHaveBeenCalledWith('STL: 1 selected solid(s).');
+    vi.unstubAllGlobals();
+  });
+
+  it('writes a STEP file containing the real exact geometry of the solids provided', async () => {
+    const doc = new Document();
+    const feature = { kind: 'primitive' as const, primitive: 'box' as const, center: { x: 0, y: 0 }, width: 2, depth: 4, height: 6 };
+    const geometry = await buildExactBox(feature);
+    const selected = doc.createSolid(geometry.mesh, 'selected', 6, [], undefined, feature);
+    selected.exact = geometry.exact;
+    doc.solids.push(selected);
+    const saveFile = vi.fn(async (_request: { content: string }) => ({ canceled: false, filePath: '/tmp/selected.step' }));
+    vi.stubGlobal('window', { mycadAPI: { saveFile } });
+    const callbacks = {
+      captureView: vi.fn(), cancelInteraction: vi.fn(), resetView: vi.fn(), applyView: vi.fn(),
+      zoomExtents: vi.fn(), renderLayers: vi.fn(), log: vi.fn(), clearLog: vi.fn(),
+      redraw: vi.fn(), focusInput: vi.fn(),
+    } as unknown as ProjectControllerCallbacks;
+    const controller = new ProjectController(doc, new CommandHistory(doc), callbacks);
+
+    await controller.exportStep([selected]);
+
+    const request = saveFile.mock.calls[0]![0];
+    expect(request.content).toContain('ISO-10303-21');
+    expect(callbacks.log).toHaveBeenCalledWith('STEP: 1 selected solid(s).');
+    vi.unstubAllGlobals();
+  });
+
+  it('imports every solid in a STEP file as one undoable operation', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const kernel = await openCascadeKernel();
+    const box = kernel.makeBox({ x: 2, y: 2, z: 2 });
+    const step = kernel.writeStep([box]);
+    box.dispose();
+    vi.stubGlobal('window', { mycadAPI: {
+      openFile: vi.fn(async () => ({ canceled: false, filePath: '/tmp/part.step', content: step })),
+    } });
+    const callbacks = {
+      captureView: vi.fn(), cancelInteraction: vi.fn(), resetView: vi.fn(), applyView: vi.fn(),
+      zoomExtents: vi.fn(), renderLayers: vi.fn(), log: vi.fn(), clearLog: vi.fn(),
+      redraw: vi.fn(), focusInput: vi.fn(),
+    } as unknown as ProjectControllerCallbacks;
+    const controller = new ProjectController(doc, history, callbacks);
+
+    await controller.importStep();
+    expect(doc.solids).toHaveLength(1);
+    expect(doc.solids[0]).toMatchObject({ name: 'STEP import' });
+
+    history.undo();
+    expect(doc.solids).toEqual([]);
+    history.redo();
+    expect(doc.solids).toHaveLength(1);
     vi.unstubAllGlobals();
   });
 

@@ -2,6 +2,8 @@ import type {
   OpenCascadeInstance,
   ChFi3d_FilletShape,
   gp_Ax2,
+  IFSelect_ReturnStatus,
+  STEPControl_StepModelType,
   TopAbs_ShapeEnum,
   TopTools_FormatVersion,
   TopoDS_Edge,
@@ -912,7 +914,7 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
   }
 
   serialize(solid: OpenCascadeSolid): SerializedKernelSolid {
-    const file = this.temporaryFile('write');
+    const file = this.temporaryFile('write', 'brep');
     const progress = new this.oc.Message_ProgressRange_1();
     try {
       const written = this.oc.BRepTools.Write_4(
@@ -935,7 +937,7 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     if (serialized.format !== 'occt-brep-v1' || !serialized.data) {
       throw new Error('Unsupported or empty exact-solid format.');
     }
-    const file = this.temporaryFile('read');
+    const file = this.temporaryFile('read', 'brep');
     this.oc.FS.writeFile(file, serialized.data);
     const shape = new this.oc.TopoDS_Shape();
     const builder = new this.oc.BRep_Builder();
@@ -956,6 +958,58 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       builder.delete();
       this.unlinkIfPresent(file);
     }
+  }
+
+  writeStep(shapes: readonly OpenCascadeSolid[]): string {
+    if (shapes.length === 0) throw new Error('STEP export requires at least one solid.');
+    this.oc.Interface_Static.SetCVal('write.step.unit', 'MM');
+    const file = this.temporaryFile('write', 'step');
+    const writer = new this.oc.STEPControl_Writer_1();
+    try {
+      for (const solid of shapes) {
+        const progress = new this.oc.Message_ProgressRange_1();
+        const status = writer.Transfer(
+          solid.shape(this),
+          this.oc.STEPControl_StepModelType.STEPControl_AsIs as unknown as STEPControl_StepModelType,
+          true,
+          progress,
+        );
+        progress.delete();
+        if (!this.isStepDone(status)) throw new Error('OpenCascade failed to transfer a solid to the STEP writer.');
+      }
+      if (!this.isStepDone(writer.Write(file))) throw new Error('OpenCascade failed to write the STEP file.');
+      return this.oc.FS.readFile(file, { encoding: 'utf8' });
+    } finally {
+      writer.delete();
+      this.unlinkIfPresent(file);
+    }
+  }
+
+  readStep(text: string): OpenCascadeSolid[] {
+    const file = this.temporaryFile('read', 'step');
+    this.oc.FS.writeFile(file, text);
+    const reader = new this.oc.STEPControl_Reader_1();
+    try {
+      if (!this.isStepDone(reader.ReadFile(file))) throw new Error('OpenCascade could not read the STEP file.');
+      const progress = new this.oc.Message_ProgressRange_1();
+      reader.TransferRoots(progress);
+      progress.delete();
+      const shapes: OpenCascadeSolid[] = [];
+      for (let index = 1; index <= reader.NbShapes(); index++) {
+        const shape = reader.Shape(index);
+        if (shape.IsNull()) { shape.delete(); continue; }
+        shapes.push(this.wrap(shape));
+      }
+      if (shapes.length === 0) throw new Error('The STEP file contains no shapes.');
+      return shapes;
+    } finally {
+      reader.delete();
+      this.unlinkIfPresent(file);
+    }
+  }
+
+  private isStepDone(status: IFSelect_ReturnStatus): boolean {
+    return status === (this.oc.IFSelect_ReturnStatus.IFSelect_RetDone as unknown as IFSelect_ReturnStatus);
   }
 
   private wrap(shape: TopoDS_Shape): OpenCascadeSolid {
@@ -1177,8 +1231,8 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
-  private temporaryFile(operation: string): string {
-    return `/tmp/mycad-${operation}-${++this.temporaryFileSequence}.brep`;
+  private temporaryFile(operation: string, extension: string): string {
+    return `/tmp/mycad-${operation}-${++this.temporaryFileSequence}.${extension}`;
   }
 
   private unlinkIfPresent(file: string): void {

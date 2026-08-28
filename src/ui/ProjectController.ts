@@ -11,7 +11,11 @@ import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
 import { exportAsciiStl, loadProject, serializeProject, type ProjectViewState } from '../io/ProjectIO';
 import { exportGcode } from '../io/GcodeExport';
+import { exportStepSolids } from '../io/StepExport';
+import { importStepSolids } from '../io/StepImport';
 import { clearInsertExpansionCache, cloneBlockDefinition, type Solid } from '../core/entities/types';
+import { ReplaceObjectsEdit } from '../core/history/edits';
+import { openCascadeKernel } from '../core/geometry/OpenCascadeRuntime';
 import { buildPrintSvg, paperPage, type PrintStyle, type PrintWindow } from '../render/SvgExport';
 
 export interface ProjectControllerCallbacks {
@@ -236,6 +240,40 @@ export class ProjectController {
     }
     this.callbacks.log(`STL: ${solids.length} selected solid(s).`);
     await this.saveText(exportAsciiStl(solids), this.exportDefaultPath('stl'), 'STL model', 'stl');
+  }
+
+  async importStep(): Promise<void> {
+    try {
+      const file = await this.pickFile('.step,.stp,model/step', 'STEP', 'step');
+      if (!file) return;
+      if (!file.content) throw new Error('The file is empty.');
+      this.callbacks.cancelInteraction();
+      const kernel = await openCascadeKernel();
+      const result = importStepSolids(this.doc, kernel, file.content);
+      this.doc.viewMode = '3d';
+      this.doc.transaction(() => {
+        this.doc.clearSelection();
+        this.history.execute(new ReplaceObjectsEdit('Import STEP', [], [], [], result.solids));
+      });
+      this.callbacks.zoomExtents();
+      this.callbacks.log(`Imported STEP: ${file.name} · ${result.solids.length} solid(s).`);
+      if (result.skipped > 0) this.callbacks.log(`${result.skipped} shape(s) in the file were not solids and were skipped.`);
+      this.callbacks.redraw();
+    } catch (error) { this.report('STEP import failed', error); }
+  }
+
+  async exportStep(solids: readonly Solid[]): Promise<void> {
+    if (solids.length === 0) {
+      this.callbacks.log('STEP export: no 3D solids were selected.');
+      return;
+    }
+    try {
+      const kernel = await openCascadeKernel();
+      const result = await exportStepSolids(kernel, solids);
+      const skippedNote = result.skipped > 0 ? `, ${result.skipped} skipped` : '';
+      this.callbacks.log(`STEP: ${result.exported} selected solid(s)${skippedNote}.`);
+      await this.saveText(result.step, this.exportDefaultPath('step'), 'STEP model', 'step');
+    } catch (error) { this.report('STEP export failed', error); }
   }
 
   async exportPdf(win: PrintWindow, paper: string, landscape: boolean, style: PrintStyle): Promise<void> {

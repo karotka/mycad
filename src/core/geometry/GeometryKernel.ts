@@ -123,4 +123,10 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   tessellate(solid: Solid, options?: TessellationOptions): KernelTessellation;
   serialize(solid: Solid): SerializedKernelSolid;
   deserialize(serialized: SerializedKernelSolid): Solid;
+  /** ISO-10303-21 STEP text for every given solid, in one file — the exchange
+   *  format another CAD program reads back as real B-rep, not a mesh. */
+  writeStep(shapes: readonly Solid[]): string;
+  /** Every top-level shape found in a STEP file, each its own solid handle —
+   *  a STEP file can hold more than one part. */
+  readStep(text: string): Solid[];
 }

@@ -209,6 +209,30 @@ describe('CommandManager history integration', () => {
     expect(Array.from(exported[0].mesh.positions)).toEqual(expect.arrayContaining([8, 17, 0, 12, 23, 16]));
   });
 
+  it('requires an explicit solid selection and exports exactly the gathered solids to STEP', async () => {
+    // Same gathering wiring as EXPORTSTL, exercised once for EXPORTSTEP to
+    // prove ctx.exportStep is actually reached.
+    const { doc, manager } = setup();
+    const solid = doc.createSolid(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'first', 0, [],
+    );
+    doc.solids.push(solid);
+    const exportStep = vi.fn();
+    manager.updateContext({ exportStep });
+
+    manager.startCommand('EXPORTSTEP');
+    expect(manager.currentPrompt()).toContain('Select 3D solid(s) or block(s)');
+    expect(exportStep).not.toHaveBeenCalled();
+
+    await manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await manager.submitInput('');
+
+    expect(exportStep).toHaveBeenCalledOnce();
+    expect(exportStep).toHaveBeenCalledWith([solid]);
+    expect(manager.active).toBeNull();
+  });
+
   it('joins connected lines into one closed polyline', async () => {
     const { doc, manager } = setup();
     const lines = [

@@ -734,6 +734,7 @@ const projectController = new ProjectController(cadDocument, history, {
 });
 commands.updateContext({
   exportStl: (solids) => projectController.exportStl(solids),
+  exportStep: (solids) => projectController.exportStep(solids),
   exportPdf: (win) => projectController.exportPdf(
     win,
     get<HTMLSelectElement>('print-paper').value,
@@ -890,15 +891,25 @@ function startStlExport(): void {
   commands.startCommand('EXPORTSTL');
 }
 
+function startStepExport(): void {
+  if (cadDocument.solids.length === 0) {
+    log('STEP export: the document contains no 3D solids.');
+    return;
+  }
+  commands.startCommand('EXPORTSTEP');
+}
+
 /** The native menu owns these on Electron; each maps to an action the app already had. */
 const menuActions: Record<string, () => void> = {
   new: () => projectController.newProject(),
   open: () => { void projectController.open(); },
   'import-dxf': () => { void projectController.importDxf(); },
   'import-excellon': () => { void projectController.importExcellon(); },
+  'import-step': () => { void projectController.importStep(); },
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': startStlExport,
+  'export-step': startStepExport,
   'export-dxf': () => { void projectController.exportDxf(); },
   'export-gcode': () => { void projectController.exportGcode(); },
   print: () => settingsController.openTab(printTab),

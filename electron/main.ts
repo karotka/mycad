@@ -94,7 +94,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'save' | 'save-as' | 'export-stl' | 'export-dxf' | 'export-gcode' | 'print' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'import-step' | 'save' | 'save-as' | 'export-stl' | 'export-step' | 'export-dxf' | 'export-gcode' | 'print' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -131,6 +131,7 @@ function buildMenu(win: BrowserWindow): void {
           submenu: [
             { label: 'DXF…', accelerator: 'CmdOrCtrl+I', click: send('import-dxf') },
             { label: 'Excellon Drill…', click: send('import-excellon') },
+            { label: 'STEP…', click: send('import-step') },
           ],
         },
         {
@@ -138,6 +139,7 @@ function buildMenu(win: BrowserWindow): void {
           submenu: [
             { label: 'DXF…', accelerator: 'Shift+CmdOrCtrl+E', click: send('export-dxf') },
             { label: 'STL…', accelerator: 'CmdOrCtrl+E', click: send('export-stl') },
+            { label: 'STEP…', click: send('export-step') },
             { label: 'G-code…', accelerator: 'Shift+CmdOrCtrl+G', click: send('export-gcode') },
           ],
         },

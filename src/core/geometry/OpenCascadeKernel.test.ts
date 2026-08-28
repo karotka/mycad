@@ -477,4 +477,30 @@ describe('OpenCascade exact-kernel spike', () => {
     });
     expect(solidDesignEdges(kernel.tessellate(restored))).toHaveLength(12);
   });
+
+  it('round-trips one or more solids through a STEP file as real B-rep', () => {
+    const box = keep(kernel.makeBox({ x: 20, y: 30, z: 40 }));
+    const step = kernel.writeStep([box]);
+    expect(step).toContain('ISO-10303-21');
+    const [restored] = kernel.readStep(step).map(keep);
+    expect(kernel.inspect(restored)).toMatchObject({
+      bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 30, z: 40 } },
+      faceCount: 6,
+      volume: expect.closeTo(24_000, 6),
+      valid: true,
+    });
+
+    const sphere = keep(kernel.makeSphere(5, { x: 100, y: 0, z: 0 }));
+    const multi = kernel.writeStep([box, sphere]);
+    const shapes = kernel.readStep(multi).map(keep);
+    expect(shapes).toHaveLength(2);
+    const volumes = shapes.map((shape) => kernel.inspect(shape).volume).sort((a, b) => a - b);
+    expect(volumes[0]).toBeCloseTo((4 / 3) * Math.PI * 125, 3);
+    expect(volumes[1]).toBeCloseTo(24_000, 3);
+  });
+
+  it('refuses to export nothing and to read a file with no shapes', () => {
+    expect(() => kernel.writeStep([])).toThrow('at least one solid');
+    expect(() => kernel.readStep('not a step file')).toThrow();
+  });
 });

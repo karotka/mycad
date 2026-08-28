@@ -19,7 +19,7 @@ import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, swee
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
-import { exportStlSelection } from './steps/export';
+import { exportStepSelection, exportStlSelection } from './steps/export';
 import { selectPrintArea } from './steps/print';
 import { sliceSolids } from './steps/slice';
 import { createBlock, insertBlock, purgeUnreachableBlocks } from './steps/blocks';
@@ -407,6 +407,17 @@ export const COMMANDS = [
       active.data.solids = [...solids];
       active.data.entities = [...entities];
       ctx.log(`${solids.length + entities.length} object(s) preselected for STL export.`);
+    } },
+  { name: 'EXPORTSTEP', aliases: ['STEP', 'EXPORTSTEP'], execute: exportStepSelection, help: 'export selected 3D solids or 3D blocks to STEP',
+    steps: [{ kind: 'entity', label: 'Select 3D solid(s) or block(s) to export, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: (active, ctx) => {
+      const solids = ctx.doc.getSelectedSolids();
+      const entities = ctx.doc.getSelectedEntities().filter((entity) => entity.type === 'insert' && expandedInsertSolids(entity).length > 0);
+      if (solids.length + entities.length === 0) return;
+      active.data.solids = [...solids];
+      active.data.entities = [...entities];
+      ctx.log(`${solids.length + entities.length} object(s) preselected for STEP export.`);
     } },
   { name: 'PRINTAREA', aliases: ['PRINTAREA', 'PLOT'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
     steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
