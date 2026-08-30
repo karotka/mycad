@@ -13,6 +13,10 @@
 import type { Document } from '../core/Document';
 import type { BezierSegment, Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
+// A plain asset URL, not the worker module itself — pdf.js refuses to parse
+// anything until this is set, since (unlike Node) a real browser Worker is
+// available and it insists on using one.
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
 /** 1 PDF user-space unit is 1/72 inch. */
 const PDF_POINTS_TO_MM = 25.4 / 72;
@@ -160,9 +164,13 @@ export interface PdfImportResult {
  */
 export async function importPdfEntities(doc: Document, bytes: Uint8Array): Promise<PdfImportResult> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  // No worker is configured — pdf.js falls back to running entirely on this
-  // thread (a one-time "Setting up fake worker" notice, nothing more), which
-  // is fine for a one-shot import and sidesteps bundling its worker script.
+  // A real browser Worker exists in the renderer, and pdf.js insists on one
+  // there — Node (this module's own tests) has none, and the ?url import
+  // above resolves to a path only a running app's asset server can serve, so
+  // it must stay unset there for pdf.js's same-thread fallback to kick in.
+  // Checked via `Worker` itself, not `window` — a test stubbing a bare
+  // `window` object for unrelated reasons must not look like a browser here.
+  if (typeof Worker !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const loadingTask = pdfjsLib.getDocument({ data: bytes, verbosity: 0 });
   const pdf = await loadingTask.promise;
   try {
