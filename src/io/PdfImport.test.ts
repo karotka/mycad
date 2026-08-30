@@ -102,6 +102,40 @@ describe('importPdfEntities', () => {
     expect(result.entities[1]).toMatchObject({ type: 'line', start: { x: 0, y: 0 } });
   });
 
+  it('defaults to black — PDF\'s own default color — rather than the document\'s BYLAYER color', async () => {
+    const doc = new Document();
+    const bytes = minimalPdf('100 100 m\n200 200 l\nS\n');
+    const result = await importPdfEntities(doc, bytes);
+
+    expect(result.entities[0]).toMatchObject({ color: 0x000000 });
+  });
+
+  it('reads a stroked path\'s color off the stroke color, not the fill color', async () => {
+    const doc = new Document();
+    const bytes = minimalPdf('1 0 0 RG\n0 1 0 rg\n100 100 m\n200 200 l\nS\n');
+    const result = await importPdfEntities(doc, bytes);
+
+    expect(result.entities[0]).toMatchObject({ color: 0xff0000 });
+  });
+
+  it('reads a filled-only path\'s color off the fill color', async () => {
+    const doc = new Document();
+    const bytes = minimalPdf('1 0 0 RG\n0 0 1 rg\n0 0 100 50 re\nf\n');
+    const result = await importPdfEntities(doc, bytes);
+
+    expect(result.entities[0]).toMatchObject({ color: 0x0000ff });
+  });
+
+  it('restores the color pushed by q/Q along with the transform, not leaking it to later paths', async () => {
+    const doc = new Document();
+    const bytes = minimalPdf('q\n1 0 0 RG\n0 0 m\n1 0 l\nS\nQ\n0 0 m\n2 0 l\nS\n');
+    const result = await importPdfEntities(doc, bytes);
+
+    expect(result.entities).toHaveLength(2);
+    expect(result.entities[0]).toMatchObject({ color: 0xff0000 });
+    expect(result.entities[1]).toMatchObject({ color: 0x000000 });
+  });
+
   it('imports text as a TEXT entity at its own position', async () => {
     const doc = new Document();
     const bytes = minimalPdf(

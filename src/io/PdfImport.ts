@@ -12,6 +12,7 @@
  */
 import type { Document } from '../core/Document';
 import type { BezierSegment, Entity } from '../core/entities/types';
+import { rgbToAci } from './DxfAci';
 import type { Vec2 } from '../math/geometry';
 // A plain asset URL, not the worker module itself — pdf.js refuses to parse
 // anything until this is set, since (unlike Node) a real browser Worker is
@@ -42,6 +43,30 @@ function composeMatrix(outer: Matrix, inner: Matrix): Matrix {
 
 function applyMatrix(m: Matrix, x: number, y: number): Vec2 {
   return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/** The transform and colors in effect when a path is drawn — all three are
+ *  PDF graphics state, saved and restored together by `q`/`Q`. Gray, RGB and
+ *  CMYK color operators all arrive here already resolved by pdf.js to a
+ *  plain `#rrggbb` string; only a colorspace it can't reduce to one (a
+ *  pattern or separation fill) leaves the current color as it was. */
+interface GraphicsState {
+  ctm: Matrix;
+  fillColor: number;
+  strokeColor: number;
+}
+const INITIAL_STATE: GraphicsState = { ctm: IDENTITY, fillColor: 0x000000, strokeColor: 0x000000 };
+
+function parseHexColor(value: unknown): number | null {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? parseInt(value.slice(1), 16) : null;
+}
+
+/** Whether a `constructPath` paint operation draws a visible stroke — if so
+ *  its stroke color reads as the entity's color, since that is the line work
+ *  a CAD import cares about; a fill-only path takes its fill color instead. */
+function paintsStroke(paintOp: number, OPS: { stroke: number; closeStroke: number; fillStroke: number; eoFillStroke: number; closeFillStroke: number; closeEOFillStroke: number }): boolean {
+  return paintOp === OPS.stroke || paintOp === OPS.closeStroke || paintOp === OPS.fillStroke
+    || paintOp === OPS.eoFillStroke || paintOp === OPS.closeFillStroke || paintOp === OPS.closeEOFillStroke;
 }
 
 /**
@@ -125,26 +150,35 @@ function extractSubpaths(data: readonly number[], project: (x: number, y: number
  *  Bezier chain — a straight span inside an otherwise-curved subpath becomes
  *  a degenerate cubic (control points on its own endpoints), the same
  *  convention JOIN already uses for a mixed line-and-curve chain. */
-function subpathToEntity(doc: Document, subpath: PdfSubpath): Entity | null {
+function subpathToEntity(doc: Document, subpath: PdfSubpath, color: number): Entity | null {
   if (subpath.segments.length === 0) return null;
   const hasCurve = subpath.segments.some((segment) => segment.kind === 'cubic');
+  let entity: Entity;
   if (!hasCurve) {
     const vertices = [subpath.start, ...subpath.segments.map((segment) => segment.end)];
-    if (vertices.length === 2 && !subpath.closed) return doc.createLine(vertices[0], vertices[1]);
-    return doc.createPolyline(vertices, subpath.closed);
+    entity = vertices.length === 2 && !subpath.closed
+      ? doc.createLine(vertices[0], vertices[1])
+      : doc.createPolyline(vertices, subpath.closed);
+  } else {
+    let previous = subpath.start;
+    const segments: BezierSegment[] = subpath.segments.map((segment) => {
+      const built: BezierSegment = segment.kind === 'cubic'
+        ? { control1: segment.control1, control2: segment.control2, end: segment.end }
+        : { control1: previous, control2: segment.end, end: segment.end };
+      previous = segment.end;
+      return built;
+    });
+    if (subpath.closed && Math.hypot(previous.x - subpath.start.x, previous.y - subpath.start.y) > 1e-9) {
+      segments.push({ control1: previous, control2: subpath.start, end: subpath.start });
+    }
+    entity = doc.createSpline(subpath.start, segments);
   }
-  let previous = subpath.start;
-  const segments: BezierSegment[] = subpath.segments.map((segment) => {
-    const built: BezierSegment = segment.kind === 'cubic'
-      ? { control1: segment.control1, control2: segment.control2, end: segment.end }
-      : { control1: previous, control2: segment.end, end: segment.end };
-    previous = segment.end;
-    return built;
-  });
-  if (subpath.closed && Math.hypot(previous.x - subpath.start.x, previous.y - subpath.start.y) > 1e-9) {
-    segments.push({ control1: previous, control2: subpath.start, end: subpath.start });
-  }
-  return doc.createSpline(subpath.start, segments);
+  // BYLAYER (the document's own current-layer color) isn't what a stroked
+  // black line in the PDF becomes on its own — this is an explicit override,
+  // the same way DXF import stamps a color it read from the file.
+  entity.aci = rgbToAci(color);
+  entity.color = color;
+  return entity;
 }
 
 export interface PdfImportResult {
@@ -188,27 +222,34 @@ export async function importPdfEntities(doc: Document, bytes: Uint8Array): Promi
     let skippedShading = 0;
     const OPS = pdfjsLib.OPS;
     const opList = await page.getOperatorList();
-    const ctmStack: Matrix[] = [];
-    let ctm: Matrix = IDENTITY;
+    const stateStack: GraphicsState[] = [];
+    let state: GraphicsState = INITIAL_STATE;
     for (let index = 0; index < opList.fnArray.length; index++) {
       const fn = opList.fnArray[index];
       const args = opList.argsArray[index];
       if (fn === OPS.save) {
-        ctmStack.push(ctm);
+        stateStack.push(state);
       } else if (fn === OPS.restore) {
-        ctm = ctmStack.pop() ?? IDENTITY;
+        state = stateStack.pop() ?? INITIAL_STATE;
       } else if (fn === OPS.transform) {
-        ctm = composeMatrix(ctm, Array.from(args as ArrayLike<number>) as unknown as Matrix);
+        state = { ...state, ctm: composeMatrix(state.ctm, Array.from(args as ArrayLike<number>) as unknown as Matrix) };
+      } else if (fn === OPS.setFillRGBColor || fn === OPS.setFillColorN) {
+        const color = parseHexColor((args as unknown[])[0]);
+        if (color !== null) state = { ...state, fillColor: color };
+      } else if (fn === OPS.setStrokeRGBColor || fn === OPS.setStrokeColorN) {
+        const color = parseHexColor((args as unknown[])[0]);
+        if (color !== null) state = { ...state, strokeColor: color };
       } else if (fn === OPS.constructPath) {
         // args is [paintOp, data, minMax], and pdf.js's own constructPath
         // handler destructures the raw coordinate buffer as `[path] = data`
         // — it is wrapped one level deeper than the rest of the operator
         // list's argument arrays.
-        const [rawPath] = args[1] as [ArrayLike<number>];
+        const [paintOp, [rawPath]] = args as [number, [ArrayLike<number>]];
         const data = Array.from(rawPath);
-        const project = (x: number, y: number): Vec2 => toMm(applyMatrix(ctm, x, y));
+        const project = (x: number, y: number): Vec2 => toMm(applyMatrix(state.ctm, x, y));
+        const color = paintsStroke(paintOp, OPS) ? state.strokeColor : state.fillColor;
         for (const subpath of extractSubpaths(data, project)) {
-          const entity = subpathToEntity(doc, subpath);
+          const entity = subpathToEntity(doc, subpath, color);
           if (entity) entities.push(entity);
         }
       } else if (
