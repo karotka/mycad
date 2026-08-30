@@ -245,9 +245,11 @@ export class ProjectController {
       this.doc.viewMode = '2d';
       this.doc.transaction(() => {
         this.doc.clearSelection();
+        this.doc.recolour();
         this.history.execute(new AddEntitiesEdit('Import PDF entities', result.entities));
       });
       this.callbacks.zoomExtents();
+      this.callbacks.renderLayers();
       this.callbacks.log(`Imported PDF: ${file.name} · ${result.entities.length} object(s).`);
       if (result.pageCount > 1) this.callbacks.log(`This PDF has ${result.pageCount} pages; only the first was imported.`);
       if (result.skippedImages > 0) this.callbacks.log(`${result.skippedImages} raster image(s) skipped — not vector geometry.`);

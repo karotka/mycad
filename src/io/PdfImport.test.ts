@@ -136,6 +136,40 @@ describe('importPdfEntities', () => {
     expect(result.entities[1]).toMatchObject({ color: 0x000000 });
   });
 
+  it('imports content in a named Optional Content Group as its own layer', async () => {
+    // AutoCAD's own "Export to PDF" maps each drawing layer onto exactly
+    // this: one Optional Content Group per layer, named and independently
+    // (in)visible — the PDF spec's own idea of a layer.
+    const doc = new Document();
+    const content = '/OC /MC0 BDC\n0 0 m\n10 0 l\nS\nEMC\n';
+    let pdfText = new TextDecoder().decode(minimalPdf(content, '<< /Properties << /MC0 7 0 R >> >>'));
+    pdfText = pdfText.replace(
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [7 0 R] /D << /ON [7 0 R] /Order [7 0 R] >> >> >>',
+    );
+    pdfText = pdfText.replace('trailer', '7 0 obj\n<< /Type /OCG /Name (Walls) >>\nendobj\ntrailer');
+    const result = await importPdfEntities(doc, new TextEncoder().encode(pdfText));
+
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].layer).toBe('Walls');
+    expect(doc.layers).toContain('Walls');
+  });
+
+  it('marks a layer hidden when its Optional Content Group starts off', async () => {
+    const doc = new Document();
+    const content = '/OC /MC0 BDC\n0 0 m\n10 0 l\nS\nEMC\n';
+    let pdfText = new TextDecoder().decode(minimalPdf(content, '<< /Properties << /MC0 7 0 R >> >>'));
+    pdfText = pdfText.replace(
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [7 0 R] /D << /OFF [7 0 R] /Order [7 0 R] >> >> >>',
+    );
+    pdfText = pdfText.replace('trailer', '7 0 obj\n<< /Type /OCG /Name (Frozen) >>\nendobj\ntrailer');
+    const result = await importPdfEntities(doc, new TextEncoder().encode(pdfText));
+
+    expect(result.entities[0].layer).toBe('Frozen');
+    expect(doc.hiddenLayers.has('Frozen')).toBe(true);
+  });
+
   it('imports text as a TEXT entity at its own position', async () => {
     const doc = new Document();
     const bytes = minimalPdf(

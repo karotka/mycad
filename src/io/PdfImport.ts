@@ -12,7 +12,7 @@
  */
 import type { Document } from '../core/Document';
 import type { BezierSegment, Entity } from '../core/entities/types';
-import { rgbToAci } from './DxfAci';
+import { ACI_WHITE, rgbToAci } from './DxfAci';
 import type { Vec2 } from '../math/geometry';
 // A plain asset URL, not the worker module itself — pdf.js refuses to parse
 // anything until this is set, since (unlike Node) a real browser Worker is
@@ -150,7 +150,7 @@ function extractSubpaths(data: readonly number[], project: (x: number, y: number
  *  Bezier chain — a straight span inside an otherwise-curved subpath becomes
  *  a degenerate cubic (control points on its own endpoints), the same
  *  convention JOIN already uses for a mixed line-and-curve chain. */
-function subpathToEntity(doc: Document, subpath: PdfSubpath, color: number): Entity | null {
+function subpathToEntity(doc: Document, subpath: PdfSubpath, color: number, layer: string | undefined): Entity | null {
   if (subpath.segments.length === 0) return null;
   const hasCurve = subpath.segments.some((segment) => segment.kind === 'cubic');
   let entity: Entity;
@@ -178,7 +178,31 @@ function subpathToEntity(doc: Document, subpath: PdfSubpath, color: number): Ent
   // the same way DXF import stamps a color it read from the file.
   entity.aci = rgbToAci(color);
   entity.color = color;
+  if (layer) entity.layer = layer;
   return entity;
+}
+
+/** An Optional Content Group is PDF's own idea of a layer — AutoCAD's own
+ *  "Export to PDF" maps its drawing layers onto exactly this, one OCG per
+ *  layer, each independently named and (in)visible by default. Only a
+ *  member of a single group is resolved to a MyCAD layer; an OCMD combining
+ *  several with AND/OR visibility logic has no one name to give it, so
+ *  content under one falls back to the document's current layer instead. */
+function resolveOcgLayer(
+  doc: Document,
+  ocConfig: { getGroup(id: string): { name?: string } | undefined; isVisible(group: unknown): boolean },
+  group: { type: string; id: string } | null,
+  layerNames: Map<string, string>,
+): string | undefined {
+  if (!group || group.type !== 'OCG') return undefined;
+  const cached = layerNames.get(group.id);
+  if (cached) return cached;
+  const name = ocConfig.getGroup(group.id)?.name?.trim() || `PDF ${group.id}`;
+  layerNames.set(group.id, name);
+  if (!doc.layers.includes(name)) doc.layers.push(name);
+  doc.layerAci[name] ??= ACI_WHITE;
+  if (!ocConfig.isVisible(group)) doc.hiddenLayers.add(name);
+  return name;
 }
 
 export interface PdfImportResult {
@@ -222,8 +246,14 @@ export async function importPdfEntities(doc: Document, bytes: Uint8Array): Promi
     let skippedShading = 0;
     const OPS = pdfjsLib.OPS;
     const opList = await page.getOperatorList();
+    const ocConfig = await pdf.getOptionalContentConfig();
+    const layerNames = new Map<string, string>();
     const stateStack: GraphicsState[] = [];
     let state: GraphicsState = INITIAL_STATE;
+    // Marked content (BDC/EMC) nests independently of q/Q graphics state, so
+    // it gets its own stack — inheriting the parent's group across a nested
+    // non-OC tag (a /Span inside a layer, say) rather than losing it.
+    const ocStack: Array<{ type: string; id: string } | null> = [];
     for (let index = 0; index < opList.fnArray.length; index++) {
       const fn = opList.fnArray[index];
       const args = opList.argsArray[index];
@@ -239,6 +269,11 @@ export async function importPdfEntities(doc: Document, bytes: Uint8Array): Promi
       } else if (fn === OPS.setStrokeRGBColor || fn === OPS.setStrokeColorN) {
         const color = parseHexColor((args as unknown[])[0]);
         if (color !== null) state = { ...state, strokeColor: color };
+      } else if (fn === OPS.beginMarkedContent || fn === OPS.beginMarkedContentProps) {
+        const [tag, properties] = args as [string, { type: string; id: string } | undefined];
+        ocStack.push(tag === 'OC' && properties ? properties : (ocStack.at(-1) ?? null));
+      } else if (fn === OPS.endMarkedContent) {
+        ocStack.pop();
       } else if (fn === OPS.constructPath) {
         // args is [paintOp, data, minMax], and pdf.js's own constructPath
         // handler destructures the raw coordinate buffer as `[path] = data`
@@ -248,8 +283,9 @@ export async function importPdfEntities(doc: Document, bytes: Uint8Array): Promi
         const data = Array.from(rawPath);
         const project = (x: number, y: number): Vec2 => toMm(applyMatrix(state.ctm, x, y));
         const color = paintsStroke(paintOp, OPS) ? state.strokeColor : state.fillColor;
+        const layer = resolveOcgLayer(doc, ocConfig, ocStack.at(-1) ?? null, layerNames);
         for (const subpath of extractSubpaths(data, project)) {
-          const entity = subpathToEntity(doc, subpath, color);
+          const entity = subpathToEntity(doc, subpath, color, layer);
           if (entity) entities.push(entity);
         }
       } else if (
