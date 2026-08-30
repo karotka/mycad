@@ -13,7 +13,7 @@ import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, dra
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
-import { measureAngle, measureDistance, measureRadius, setWorkPlane } from './steps/dimensions';
+import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
 import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
@@ -215,6 +215,13 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for diameter dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
+  { name: 'QDIM', aliases: ['QD', 'QDIM'], execute: quickDimension, help: 'dimension a whole selection at once, in one continuous chain', suggest: true, sticky: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select geometry to dimension, then press Enter:', multi: true, accepts: ['entity'] },
+      { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [] }) },
   { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },

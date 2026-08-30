@@ -36,6 +36,7 @@ export const dimensionTools: Array<[string, string, CommandName]> = [
   ['Angular', 'Angular Dimension', 'DIMANGULAR'],
   ['Radius', 'Radius Dimension', 'DIMRADIUS'],
   ['Diameter', 'Diameter Dimension', 'DIMDIAMETER'],
+  ['Quick', 'Quick Dimension — dimension a whole selection at once', 'QDIM'],
 ];
 export const zoomTools: Array<[string, 'ZOOM_ALL' | 'ZOOM_WINDOW']> = [['Zoom All', 'ZOOM_ALL'], ['Zoom Window', 'ZOOM_WINDOW']];
 export const editTools: Array<[string, CommandName]> = [

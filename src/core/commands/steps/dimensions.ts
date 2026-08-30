@@ -6,8 +6,8 @@
  * an arc placement. UCS sits here because it is the same question turned
  * around — three points that say what "horizontal" means after them.
  */
-import { AddEntityEdit } from '../../history/edits';
-import { dimensionGeometry, linearDimensionRotation, type Entity, type LineEntity, type SolidEdgeSelection } from '../../entities/types';
+import { AddEntitiesEdit, AddEntityEdit } from '../../history/edits';
+import { curvePoints, dimensionGeometry, ellipseAxisPoints, linearDimensionRotation, type Entity, type LineEntity, type SolidEdgeSelection } from '../../entities/types';
 import {
   cloneWorkPlane,
   localToWorld,
@@ -17,7 +17,7 @@ import {
   WORLD_WORK_PLANE,
   type WorkPlane,
 } from '../../../math/workplane';
-import { dist3, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry';
+import { dist2, dist3, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 
 type SpatialLocalPoint = Vec2 & { z?: number };
@@ -440,6 +440,82 @@ export function measureRadius(run: CommandRun): StepOutcome {
   dimension.workPlane = cloneWorkPlane(source.workPlane);
   ctx.history.execute(new AddEntityEdit(radial ? 'Radius dimension' : 'Diameter dimension', dimension));
   ctx.log(`${radial ? 'Radius' : 'Diameter'} dimension created.`);
+  return 'advance';
+}
+
+/** The points QDIM offers to dimension: true endpoints and vertices, plus a
+ *  circle's or arc's own center — never a curve's control points, and (this
+ *  app has no quadrant snap) never a circle's quadrants either. */
+function qdimPoints(entity: Entity): Vec2[] {
+  switch (entity.type) {
+    case 'line': return [entity.start, entity.end];
+    case 'rectangle': return [
+      entity.first,
+      { x: entity.opposite.x, y: entity.first.y },
+      entity.opposite,
+      { x: entity.first.x, y: entity.opposite.y },
+    ];
+    case 'polyline': {
+      const closingDuplicate = entity.closed && entity.vertices.length > 1
+        && dist2(entity.vertices[0], entity.vertices.at(-1)!) < 1e-9;
+      return closingDuplicate ? entity.vertices.slice(0, -1) : entity.vertices;
+    }
+    case 'octagon': return entity.vertices;
+    case 'arc': { const points = curvePoints(entity, 2); return [points[0], points[2], entity.center]; }
+    case 'bezier': { const points = curvePoints(entity, 2); return [points[0], points[2]]; }
+    case 'ellipse': return ellipseAxisPoints(entity);
+    case 'circle': return [entity.center];
+    default: return [];
+  }
+}
+
+function dedupePoints(points: Vec2[]): Vec2[] {
+  const unique: Vec2[] = [];
+  for (const point of points) {
+    if (!unique.some((existing) => dist2(existing, point) < 1e-6)) unique.push(point);
+  }
+  return unique;
+}
+
+/**
+ * QDIM: dimension a whole selection in one action. Every distinct endpoint,
+ * vertex or circle center across the gathered objects becomes one point in a
+ * single continuous chain, read along whichever axis the dimension line was
+ * pulled across — the same question `linearDimensionRotation` already
+ * answers for a plain two-point dimension, generalised over the point set's
+ * own bounding box instead of a single pair.
+ */
+export function quickDimension(run: CommandRun): StepOutcome {
+  const { step, value, data, ctx, gather } = run;
+  if (step.kind === 'entity') {
+    if (gather(value)) return 'stay';
+    const entities = (data.entities as Entity[] | undefined) ?? [];
+    if (entities.length === 0) {
+      ctx.log('QDIM: select at least one object to dimension.');
+      return 'stay';
+    }
+    return 'advance';
+  }
+
+  const entities = (data.entities as Entity[] | undefined) ?? [];
+  const points = dedupePoints(entities.flatMap(qdimPoints));
+  if (points.length < 2) {
+    ctx.log('QDIM: the selection has fewer than two distinct points to dimension.');
+    return 'advance';
+  }
+  const offset = value as Vec2;
+  const bounds = {
+    min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
+    max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
+  };
+  const rotation = linearDimensionRotation(bounds.min, bounds.max, offset);
+  const sorted = [...points].sort((a, b) => rotation === 0 ? a.x - b.x : a.y - b.y);
+  const dimensions = [];
+  for (let index = 0; index < sorted.length - 1; index++) {
+    dimensions.push(ctx.doc.createDimension(sorted[index], sorted[index + 1], offset, 'linear', rotation));
+  }
+  ctx.history.execute(new AddEntitiesEdit('Quick Dimension', dimensions));
+  ctx.log(`Quick Dimension: ${dimensions.length} dimension(s) created.`);
   return 'advance';
 }
 

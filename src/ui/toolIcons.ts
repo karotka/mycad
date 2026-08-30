@@ -54,6 +54,7 @@ export function toolIcon(command: ToolbarIcon): string {
     DIMANGULAR: '<path d="M4 19L12 5l8 14M7 14a8 8 0 0110 0"/><path d="M7 14l3-.2-1.5-2.4M17 14l-3-.2 1.5-2.4"/>',
     DIMRADIUS: '<circle cx="11" cy="12" r="7"/><path d="M11 12l5-5M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">R</text>',
     DIMDIAMETER: '<circle cx="11" cy="12" r="7"/><path d="M6 17L16 7M6 15v2h2M14 7h2v2"/><text class="tool-icon-label" x="17" y="22">Ø</text>',
+    QDIM: '<path d="M3 17h18M3 9v8M11 9v8M19 9v8"/><path d="M6 15l-2-2 2-2M8 11l2 2-2 2M14 15l-2-2 2-2M16 11l2 2-2 2"/><text class="tool-icon-label" x="2" y="6">QD</text>',
     UCS: '<path d="M5 19V7M5 19h12M5 19l7-7M5 7l-2 3M5 7l2 3M17 19l-3-2M17 19l-3 2M12 12l-1-4M12 12l4-1"/>',
     ZOOM_ALL: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">ALL</text>',
     ZOOM_WINDOW: '<circle cx="13" cy="8.5" r="5.5"/><path d="M17 12.5l4.5 4.5"/><text class="tool-icon-label" x="1" y="22">WIN</text>',

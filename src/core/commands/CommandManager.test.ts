@@ -3592,3 +3592,89 @@ describe('which leg a linear dimension reads', () => {
     expect(reads(start, end, { x: -6, y: 2 })).toBeCloseTo(4);    // pulled aside
   });
 });
+
+describe('QDIM command', () => {
+  it('creates one continuous dimension per gap between the selection\'s points', async () => {
+    const { doc, manager } = setup();
+    const a = doc.createCircle({ x: 0, y: 0 }, 2);
+    const b = doc.createCircle({ x: 10, y: 0 }, 2);
+    const c = doc.createCircle({ x: 25, y: 0 }, 2);
+    doc.entities.push(a, b, c);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 0, y: 0 }, a);
+    await manager.handleClick({ x: 10, y: 0 }, b);
+    await manager.handleClick({ x: 25, y: 0 }, c);
+    await manager.submitInput(''); // finish gathering objects
+    await manager.handleClick({ x: 12, y: -8 }); // pulled below -> horizontal chain
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    expect(dimensions).toHaveLength(2);
+    const texts = dimensions.map((dimension) => dimensionGeometry(dimension).text).sort();
+    expect(texts).toEqual(['10.00', '15.00']);
+    expect(dimensions.every((dimension) => dimension.type === 'dimension' && dimension.rotation === 0)).toBe(true);
+  });
+
+  it('dedupes a point shared by two adjacent objects instead of double-dimensioning it', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const second = doc.createLine({ x: 10, y: 0 }, { x: 20, y: 0 }); // shares the (10, 0) endpoint
+    doc.entities.push(first, second);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 5, y: 0 }, first);
+    await manager.handleClick({ x: 15, y: 0 }, second);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 10, y: -5 });
+
+    // Three unique points (0, 10, 20) make two gaps, not three.
+    expect(doc.entities.filter((entity) => entity.type === 'dimension')).toHaveLength(2);
+  });
+
+  it('refuses a selection with fewer than two distinct points', async () => {
+    const { doc, log, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 3);
+    doc.entities.push(circle);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 0, y: 0 }, circle);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 0, y: -5 });
+    expect(doc.entities.filter((entity) => entity.type === 'dimension')).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('QDIM: the selection has fewer than two distinct points to dimension.');
+  });
+
+  it('reads an arc\'s true endpoints and its center, never its curve midpoint', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 20, y: 0 });
+    const arc = doc.createArc({ x: 30, y: 0 }, 5, 0, Math.PI); // endpoints (35,0) and (25,0), midpoint (30,5)
+    doc.entities.push(line, arc);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 10, y: 0 }, line);
+    await manager.handleClick({ x: 30, y: 5 }, arc);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 15, y: -10 });
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    // Points: line ends (0,0),(20,0); arc ends (35,0),(25,0) plus its (30,0)
+    // center — never its (30,5) curve midpoint. Sorted by x: 0,20,25,30,35.
+    expect(dimensions).toHaveLength(4);
+    const texts = dimensions
+      .map((dimension) => dimensionGeometry(dimension).text)
+      .sort((a, b) => Number(a) - Number(b));
+    expect(texts).toEqual(['5.00', '5.00', '5.00', '20.00']);
+  });
+
+  it('undoes every generated dimension in one step', async () => {
+    const { doc, history, manager } = setup();
+    const a = doc.createCircle({ x: 0, y: 0 }, 2);
+    const b = doc.createCircle({ x: 10, y: 0 }, 2);
+    doc.entities.push(a, b);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 0, y: 0 }, a);
+    await manager.handleClick({ x: 10, y: 0 }, b);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: -5 });
+    expect(doc.entities.filter((entity) => entity.type === 'dimension')).toHaveLength(1);
+
+    expect(history.undo()).toBe(true);
+    expect(doc.entities.filter((entity) => entity.type === 'dimension')).toHaveLength(0);
+  });
+});
