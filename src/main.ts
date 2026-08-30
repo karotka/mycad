@@ -906,6 +906,7 @@ const menuActions: Record<string, () => void> = {
   'import-dxf': () => { void projectController.importDxf(); },
   'import-excellon': () => { void projectController.importExcellon(); },
   'import-step': () => { void projectController.importStep(); },
+  'import-pdf': () => { void projectController.importPdf(); },
   save: () => { void projectController.quickSave(); },
   'save-as': () => { void projectController.saveAs(); },
   'export-stl': startStlExport,

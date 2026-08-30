@@ -6,6 +6,7 @@ import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, de
 import { SETTINGS_DEFAULT_KEYS, loadStoredDefault } from './settingsDefaults';
 import { importAsciiDxf } from '../io/DxfImport';
 import { importExcellon } from '../io/ExcellonImport';
+import { importPdfEntities } from '../io/PdfImport';
 import { exportAsciiDxf } from '../io/DxfExport';
 import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
@@ -233,6 +234,28 @@ export class ProjectController {
     } catch (error) { this.report('Excellon import failed', error); }
   }
 
+  async importPdf(): Promise<void> {
+    try {
+      const file = await this.pickBinaryFile('.pdf,application/pdf', 'PDF', 'pdf');
+      if (!file) return;
+      if (file.data.length === 0) throw new Error('The file is empty.');
+      this.callbacks.cancelInteraction();
+      const result = await importPdfEntities(this.doc, file.data);
+      if (result.entities.length === 0) throw new Error('No vector geometry was found in this PDF — it may be a scanned image.');
+      this.doc.viewMode = '2d';
+      this.doc.transaction(() => {
+        this.doc.clearSelection();
+        this.history.execute(new AddEntitiesEdit('Import PDF entities', result.entities));
+      });
+      this.callbacks.zoomExtents();
+      this.callbacks.log(`Imported PDF: ${file.name} · ${result.entities.length} object(s).`);
+      if (result.pageCount > 1) this.callbacks.log(`This PDF has ${result.pageCount} pages; only the first was imported.`);
+      if (result.skippedImages > 0) this.callbacks.log(`${result.skippedImages} raster image(s) skipped — not vector geometry.`);
+      if (result.skippedShading > 0) this.callbacks.log(`${result.skippedShading} gradient or pattern fill(s) skipped.`);
+      this.callbacks.redraw();
+    } catch (error) { this.report('PDF import failed', error); }
+  }
+
   async exportStl(solids: readonly Solid[]): Promise<void> {
     if (solids.length === 0) {
       this.callbacks.log('STL export: no 3D solids were selected.');
@@ -340,6 +363,24 @@ export class ProjectController {
       picker.click();
     });
     return file ? { content: await file.text(), name: file.name } : undefined;
+  }
+
+  /** Same as pickFile, but the raw bytes — for a binary format like PDF that
+   *  a text read would corrupt. */
+  private async pickBinaryFile(accept: string, name: string, extension: string): Promise<{ data: Uint8Array; name: string; path?: string } | undefined> {
+    if (window.mycadAPI) {
+      const result = await window.mycadAPI.openBinaryFile({ filters: [{ name, extensions: [extension] }] });
+      if (result.canceled || !result.data) return undefined;
+      return { data: result.data, name: result.filePath ?? `file.${extension}`, path: result.filePath };
+    }
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = accept;
+    const file = await new Promise<File | undefined>((resolve) => {
+      picker.addEventListener('change', () => resolve(picker.files?.[0]), { once: true });
+      picker.click();
+    });
+    return file ? { data: new Uint8Array(await file.arrayBuffer()), name: file.name } : undefined;
   }
 
   private async saveText(content: string, defaultPath: string, name: string, extension: string): Promise<string | undefined> {

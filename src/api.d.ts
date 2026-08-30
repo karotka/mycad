@@ -11,6 +11,11 @@ declare global {
       openFile(options: {
         filters: Array<{ name: string; extensions: string[] }>;
       }): Promise<{ canceled: boolean; filePath?: string; content?: string }>;
+      /** Reads the raw bytes of a chosen file — for a binary format like PDF,
+       *  where decoding it as text would corrupt its compressed streams. */
+      openBinaryFile(options: {
+        filters: Array<{ name: string; extensions: string[] }>;
+      }): Promise<{ canceled: boolean; filePath?: string; data?: Uint8Array }>;
       writeFile(options: { filePath: string; content: string }): Promise<{ filePath: string }>;
       quickSave(options: { filePath?: string; defaultPath?: string; content: string }): Promise<{ filePath: string }>;
       exportPdf(options: {

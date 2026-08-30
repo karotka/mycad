@@ -94,7 +94,7 @@ function validateFilters(filters: unknown): asserts filters is Array<{ name: str
 }
 
 /** Menu actions are names the renderer already has callbacks for. */
-type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'import-step' | 'save' | 'save-as' | 'export-stl' | 'export-step' | 'export-dxf' | 'export-gcode' | 'print' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
+type MenuAction = 'new' | 'open' | 'import-dxf' | 'import-excellon' | 'import-step' | 'import-pdf' | 'save' | 'save-as' | 'export-stl' | 'export-step' | 'export-dxf' | 'export-gcode' | 'print' | 'settings' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste';
 
 function buildMenu(win: BrowserWindow): void {
   const send = (action: MenuAction) => () => win.webContents.send('mycad-menu', action);
@@ -132,6 +132,7 @@ function buildMenu(win: BrowserWindow): void {
             { label: 'DXF…', accelerator: 'CmdOrCtrl+I', click: send('import-dxf') },
             { label: 'Excellon Drill…', click: send('import-excellon') },
             { label: 'STEP…', click: send('import-step') },
+            { label: 'PDF (vector)…', click: send('import-pdf') },
           ],
         },
         {
@@ -375,6 +376,28 @@ ipcMain.handle('open-file', async (event, options: {
   writableFiles.add(filePath);
   await rememberDirectory(filePath);
   return { canceled: false, filePath, content: await fs.readFile(filePath, 'utf8') };
+});
+
+// PDF (and any other binary import) can't go through open-file's utf8 read —
+// that would corrupt every compressed content stream in the file. The bytes
+// only ever leave the main process as a Uint8Array, never re-decoded as text.
+ipcMain.handle('open-binary-file', async (event, options: {
+  filters: Array<{ name: string; extensions: string[] }>;
+}) => {
+  assertTrustedSender(event);
+  validateFilters(options?.filters);
+  await loadPrefs();
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: options.filters,
+    ...(lastDirectory ? { defaultPath: lastDirectory } : {}),
+  });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+  const filePath = result.filePaths[0];
+  const stat = await fs.stat(filePath);
+  if (stat.size > MAX_TEXT_FILE_BYTES) throw new Error('The selected file is too large.');
+  await rememberDirectory(filePath);
+  return { canceled: false, filePath, data: Uint8Array.from(await fs.readFile(filePath)) };
 });
 
 ipcMain.handle('write-file', async (event, options: { filePath: string; content: string }) => {

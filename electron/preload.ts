@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('mycadAPI', {
     ipcRenderer.invoke('save-file', options),
   openFile: (options: { filters: Array<{ name: string; extensions: string[] }> }) =>
     ipcRenderer.invoke('open-file', options),
+  openBinaryFile: (options: { filters: Array<{ name: string; extensions: string[] }> }) =>
+    ipcRenderer.invoke('open-binary-file', options),
   writeFile: (options: { filePath: string; content: string }) =>
     ipcRenderer.invoke('write-file', options),
   quickSave: (options: { filePath?: string; defaultPath?: string; content: string }) =>

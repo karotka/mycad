@@ -175,6 +175,51 @@ describe('ProjectController', () => {
     vi.unstubAllGlobals();
   });
 
+  it('imports a PDF\'s vector paths as one undoable operation', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const content = '100 100 m\n200 200 l\nS\n';
+    const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length ${content.length} >>
+stream
+${content}endstream
+endobj
+trailer
+<< /Size 5 /Root 1 0 R >>
+%%EOF
+`;
+    const bytes = new TextEncoder().encode(pdf);
+    vi.stubGlobal('window', { mycadAPI: {
+      openBinaryFile: vi.fn(async () => ({ canceled: false, filePath: '/tmp/part.pdf', data: bytes })),
+    } });
+    const callbacks = {
+      captureView: vi.fn(), cancelInteraction: vi.fn(), resetView: vi.fn(), applyView: vi.fn(),
+      zoomExtents: vi.fn(), renderLayers: vi.fn(), log: vi.fn(), clearLog: vi.fn(),
+      redraw: vi.fn(), focusInput: vi.fn(),
+    } as unknown as ProjectControllerCallbacks;
+    const controller = new ProjectController(doc, history, callbacks);
+
+    await controller.importPdf();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('line');
+
+    history.undo();
+    expect(doc.entities).toEqual([]);
+    history.redo();
+    expect(doc.entities).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
   it('imports DXF block definitions and references as one undoable operation', async () => {
     const doc = new Document();
     const history = new CommandHistory(doc);
