@@ -2337,7 +2337,7 @@ export class Viewport3D {
     return axisOffsetUnderRay(centre, face.normal, ray.origin, ray.direction);
   }
 
-  projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): Vec2 | null {
+  projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): (Vec2 & { depth: number }) | null {
     return this.projection.projectCadPoint(canvas, point);
   }
 

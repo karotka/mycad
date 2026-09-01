@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, type Entity, type Solid } from '../core/entities/types';
+import { curvePoints, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, type Entity, type Solid, type SolidMesh } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
@@ -21,6 +21,23 @@ export interface SnapCandidate {
 }
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
+
+/** The real, topological corners of a solid — endpoints of its true feature
+ *  edges, deduplicated — rather than every triangle vertex the tessellation
+ *  happened to produce (which, on a curved wall or a CSG seam, are many and
+ *  none of them exactly the corner a user means by "endpoint"). */
+function solidCornerVertices(mesh: SolidMesh): Vec3[] {
+  const seen = new Set<string>();
+  const vertices: Vec3[] = [];
+  const add = (point: Vec3): void => {
+    const key = `${point.x.toFixed(6)}:${point.y.toFixed(6)}:${point.z.toFixed(6)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    vertices.push(point);
+  };
+  for (const edge of solidFeatureEdges(mesh)) { add(edge.start); add(edge.end); }
+  return vertices;
+}
 
 function visibleSnapSolids(doc: Document, excludedId?: string | null): Array<{ solid: Solid; ownerId: string }> {
   const result = doc.solids
@@ -86,6 +103,7 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
   if (mode === 'nearest') return [];
   if (mode === 'intersection' || mode === 'apparent-intersection') return tag(intersectionCandidates(doc, excludedId));
   if (mode === 'perpendicular') return tag(perpendicularCandidates(doc, reference, excludedId));
+  if (mode === 'tangent') return tag(tangentCandidates(doc, reference, excludedId));
   const candidates: Vec3[] = [];
   const addLocal = (entity: Entity, point: Vec2): void => {
     candidates.push(localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, localPointZ(point) ?? entityPlaneOffset(entity)));
@@ -102,11 +120,14 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
     else addEntityMiddles(entity, addLocal);
   }
   for (const { solid } of visibleSnapSolids(doc, excludedId)) {
-    const positions = solid.mesh.positions;
     if (mode === 'end') {
-      for (let index = 0; index < positions.length; index += 3) {
-        candidates.push({ x: positions[index], y: positions[index + 1], z: positions[index + 2] });
-      }
+      // The raw triangulated mesh, not real topology: every tessellation
+      // vertex on a curved wall or CSG seam offered itself as an "endpoint"
+      // too, filling the space right around a real corner with a cloud of
+      // close-but-not-quite candidates. solidFeatureEdges already exists to
+      // reject exactly those (see its own doc comment) — the same filter
+      // 'perpendicular' and 'nearest' already trust below.
+      candidates.push(...solidCornerVertices(solid.mesh));
     } else if (mode === 'center') {
       const bounds = solidBounds(solid);
       candidates.push({
@@ -321,6 +342,51 @@ function perpendicularCandidates(doc: Document, reference?: Vec3 | null, exclude
   return candidates;
 }
 
+/** True when `angle` lies within the arc's own sweep, starting at
+ *  `startAngle` and running counter-clockwise (an arc's sweep is always
+ *  stored positive) — a tangent point that only exists on the *rest* of the
+ *  full circle is not one this arc actually offers. */
+function angleWithinSweep(angle: number, startAngle: number, sweepAngle: number): boolean {
+  const twoPi = Math.PI * 2;
+  const delta = ((angle - startAngle) % twoPi + twoPi) % twoPi;
+  return delta <= sweepAngle + 1e-9;
+}
+
+/**
+ * The one or two points where a line from `reference` would run tangent to a
+ * circle or arc — AutoCAD's Tangent object snap. From a point outside a
+ * circle of radius r at distance d, the tangent points sit at angle
+ * ±arccos(r/d) from the direction to the circle's centre; a point on or
+ * inside the circle has none. Not solved for the previous point directly:
+ * both candidates are always offered (tagged 'tangent' like everything else),
+ * and nearestCandidate2d/nearestCandidateProjected already pick whichever one
+ * the cursor sits closer to.
+ */
+function tangentCandidates(doc: Document, reference?: Vec3 | null, excludedId?: string | null): Vec3[] {
+  if (!reference) return [];
+  const candidates: Vec3[] = [];
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    if (entity.type !== 'circle' && entity.type !== 'arc') continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const local = worldToLocal(plane, reference);
+    const dx = local.x - entity.center.x, dy = local.y - entity.center.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= entity.radius + 1e-9) continue; // on or inside: no real tangent line
+    const centerAngle = Math.atan2(dy, dx);
+    const offset = Math.acos(entity.radius / distance);
+    const z = localPointZ(entity.center) ?? entityPlaneOffset(entity);
+    for (const angle of [centerAngle + offset, centerAngle - offset]) {
+      if (entity.type === 'arc' && !angleWithinSweep(angle, entity.startAngle, entity.sweepAngle)) continue;
+      candidates.push(localToWorld(plane, {
+        x: entity.center.x + Math.cos(angle) * entity.radius,
+        y: entity.center.y + Math.sin(angle) * entity.radius,
+      }, z));
+    }
+  }
+  return candidates;
+}
+
 function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityEnds(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') [entity.start, entity.end].forEach((point) => add(entity, point));
@@ -390,22 +456,34 @@ export function nearestCandidate2d(candidates: readonly SnapCandidate[], cursor:
   return result;
 }
 
+/** How close two candidates' screen distances have to be to call it a tie —
+ *  see the depth tie-break below. */
+const SCREEN_TIE_MARGIN_PX = 2;
+
 export function nearestCandidateProjected(
   candidates: readonly SnapCandidate[],
   cursor: Vec2,
-  project: (point: Vec3) => Vec2 | null,
+  project: (point: Vec3) => (Vec2 & { depth?: number }) | null,
   tolerance: number,
   plane: WorkPlane,
 ): SnapTarget | null {
-  let best = tolerance;
-  let result: SnapCandidate | null = null;
+  const withinTolerance: Array<{ candidate: SnapCandidate; distance: number; depth: number }> = [];
   for (const candidate of candidates) {
     const projected = project(candidate.world);
     if (!projected) continue;
     const distance = Math.hypot(projected.x - cursor.x, projected.y - cursor.y);
-    if (distance <= best) { best = distance; result = candidate; }
+    if (distance <= tolerance) withinTolerance.push({ candidate, distance, depth: projected.depth ?? 0 });
   }
-  if (!result) return null;
+  if (withinTolerance.length === 0) return null;
+  // A screen-space tie is routine under perspective — a solid's near and far
+  // corner can land on almost the same pixel while being nowhere near each
+  // other in the model. Among near-ties, the one actually facing the camera
+  // (the smaller normalized depth) is the one a click there was meant for;
+  // picking whichever merely projected fractionally closer used to snap a
+  // line onto a hidden vertex sitting right behind the visible one.
+  const minDistance = Math.min(...withinTolerance.map((entry) => entry.distance));
+  const tied = withinTolerance.filter((entry) => entry.distance <= minDistance + SCREEN_TIE_MARGIN_PX);
+  const result = tied.reduce((best, entry) => (entry.depth < best.depth ? entry : best)).candidate;
   const local = worldToLocal(plane, result.world);
   return { point: { x: local.x, y: local.y }, world: result.world, mode: result.mode };
 }

@@ -272,6 +272,21 @@ html, body, #app {
 .snap-marker[data-snap='node']::before { transform: rotate(45deg); }
 .snap-marker[data-snap='node']::after { transform: rotate(-45deg); }
 
+/* Tangent: a circle with a tangent line touching its base. */
+.snap-marker[data-snap='tangent'] {
+  border-radius: 50%;
+  border-color: #b98aff;
+}
+.snap-marker[data-snap='tangent']::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  bottom: -4px;
+  height: 2px;
+  background: #b98aff;
+}
+
 /* Midpoint: a triangle, drawn with borders so it needs no extra element. */
 .snap-marker[data-snap='middle'],
 .snap-marker[data-snap='mid2p'] {

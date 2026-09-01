@@ -37,8 +37,8 @@ describe('drafting controls', () => {
     document.body.innerHTML = shellHtml({ primitive: 'BOX', circle: 'CIRCLE', curve: 'BEZIER', dimension: 'MEASURE', zoom: 'ZOOM_ALL' });
     const modes = [...document.querySelectorAll<HTMLButtonElement>('.one-shot-snaps [data-grip-mode]')]
       .map((button) => button.dataset.gripMode);
-    expect(modes.slice(0, 7)).toEqual([
-      'end', 'middle', 'perpendicular', 'intersection', 'center', 'apparent-intersection', 'mid2p',
+    expect(modes.slice(0, 8)).toEqual([
+      'end', 'middle', 'perpendicular', 'tangent', 'intersection', 'center', 'apparent-intersection', 'mid2p',
     ]);
   });
 });

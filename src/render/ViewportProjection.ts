@@ -10,11 +10,14 @@ export class ViewportProjection {
 
   constructor(private readonly camera: () => Camera, private readonly target: () => THREE.Vector3) {}
 
-  projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): Vec2 | null {
+  projectCadPoint(canvas: HTMLCanvasElement, point: Vec3): (Vec2 & { depth: number }) | null {
     const rect = canvas.getBoundingClientRect();
     const projected = new THREE.Vector3(point.x, point.z, -point.y).project(this.camera());
     if (projected.z < -1 || projected.z > 1) return null;
-    return { x: (projected.x + 1) * rect.width / 2, y: (1 - projected.y) * rect.height / 2 };
+    // Normalized device Z: smaller is nearer the camera. Kept alongside the
+    // screen position so a screen-space nearest-candidate search can still
+    // tell two points apart that project to (almost) the same pixel.
+    return { x: (projected.x + 1) * rect.width / 2, y: (1 - projected.y) * rect.height / 2, depth: projected.z };
   }
 
   groundPoint(canvas: HTMLCanvasElement, sx: number, sy: number): Vec2 | null {

@@ -246,6 +246,7 @@ export function shellHtml(tools: ShellTools): string {
       <button data-grip-mode="end">Endpoint</button>
       <button data-grip-mode="middle">Midpoint</button>
       <button data-grip-mode="perpendicular">Perpendicular</button>
+      <button data-grip-mode="tangent">Tangent</button>
       <button data-grip-mode="intersection">Intersection</button>
       <button data-grip-mode="center">Center</button>
       <button data-grip-mode="apparent-intersection">Apparent intersection</button>
@@ -260,6 +261,7 @@ export function shellHtml(tools: ShellTools): string {
       <button data-persistent-snap="end">Endpoint</button>
       <button data-persistent-snap="middle">Midpoint</button>
       <button data-persistent-snap="perpendicular">Perpendicular</button>
+      <button data-persistent-snap="tangent">Tangent</button>
       <button data-persistent-snap="intersection">Intersection</button>
       <button data-persistent-snap="center">Center</button>
       <button data-persistent-snap="apparent-intersection">Apparent intersection</button>

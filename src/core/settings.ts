@@ -1,4 +1,4 @@
-export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'node' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'nearest';
+export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'node' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'tangent' | 'nearest';
 
 export interface DraftingSettings {
   orthoEnabled: boolean;
