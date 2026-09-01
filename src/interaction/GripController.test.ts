@@ -114,6 +114,34 @@ describe('GripController', () => {
     expect(grips.dragReferencePoint()).toBeNull();
   });
 
+  it('reports the radius while dragging a circle by its centre grip, for Tangent to solve against', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const circle = doc.createCircle({ x: 0, y: 0 }, 3);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+
+    grips.begin(circle, undefined, 0, { x: 0, y: 0 }); // dragging the centre
+    expect(grips.draggingCircleRadius()).toBe(3);
+    grips.cancel();
+
+    grips.begin(circle, undefined, 1, { x: 3, y: 0 }); // dragging a radius grip instead
+    expect(grips.draggingCircleRadius()).toBeNull();
+  });
+
+  it('has no dragged-circle radius outside a circle\'s own centre grip', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    grips.begin(line, undefined, 0, { x: 0, y: 0 });
+    expect(grips.draggingCircleRadius()).toBeNull();
+  });
+
   it('keeps Z on a 3D line midpoint grip so it stays on the line', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

@@ -39,6 +39,20 @@ export class GripController {
   get draggingOrigin(): Vec2 | null { return this.drag ? { ...this.drag.origin } : null; }
 
   /**
+   * The radius of the circle being moved by its own centre grip, so Tangent
+   * snap can solve for where that centre must land to make the circle — at
+   * its own fixed size — touch a target line or circle. Null for every other
+   * drag, including a circle's own radius grips (index > 0), which resize it
+   * rather than move it.
+   */
+  draggingCircleRadius(): number | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'circle' || this.drag.gripIndex !== 0) return null;
+    return entity.radius;
+  }
+
+  /**
    * A natural "from" point for Perpendicular/Tangent snap while a grip is
    * being dragged with no draw command active to supply one: a line's own
    * other endpoint, when the grip being dragged is one of its two ends. This

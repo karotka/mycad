@@ -13,6 +13,7 @@ import {
   nearestCandidateProjected,
   nearestEdgeWorldPoint,
   objectSnapCandidates,
+  tangentDragCandidates,
   type ObjectSnapMode,
   type SnapTarget,
 } from './SnapService';
@@ -337,6 +338,26 @@ export function createPointResolver(ctx: PointResolverContext) {
     return gripController.dragReferencePoint();
   }
 
+  /** The cursor's own world point, standing in for a reference when a snap
+   *  mode's valid targets form a locus tracked by the cursor rather than a
+   *  handful of fixed points (see `tangentDragCandidates`). */
+  function cursorWorldPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec3 | null {
+    const local = doc.viewMode === '3d' ? rawWorldPoint3d(event) : rawWorldPoint(event);
+    return local ? localToWorld(doc.activeWorkPlane, local) : null;
+  }
+
+  /** Tangent candidates for a whole circle being moved by its centre grip, so
+   *  it can snap to touch a target line or circle at its own fixed radius —
+   *  in addition to (not instead of) the ordinary point-tangent candidates,
+   *  which stay empty here since a circle-centre drag has no reference point. */
+  function tangentCircleDragCandidates(event: Pick<PointerEvent, 'clientX' | 'clientY'>) {
+    const draggedRadius = gripController.draggingCircleRadius();
+    if (!draggedRadius) return [];
+    const cursor = cursorWorldPoint(event);
+    if (!cursor) return [];
+    return tangentDragCandidates(doc, draggedRadius, cursor, gripController.draggingObjectId);
+  }
+
   function nearestGripTargetSnap(
     event: Pick<PointerEvent, 'clientX' | 'clientY'>,
     mode: ObjectSnapMode | null = gripInteraction.targetSnapMode,
@@ -345,6 +366,7 @@ export function createPointResolver(ctx: PointResolverContext) {
     if (!mode) return null;
     const reference = commandOrDragReferencePoint();
     const candidates = objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference);
+    if (mode === 'tangent') candidates.push(...tangentCircleDragCandidates(event));
     if (doc.viewMode === '3d') {
       const rect = viewport.getBoundingClientRect();
       return nearestCandidateProjected(
@@ -383,6 +405,7 @@ export function createPointResolver(ctx: PointResolverContext) {
       : doc.drafting.objectSnapModes;
     const candidates = modes.flatMap((mode) =>
       objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference));
+    if (modes.includes('tangent')) candidates.push(...tangentCircleDragCandidates(event));
     const rect = viewport.getBoundingClientRect();
     const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const discrete = doc.viewMode === '3d'

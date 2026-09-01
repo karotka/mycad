@@ -387,6 +387,65 @@ function tangentCandidates(doc: Document, reference?: Vec3 | null, excludedId?: 
   return candidates;
 }
 
+/**
+ * Where a circle's own centre should land so that, at its own fixed radius,
+ * it becomes tangent to a target line or circle/arc — grip-dragging a whole
+ * circle onto Tangent, as distinct from `tangentCandidates` above (which
+ * places a point ON a fixed circle, reached from a reference point). Here the
+ * valid centres are not a couple of discrete points but a whole offset line
+ * (parallel to a target line, radius away) or offset circle (concentric with
+ * a target circle, at the sum or difference of the two radii), so the raw
+ * cursor position stands in for the reference, picking the one point on that
+ * locus nearest itself — recomputed fresh on every call since it tracks
+ * the cursor rather than fixed geometry.
+ */
+export function tangentDragCandidates(doc: Document, radius: number, cursor: Vec3, excludedId?: string | null): SnapCandidate[] {
+  if (!(radius > 1e-9)) return [];
+  const candidates: SnapCandidate[] = [];
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const local = worldToLocal(plane, cursor);
+    if (entity.type === 'circle' || entity.type === 'arc') {
+      const dx = local.x - entity.center.x, dy = local.y - entity.center.y;
+      const dist = Math.hypot(dx, dy);
+      const ux = dist > 1e-9 ? dx / dist : 1, uy = dist > 1e-9 ? dy / dist : 0;
+      const z = localPointZ(entity.center) ?? entityPlaneOffset(entity);
+      const contactAngle = Math.atan2(uy, ux);
+      if (entity.type === 'arc' && !angleWithinSweep(contactAngle, entity.startAngle, entity.sweepAngle)) continue;
+      for (const separation of [entity.radius + radius, Math.abs(entity.radius - radius)]) {
+        if (separation < 1e-9) continue;
+        candidates.push({
+          world: localToWorld(plane, { x: entity.center.x + ux * separation, y: entity.center.y + uy * separation }, z),
+          mode: 'tangent',
+        });
+      }
+    } else {
+      for (const [start, end] of entitySegments(entity)) {
+        const dx = end.x - start.x, dy = end.y - start.y;
+        const lengthSquared = dx * dx + dy * dy;
+        if (lengthSquared < 1e-12) continue;
+        const length = Math.sqrt(lengthSquared);
+        const t = Math.max(0, Math.min(1, ((local.x - start.x) * dx + (local.y - start.y) * dy) / lengthSquared));
+        const footX = start.x + dx * t, footY = start.y + dy * t;
+        const nx = -dy / length, ny = dx / length;
+        const side = (local.x - footX) * nx + (local.y - footY) * ny >= 0 ? 1 : -1;
+        const startZ = localPointZ(start) ?? entityPlaneOffset(entity);
+        const endZ = localPointZ(end) ?? entityPlaneOffset(entity);
+        candidates.push({
+          world: localToWorld(
+            plane,
+            { x: footX + nx * radius * side, y: footY + ny * radius * side },
+            startZ + (endZ - startZ) * t,
+          ),
+          mode: 'tangent',
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
 function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityEnds(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') [entity.start, entity.end].forEach((point) => add(entity, point));

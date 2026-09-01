@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeWorldPoint, objectSnapCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
+import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -272,6 +272,56 @@ describe('tangent object snap', () => {
     const candidates = objectSnapCandidates(doc, 'tangent', null, { x: 5, y: 0, z: 0 });
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.every((candidate) => candidate.mode === 'tangent')).toBe(true);
+  });
+});
+
+describe('tangentDragCandidates (dragging a whole circle onto Tangent)', () => {
+  it('offers the two centres, on the cursor\'s side, that make a dragged circle tangent to a line', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: -10, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(line);
+    // Dragging a radius-2 circle with the cursor above the line: its centre
+    // should land 2 units above the nearest point on the line.
+    const candidates = tangentDragCandidates(doc, 2, { x: 3, y: 5, z: 0 }, null);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].world).toMatchObject({ x: 3, y: 2, z: 0 });
+    expect(candidates[0].mode).toBe('tangent');
+  });
+
+  it('flips sides to follow the cursor below the line', () => {
+    const doc = new Document();
+    doc.entities.push(doc.createLine({ x: -10, y: 0 }, { x: 10, y: 0 }));
+    const candidates = tangentDragCandidates(doc, 2, { x: 3, y: -5, z: 0 }, null);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].world).toMatchObject({ x: 3, y: -2 });
+  });
+
+  it('offers both the external and internal tangent centres against a circle', () => {
+    const doc = new Document();
+    doc.entities.push(doc.createCircle({ x: 0, y: 0 }, 5));
+    // A radius-2 dragged circle, cursor to the right of the target: external
+    // tangency puts its centre 7 away (5+2), internal 3 away (5-2), both on
+    // the cursor's side.
+    const candidates = tangentDragCandidates(doc, 2, { x: 20, y: 0, z: 0 }, null);
+    expect(candidates).toHaveLength(2);
+    const xs = candidates.map((c) => c.world.x).sort((a, b) => a - b);
+    expect(xs).toEqual([3, 7]);
+    expect(candidates.every((c) => Math.abs(c.world.y) < 1e-9)).toBe(true);
+  });
+
+  it('excludes the dragged circle itself from its own candidates', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    doc.entities.push(circle);
+    expect(tangentDragCandidates(doc, 2, { x: 20, y: 0, z: 0 }, circle.id)).toEqual([]);
+  });
+
+  it('drops a candidate whose contact point falls outside a target arc\'s sweep', () => {
+    const doc = new Document();
+    // A quarter arc spanning 0°-90°; approaching from straight left (180°)
+    // means the contact point at 180° is nowhere on this sweep.
+    doc.entities.push(doc.createArc({ x: 0, y: 0 }, 5, 0, Math.PI / 2));
+    expect(tangentDragCandidates(doc, 2, { x: -20, y: 0, z: 0 }, null)).toEqual([]);
   });
 });
 
