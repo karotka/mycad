@@ -144,9 +144,16 @@ export function segmentCircleIntersections(p0: Vec2, p1: Vec2, center: Vec2, rad
   const b = 2 * (fx * dx + fy * dy);
   const c = fx * fx + fy * fy - radius * radius;
   const disc = b * b - 4 * a * c;
-  if (disc < 0) return [];
-  const sqrt = Math.sqrt(disc);
-  const roots = sqrt < 1e-9 ? [-b / (2 * a)] : [(-b - sqrt) / (2 * a), (-b + sqrt) / (2 * a)];
+  // A line built to be exactly tangent (e.g. via the tangent snap) can still
+  // land its discriminant a hair below zero to floating-point rounding, so
+  // reject only discriminants that are negative well beyond that noise floor,
+  // and treat anything within it as the single tangent contact point.
+  const tangentTolerance = 1e-9 * a * Math.max(radius * radius, 1e-12);
+  if (disc < -tangentTolerance) return [];
+  const roots = disc <= tangentTolerance ? [-b / (2 * a)] : (() => {
+    const sqrt = Math.sqrt(disc);
+    return [(-b - sqrt) / (2 * a), (-b + sqrt) / (2 * a)];
+  })();
   return roots.map((t) => ({ t, point: { x: p0.x + t * dx, y: p0.y + t * dy } }));
 }
 

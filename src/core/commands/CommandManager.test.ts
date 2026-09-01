@@ -578,6 +578,30 @@ describe('CommandManager history integration', () => {
     if (arc?.type === 'arc') expect(Math.cos(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
   });
 
+  it('trims a circle between two tangent lines, even when one lands a hair off exact due to floating point', async () => {
+    // These two lines are each mathematically tangent to the circle (touching
+    // at a single point), built at angles that are known to nudge the
+    // line-circle discriminant to a tiny negative number from float rounding
+    // rather than exactly zero — the case that used to make the tangent
+    // crossing vanish entirely and leave TRIM with less than two boundary points.
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 5);
+    const tangentA = doc.createLine({ x: 7.417819582470549, y: -8.365163037378078 }, { x: 2.241438680420134, y: 10.953353488403287 });
+    const tangentB = doc.createLine({ x: -8.118664537186229, y: 7.686825491230742 }, { x: -1.278261670672856, y: -11.107026924487428 });
+    doc.entities.push(circle, tangentA, tangentB);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: tangentA.start.x, y: tangentA.start.y }, tangentA);
+    await manager.handleClick({ x: tangentB.start.x, y: tangentB.start.y }, tangentB);
+    await manager.submitInput(''); // finish selecting the two cutting edges
+    await manager.handleClick({ x: 0, y: 5 }, circle); // remove the span near the top
+    expect(doc.getEntity(circle.id)).toBeUndefined();
+    const arc = doc.entities.find((entity) => entity.type === 'arc');
+    expect(arc).toMatchObject({ type: 'arc', radius: 5 });
+    // The kept span runs the long way round through the bottom, so its
+    // midpoint sits below the center.
+    if (arc?.type === 'arc') expect(Math.sin(arc.startAngle + arc.sweepAngle / 2)).toBeLessThan(0);
+  });
+
   it('trims coplanar objects whose work planes carry a different origin (same face, different UCS)', async () => {
     const { doc, manager } = setup();
     const planeAt = (ox: number, oy: number) => ({
