@@ -415,6 +415,32 @@ html, body, #app {
   display: none;
 }
 
+/* Dynamic input: an editable width/height readout sitting on a rectangle's
+ * own side while its second corner is still being placed, Fusion-360 style. */
+.dyn-dim-input {
+  position: absolute;
+  z-index: 46;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  padding: 3px 5px;
+  border: 1px solid #4d8dbd;
+  border-radius: 3px;
+  background: rgba(13, 17, 23, 0.92);
+  color: #d7efff;
+  font: 11px 'SF Mono', monospace;
+  text-align: center;
+}
+
+.dyn-dim-input:focus {
+  outline: none;
+  border-color: #6fb6f0;
+  background: #11171c;
+}
+
+.dyn-dim-input[hidden] {
+  display: none;
+}
+
 .crosshair::before {
   width: 1px;
   height: 44px;

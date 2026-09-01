@@ -1,0 +1,104 @@
+import type { Vec2 } from '../math/geometry';
+import type { Document } from '../core/Document';
+import type { CommandManager } from '../core/commands/CommandManager';
+import { dynamicRectangleBoxPoints, dynamicRectangleCorner, type DynamicRectangleFields } from './DynamicRectangleInput';
+
+/** A minimal element surface — real `HTMLElement`/`HTMLInputElement` in the
+ *  app, a plain stub in tests — so this stays testable without a DOM. */
+export interface DynamicRectangleInputElement {
+  value: string;
+  hidden: boolean;
+  style: { left: string; top: string };
+  select(): void;
+  addEventListener(type: 'focus' | 'blur' | 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
+}
+
+export interface DynamicRectangleInputContext {
+  widthInput: DynamicRectangleInputElement;
+  heightInput: DynamicRectangleInputElement;
+  commands: CommandManager;
+  doc: Document;
+  /** Local-plane point to screen pixels, the same frame RECTANGLE's own points arrive in. */
+  project: (point: Vec2) => { x: number; y: number };
+  onCommit: (point: Vec2) => void;
+}
+
+/**
+ * A Fusion-360-style dynamic input prototype for RECTANGLE: while its second
+ * point is pending, two small boxes sit on the width and height sides showing
+ * the live size, editable in place — Tab moves between them (plain DOM tab
+ * order, since they are adjacent siblings), Enter commits through the same
+ * `handleClick` path a real click would take, so typed and clicked corners
+ * can never diverge. 2D only; scoped to the one command as a trial run of an
+ * on-canvas input surface living alongside the command line.
+ */
+export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
+  const { widthInput, heightInput, commands, doc, project, onCommit } = ctx;
+  let widthFocused = false;
+  let heightFocused = false;
+  let lastStart: Vec2 | null = null;
+  let lastCursor: Vec2 | null = null;
+
+  function currentFields(): DynamicRectangleFields {
+    return { width: widthInput.value, height: heightInput.value };
+  }
+
+  function position(input: DynamicRectangleInputElement, point: Vec2): void {
+    const screen = project(point);
+    input.style.left = `${screen.x}px`;
+    input.style.top = `${screen.y}px`;
+    input.hidden = false;
+  }
+
+  /** Hides both boxes and drops whatever was typed — a fresh drag starts clean. */
+  function hide(): void {
+    if (widthInput.hidden && heightInput.hidden) return;
+    widthInput.hidden = true;
+    heightInput.hidden = true;
+    widthInput.value = '';
+    heightInput.value = '';
+    lastStart = null;
+    lastCursor = null;
+  }
+
+  function commit(): void {
+    if (!lastStart || !lastCursor) return;
+    const corner = dynamicRectangleCorner(lastStart, lastCursor, currentFields());
+    hide();
+    onCommit(corner);
+  }
+
+  /** Called on every pointer move while RECTANGLE's second point is pending:
+   *  positions both boxes and refreshes whichever one isn't being typed into. */
+  function update(start: Vec2, cursor: Vec2): void {
+    lastStart = start;
+    lastCursor = cursor;
+    const corner = dynamicRectangleCorner(start, cursor, currentFields());
+    if (!widthFocused) widthInput.value = Math.abs(corner.x - start.x).toFixed(2);
+    if (!heightFocused) heightInput.value = Math.abs(corner.y - start.y).toFixed(2);
+    const points = dynamicRectangleBoxPoints(start, corner);
+    position(widthInput, points.width);
+    position(heightInput, points.height);
+  }
+
+  /** Hides the boxes the moment RECTANGLE's second point is no longer being
+   *  gathered — a command switch, cancel or completion — even without any
+   *  further pointer movement to trigger it otherwise. */
+  function sync(): void {
+    const active = commands.active;
+    const applies = active?.name === 'RECTANGLE' && active.stepIndex === 1 && doc.viewMode === '2d';
+    if (!applies) hide();
+  }
+
+  const onKeydown = (event: { key?: string; preventDefault(): void }): void => {
+    if (event.key === 'Enter') { event.preventDefault(); commit(); }
+  };
+  widthInput.addEventListener('keydown', onKeydown);
+  heightInput.addEventListener('keydown', onKeydown);
+  widthInput.addEventListener('focus', () => { widthFocused = true; widthInput.select(); });
+  widthInput.addEventListener('blur', () => { widthFocused = false; });
+  heightInput.addEventListener('focus', () => { heightFocused = true; heightInput.select(); });
+  heightInput.addEventListener('blur', () => { heightFocused = false; });
+
+  return { update, hide, sync };
+}

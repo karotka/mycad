@@ -33,6 +33,7 @@ export interface ViewportPointerHelpers {
   updatePreview(cursor: Vec2): void;
   showDimension(text: string | null, x: number, y: number): void;
   showPreviewLabel(text: string | null, x: number, y: number): void;
+  updateDynamicRectangleInput(start: Vec2, cursor: Vec2): void;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -102,6 +103,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
+    updateDynamicRectangleInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -379,7 +381,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
       } else if (active.name === 'RECTANGLE' && active.data.start) {
         const start = active.data.start as Vec2;
-        showPreviewLabel(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
+        if (cadDocument.viewMode === '2d') updateDynamicRectangleInput(start, p);
+        else showPreviewLabel(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
       } else if (active.name === 'CIRCLE' && active.data.center) {
         const center = active.data.center as Vec2;
         const radius = Math.hypot(p.x - center.x, p.y - center.y);

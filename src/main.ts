@@ -41,6 +41,7 @@ import { createPointResolver, type PointResolverState } from './interaction/Poin
 import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPlaneWorldDelta } from './interaction/DragEditing';
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 import { createToolActions } from './interaction/ToolActions';
+import { createDynamicRectangleInput } from './interaction/DynamicRectangleInputController';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 import type { PrintColorMode } from './render/SvgExport';
@@ -110,6 +111,8 @@ const mtextEditor = get<HTMLElement>('mtext-editor');
 const mtextInput = get<HTMLTextAreaElement>('mtext-input');
 const mtextEditorHeight = get<HTMLInputElement>('mtext-editor-height');
 const mtextEditorFont = get<HTMLSelectElement>('mtext-editor-font');
+const dynDimWidthInput = get<HTMLInputElement>('dyn-dim-width');
+const dynDimHeightInput = get<HTMLInputElement>('dyn-dim-height');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -409,6 +412,7 @@ function syncChrome(): void {
 
 function drawFrame(): void {
   syncDynamicUcsLifecycle();
+  dynamicRectangleInput.sync();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
   renderer3d.syncCutAreaFrame(cadDocument.gcode);
@@ -585,6 +589,18 @@ const commands = new CommandManager({
     input.value = value;
     input.focus({ preventScroll: true });
     input.select();
+  },
+});
+const dynamicRectangleInput = createDynamicRectangleInput({
+  widthInput: dynDimWidthInput,
+  heightInput: dynDimHeightInput,
+  commands,
+  doc: cadDocument,
+  project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  onCommit: (point) => {
+    void commands.handleClick(point);
+    redraw();
+    input.focus({ preventScroll: true });
   },
 });
 const blockController = new BlockController(
@@ -1072,6 +1088,10 @@ function showPreviewLabel(text: string | null, x: number, y: number): void {
   showDimension(text, x, y);
 }
 
+function updateDynamicRectangleInput(start: Vec2, cursor: Vec2): void {
+  dynamicRectangleInput.update(start, cursor);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1189,6 +1209,7 @@ attachViewportPointerHandlers({
     updatePreview,
     showDimension,
     showPreviewLabel,
+    updateDynamicRectangleInput,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,

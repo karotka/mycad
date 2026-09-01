@@ -63,6 +63,8 @@ export function shellHtml(tools: ShellTools): string {
       <div class="snap-marker" id="snap-marker" hidden></div>
       <div class="tracking-line" id="tracking-line" hidden></div>
       <div class="dimension-toast" id="dimension-toast" hidden></div>
+      <input class="dyn-dim-input" id="dyn-dim-width" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle width" hidden />
+      <input class="dyn-dim-input" id="dyn-dim-height" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle height" hidden />
       <section class="mtext-editor" id="mtext-editor" hidden>
         <label class="mtext-editor-font">Font<select id="mtext-editor-font">${TEXT_FONT_OPTIONS}</select></label>
         <label class="mtext-editor-height">Height (mm)<input id="mtext-editor-height" type="number" min="0.1" step="0.5" value="2.5" /></label>
