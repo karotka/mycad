@@ -82,6 +82,38 @@ describe('GripController', () => {
     expect(doc.getEntity(line.id)).toMatchObject({ start: { x: 0, y: 0 }, end: { x: 2, y: 0 } });
   });
 
+  it('offers a line\'s other endpoint as a drag reference for Perpendicular/Tangent snap', () => {
+    // With no draw command running to supply a "from" point (the ordinary
+    // case while grip-editing an existing line), its own other end is the
+    // only sensible one — the same point AutoCAD's grip editing measures
+    // Perpendicular and Tangent from.
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    grips.begin(line, undefined, 0, { x: 0, y: 0 }); // dragging the start
+    expect(grips.dragReferencePoint()).toMatchObject({ x: 10, y: 0 });
+    grips.cancel();
+
+    grips.begin(line, undefined, 1, { x: 10, y: 0 }); // dragging the end
+    expect(grips.dragReferencePoint()).toMatchObject({ x: 0, y: 0 });
+  });
+
+  it('has no drag reference point outside a line\'s own two endpoint grips', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const circle = doc.createCircle({ x: 0, y: 0 }, 3);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+
+    grips.begin(circle, undefined, 0, { x: 3, y: 0 });
+    expect(grips.dragReferencePoint()).toBeNull();
+  });
+
   it('keeps Z on a 3D line midpoint grip so it stays on the line', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

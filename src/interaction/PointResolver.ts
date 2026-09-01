@@ -1,4 +1,4 @@
-import type { Vec2 } from '../math/geometry';
+import type { Vec2, Vec3 } from '../math/geometry';
 import { snapPoint2, worldToScreen } from '../math/geometry';
 import type { WorkPlane } from '../math/workplane';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from '../math/workplane';
@@ -321,17 +321,29 @@ export function createPointResolver(ctx: PointResolverContext) {
     return nearestCandidate2d(candidates, cursor, doc.activeWorkPlane, pixelTolerance / renderer2d.zoom)?.world ?? null;
   }
 
+  /**
+   * The "from" point Perpendicular and Tangent measure against: the active
+   * draw command's last point when one is running, or — with no command
+   * active, which is the ordinary case while grip-dragging an existing
+   * entity's own point — the natural reference the grip drag itself supplies
+   * (a dragged line endpoint's own other end).
+   */
+  function commandOrDragReferencePoint(): Vec3 | null {
+    const active = commands.active;
+    const referenceValue = active?.data.start ?? active?.data.basePoint ?? active?.data.center;
+    if (referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue) {
+      return localToWorld(doc.activeWorkPlane, referenceValue as Vec2);
+    }
+    return gripController.dragReferencePoint();
+  }
+
   function nearestGripTargetSnap(
     event: Pick<PointerEvent, 'clientX' | 'clientY'>,
     mode: ObjectSnapMode | null = gripInteraction.targetSnapMode,
     pixelTolerance = 10,
   ): GripSnapTarget | null {
     if (!mode) return null;
-    const active = commands.active;
-    const referenceValue = active?.data.start ?? active?.data.basePoint ?? active?.data.center;
-    const reference = referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue
-      ? localToWorld(doc.activeWorkPlane, referenceValue as Vec2)
-      : null;
+    const reference = commandOrDragReferencePoint();
     const candidates = objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference);
     if (doc.viewMode === '3d') {
       const rect = viewport.getBoundingClientRect();
@@ -357,10 +369,7 @@ export function createPointResolver(ctx: PointResolverContext) {
   ): GripSnapTarget | null {
     if (!doc.drafting.objectSnapEnabled || doc.drafting.objectSnapModes.length === 0) return null;
     const active = commands.active;
-    const referenceValue = active?.data.start ?? active?.data.basePoint ?? active?.data.center;
-    const reference = referenceValue && typeof referenceValue === 'object' && 'x' in referenceValue && 'y' in referenceValue
-      ? localToWorld(doc.activeWorkPlane, referenceValue as Vec2)
-      : null;
+    const reference = commandOrDragReferencePoint();
     // Intersection snapping is quadratic in entity count (and curves expand to
     // segments). While a large selection is transformed, intersections among
     // the objects riding together cannot help place the transform, but used to

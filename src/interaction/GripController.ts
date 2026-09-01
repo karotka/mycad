@@ -2,7 +2,7 @@ import type { Document } from '../core/Document';
 import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type ExactSolidGeometry, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
-import { midpoint2, type Vec2 } from '../math/geometry';
+import { midpoint2, type Vec2, type Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
 import { solidBounds } from './PickingService';
 import { translatedFeature } from '../core/solids/featureTransform';
@@ -37,6 +37,22 @@ export class GripController {
   get draggingObjectId(): string | null { return this.drag?.objectId ?? null; }
   get draggingGripIndex(): number | null { return this.drag?.gripIndex ?? null; }
   get draggingOrigin(): Vec2 | null { return this.drag ? { ...this.drag.origin } : null; }
+
+  /**
+   * A natural "from" point for Perpendicular/Tangent snap while a grip is
+   * being dragged with no draw command active to supply one: a line's own
+   * other endpoint, when the grip being dragged is one of its two ends. This
+   * is the same point AutoCAD's own grip editing measures Perpendicular and
+   * Tangent from — dragging a line's end onto a circle to make it tangent has
+   * nothing else it could sensibly mean.
+   */
+  dragReferencePoint(): Vec3 | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'line' || this.drag.gripIndex >= 2) return null;
+    const local = (this.drag.gripIndex === 0 ? entity.end : entity.start) as Vec2 & { z?: number };
+    return localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, local, local.z ?? 0);
+  }
 
   applyRelativeDistance(distance: number): boolean {
     if (!this.drag || !Number.isFinite(distance) || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return false;
