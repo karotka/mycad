@@ -36,6 +36,7 @@ export interface ViewportPointerHelpers {
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
   updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
+  updateDynamicDiameterInput(center: Vec2, cursor: Vec2): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -105,7 +106,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -423,8 +424,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         else showPreviewLabel(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
       } else if (active.name === 'CIRCLE' && active.data.center) {
         const center = active.data.center as Vec2;
-        const radius = Math.hypot(p.x - center.x, p.y - center.y);
-        showPreviewLabel(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
+        if (cadDocument.viewMode === '2d') {
+          const point = updateDynamicDiameterInput(center, p);
+          updatePreview(point);
+        } else {
+          const radius = Math.hypot(p.x - center.x, p.y - center.y);
+          showPreviewLabel(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
+        }
       }
     }
     if (active?.name === 'POLYGON' && active.stepIndex === 2 && active.data.center) {

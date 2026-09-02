@@ -622,11 +622,12 @@ const dynamicLengthInput = createDynamicLengthInput({
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
   isActive: () => {
     const active = commands.active;
-    if ((active?.name === 'LINE' || active?.name === 'POLYLINE') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
+    if (active && (active.name === 'LINE' || active.name === 'POLYLINE' || active.name === 'CIRCLE') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
     return cadDocument.viewMode === '2d' && gripController.draggingLineFixedEnd() !== null;
   },
   onCommit: (point) => {
-    if (commands.active?.name === 'LINE' || commands.active?.name === 'POLYLINE') void commands.handleClick(point);
+    const active = commands.active;
+    if (active?.name === 'LINE' || active?.name === 'POLYLINE' || active?.name === 'CIRCLE') void commands.handleClick(point);
     else gripInteraction.commitTypedPoint(point);
     redraw();
     input.focus({ preventScroll: true });
@@ -1134,6 +1135,10 @@ function updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFin
   return dynamicLengthInput.update(start, cursor, options);
 }
 
+function updateDynamicDiameterInput(center: Vec2, cursor: Vec2): Vec2 {
+  return dynamicLengthInput.updateDiameter(center, cursor);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1254,6 +1259,7 @@ attachViewportPointerHandlers({
     updateDynamicRectangleInput,
     updateDynamicRectangleEdge,
     updateDynamicLengthInput,
+    updateDynamicDiameterInput,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,

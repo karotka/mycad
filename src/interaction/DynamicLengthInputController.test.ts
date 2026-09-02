@@ -211,3 +211,48 @@ describe('createDynamicLengthInput', () => {
     expect(lengthInput.hidden).toBe(true);
   });
 });
+
+describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step)', () => {
+  it('shows only the length box, displaying the diameter — twice the centre-to-cursor distance', () => {
+    const { lengthInput, angleInput, separatorLabel, degreeLabel, controller } = setup();
+    // Centre-to-cursor distance is 5 (3-4-5 triangle); diameter is 10.
+    const point = controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    expect(point.x).toBeCloseTo(3, 6);
+    expect(point.y).toBeCloseTo(4, 6);
+    expect(lengthInput.hidden).toBe(false);
+    expect(lengthInput.value).toBe('10.00');
+    expect(angleInput.hidden).toBe(true);
+    expect(separatorLabel.hidden).toBe(true);
+    expect(degreeLabel.hidden).toBe(true);
+  });
+
+  it('fixes the point at half the typed diameter — the radius-equivalent distance', () => {
+    const { lengthInput, controller } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    lengthInput.value = '20'; // diameter 20 → radius 10
+    fire(lengthInput, 'input');
+    const point = controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    expect(point.x).toBeCloseTo(6, 6); // 10 * (3/5)
+    expect(point.y).toBeCloseTo(8, 6); // 10 * (4/5)
+  });
+
+  it('commits through onCommit on Enter, converting the typed diameter to the underlying radius point', () => {
+    const { lengthInput, controller, onCommit } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    lengthInput.value = '20';
+    fire(lengthInput, 'input');
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    const [point] = onCommit.mock.calls[0];
+    expect(point.x).toBeCloseTo(6, 6);
+    expect(point.y).toBeCloseTo(8, 6);
+  });
+
+  it('hides and clears after a commit, same as the polar (length/angle) mode', () => {
+    const { lengthInput, angleInput, controller } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    expect(lengthInput.hidden).toBe(true);
+    expect(angleInput.hidden).toBe(true);
+    expect(lengthInput.value).toBe('');
+  });
+});

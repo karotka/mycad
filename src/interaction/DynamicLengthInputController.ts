@@ -69,12 +69,22 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   let lastStart: Vec2 | null = null;
   let lastCursor: Vec2 | null = null;
   let lastEmptyFinishes = false;
+  let lastDiameterMode = false;
 
   function currentFields(): DynamicLengthFields {
     return {
       length: lengthOverridden ? lengthInput.value : '',
       angle: angleOverridden ? angleInput.value : '',
     };
+  }
+
+  /** `updateDiameter`'s own fields: the box shows and edits the diameter,
+   *  but `dynamicLengthPoint`'s "length" is the radius-equivalent distance
+   *  from centre to the circumference point — half of whatever was typed.
+   *  Dividing unparsable text by 2 still fails to parse, so it falls back
+   *  to the live distance exactly the same way an empty box would. */
+  function radiusFieldsFromDiameterBox(): DynamicLengthFields {
+    return { length: lengthOverridden ? String(Number(lengthInput.value) / 2) : '', angle: '' };
   }
 
   function position(element: DynamicLengthInputElement | DynamicLengthLabelElement, screen: { x: number; y: number }): void {
@@ -97,6 +107,7 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     angleOverridden = false;
     lastStart = null;
     lastCursor = null;
+    lastDiameterMode = false;
   }
 
   function commit(): void {
@@ -109,7 +120,8 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
       onEmptyCommit();
       return;
     }
-    const point = dynamicLengthPoint(lastStart, lastCursor, currentFields());
+    const fields = lastDiameterMode ? radiusFieldsFromDiameterBox() : currentFields();
+    const point = dynamicLengthPoint(lastStart, lastCursor, fields);
     hide();
     onCommit(point);
   }
@@ -135,6 +147,7 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     lastStart = start;
     lastCursor = cursor;
     lastEmptyFinishes = options.emptyFinishes;
+    lastDiameterMode = false;
     const point = dynamicLengthPoint(start, cursor, currentFields());
     if (!lengthOverridden) lengthInput.value = Math.hypot(point.x - start.x, point.y - start.y).toFixed(2);
     if (!angleOverridden) angleInput.value = ((Math.atan2(point.y - start.y, point.x - start.x) * 180) / Math.PI).toFixed(2);
@@ -144,6 +157,28 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     position(angleInput, { x: screen.x + ANGLE_OFFSET_PX, y: screen.y });
     position(degreeLabel, { x: screen.x + ANGLE_OFFSET_PX + DEGREE_OFFSET_PX, y: screen.y });
     if (firstFrame && options.autoFocus) lengthInput.focus();
+    return point;
+  }
+
+  /**
+   * The single-axis counterpart for CIRCLE's own radius step: shows and
+   * edits the *diameter* (what the user asked to see) even though the
+   * underlying geometry is radius-based — a circle looks the same
+   * regardless of which way around it the boundary point sits, so there is
+   * no angle to fix and the angle box stays hidden along with its labels.
+   */
+  function updateDiameter(center: Vec2, cursor: Vec2): Vec2 {
+    lastStart = center;
+    lastCursor = cursor;
+    lastEmptyFinishes = false;
+    lastDiameterMode = true;
+    const point = dynamicLengthPoint(center, cursor, radiusFieldsFromDiameterBox());
+    if (!lengthOverridden) lengthInput.value = (Math.hypot(point.x - center.x, point.y - center.y) * 2).toFixed(2);
+    const screen = project(dynamicLengthMidpoint(center, point));
+    position(lengthInput, screen);
+    angleInput.hidden = true;
+    separatorLabel.hidden = true;
+    degreeLabel.hidden = true;
     return point;
   }
 
@@ -172,5 +207,5 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   lengthInput.addEventListener('input', () => { lengthOverridden = lengthInput.value.trim() !== ''; });
   angleInput.addEventListener('input', () => { angleOverridden = angleInput.value.trim() !== ''; });
 
-  return { update, hide, sync };
+  return { update, updateDiameter, hide, sync };
 }
