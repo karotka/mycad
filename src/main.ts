@@ -42,6 +42,7 @@ import { createMoveEditing, createSolidDragPreview, FINAL_DRAG_PRIMITIVES, ucsPl
 import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction/DynamicUcsCoordinator';
 import { createToolActions } from './interaction/ToolActions';
 import { createDynamicRectangleInput } from './interaction/DynamicRectangleInputController';
+import { createDynamicLengthInput } from './interaction/DynamicLengthInputController';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 import type { PrintColorMode } from './render/SvgExport';
@@ -113,6 +114,7 @@ const mtextEditorHeight = get<HTMLInputElement>('mtext-editor-height');
 const mtextEditorFont = get<HTMLSelectElement>('mtext-editor-font');
 const dynDimWidthInput = get<HTMLInputElement>('dyn-dim-width');
 const dynDimHeightInput = get<HTMLInputElement>('dyn-dim-height');
+const dynDimLengthInput = get<HTMLInputElement>('dyn-dim-length');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -413,6 +415,7 @@ function syncChrome(): void {
 function drawFrame(): void {
   syncDynamicUcsLifecycle();
   dynamicRectangleInput.sync();
+  dynamicLengthInput.sync();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
   renderer3d.syncCutAreaFrame(cadDocument.gcode);
@@ -604,6 +607,24 @@ const dynamicRectangleInput = createDynamicRectangleInput({
   onCommit: (point) => {
     if (commands.active?.name === 'RECTANGLE') void commands.handleClick(point);
     else gripInteraction.commitTypedPoint(point);
+    redraw();
+    input.focus({ preventScroll: true });
+  },
+});
+const dynamicLengthInput = createDynamicLengthInput({
+  input: dynDimLengthInput,
+  project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  isActive: () => {
+    const active = commands.active;
+    return (active?.name === 'LINE' || active?.name === 'POLYLINE') && active.stepIndex === 1 && cadDocument.viewMode === '2d';
+  },
+  onCommit: (point) => {
+    void commands.handleClick(point);
+    redraw();
+    input.focus({ preventScroll: true });
+  },
+  onEmptyCommit: () => {
+    void commands.submitInput('');
     redraw();
     input.focus({ preventScroll: true });
   },
@@ -1101,6 +1122,10 @@ function updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicula
   return dynamicRectangleInput.updateEdge(axis, fixed, perpendicular, cursor);
 }
 
+function updateDynamicLengthInput(start: Vec2, cursor: Vec2, emptyFinishes: boolean): Vec2 {
+  return dynamicLengthInput.update(start, cursor, emptyFinishes);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1220,6 +1245,7 @@ attachViewportPointerHandlers({
     showPreviewLabel,
     updateDynamicRectangleInput,
     updateDynamicRectangleEdge,
+    updateDynamicLengthInput,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,

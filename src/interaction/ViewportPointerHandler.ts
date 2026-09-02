@@ -35,6 +35,7 @@ export interface ViewportPointerHelpers {
   showPreviewLabel(text: string | null, x: number, y: number): void;
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
+  updateDynamicLengthInput(start: Vec2, cursor: Vec2, emptyFinishes: boolean): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -104,7 +105,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput, updateDynamicRectangleEdge,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -390,9 +391,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       measureTarget.hidden = true;
     }
     if (active?.stepIndex === 1) {
-      if (active.name === 'LINE' && active.data.start) {
+      if ((active.name === 'LINE' || active.name === 'POLYLINE') && active.data.start) {
         const start = active.data.start as Vec2;
-        showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
+        if (cadDocument.viewMode === '2d') {
+          // A bare Enter on the box should finish the whole polyline early
+          // (its own "blank Enter" convention), not place a point at the
+          // live cursor — LINE has no such concept, so it never sets this.
+          const point = updateDynamicLengthInput(start, p, active.name === 'POLYLINE');
+          updatePreview(point);
+        } else {
+          showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
+        }
       } else if (active.name === 'RECTANGLE' && active.data.start) {
         const start = active.data.start as Vec2;
         if (cadDocument.viewMode === '2d') {
