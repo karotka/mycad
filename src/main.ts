@@ -1088,8 +1088,8 @@ function showPreviewLabel(text: string | null, x: number, y: number): void {
   showDimension(text, x, y);
 }
 
-function updateDynamicRectangleInput(start: Vec2, cursor: Vec2): void {
-  dynamicRectangleInput.update(start, cursor);
+function updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2 {
+  return dynamicRectangleInput.update(start, cursor);
 }
 
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {

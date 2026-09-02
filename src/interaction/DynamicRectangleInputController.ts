@@ -83,9 +83,17 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
     onCommit(corner);
   }
 
-  /** Called on every pointer move while RECTANGLE's second point is pending:
-   *  positions both boxes and refreshes whichever one isn't being typed into. */
-  function update(start: Vec2, cursor: Vec2): void {
+  /**
+   * Called on every pointer move while RECTANGLE's second point is pending:
+   * positions both boxes and refreshes whichever one isn't being typed into.
+   * Returns the effective corner — the live cursor on any axis with no typed
+   * override, fixed at the typed value on one that has it — so the caller can
+   * draw the rectangle's own rubber-band preview against the same point
+   * instead of the raw cursor. Without that, typing a width wouldn't visibly
+   * fix that side: the box would show the right number while the drawn
+   * rectangle kept following the mouse as if nothing had been typed.
+   */
+  function update(start: Vec2, cursor: Vec2): Vec2 {
     lastStart = start;
     lastCursor = cursor;
     const corner = dynamicRectangleCorner(start, cursor, currentFields());
@@ -94,6 +102,7 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
     const points = dynamicRectangleBoxPoints(start, corner);
     position(widthInput, points.width);
     position(heightInput, points.height);
+    return corner;
   }
 
   /** Hides the boxes the moment RECTANGLE's second point is no longer being

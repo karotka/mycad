@@ -70,6 +70,16 @@ describe('createDynamicRectangleInput', () => {
     expect(heightInput.value).toBe('4.00'); // still live-tracked
   });
 
+  it('returns the effective corner — fixed on a typed axis, live on the other — so the drawn preview can match it', () => {
+    const { widthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    widthInput.value = '25';
+    fire(widthInput, 'input');
+    // The mouse keeps moving, but width is now fixed at 25; only height follows.
+    const corner = controller.update({ x: 0, y: 0 }, { x: 12, y: 9 });
+    expect(corner).toEqual({ x: 25, y: 9 });
+  });
+
   it('keeps tracking the live cursor across repeated updates when nothing was typed', () => {
     // Regression test: update() writes its own live value into `.value` every
     // call. Reading that back as a "typed override" on the next call would
