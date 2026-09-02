@@ -114,6 +114,34 @@ describe('GripController', () => {
     expect(grips.dragReferencePoint()).toBeNull();
   });
 
+  it('reports the fixed other end while dragging one of a line\'s own endpoint grips', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    grips.begin(line, undefined, 0, { x: 0, y: 0 }); // dragging the start
+    expect(grips.draggingLineFixedEnd()).toEqual({ x: 10, y: 0 });
+    grips.cancel();
+
+    grips.begin(line, undefined, 1, { x: 10, y: 0 }); // dragging the end
+    expect(grips.draggingLineFixedEnd()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('has no fixed end for a line\'s own midpoint grip (moving the whole line)', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    grips.begin(line, undefined, 2, { x: 5, y: 0 });
+    expect(grips.draggingLineFixedEnd()).toBeNull();
+  });
+
   it('reports the radius while dragging a circle by its centre grip, for Tangent to solve against', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

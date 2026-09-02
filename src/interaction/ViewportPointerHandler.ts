@@ -35,7 +35,7 @@ export interface ViewportPointerHelpers {
   showPreviewLabel(text: string | null, x: number, y: number): void;
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
-  updateDynamicLengthInput(start: Vec2, cursor: Vec2, emptyFinishes: boolean): Vec2;
+  updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -294,10 +294,18 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       // as it does while first drawing the rectangle.
       const rectangleFixedCorner = cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedCorner() : null;
       const rectangleFixedEdge = !rectangleFixedCorner && cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedEdge() : null;
+      const lineFixedEnd = !rectangleFixedCorner && !rectangleFixedEdge && cadDocument.viewMode === '2d' ? gripController.draggingLineFixedEnd() : null;
       if (rectangleFixedCorner) {
         gripController.update(updateDynamicRectangleInput(rectangleFixedCorner, p));
       } else if (rectangleFixedEdge) {
         gripController.update(updateDynamicRectangleEdge(rectangleFixedEdge.axis, rectangleFixedEdge.fixed, rectangleFixedEdge.perpendicular, p));
+      } else if (lineFixedEnd) {
+        // Same shape as LINE's own draw step (fixed point, free point), so
+        // the Length/Angle boxes take over here too, in place of the plain
+        // "Length: … mm" toast. Grip-editing keeps the pointer captured for
+        // the whole click-move-click gesture, so the box auto-focuses —
+        // a click could never reach it otherwise.
+        gripController.update(updateDynamicLengthInput(lineFixedEnd, p, { emptyFinishes: false, autoFocus: true }));
       } else {
         gripController.update(p);
         showDimension(gripController.changedDimension(), sx, sy);
@@ -397,7 +405,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           // A bare Enter on the box should finish the whole polyline early
           // (its own "blank Enter" convention), not place a point at the
           // live cursor — LINE has no such concept, so it never sets this.
-          const point = updateDynamicLengthInput(start, p, active.name === 'POLYLINE');
+          const point = updateDynamicLengthInput(start, p, { emptyFinishes: active.name === 'POLYLINE' });
           updatePreview(point);
         } else {
           showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);

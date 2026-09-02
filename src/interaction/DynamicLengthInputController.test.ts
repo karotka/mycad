@@ -38,7 +38,7 @@ function setup() {
 describe('createDynamicLengthInput', () => {
   it('shows and positions both boxes, tracking the live cursor', () => {
     const { lengthInput, angleInput, controller } = setup();
-    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     expect(point.x).toBeCloseTo(6, 6);
     expect(point.y).toBeCloseTo(8, 6);
     expect(lengthInput.hidden).toBe(false);
@@ -47,49 +47,72 @@ describe('createDynamicLengthInput', () => {
     const angleDeg = Number(angleInput.value);
     expect(angleDeg).toBeCloseTo((Math.atan2(8, 6) * 180) / Math.PI, 1);
     expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(30, 6); // midpoint (3,4), projected *10
-    expect(angleInput.style.left).toBe('0px'); // at the start point
+    // The angle box sits a fixed screen-pixel offset to the right of the
+    // length box, at the same height — not at the (world-space) start point.
+    expect(Number.parseFloat(angleInput.style.left)).toBeCloseTo(30 + 70, 6);
+    expect(angleInput.style.top).toBe(lengthInput.style.top);
+  });
+
+  it('does not auto-focus by default (drawing a new line/polyline never captures the pointer, so a click reaches it fine)', () => {
+    const { lengthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+    expect(lengthInput.focus).not.toHaveBeenCalled();
+  });
+
+  it('auto-focuses the length box on first appearance when asked — grip-editing keeps the pointer captured', () => {
+    const { lengthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false, autoFocus: true });
+    expect(lengthInput.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep re-focusing length on every later update — that would yank focus back from angle', () => {
+    const { lengthInput, angleInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false, autoFocus: true });
+    fire(angleInput, 'focus'); // user tabbed to angle
+    controller.update({ x: 0, y: 0 }, { x: 9, y: 12 }, { emptyFinishes: false, autoFocus: true });
+    expect(lengthInput.focus).toHaveBeenCalledTimes(1); // only the initial auto-focus
   });
 
   it('does not overwrite a field the user is actively editing', () => {
     const { lengthInput, angleInput, controller } = setup();
     lengthInput.value = '99';
     fire(lengthInput, 'input');
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     expect(lengthInput.value).toBe('99');
     expect(Number(angleInput.value)).not.toBeNaN(); // still live-tracked
   });
 
   it('keeps tracking the live cursor across repeated updates when nothing was typed', () => {
     const { lengthInput, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     expect(lengthInput.value).toBe('10.00');
-    controller.update({ x: 0, y: 0 }, { x: 9, y: 12 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 9, y: 12 }, { emptyFinishes: false });
     expect(lengthInput.value).toBe('15.00');
   });
 
   it('fixes the length at a typed value, keeping the live angle', () => {
     const { lengthInput, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     lengthInput.value = '20';
     fire(lengthInput, 'input');
-    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     expect(point.x).toBeCloseTo(12, 6);
     expect(point.y).toBeCloseTo(16, 6);
   });
 
   it('fixes the angle at a typed value, keeping the live distance', () => {
     const { angleInput, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false); // distance 10
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false }); // distance 10
     angleInput.value = '0';
     fire(angleInput, 'input');
-    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     expect(point.x).toBeCloseTo(10, 6);
     expect(point.y).toBeCloseTo(0, 6);
   });
 
   it('Tab moves focus explicitly between length and angle, regardless of DOM tab order', () => {
     const { lengthInput, angleInput, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     fire(lengthInput, 'focus');
     fire(lengthInput, 'keydown', { key: 'Tab', preventDefault: () => {} });
     expect(angleInput.focus).toHaveBeenCalled();
@@ -99,7 +122,7 @@ describe('createDynamicLengthInput', () => {
 
   it('commits through onCommit on Enter, using the typed overrides', () => {
     const { lengthInput, angleInput, controller, onCommit } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     lengthInput.value = '10';
     fire(lengthInput, 'input');
     angleInput.value = '180';
@@ -112,7 +135,7 @@ describe('createDynamicLengthInput', () => {
 
   it('a bare Enter places the point at the live cursor when emptyFinishes is false (LINE)', () => {
     const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     const [point] = onCommit.mock.calls[0];
     expect(point.x).toBeCloseTo(6, 6);
@@ -122,7 +145,7 @@ describe('createDynamicLengthInput', () => {
 
   it('a bare Enter finishes early via onEmptyCommit when emptyFinishes is true (POLYLINE)', () => {
     const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, true);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: true });
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     expect(onEmptyCommit).toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
@@ -130,7 +153,7 @@ describe('createDynamicLengthInput', () => {
 
   it('only one overridden field still counts as "something typed" — not an empty-finish', () => {
     const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, true);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: true });
     lengthInput.value = '20';
     fire(lengthInput, 'input');
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
@@ -140,7 +163,7 @@ describe('createDynamicLengthInput', () => {
 
   it('hides and clears both boxes after a commit', () => {
     const { lengthInput, angleInput, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     expect(lengthInput.hidden).toBe(true);
     expect(angleInput.hidden).toBe(true);
@@ -150,7 +173,7 @@ describe('createDynamicLengthInput', () => {
 
   it('sync() hides the boxes once isActive() turns false', () => {
     const { lengthInput, controller, setActive } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
     controller.sync();
     expect(lengthInput.hidden).toBe(false);
     setActive(false);

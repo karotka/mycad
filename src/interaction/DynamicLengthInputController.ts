@@ -1,5 +1,12 @@
 import type { Vec2 } from '../math/geometry';
-import { dynamicLengthBoxPoints, dynamicLengthPoint, type DynamicLengthFields } from './DynamicLengthInput';
+import { dynamicLengthMidpoint, dynamicLengthPoint, type DynamicLengthFields } from './DynamicLengthInput';
+
+/** How far right of the length box, in screen pixels, the angle box sits —
+ *  a fixed on-screen offset rather than a world-space one, since a world
+ *  offset would grow or shrink with zoom instead of staying a steady gap
+ *  beside the other box. Roughly the box's own rendered width (56px plus
+ *  padding and border, see .dyn-dim-input in app.css) plus a small gap. */
+const ANGLE_OFFSET_PX = 70;
 
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
@@ -33,14 +40,11 @@ export interface DynamicLengthInputContext {
 /**
  * The polar counterpart to RECTANGLE's width/height boxes: while a line's
  * (or one polyline segment's) free end is pending, a Length box sits at the
- * segment's own midpoint and an Angle box sits at the fixed start point —
- * typing either fixes it while the mouse still drives the other. Tab moves
+ * segment's own midpoint and an Angle box sits right beside it — typing
+ * either fixes it while the mouse still drives the other. Tab moves
  * between the two (plain DOM tab order isn't reliable here, so handled
- * explicitly, same as RECTANGLE's boxes). Click to edit — unlike
- * RECTANGLE's grip-editing case, drawing a new line or polyline never
- * captures the pointer, so a click reaches a box fine without needing to
- * auto-focus it and risk swallowing POLYLINE's own keyboard shortcuts (like
- * typing "C" to close).
+ * explicitly, same as RECTANGLE's boxes). See update()'s own doc comment
+ * for when it auto-focuses versus waits for a click.
  */
 export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   const { lengthInput, angleInput, project, isActive, onCommit, onEmptyCommit } = ctx;
@@ -57,8 +61,7 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     };
   }
 
-  function position(input: DynamicLengthInputElement, point: Vec2): void {
-    const screen = project(point);
+  function position(input: DynamicLengthInputElement, screen: { x: number; y: number }): void {
     input.style.left = `${screen.x}px`;
     input.style.top = `${screen.y}px`;
     input.hidden = false;
@@ -96,21 +99,30 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
    * Called on every pointer move while a segment's free end is pending.
    * `emptyFinishes` marks whether a bare Enter should finish the whole
    * command instead of placing a point at the live cursor — true for
-   * POLYLINE's own optional continuation step, false for LINE. Returns the
-   * effective point so the caller can draw the segment's own live preview
-   * against it instead of the raw cursor — see RECTANGLE's `update()` for
-   * why that matters once a value has been typed.
+   * POLYLINE's own optional continuation step, false otherwise. `autoFocus`
+   * is for grip-editing an existing line's endpoint: that keeps the pointer
+   * captured for the whole click-move-click gesture (see RECTANGLE's own
+   * grip-editing case), so a click on the box never reaches it — it has to
+   * already have focus. Drawing a new line/polyline never captures the
+   * pointer, so those callers leave it false and let a click reach the box
+   * normally, which also avoids swallowing POLYLINE's own keyboard
+   * shortcuts (like typing "C" to close) the moment the box appears.
+   * Returns the effective point so the caller can draw the segment's own
+   * live preview against it instead of the raw cursor — see RECTANGLE's
+   * `update()` for why that matters once a value has been typed.
    */
-  function update(start: Vec2, cursor: Vec2, emptyFinishes: boolean): Vec2 {
+  function update(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2 {
+    const firstFrame = lengthInput.hidden && angleInput.hidden;
     lastStart = start;
     lastCursor = cursor;
-    lastEmptyFinishes = emptyFinishes;
+    lastEmptyFinishes = options.emptyFinishes;
     const point = dynamicLengthPoint(start, cursor, currentFields());
     if (!lengthOverridden) lengthInput.value = Math.hypot(point.x - start.x, point.y - start.y).toFixed(2);
     if (!angleOverridden) angleInput.value = ((Math.atan2(point.y - start.y, point.x - start.x) * 180) / Math.PI).toFixed(2);
-    const points = dynamicLengthBoxPoints(start, point);
-    position(lengthInput, points.length);
-    position(angleInput, points.angle);
+    const screen = project(dynamicLengthMidpoint(start, point));
+    position(lengthInput, screen);
+    position(angleInput, { x: screen.x + ANGLE_OFFSET_PX, y: screen.y });
+    if (firstFrame && options.autoFocus) lengthInput.focus();
     return point;
   }
 

@@ -42,11 +42,9 @@ export function dynamicLengthPoint(start: Vec2, cursor: Vec2, fields: DynamicLen
   return { x: start.x + Math.cos(angle) * distance, y: start.y + Math.sin(angle) * distance };
 }
 
-/** Where the length and angle boxes sit: length at the segment's own
- *  midpoint, angle at the fixed start point it's measured from. */
-export function dynamicLengthBoxPoints(start: Vec2, point: Vec2): { length: Vec2; angle: Vec2 } {
-  return {
-    length: { x: (start.x + point.x) / 2, y: (start.y + point.y) / 2 },
-    angle: { ...start },
-  };
+/** Where both boxes anchor: the segment's own midpoint. The angle box then
+ *  sits right beside the length box, offset in screen pixels rather than
+ *  world space — see the controller's own `ANGLE_OFFSET_PX`. */
+export function dynamicLengthMidpoint(start: Vec2, point: Vec2): Vec2 {
+  return { x: (start.x + point.x) / 2, y: (start.y + point.y) / 2 };
 }

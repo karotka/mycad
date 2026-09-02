@@ -53,6 +53,20 @@ export class GripController {
   }
 
   /**
+   * The fixed other end while dragging one of a line's own two endpoint
+   * grips — the same "fixed point, free point" shape LINE's own draw step
+   * uses, so the dynamic length/angle boxes work identically for editing an
+   * existing line. Null for the line's midpoint grip (index 2), which moves
+   * the whole line rather than placing a free endpoint.
+   */
+  draggingLineFixedEnd(): Vec2 | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'line' || this.drag.gripIndex >= 2) return null;
+    return this.drag.gripIndex === 0 ? entity.end : entity.start;
+  }
+
+  /**
    * The fixed diagonal corner while dragging one of a rectangle's own four
    * corner grips — the same "first corner fixed, opposite corner follows the
    * cursor" shape RECTANGLE's own draw step uses, so the dynamic width/height

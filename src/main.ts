@@ -618,10 +618,12 @@ const dynamicLengthInput = createDynamicLengthInput({
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
   isActive: () => {
     const active = commands.active;
-    return (active?.name === 'LINE' || active?.name === 'POLYLINE') && active.stepIndex === 1 && cadDocument.viewMode === '2d';
+    if ((active?.name === 'LINE' || active?.name === 'POLYLINE') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
+    return cadDocument.viewMode === '2d' && gripController.draggingLineFixedEnd() !== null;
   },
   onCommit: (point) => {
-    void commands.handleClick(point);
+    if (commands.active?.name === 'LINE' || commands.active?.name === 'POLYLINE') void commands.handleClick(point);
+    else gripInteraction.commitTypedPoint(point);
     redraw();
     input.focus({ preventScroll: true });
   },
@@ -1124,8 +1126,8 @@ function updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicula
   return dynamicRectangleInput.updateEdge(axis, fixed, perpendicular, cursor);
 }
 
-function updateDynamicLengthInput(start: Vec2, cursor: Vec2, emptyFinishes: boolean): Vec2 {
-  return dynamicLengthInput.update(start, cursor, emptyFinishes);
+function updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2 {
+  return dynamicLengthInput.update(start, cursor, options);
 }
 
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {

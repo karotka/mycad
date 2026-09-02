@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dynamicLengthBoxPoints, dynamicLengthPoint } from './DynamicLengthInput';
+import { dynamicLengthMidpoint, dynamicLengthPoint } from './DynamicLengthInput';
 
 describe('dynamicLengthPoint', () => {
   it('follows the live cursor with no typed override', () => {
@@ -47,10 +47,8 @@ describe('dynamicLengthPoint', () => {
   });
 });
 
-describe('dynamicLengthBoxPoints', () => {
-  it('places the length box at the segment\'s midpoint and the angle box at the fixed start', () => {
-    const points = dynamicLengthBoxPoints({ x: 0, y: 0 }, { x: 6, y: 8 });
-    expect(points.length).toEqual({ x: 3, y: 4 });
-    expect(points.angle).toEqual({ x: 0, y: 0 });
+describe('dynamicLengthMidpoint', () => {
+  it('is the midpoint of the segment both boxes anchor to', () => {
+    expect(dynamicLengthMidpoint({ x: 0, y: 0 }, { x: 6, y: 8 })).toEqual({ x: 3, y: 4 });
   });
 });
