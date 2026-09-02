@@ -6,14 +6,19 @@ import { createDynamicRectangleInput, type DynamicRectangleInputElement } from '
 
 function fakeInput(): DynamicRectangleInputElement & { listeners: Record<string, Array<(event: never) => void>> } {
   const listeners: Record<string, Array<(event: never) => void>> = {};
-  return {
+  const input = {
     value: '',
     hidden: true,
     style: { left: '', top: '' },
     select: vi.fn(),
-    addEventListener: (type, listener) => { (listeners[type] ??= []).push(listener as never); },
+    // A real `.focus()` call fires the element's own 'focus' listeners too —
+    // needed since the controller focuses its sibling field programmatically
+    // on Tab, and that must still flip the (un)focused-tracking state.
+    focus: vi.fn(() => { for (const listener of listeners.focus ?? []) listener({} as never); }),
+    addEventListener: (type: string, listener: (event: never) => void) => { (listeners[type] ??= []).push(listener); },
     listeners,
   };
+  return input;
 }
 
 function fire(element: ReturnType<typeof fakeInput>, type: string, event: object = {}): void {
@@ -62,6 +67,16 @@ describe('createDynamicRectangleInput', () => {
     controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
     expect(widthInput.value).toBe('99'); // left alone
     expect(heightInput.value).toBe('4.00'); // still live-tracked
+  });
+
+  it('Tab moves focus explicitly from width to height and back, regardless of DOM tab order', () => {
+    const { widthInput, heightInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    fire(widthInput, 'focus');
+    fire(widthInput, 'keydown', { key: 'Tab', preventDefault: () => {} });
+    expect(heightInput.focus).toHaveBeenCalled();
+    fire(heightInput, 'keydown', { key: 'Tab', preventDefault: () => {} });
+    expect(widthInput.focus).toHaveBeenCalled();
   });
 
   it('commits through onCommit on Enter, using the typed override', () => {

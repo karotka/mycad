@@ -10,6 +10,7 @@ export interface DynamicRectangleInputElement {
   hidden: boolean;
   style: { left: string; top: string };
   select(): void;
+  focus(): void;
   addEventListener(type: 'focus' | 'blur' | 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
 }
 
@@ -90,11 +91,21 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
     if (!applies) hide();
   }
 
-  const onKeydown = (event: { key?: string; preventDefault(): void }): void => {
+  // Native DOM tab order is not trustworthy here: the app has many other
+  // focusable elements (toolbar buttons, panel inputs), so a plain Tab out of
+  // one box can easily land somewhere else in the page entirely rather than
+  // on its sibling. Tab is handled explicitly instead, cycling only between
+  // these two fields.
+  const onWidthKeydown = (event: { key?: string; preventDefault(): void }): void => {
     if (event.key === 'Enter') { event.preventDefault(); commit(); }
+    else if (event.key === 'Tab') { event.preventDefault(); heightInput.focus(); }
   };
-  widthInput.addEventListener('keydown', onKeydown);
-  heightInput.addEventListener('keydown', onKeydown);
+  const onHeightKeydown = (event: { key?: string; preventDefault(): void }): void => {
+    if (event.key === 'Enter') { event.preventDefault(); commit(); }
+    else if (event.key === 'Tab') { event.preventDefault(); widthInput.focus(); }
+  };
+  widthInput.addEventListener('keydown', onWidthKeydown);
+  heightInput.addEventListener('keydown', onHeightKeydown);
   widthInput.addEventListener('focus', () => { widthFocused = true; widthInput.select(); });
   widthInput.addEventListener('blur', () => { widthFocused = false; });
   heightInput.addEventListener('focus', () => { heightFocused = true; heightInput.select(); });
