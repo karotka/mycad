@@ -3,14 +3,16 @@ import { createDynamicLengthInput, type DynamicLengthInputElement } from './Dyna
 
 function fakeInput(): DynamicLengthInputElement & { listeners: Record<string, Array<(event: never) => void>> } {
   const listeners: Record<string, Array<(event: never) => void>> = {};
-  return {
+  const input = {
     value: '',
     hidden: true,
     style: { left: '', top: '' },
     select: vi.fn(),
+    focus: vi.fn(() => { for (const listener of listeners.focus ?? []) listener({} as never); }),
     addEventListener: (type: string, listener: (event: never) => void) => { (listeners[type] ??= []).push(listener); },
     listeners,
   };
+  return input;
 }
 
 function fire(input: ReturnType<typeof fakeInput>, type: string, event: object = {}): void {
@@ -18,99 +20,141 @@ function fire(input: ReturnType<typeof fakeInput>, type: string, event: object =
 }
 
 function setup() {
-  const input = fakeInput();
+  const lengthInput = fakeInput();
+  const angleInput = fakeInput();
   const onCommit = vi.fn();
   const onEmptyCommit = vi.fn();
   let active = true;
   const controller = createDynamicLengthInput({
-    input,
+    lengthInput, angleInput,
     project: (point) => ({ x: point.x * 10, y: point.y * 10 }),
     isActive: () => active,
     onCommit,
     onEmptyCommit,
   });
-  return { input, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
+  return { lengthInput, angleInput, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
 }
 
 describe('createDynamicLengthInput', () => {
-  it('shows and positions the box at the segment\'s midpoint, tracking the live cursor', () => {
-    const { input, controller } = setup();
+  it('shows and positions both boxes, tracking the live cursor', () => {
+    const { lengthInput, angleInput, controller } = setup();
     const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    expect(point).toEqual({ x: 6, y: 8 });
-    expect(input.hidden).toBe(false);
-    expect(input.value).toBe('10.00'); // 3-4-5-ish: hypot(6,8) = 10
-    expect(input.style.left).toBe('30px'); // midpoint (3,4), projected *10
-    expect(input.style.top).toBe('40px');
+    expect(point.x).toBeCloseTo(6, 6);
+    expect(point.y).toBeCloseTo(8, 6);
+    expect(lengthInput.hidden).toBe(false);
+    expect(lengthInput.value).toBe('10.00'); // hypot(6,8)
+    expect(angleInput.hidden).toBe(false);
+    const angleDeg = Number(angleInput.value);
+    expect(angleDeg).toBeCloseTo((Math.atan2(8, 6) * 180) / Math.PI, 1);
+    expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(30, 6); // midpoint (3,4), projected *10
+    expect(angleInput.style.left).toBe('0px'); // at the start point
   });
 
-  it('does not overwrite the box while the user is typing into it', () => {
-    const { input, controller } = setup();
-    input.value = '99';
-    fire(input, 'input');
+  it('does not overwrite a field the user is actively editing', () => {
+    const { lengthInput, angleInput, controller } = setup();
+    lengthInput.value = '99';
+    fire(lengthInput, 'input');
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    expect(input.value).toBe('99');
+    expect(lengthInput.value).toBe('99');
+    expect(Number(angleInput.value)).not.toBeNaN(); // still live-tracked
   });
 
   it('keeps tracking the live cursor across repeated updates when nothing was typed', () => {
-    // Same regression shape as RECTANGLE: update()'s own live write must not
-    // be mistaken for a typed override on the next call.
-    const { input, controller } = setup();
+    const { lengthInput, controller } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    expect(input.value).toBe('10.00');
+    expect(lengthInput.value).toBe('10.00');
     controller.update({ x: 0, y: 0 }, { x: 9, y: 12 }, false);
-    expect(input.value).toBe('15.00');
+    expect(lengthInput.value).toBe('15.00');
   });
 
-  it('fixes the length at a typed value, keeping the live direction', () => {
-    const { input, controller } = setup();
+  it('fixes the length at a typed value, keeping the live angle', () => {
+    const { lengthInput, controller } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    input.value = '20';
-    fire(input, 'input');
-    const point = controller.update({ x: 0, y: 0 }, { x: 3, y: 4 }, false); // direction changes, length stays fixed
+    lengthInput.value = '20';
+    fire(lengthInput, 'input');
+    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
     expect(point.x).toBeCloseTo(12, 6);
     expect(point.y).toBeCloseTo(16, 6);
   });
 
-  it('commits through onCommit on Enter, using the typed override', () => {
-    const { input, controller, onCommit } = setup();
+  it('fixes the angle at a typed value, keeping the live distance', () => {
+    const { angleInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false); // distance 10
+    angleInput.value = '0';
+    fire(angleInput, 'input');
+    const point = controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    expect(point.x).toBeCloseTo(10, 6);
+    expect(point.y).toBeCloseTo(0, 6);
+  });
+
+  it('Tab moves focus explicitly between length and angle, regardless of DOM tab order', () => {
+    const { lengthInput, angleInput, controller } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    input.value = '20';
-    fire(input, 'input');
-    fire(input, 'keydown', { key: 'Enter', preventDefault: () => {} });
-    expect(onCommit).toHaveBeenCalledWith({ x: 12, y: 16 });
+    fire(lengthInput, 'focus');
+    fire(lengthInput, 'keydown', { key: 'Tab', preventDefault: () => {} });
+    expect(angleInput.focus).toHaveBeenCalled();
+    fire(angleInput, 'keydown', { key: 'Tab', preventDefault: () => {} });
+    expect(lengthInput.focus).toHaveBeenCalled();
+  });
+
+  it('commits through onCommit on Enter, using the typed overrides', () => {
+    const { lengthInput, angleInput, controller, onCommit } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    lengthInput.value = '10';
+    fire(lengthInput, 'input');
+    angleInput.value = '180';
+    fire(angleInput, 'input');
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    const [point] = onCommit.mock.calls[0];
+    expect(point.x).toBeCloseTo(-10, 6);
+    expect(point.y).toBeCloseTo(0, 6);
   });
 
   it('a bare Enter places the point at the live cursor when emptyFinishes is false (LINE)', () => {
-    const { input, controller, onCommit, onEmptyCommit } = setup();
+    const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    fire(input, 'keydown', { key: 'Enter', preventDefault: () => {} });
-    expect(onCommit).toHaveBeenCalledWith({ x: 6, y: 8 });
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    const [point] = onCommit.mock.calls[0];
+    expect(point.x).toBeCloseTo(6, 6);
+    expect(point.y).toBeCloseTo(8, 6);
     expect(onEmptyCommit).not.toHaveBeenCalled();
   });
 
   it('a bare Enter finishes early via onEmptyCommit when emptyFinishes is true (POLYLINE)', () => {
-    const { input, controller, onCommit, onEmptyCommit } = setup();
+    const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, true);
-    fire(input, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     expect(onEmptyCommit).toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
   });
 
-  it('hides and clears the box after a commit', () => {
-    const { input, controller } = setup();
-    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
-    fire(input, 'keydown', { key: 'Enter', preventDefault: () => {} });
-    expect(input.hidden).toBe(true);
-    expect(input.value).toBe('');
+  it('only one overridden field still counts as "something typed" — not an empty-finish', () => {
+    const { lengthInput, controller, onCommit, onEmptyCommit } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, true);
+    lengthInput.value = '20';
+    fire(lengthInput, 'input');
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    expect(onCommit).toHaveBeenCalled();
+    expect(onEmptyCommit).not.toHaveBeenCalled();
   });
 
-  it('sync() hides the box once isActive() turns false', () => {
-    const { input, controller, setActive } = setup();
+  it('hides and clears both boxes after a commit', () => {
+    const { lengthInput, angleInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
+    fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    expect(lengthInput.hidden).toBe(true);
+    expect(angleInput.hidden).toBe(true);
+    expect(lengthInput.value).toBe('');
+    expect(angleInput.value).toBe('');
+  });
+
+  it('sync() hides the boxes once isActive() turns false', () => {
+    const { lengthInput, controller, setActive } = setup();
     controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, false);
     controller.sync();
-    expect(input.hidden).toBe(false);
+    expect(lengthInput.hidden).toBe(false);
     setActive(false);
     controller.sync();
-    expect(input.hidden).toBe(true);
+    expect(lengthInput.hidden).toBe(true);
   });
 });

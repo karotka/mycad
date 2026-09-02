@@ -1,27 +1,52 @@
 import type { Vec2 } from '../math/geometry';
 
+/** The length/angle boxes' current text, empty when the user has not typed
+ *  an override and the live cursor position should drive that quantity
+ *  instead. Angle is in degrees, matching how the rest of the app already
+ *  shows angles (ROTATE's own preview label, DIMANGULAR, …). */
+export interface DynamicLengthFields {
+  length: string;
+  angle: string;
+}
+
+function parsedMagnitude(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? Math.abs(value) : null;
+}
+
+function parsedAngleDegrees(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
 /**
- * Where a line's (or one polyline segment's) free end should currently land:
- * the live cursor's direction from `start`, at either the live distance or a
- * typed override length. Typing only ever fixes the distance — the mouse
- * still controls which way the segment points, the same way a typed
- * rectangle dimension still lets the mouse choose which side of the fixed
- * corner it's on.
+ * Where a line's (or one polyline segment's) free end should currently
+ * land: the live cursor's distance and direction from `start`, with either
+ * one swapped out for a typed override. A typed length is always a
+ * magnitude, the same way a typed rectangle dimension is — the mouse still
+ * decides which way things point unless the angle is *also* overridden.
  */
-export function dynamicLengthPoint(start: Vec2, cursor: Vec2, text: string): Vec2 {
+export function dynamicLengthPoint(start: Vec2, cursor: Vec2, fields: DynamicLengthFields): Vec2 {
   const dx = cursor.x - start.x;
   const dy = cursor.y - start.y;
   const liveDistance = Math.hypot(dx, dy);
-  const trimmed = text.trim();
-  const typed = trimmed === '' ? NaN : Number(trimmed);
-  const overridden = Number.isFinite(typed);
-  const distance = overridden ? Math.abs(typed) : liveDistance;
-  if (liveDistance < 1e-9) {
-    // No direction to go on yet (the cursor hasn't moved off the start
-    // point) — an override still needs somewhere to point, so pick +x
-    // arbitrarily; with no override there is nothing sensible to return but
-    // the start itself.
-    return overridden ? { x: start.x + distance, y: start.y } : { ...cursor };
-  }
-  return { x: start.x + (dx / liveDistance) * distance, y: start.y + (dy / liveDistance) * distance };
+  const liveAngle = Math.atan2(dy, dx);
+  const typedLength = parsedMagnitude(fields.length);
+  const typedAngleDeg = parsedAngleDegrees(fields.angle);
+  const distance = typedLength ?? liveDistance;
+  const angle = typedAngleDeg === null ? liveAngle : (typedAngleDeg * Math.PI) / 180;
+  return { x: start.x + Math.cos(angle) * distance, y: start.y + Math.sin(angle) * distance };
+}
+
+/** Where the length and angle boxes sit: length at the segment's own
+ *  midpoint, angle at the fixed start point it's measured from. */
+export function dynamicLengthBoxPoints(start: Vec2, point: Vec2): { length: Vec2; angle: Vec2 } {
+  return {
+    length: { x: (start.x + point.x) / 2, y: (start.y + point.y) / 2 },
+    angle: { ...start },
+  };
 }

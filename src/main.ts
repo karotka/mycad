@@ -115,6 +115,7 @@ const mtextEditorFont = get<HTMLSelectElement>('mtext-editor-font');
 const dynDimWidthInput = get<HTMLInputElement>('dyn-dim-width');
 const dynDimHeightInput = get<HTMLInputElement>('dyn-dim-height');
 const dynDimLengthInput = get<HTMLInputElement>('dyn-dim-length');
+const dynDimAngleInput = get<HTMLInputElement>('dyn-dim-angle');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -612,7 +613,8 @@ const dynamicRectangleInput = createDynamicRectangleInput({
   },
 });
 const dynamicLengthInput = createDynamicLengthInput({
-  input: dynDimLengthInput,
+  lengthInput: dynDimLengthInput,
+  angleInput: dynDimAngleInput,
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
   isActive: () => {
     const active = commands.active;
