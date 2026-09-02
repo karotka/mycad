@@ -598,7 +598,8 @@ const dynamicRectangleInput = createDynamicRectangleInput({
   isActive: () => {
     const active = commands.active;
     if (active?.name === 'RECTANGLE' && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
-    return cadDocument.viewMode === '2d' && gripController.draggingRectangleFixedCorner() !== null;
+    if (cadDocument.viewMode !== '2d') return false;
+    return gripController.draggingRectangleFixedCorner() !== null || gripController.draggingRectangleFixedEdge() !== null;
   },
   onCommit: (point) => {
     if (commands.active?.name === 'RECTANGLE') void commands.handleClick(point);
@@ -1096,6 +1097,10 @@ function updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2 {
   return dynamicRectangleInput.update(start, cursor);
 }
 
+function updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2 {
+  return dynamicRectangleInput.updateEdge(axis, fixed, perpendicular, cursor);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1214,6 +1219,7 @@ attachViewportPointerHandlers({
     showDimension,
     showPreviewLabel,
     updateDynamicRectangleInput,
+    updateDynamicRectangleEdge,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,

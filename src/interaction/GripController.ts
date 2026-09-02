@@ -74,6 +74,26 @@ export class GripController {
   }
 
   /**
+   * The fixed reference for one of a rectangle's four mid-edge grips: which
+   * coordinate is the only one that moves (`x` for the left/right edges, `y`
+   * for top/bottom), the unmoving opposite edge's value along that axis, and
+   * the perpendicular span the edge itself runs — so a single dynamic input
+   * box can sit at its midpoint. Null outside a mid-edge grip (indices 4-7).
+   */
+  draggingRectangleFixedEdge(): { axis: 'x' | 'y'; fixed: number; perpendicular: [number, number] } | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'rectangle' || this.drag.gripIndex < 4 || this.drag.gripIndex >= 8) return null;
+    const { first, opposite } = entity;
+    switch (this.drag.gripIndex - 4) {
+      case 0: return { axis: 'y', fixed: opposite.y, perpendicular: [first.x, opposite.x] };
+      case 1: return { axis: 'x', fixed: first.x, perpendicular: [first.y, opposite.y] };
+      case 2: return { axis: 'y', fixed: first.y, perpendicular: [first.x, opposite.x] };
+      default: return { axis: 'x', fixed: opposite.x, perpendicular: [first.y, opposite.y] };
+    }
+  }
+
+  /**
    * A natural "from" point for Perpendicular/Tangent snap while a grip is
    * being dragged with no draw command active to supply one: a line's own
    * other endpoint, when the grip being dragged is one of its two ends. This

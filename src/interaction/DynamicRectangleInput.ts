@@ -15,20 +15,30 @@ function parsedMagnitude(text: string): number | null {
 }
 
 /**
+ * Where a single axis should currently land, blending the live cursor
+ * position with a typed override. A typed value is always a magnitude: it
+ * cannot flip the result to the other side of `fixed`, since the mouse — not
+ * the keyboard — is what sets which side is being dragged toward. Shared by
+ * `dynamicRectangleCorner` (both axes at once, for a corner grip or
+ * RECTANGLE's own second point) and a rectangle's single-axis mid-edge grip,
+ * which only ever moves one of the two.
+ */
+export function dynamicRectangleAxisCoordinate(fixed: number, cursor: number, text: string): number {
+  const live = cursor - fixed;
+  const typed = parsedMagnitude(text);
+  const delta = typed === null ? live : Math.sign(live || 1) * typed;
+  return fixed + delta;
+}
+
+/**
  * The opposite corner RECTANGLE should currently use, blending the live
- * cursor position with whichever axis has a typed override. A typed value is
- * always a magnitude: it cannot flip the rectangle to the other side of the
- * start point, since the mouse — not the keyboard — is what sets which side
- * it's being drawn on.
+ * cursor position with whichever axis has a typed override.
  */
 export function dynamicRectangleCorner(start: Vec2, cursor: Vec2, fields: DynamicRectangleFields): Vec2 {
-  const liveWidth = cursor.x - start.x;
-  const liveHeight = cursor.y - start.y;
-  const typedWidth = parsedMagnitude(fields.width);
-  const typedHeight = parsedMagnitude(fields.height);
-  const width = typedWidth === null ? liveWidth : Math.sign(liveWidth || 1) * typedWidth;
-  const height = typedHeight === null ? liveHeight : Math.sign(liveHeight || 1) * typedHeight;
-  return { x: start.x + width, y: start.y + height };
+  return {
+    x: dynamicRectangleAxisCoordinate(start.x, cursor.x, fields.width),
+    y: dynamicRectangleAxisCoordinate(start.y, cursor.y, fields.height),
+  };
 }
 
 /** Where the width and height boxes sit: the midpoints of the two sides that

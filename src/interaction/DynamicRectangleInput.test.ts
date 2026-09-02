@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { dynamicRectangleBoxPoints, dynamicRectangleCorner } from './DynamicRectangleInput';
+import { dynamicRectangleAxisCoordinate, dynamicRectangleBoxPoints, dynamicRectangleCorner } from './DynamicRectangleInput';
+
+describe('dynamicRectangleAxisCoordinate', () => {
+  it('follows the live cursor with no typed override', () => {
+    expect(dynamicRectangleAxisCoordinate(10, 16, '')).toBe(16);
+  });
+
+  it('fixes the axis at the typed magnitude, on the cursor\'s side of the fixed value', () => {
+    expect(dynamicRectangleAxisCoordinate(10, 16, '20')).toBe(30); // cursor is above fixed: +20
+    expect(dynamicRectangleAxisCoordinate(10, 4, '20')).toBe(-10); // cursor is below fixed: -20
+  });
+});
 
 describe('dynamicRectangleCorner', () => {
   it('follows the live cursor when neither field has been typed into', () => {

@@ -133,3 +133,43 @@ describe('createDynamicRectangleInput', () => {
     expect(widthInput.hidden).toBe(true);
   });
 });
+
+describe('createDynamicRectangleInput — updateEdge (a rectangle\'s mid-edge grips)', () => {
+  it('shows only the width box for a horizontal-axis edge, at its own midpoint', () => {
+    const { widthInput, heightInput, controller } = setup();
+    // Right edge: x is free, fixed at first.x = 0; the edge spans y 0..5.
+    const point = controller.updateEdge('x', 0, [0, 5], { x: 12, y: 2 });
+    expect(point).toEqual({ x: 12, y: 2.5 });
+    expect(widthInput.hidden).toBe(false);
+    expect(widthInput.value).toBe('12.00');
+    expect(heightInput.hidden).toBe(true);
+    expect(widthInput.style.left).toBe('120px'); // x=12, projected *10
+    expect(widthInput.style.top).toBe('25px'); // midpoint y=2.5, projected *10
+  });
+
+  it('shows only the height box for a vertical-axis edge', () => {
+    const { widthInput, heightInput, controller } = setup();
+    // Bottom edge: y is free, fixed at opposite.y = 5; the edge spans x 0..10.
+    const point = controller.updateEdge('y', 5, [0, 10], { x: 3, y: -2 });
+    expect(point).toEqual({ x: 5, y: -2 });
+    expect(heightInput.hidden).toBe(false);
+    expect(heightInput.value).toBe('7.00'); // |−2 − 5|
+    expect(widthInput.hidden).toBe(true);
+  });
+
+  it('fixes the one free axis at a typed magnitude, on the cursor\'s side', () => {
+    const { widthInput, controller } = setup();
+    controller.updateEdge('x', 0, [0, 5], { x: 12, y: 2 });
+    widthInput.value = '30';
+    fire(widthInput, 'input');
+    const point = controller.updateEdge('x', 0, [0, 5], { x: 12, y: 2 }); // cursor unchanged, now overridden
+    expect(point).toEqual({ x: 30, y: 2.5 });
+  });
+
+  it('commits through onCommit on Enter, same as the corner-mode boxes', () => {
+    const { widthInput, controller, onCommit } = setup();
+    controller.updateEdge('x', 0, [0, 5], { x: 12, y: 2 });
+    fire(widthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
+    expect(onCommit).toHaveBeenCalledWith({ x: 12, y: 2.5 });
+  });
+});

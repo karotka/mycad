@@ -180,6 +180,42 @@ describe('GripController', () => {
     expect(grips.draggingRectangleFixedCorner()).toBeNull();
   });
 
+  it('reports the free axis, fixed edge and perpendicular span for each of a rectangle\'s mid-edge grips', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    grips.begin(rectangle, undefined, 4, { x: 5, y: 0 }); // bottom edge: first.y moves
+    expect(grips.draggingRectangleFixedEdge()).toEqual({ axis: 'y', fixed: 5, perpendicular: [0, 10] });
+    grips.cancel();
+
+    grips.begin(rectangle, undefined, 5, { x: 10, y: 2.5 }); // right edge: opposite.x moves
+    expect(grips.draggingRectangleFixedEdge()).toEqual({ axis: 'x', fixed: 0, perpendicular: [0, 5] });
+    grips.cancel();
+
+    grips.begin(rectangle, undefined, 6, { x: 5, y: 5 }); // top edge: opposite.y moves
+    expect(grips.draggingRectangleFixedEdge()).toEqual({ axis: 'y', fixed: 0, perpendicular: [0, 10] });
+    grips.cancel();
+
+    grips.begin(rectangle, undefined, 7, { x: 0, y: 2.5 }); // left edge: first.x moves
+    expect(grips.draggingRectangleFixedEdge()).toEqual({ axis: 'x', fixed: 10, perpendicular: [0, 5] });
+  });
+
+  it('has no fixed edge outside a mid-edge grip', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    grips.begin(rectangle, undefined, 2, { x: 10, y: 5 }); // a corner grip, not a mid-edge one
+    expect(grips.draggingRectangleFixedEdge()).toBeNull();
+  });
+
   it('keeps Z on a 3D line midpoint grip so it stays on the line', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

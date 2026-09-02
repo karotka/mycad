@@ -34,6 +34,7 @@ export interface ViewportPointerHelpers {
   showDimension(text: string | null, x: number, y: number): void;
   showPreviewLabel(text: string | null, x: number, y: number): void;
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
+  updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -103,7 +104,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -285,14 +286,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
     if (!p) { trackingLine.hidden = true; return; }
     if (gripController.isDragging) {
-      // Dragging one of a rectangle's own corner grips is the same "fixed
-      // corner, free corner" shape RECTANGLE's own draw step uses, so the
-      // dynamic width/height boxes take over from the plain "Edge: … mm"
-      // toast here too — typing a value fixes that side exactly as it does
-      // while first drawing the rectangle.
+      // Dragging one of a rectangle's own corner or mid-edge grips is the
+      // same "fixed reference, free point" shape RECTANGLE's own draw step
+      // uses, so the dynamic width/height boxes take over from the plain
+      // "Edge: … mm" toast here too — typing a value fixes that side exactly
+      // as it does while first drawing the rectangle.
       const rectangleFixedCorner = cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedCorner() : null;
+      const rectangleFixedEdge = !rectangleFixedCorner && cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedEdge() : null;
       if (rectangleFixedCorner) {
         gripController.update(updateDynamicRectangleInput(rectangleFixedCorner, p));
+      } else if (rectangleFixedEdge) {
+        gripController.update(updateDynamicRectangleEdge(rectangleFixedEdge.axis, rectangleFixedEdge.fixed, rectangleFixedEdge.perpendicular, p));
       } else {
         gripController.update(p);
         showDimension(gripController.changedDimension(), sx, sy);
