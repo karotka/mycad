@@ -9,7 +9,7 @@ export interface DynamicRectangleInputElement {
   style: { left: string; top: string };
   select(): void;
   focus(): void;
-  addEventListener(type: 'focus' | 'blur' | 'input', listener: () => void): void;
+  addEventListener(type: 'focus' | 'input', listener: () => void): void;
   addEventListener(type: 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
 }
 
@@ -48,8 +48,6 @@ type Session =
  */
 export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
   const { widthInput, heightInput, project, isActive, onCommit } = ctx;
-  let widthFocused = false;
-  let heightFocused = false;
   // Whether the user has actually typed a value, as opposed to what the box
   // is currently displaying — the two must stay separate. update() writes
   // its own live-tracked number into `.value` every frame, and reading that
@@ -106,8 +104,8 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
 
   /**
    * Called on every pointer move while a free corner opposite `start` is
-   * pending: positions both boxes and refreshes whichever one isn't being
-   * typed into. Returns the effective corner — the live cursor on any axis
+   * pending: positions both boxes and refreshes whichever one has no typed
+   * override yet. Returns the effective corner — the live cursor on any axis
    * with no typed override, fixed at the typed value on one that has it — so
    * the caller can draw the rectangle's own live shape against the same
    * point instead of the raw cursor. Without that, typing a width wouldn't
@@ -115,13 +113,19 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
    * drawn rectangle kept following the mouse as if nothing had been typed.
    */
   function update(start: Vec2, cursor: Vec2): Vec2 {
+    const firstFrame = widthInput.hidden && heightInput.hidden;
     session = { kind: 'corner', start, cursor };
     const corner = dynamicRectangleCorner(start, cursor, currentFields());
-    if (!widthFocused) widthInput.value = Math.abs(corner.x - start.x).toFixed(2);
-    if (!heightFocused) heightInput.value = Math.abs(corner.y - start.y).toFixed(2);
+    if (!widthOverridden) widthInput.value = Math.abs(corner.x - start.x).toFixed(2);
+    if (!heightOverridden) heightInput.value = Math.abs(corner.y - start.y).toFixed(2);
     const points = dynamicRectangleBoxPoints(start, corner);
     position(widthInput, points.width);
     position(heightInput, points.height);
+    // Grip-editing keeps the pointer captured by the viewport for the whole
+    // click-move-click gesture, so a click on the box itself never reaches
+    // it — it would be delivered to the viewport as the drag's finishing
+    // click instead. Focusing it the moment it appears is the only way in.
+    if (firstFrame) widthInput.focus();
     return corner;
   }
 
@@ -137,17 +141,21 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
    * for why the caller needs it rather than the raw cursor.
    */
   function updateEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2 {
+    const firstFrame = widthInput.hidden && heightInput.hidden;
     const cursorAxisValue = axis === 'x' ? cursor.x : cursor.y;
     const mid = (perpendicular[0] + perpendicular[1]) / 2;
     session = { kind: 'edge', axis, fixed, mid, cursor: cursorAxisValue };
     const activeInput = axis === 'x' ? widthInput : heightInput;
     const inactiveInput = axis === 'x' ? heightInput : widthInput;
-    const focused = axis === 'x' ? widthFocused : heightFocused;
+    const overridden = axis === 'x' ? widthOverridden : heightOverridden;
     const value = dynamicRectangleAxisCoordinate(fixed, cursorAxisValue, edgeOverrideText(axis));
-    if (!focused) activeInput.value = Math.abs(value - fixed).toFixed(2);
+    if (!overridden) activeInput.value = Math.abs(value - fixed).toFixed(2);
     const point = axis === 'x' ? { x: value, y: mid } : { x: mid, y: value };
     position(activeInput, point);
     inactiveInput.hidden = true;
+    // See update()'s comment: grip-editing keeps the pointer captured, so a
+    // click can never reach the box — it has to already have focus.
+    if (firstFrame) activeInput.focus();
     return point;
   }
 
@@ -172,10 +180,10 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
   };
   widthInput.addEventListener('keydown', onWidthKeydown);
   heightInput.addEventListener('keydown', onHeightKeydown);
-  widthInput.addEventListener('focus', () => { widthFocused = true; widthInput.select(); });
-  widthInput.addEventListener('blur', () => { widthFocused = false; });
-  heightInput.addEventListener('focus', () => { heightFocused = true; heightInput.select(); });
-  heightInput.addEventListener('blur', () => { heightFocused = false; });
+  // Selects the current text so the first keystroke replaces it outright,
+  // whether focus arrived from a click or from update()'s own auto-focus.
+  widthInput.addEventListener('focus', () => widthInput.select());
+  heightInput.addEventListener('focus', () => heightInput.select());
   // Clearing the box back to empty returns that axis to live tracking.
   widthInput.addEventListener('input', () => { widthOverridden = widthInput.value.trim() !== ''; });
   heightInput.addEventListener('input', () => { heightOverridden = heightInput.value.trim() !== ''; });

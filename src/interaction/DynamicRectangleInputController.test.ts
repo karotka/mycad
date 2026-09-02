@@ -48,6 +48,23 @@ describe('createDynamicRectangleInput', () => {
     expect(heightInput.style.left).toBe('100px'); // x=10, projected *10
   });
 
+  it('auto-focuses the width box the moment it first appears', () => {
+    // Grip-editing keeps the pointer captured for the whole click-move-click
+    // gesture, so a click on the box never reaches it — it has to already
+    // have focus, or there would be no way in at all.
+    const { widthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    expect(widthInput.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep re-focusing width on every later update — that would yank focus back from height', () => {
+    const { widthInput, heightInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    fire(heightInput, 'focus'); // user tabbed to height
+    controller.update({ x: 0, y: 0 }, { x: 12, y: 5 });
+    expect(widthInput.focus).toHaveBeenCalledTimes(1); // only the initial auto-focus
+  });
+
   it('does not overwrite a field the user is actively editing', () => {
     const { widthInput, heightInput, controller } = setup();
     fire(widthInput, 'focus');
@@ -107,7 +124,7 @@ describe('createDynamicRectangleInput', () => {
     widthInput.value = '25';
     fire(widthInput, 'input');
     controller.update({ x: 0, y: 0 }, { x: 12, y: 4 }); // override still holds
-    expect(widthInput.value).toBe('25.00');
+    expect(widthInput.value).toBe('25'); // left exactly as typed, not reformatted
     widthInput.value = '';
     fire(widthInput, 'input');
     controller.update({ x: 0, y: 0 }, { x: 12, y: 4 });
@@ -155,6 +172,12 @@ describe('createDynamicRectangleInput — updateEdge (a rectangle\'s mid-edge gr
     expect(heightInput.hidden).toBe(false);
     expect(heightInput.value).toBe('7.00'); // |−2 − 5|
     expect(widthInput.hidden).toBe(true);
+  });
+
+  it('auto-focuses the one shown box the moment it first appears', () => {
+    const { widthInput, controller } = setup();
+    controller.updateEdge('x', 0, [0, 5], { x: 12, y: 2 });
+    expect(widthInput.focus).toHaveBeenCalledTimes(1);
   });
 
   it('fixes the one free axis at a typed magnitude, on the cursor\'s side', () => {
