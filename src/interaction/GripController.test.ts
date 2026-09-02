@@ -142,6 +142,44 @@ describe('GripController', () => {
     expect(grips.draggingCircleRadius()).toBeNull();
   });
 
+  it('reports the fixed diagonal corner while dragging one of a rectangle\'s own corner grips', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    grips.begin(rectangle, undefined, 0, { x: 0, y: 0 }); // dragging `first`
+    expect(grips.draggingRectangleFixedCorner()).toEqual({ x: 10, y: 5 }); // the opposite corner
+    grips.cancel();
+
+    grips.begin(rectangle, undefined, 1, { x: 10, y: 0 }); // the mixed corner (opposite.x, first.y)
+    expect(grips.draggingRectangleFixedCorner()).toEqual({ x: 0, y: 5 }); // diagonally opposite
+    grips.cancel();
+
+    grips.begin(rectangle, undefined, 2, { x: 10, y: 5 }); // dragging `opposite`
+    expect(grips.draggingRectangleFixedCorner()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('has no fixed corner for a whole-rectangle move or a mid-edge stretch', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 5 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    grips.mode = 'center';
+    grips.begin(rectangle, undefined, 0, { x: 5, y: 2.5 }); // moving the whole rectangle
+    expect(grips.draggingRectangleFixedCorner()).toBeNull();
+    grips.cancel();
+
+    grips.mode = null;
+    grips.begin(rectangle, undefined, 4, { x: 5, y: 0 }); // a mid-edge grip
+    expect(grips.draggingRectangleFixedCorner()).toBeNull();
+  });
+
   it('keeps Z on a 3D line midpoint grip so it stays on the line', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

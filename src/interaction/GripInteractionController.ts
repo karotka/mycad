@@ -41,6 +41,20 @@ export class GripInteractionController {
     return true;
   }
 
+  /** Finishes a latched grip drag at an absolute point rather than the next
+   *  click — the same commit `applyRelativeDistance` does, for a typed value
+   *  that already IS the destination (e.g. a rectangle's dynamic width/height
+   *  boxes) instead of a distance along the drag's own direction. */
+  commitTypedPoint(point: Vec2): boolean {
+    if (!this.grips.isDragging || !this.latched) return false;
+    this.grips.update(point);
+    this.grips.commit();
+    this.latched = false;
+    this.snapMode = null;
+    this.grips.hoveredGrip = -1;
+    return true;
+  }
+
   cancel(): void {
     this.grips.cancel();
     this.latched = false;

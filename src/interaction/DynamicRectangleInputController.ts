@@ -1,6 +1,4 @@
 import type { Vec2 } from '../math/geometry';
-import type { Document } from '../core/Document';
-import type { CommandManager } from '../core/commands/CommandManager';
 import { dynamicRectangleBoxPoints, dynamicRectangleCorner, type DynamicRectangleFields } from './DynamicRectangleInput';
 
 /** A minimal element surface — real `HTMLElement`/`HTMLInputElement` in the
@@ -18,24 +16,31 @@ export interface DynamicRectangleInputElement {
 export interface DynamicRectangleInputContext {
   widthInput: DynamicRectangleInputElement;
   heightInput: DynamicRectangleInputElement;
-  commands: CommandManager;
-  doc: Document;
-  /** Local-plane point to screen pixels, the same frame RECTANGLE's own points arrive in. */
+  /** Local-plane point to screen pixels, the same frame the fixed/cursor
+   *  points passed to `update()` arrive in. */
   project: (point: Vec2) => { x: number; y: number };
+  /** Whether the boxes should still be showing right now — checked by
+   *  `sync()` so a command switch, cancel, grip release, or view-mode
+   *  change hides them even without a further pointer move to trigger it.
+   *  Decoupled from any one caller (RECTANGLE's own draw step, or grip-
+   *  editing an existing rectangle's corner) so this stays reusable. */
+  isActive: () => boolean;
   onCommit: (point: Vec2) => void;
 }
 
 /**
- * A Fusion-360-style dynamic input prototype for RECTANGLE: while its second
- * point is pending, two small boxes sit on the width and height sides showing
- * the live size, editable in place — Tab moves between them (plain DOM tab
- * order, since they are adjacent siblings), Enter commits through the same
- * `handleClick` path a real click would take, so typed and clicked corners
- * can never diverge. 2D only; scoped to the one command as a trial run of an
- * on-canvas input surface living alongside the command line.
+ * A Fusion-360-style dynamic input prototype for placing a rectangle's free
+ * corner opposite a fixed one — RECTANGLE's own second point, or dragging an
+ * existing rectangle's corner grip: two small boxes sit on the width and
+ * height sides showing the live size, editable in place. Tab moves between
+ * them (plain DOM tab order isn't reliable here, so handled explicitly),
+ * Enter commits through `onCommit`, which the caller wires to whichever path
+ * a real click/release would take, so typed and clicked corners never
+ * diverge. 2D only; scoped to rectangles as a trial run of an on-canvas input
+ * surface living alongside the command line.
  */
 export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
-  const { widthInput, heightInput, commands, doc, project, onCommit } = ctx;
+  const { widthInput, heightInput, project, isActive, onCommit } = ctx;
   let widthFocused = false;
   let heightFocused = false;
   // Whether the user has actually typed a value, as opposed to what the box
@@ -84,14 +89,14 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
   }
 
   /**
-   * Called on every pointer move while RECTANGLE's second point is pending:
-   * positions both boxes and refreshes whichever one isn't being typed into.
-   * Returns the effective corner — the live cursor on any axis with no typed
-   * override, fixed at the typed value on one that has it — so the caller can
-   * draw the rectangle's own rubber-band preview against the same point
-   * instead of the raw cursor. Without that, typing a width wouldn't visibly
-   * fix that side: the box would show the right number while the drawn
-   * rectangle kept following the mouse as if nothing had been typed.
+   * Called on every pointer move while a free corner opposite `start` is
+   * pending: positions both boxes and refreshes whichever one isn't being
+   * typed into. Returns the effective corner — the live cursor on any axis
+   * with no typed override, fixed at the typed value on one that has it — so
+   * the caller can draw the rectangle's own live shape against the same
+   * point instead of the raw cursor. Without that, typing a width wouldn't
+   * visibly fix that side: the box would show the right number while the
+   * drawn rectangle kept following the mouse as if nothing had been typed.
    */
   function update(start: Vec2, cursor: Vec2): Vec2 {
     lastStart = start;
@@ -105,13 +110,10 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
     return corner;
   }
 
-  /** Hides the boxes the moment RECTANGLE's second point is no longer being
-   *  gathered — a command switch, cancel or completion — even without any
-   *  further pointer movement to trigger it otherwise. */
+  /** Hides the boxes the moment they no longer apply, even without a further
+   *  pointer move to trigger it otherwise — see `isActive` above. */
   function sync(): void {
-    const active = commands.active;
-    const applies = active?.name === 'RECTANGLE' && active.stepIndex === 1 && doc.viewMode === '2d';
-    if (!applies) hide();
+    if (!isActive()) hide();
   }
 
   // Native DOM tab order is not trustworthy here: the app has many other

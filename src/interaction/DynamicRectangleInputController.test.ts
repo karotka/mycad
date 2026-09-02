@@ -1,7 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Document } from '../core/Document';
-import { CommandHistory } from '../core/history/CommandHistory';
-import { CommandManager } from '../core/commands/CommandManager';
 import { createDynamicRectangleInput, type DynamicRectangleInputElement } from './DynamicRectangleInputController';
 
 function fakeInput(): DynamicRectangleInputElement & { listeners: Record<string, Array<(event: never) => void>> } {
@@ -26,26 +23,17 @@ function fire(element: ReturnType<typeof fakeInput>, type: string, event: object
 }
 
 function setup() {
-  const doc = new Document();
-  const commands = new CommandManager({
-    doc,
-    history: new CommandHistory(doc),
-    moveObjects: vi.fn(),
-    copyWorldDelta: () => undefined,
-    log: vi.fn(),
-    prompt: vi.fn(),
-    getCursor: () => ({ x: 0, y: 0 }),
-    redraw: vi.fn(),
-  });
   const widthInput = fakeInput();
   const heightInput = fakeInput();
   const onCommit = vi.fn();
+  let active = true;
   const controller = createDynamicRectangleInput({
-    widthInput, heightInput, commands, doc,
+    widthInput, heightInput,
     project: (point) => ({ x: point.x * 10, y: point.y * 10 }),
+    isActive: () => active,
     onCommit,
   });
-  return { doc, commands, widthInput, heightInput, onCommit, controller };
+  return { widthInput, heightInput, onCommit, controller, setActive: (value: boolean) => { active = value; } };
 }
 
 describe('createDynamicRectangleInput', () => {
@@ -135,16 +123,13 @@ describe('createDynamicRectangleInput', () => {
     expect(widthInput.value).toBe('');
   });
 
-  it('sync() hides the boxes once RECTANGLE is no longer on its second point', async () => {
-    const { doc, commands, widthInput, controller } = setup();
-    commands.startCommand('RECTANGLE');
+  it('sync() hides the boxes once isActive() turns false — a command switch, cancel, grip release, or view change', () => {
+    const { widthInput, controller, setActive } = setup();
     controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
-    expect(widthInput.hidden).toBe(false);
-    await commands.handleClick({ x: 5, y: 5 }); // places the first corner, advances to step 1
     controller.sync();
-    expect(widthInput.hidden).toBe(false); // still on the pending second point
-    doc.viewMode = '3d';
+    expect(widthInput.hidden).toBe(false); // still active — sync leaves it alone
+    setActive(false);
     controller.sync();
-    expect(widthInput.hidden).toBe(true); // the prototype is 2D-only
+    expect(widthInput.hidden).toBe(true);
   });
 });

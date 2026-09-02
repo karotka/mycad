@@ -53,6 +53,27 @@ export class GripController {
   }
 
   /**
+   * The fixed diagonal corner while dragging one of a rectangle's own four
+   * corner grips — the same "first corner fixed, opposite corner follows the
+   * cursor" shape RECTANGLE's own draw step uses, so the dynamic width/height
+   * boxes work identically for resizing an existing rectangle. Null for a
+   * whole-rectangle move (`mode === 'center'`) and for a mid-edge grip, which
+   * stretches only one axis rather than placing a free corner.
+   */
+  draggingRectangleFixedCorner(): Vec2 | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'rectangle' || this.mode === 'center' || this.drag.gripIndex >= 4) return null;
+    const corners = [
+      entity.first,
+      { x: entity.opposite.x, y: entity.first.y },
+      entity.opposite,
+      { x: entity.first.x, y: entity.opposite.y },
+    ];
+    return corners[(this.drag.gripIndex + 2) % 4];
+  }
+
+  /**
    * A natural "from" point for Perpendicular/Tangent snap while a grip is
    * being dragged with no draw command active to supply one: a line's own
    * other endpoint, when the grip being dragged is one of its two ends. This

@@ -285,10 +285,20 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
     if (!p) { trackingLine.hidden = true; return; }
     if (gripController.isDragging) {
-      gripController.update(p);
+      // Dragging one of a rectangle's own corner grips is the same "fixed
+      // corner, free corner" shape RECTANGLE's own draw step uses, so the
+      // dynamic width/height boxes take over from the plain "Edge: … mm"
+      // toast here too — typing a value fixes that side exactly as it does
+      // while first drawing the rectangle.
+      const rectangleFixedCorner = cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedCorner() : null;
+      if (rectangleFixedCorner) {
+        gripController.update(updateDynamicRectangleInput(rectangleFixedCorner, p));
+      } else {
+        gripController.update(p);
+        showDimension(gripController.changedDimension(), sx, sy);
+      }
       if (gripSnap) positionSnapMarker(gripSnap.world, sx, sy, gripSnap.mode);
       else if (gripInteraction.targetSnapMode) snapMarker.hidden = true;
-      showDimension(gripController.changedDimension(), sx, sy);
     }
     else {
       if (cadDocument.viewMode === '2d') gripController.hoveredGrip = gripController.nearest2d(rawWorldPoint(event), 10 / renderer2d.zoom);

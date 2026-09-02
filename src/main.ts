@@ -594,11 +594,15 @@ const commands = new CommandManager({
 const dynamicRectangleInput = createDynamicRectangleInput({
   widthInput: dynDimWidthInput,
   heightInput: dynDimHeightInput,
-  commands,
-  doc: cadDocument,
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  isActive: () => {
+    const active = commands.active;
+    if (active?.name === 'RECTANGLE' && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
+    return cadDocument.viewMode === '2d' && gripController.draggingRectangleFixedCorner() !== null;
+  },
   onCommit: (point) => {
-    void commands.handleClick(point);
+    if (commands.active?.name === 'RECTANGLE') void commands.handleClick(point);
+    else gripInteraction.commitTypedPoint(point);
     redraw();
     input.focus({ preventScroll: true });
   },
