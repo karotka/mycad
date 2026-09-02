@@ -64,9 +64,24 @@ describe('createDynamicRectangleInput', () => {
     const { widthInput, heightInput, controller } = setup();
     fire(widthInput, 'focus');
     widthInput.value = '99';
+    fire(widthInput, 'input');
     controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
     expect(widthInput.value).toBe('99'); // left alone
     expect(heightInput.value).toBe('4.00'); // still live-tracked
+  });
+
+  it('keeps tracking the live cursor across repeated updates when nothing was typed', () => {
+    // Regression test: update() writes its own live value into `.value` every
+    // call. Reading that back as a "typed override" on the next call would
+    // latch the corner to whatever the first call happened to show, forever.
+    const { widthInput, heightInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    expect(widthInput.value).toBe('10.00');
+    expect(heightInput.value).toBe('4.00');
+    controller.update({ x: 0, y: 0 }, { x: 30, y: 9 });
+    expect(widthInput.value).toBe('30.00');
+    expect(heightInput.value).toBe('9.00');
+    expect(widthInput.style.left).toBe('150px'); // midpoint x=15, projected *10
   });
 
   it('Tab moves focus explicitly from width to height and back, regardless of DOM tab order', () => {
@@ -83,8 +98,22 @@ describe('createDynamicRectangleInput', () => {
     const { widthInput, controller, onCommit } = setup();
     controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
     widthInput.value = '25';
+    fire(widthInput, 'input');
     fire(widthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     expect(onCommit).toHaveBeenCalledWith({ x: 25, y: 4 });
+  });
+
+  it('clearing an overridden field back to empty returns that axis to live tracking', () => {
+    const { widthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 10, y: 4 });
+    widthInput.value = '25';
+    fire(widthInput, 'input');
+    controller.update({ x: 0, y: 0 }, { x: 12, y: 4 }); // override still holds
+    expect(widthInput.value).toBe('25.00');
+    widthInput.value = '';
+    fire(widthInput, 'input');
+    controller.update({ x: 0, y: 0 }, { x: 12, y: 4 });
+    expect(widthInput.value).toBe('12.00'); // back to following the cursor
   });
 
   it('hides and clears both boxes after a commit', () => {

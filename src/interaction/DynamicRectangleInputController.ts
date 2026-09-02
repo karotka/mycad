@@ -11,7 +11,8 @@ export interface DynamicRectangleInputElement {
   style: { left: string; top: string };
   select(): void;
   focus(): void;
-  addEventListener(type: 'focus' | 'blur' | 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
+  addEventListener(type: 'focus' | 'blur' | 'input', listener: () => void): void;
+  addEventListener(type: 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
 }
 
 export interface DynamicRectangleInputContext {
@@ -37,11 +38,22 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
   const { widthInput, heightInput, commands, doc, project, onCommit } = ctx;
   let widthFocused = false;
   let heightFocused = false;
+  // Whether the user has actually typed a value, as opposed to what the box
+  // is currently displaying — the two must stay separate. update() writes
+  // its own live-tracked number into `.value` every frame, and reading that
+  // back as if it were a typed override next frame would latch the corner to
+  // whatever the very first frame happened to show, forever. Only a real
+  // 'input' event (never fired by update()'s own assignment) may set these.
+  let widthOverridden = false;
+  let heightOverridden = false;
   let lastStart: Vec2 | null = null;
   let lastCursor: Vec2 | null = null;
 
   function currentFields(): DynamicRectangleFields {
-    return { width: widthInput.value, height: heightInput.value };
+    return {
+      width: widthOverridden ? widthInput.value : '',
+      height: heightOverridden ? heightInput.value : '',
+    };
   }
 
   function position(input: DynamicRectangleInputElement, point: Vec2): void {
@@ -58,6 +70,8 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
     heightInput.hidden = true;
     widthInput.value = '';
     heightInput.value = '';
+    widthOverridden = false;
+    heightOverridden = false;
     lastStart = null;
     lastCursor = null;
   }
@@ -110,6 +124,9 @@ export function createDynamicRectangleInput(ctx: DynamicRectangleInputContext) {
   widthInput.addEventListener('blur', () => { widthFocused = false; });
   heightInput.addEventListener('focus', () => { heightFocused = true; heightInput.select(); });
   heightInput.addEventListener('blur', () => { heightFocused = false; });
+  // Clearing the box back to empty returns that axis to live tracking.
+  widthInput.addEventListener('input', () => { widthOverridden = widthInput.value.trim() !== ''; });
+  heightInput.addEventListener('input', () => { heightOverridden = heightInput.value.trim() !== ''; });
 
   return { update, hide, sync };
 }
