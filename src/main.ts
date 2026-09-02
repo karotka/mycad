@@ -7,6 +7,7 @@ import { worldToScreen, type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
+import { viewCubeTransform } from './render/ViewportCoordinates';
 import { selectionExclusions } from './interaction/PickingService';
 import { InputController } from './interaction/InputController';
 import { GripController, type GripMode } from './interaction/GripController';
@@ -532,16 +533,14 @@ function gripEditingPoint(
 }
 
 function updateViewCubeOrientation(): void {
-  // The cube turns to face the camera the way the scene does: tilted down by the
-  // camera's elevation, spun round by its azimuth. The exact signs and offset
-  // were worked out against the viewport, not derived.
-  const { azimuth, elevation } = renderer3d.viewCubeAngles();
-  // Tilt down from straight-on by how far the camera is above the ground, and
-  // spin round by its azimuth. rotateY, not rotateZ: the spin is about the
-  // upright axis, which turns the side faces past the camera; rotateZ would only
-  // twist the picture in its own plane.
-  const tilt = -elevation * 180 / Math.PI;
-  const spin = -(azimuth * 180 / Math.PI) - 90;
+  // The cube turns to face the camera the way the scene does: tilted down by
+  // the camera's elevation, spun round by its azimuth (see viewCubeTransform
+  // for why 2D mode overrides this with a plain TOP pose instead). rotateY,
+  // not rotateZ: the spin is about the upright axis, which turns the side
+  // faces past the camera; rotateZ would only twist the picture in its own
+  // plane. The exact signs and offset were worked out against the viewport,
+  // not derived.
+  const { tilt, spin } = viewCubeTransform(cadDocument.viewMode, renderer3d.viewCubeAngles());
   get<HTMLElement>('cube3d').style.transform = `rotateX(${tilt}deg) rotateY(${spin}deg)`;
 }
 
