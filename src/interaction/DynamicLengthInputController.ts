@@ -5,8 +5,13 @@ import { dynamicLengthMidpoint, dynamicLengthPoint, type DynamicLengthFields } f
  *  a fixed on-screen offset rather than a world-space one, since a world
  *  offset would grow or shrink with zoom instead of staying a steady gap
  *  beside the other box. Roughly the box's own rendered width (56px plus
- *  padding and border, see .dyn-dim-input in app.css) plus a small gap. */
-const ANGLE_OFFSET_PX = 70;
+ *  padding and border, see .dyn-dim-input in app.css) plus enough gap either
+ *  side for the "<" and "°" labels. */
+const ANGLE_OFFSET_PX = 84;
+/** Where the "<" between the two boxes sits — the midpoint of the gap. */
+const SEPARATOR_OFFSET_PX = ANGLE_OFFSET_PX / 2;
+/** Where the "°" after the angle box sits, relative to the angle box itself. */
+const DEGREE_OFFSET_PX = 40;
 
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
@@ -20,9 +25,20 @@ export interface DynamicLengthInputElement {
   addEventListener(type: 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
 }
 
+/** The non-interactive "<" and "°" labels riding beside the two boxes —
+ *  just enough surface to show/hide and position them. */
+export interface DynamicLengthLabelElement {
+  hidden: boolean;
+  style: { left: string; top: string };
+}
+
 export interface DynamicLengthInputContext {
   lengthInput: DynamicLengthInputElement;
   angleInput: DynamicLengthInputElement;
+  /** The "<" between the two boxes and the "°" after the angle box —
+   *  AutoCAD's own polar-coordinate notation (e.g. "5<30"). */
+  separatorLabel: DynamicLengthLabelElement;
+  degreeLabel: DynamicLengthLabelElement;
   /** Local-plane point to screen pixels, the same frame the start/cursor
    *  points passed to `update()` arrive in. */
   project: (point: Vec2) => { x: number; y: number };
@@ -47,7 +63,7 @@ export interface DynamicLengthInputContext {
  * for when it auto-focuses versus waits for a click.
  */
 export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
-  const { lengthInput, angleInput, project, isActive, onCommit, onEmptyCommit } = ctx;
+  const { lengthInput, angleInput, separatorLabel, degreeLabel, project, isActive, onCommit, onEmptyCommit } = ctx;
   let lengthOverridden = false;
   let angleOverridden = false;
   let lastStart: Vec2 | null = null;
@@ -61,17 +77,20 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     };
   }
 
-  function position(input: DynamicLengthInputElement, screen: { x: number; y: number }): void {
-    input.style.left = `${screen.x}px`;
-    input.style.top = `${screen.y}px`;
-    input.hidden = false;
+  function position(element: DynamicLengthInputElement | DynamicLengthLabelElement, screen: { x: number; y: number }): void {
+    element.style.left = `${screen.x}px`;
+    element.style.top = `${screen.y}px`;
+    element.hidden = false;
   }
 
-  /** Hides both boxes and drops whatever was typed — a fresh segment starts clean. */
+  /** Hides both boxes (and their labels) and drops whatever was typed — a
+   *  fresh segment starts clean. */
   function hide(): void {
     if (lengthInput.hidden && angleInput.hidden) return;
     lengthInput.hidden = true;
     angleInput.hidden = true;
+    separatorLabel.hidden = true;
+    degreeLabel.hidden = true;
     lengthInput.value = '';
     angleInput.value = '';
     lengthOverridden = false;
@@ -121,7 +140,9 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     if (!angleOverridden) angleInput.value = ((Math.atan2(point.y - start.y, point.x - start.x) * 180) / Math.PI).toFixed(2);
     const screen = project(dynamicLengthMidpoint(start, point));
     position(lengthInput, screen);
+    position(separatorLabel, { x: screen.x + SEPARATOR_OFFSET_PX, y: screen.y });
     position(angleInput, { x: screen.x + ANGLE_OFFSET_PX, y: screen.y });
+    position(degreeLabel, { x: screen.x + ANGLE_OFFSET_PX + DEGREE_OFFSET_PX, y: screen.y });
     if (firstFrame && options.autoFocus) lengthInput.focus();
     return point;
   }

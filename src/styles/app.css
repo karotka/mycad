@@ -441,6 +441,22 @@ html, body, #app {
   display: none;
 }
 
+/* The "<" between Length and Angle, and the "°" after Angle — AutoCAD's own
+ * polar-coordinate notation (e.g. "5<30"), non-interactive labels riding
+ * alongside the two boxes. */
+.dyn-dim-label {
+  position: absolute;
+  z-index: 46;
+  transform: translate(-50%, -50%);
+  color: #d7efff;
+  font: 12px 'SF Mono', monospace;
+  pointer-events: none;
+}
+
+.dyn-dim-label[hidden] {
+  display: none;
+}
+
 .crosshair::before {
   width: 1px;
   height: 44px;

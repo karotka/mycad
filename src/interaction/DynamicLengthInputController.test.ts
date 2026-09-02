@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDynamicLengthInput, type DynamicLengthInputElement } from './DynamicLengthInputController';
+import { createDynamicLengthInput, type DynamicLengthInputElement, type DynamicLengthLabelElement } from './DynamicLengthInputController';
 
 function fakeInput(): DynamicLengthInputElement & { listeners: Record<string, Array<(event: never) => void>> } {
   const listeners: Record<string, Array<(event: never) => void>> = {};
@@ -15,6 +15,10 @@ function fakeInput(): DynamicLengthInputElement & { listeners: Record<string, Ar
   return input;
 }
 
+function fakeLabel(): DynamicLengthLabelElement {
+  return { hidden: true, style: { left: '', top: '' } };
+}
+
 function fire(input: ReturnType<typeof fakeInput>, type: string, event: object = {}): void {
   for (const listener of input.listeners[type] ?? []) listener(event as never);
 }
@@ -22,17 +26,19 @@ function fire(input: ReturnType<typeof fakeInput>, type: string, event: object =
 function setup() {
   const lengthInput = fakeInput();
   const angleInput = fakeInput();
+  const separatorLabel = fakeLabel();
+  const degreeLabel = fakeLabel();
   const onCommit = vi.fn();
   const onEmptyCommit = vi.fn();
   let active = true;
   const controller = createDynamicLengthInput({
-    lengthInput, angleInput,
+    lengthInput, angleInput, separatorLabel, degreeLabel,
     project: (point) => ({ x: point.x * 10, y: point.y * 10 }),
     isActive: () => active,
     onCommit,
     onEmptyCommit,
   });
-  return { lengthInput, angleInput, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
+  return { lengthInput, angleInput, separatorLabel, degreeLabel, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
 }
 
 describe('createDynamicLengthInput', () => {
@@ -49,8 +55,32 @@ describe('createDynamicLengthInput', () => {
     expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(30, 6); // midpoint (3,4), projected *10
     // The angle box sits a fixed screen-pixel offset to the right of the
     // length box, at the same height — not at the (world-space) start point.
-    expect(Number.parseFloat(angleInput.style.left)).toBeCloseTo(30 + 70, 6);
+    expect(Number.parseFloat(angleInput.style.left)).toBeCloseTo(30 + 84, 6);
     expect(angleInput.style.top).toBe(lengthInput.style.top);
+  });
+
+  it('shows the "<" between the boxes and the "°" after the angle box', () => {
+    const { lengthInput, angleInput, separatorLabel, degreeLabel, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+    const lengthX = Number.parseFloat(lengthInput.style.left);
+    const angleX = Number.parseFloat(angleInput.style.left);
+    expect(separatorLabel.hidden).toBe(false);
+    expect(degreeLabel.hidden).toBe(false);
+    const separatorX = Number.parseFloat(separatorLabel.style.left);
+    const degreeX = Number.parseFloat(degreeLabel.style.left);
+    // The separator sits strictly between the two boxes; the degree mark
+    // strictly past the angle box's far side.
+    expect(separatorX).toBeGreaterThan(lengthX);
+    expect(separatorX).toBeLessThan(angleX);
+    expect(degreeX).toBeGreaterThan(angleX);
+  });
+
+  it('hides the labels along with the boxes', () => {
+    const { separatorLabel, degreeLabel, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+    controller.hide();
+    expect(separatorLabel.hidden).toBe(true);
+    expect(degreeLabel.hidden).toBe(true);
   });
 
   it('does not auto-focus by default (drawing a new line/polyline never captures the pointer, so a click reaches it fine)', () => {

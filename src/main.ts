@@ -116,6 +116,8 @@ const dynDimWidthInput = get<HTMLInputElement>('dyn-dim-width');
 const dynDimHeightInput = get<HTMLInputElement>('dyn-dim-height');
 const dynDimLengthInput = get<HTMLInputElement>('dyn-dim-length');
 const dynDimAngleInput = get<HTMLInputElement>('dyn-dim-angle');
+const dynDimSeparatorLabel = get<HTMLElement>('dyn-dim-length-angle-separator');
+const dynDimDegreeLabel = get<HTMLElement>('dyn-dim-angle-degree');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -615,6 +617,8 @@ const dynamicRectangleInput = createDynamicRectangleInput({
 const dynamicLengthInput = createDynamicLengthInput({
   lengthInput: dynDimLengthInput,
   angleInput: dynDimAngleInput,
+  separatorLabel: dynDimSeparatorLabel,
+  degreeLabel: dynDimDegreeLabel,
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
   isActive: () => {
     const active = commands.active;
