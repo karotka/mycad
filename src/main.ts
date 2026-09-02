@@ -622,7 +622,8 @@ const dynamicLengthInput = createDynamicLengthInput({
   isActive: () => {
     const active = commands.active;
     if (active && (active.name === 'LINE' || active.name === 'POLYLINE' || active.name === 'CIRCLE') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
-    return cadDocument.viewMode === '2d' && gripController.draggingLineFixedEnd() !== null;
+    if (cadDocument.viewMode !== '2d') return false;
+    return gripController.draggingLineFixedEnd() !== null || gripController.draggingCircleFixedCenter() !== null;
   },
   onCommit: (point) => {
     const active = commands.active;
@@ -1134,8 +1135,8 @@ function updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFin
   return dynamicLengthInput.update(start, cursor, options);
 }
 
-function updateDynamicDiameterInput(center: Vec2, cursor: Vec2): Vec2 {
-  return dynamicLengthInput.updateDiameter(center, cursor);
+function updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus = false): Vec2 {
+  return dynamicLengthInput.updateDiameter(center, cursor, autoFocus);
 }
 
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {

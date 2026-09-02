@@ -255,4 +255,18 @@ describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step
     expect(angleInput.hidden).toBe(true);
     expect(lengthInput.value).toBe('');
   });
+
+  it('does not auto-focus by default (drawing a new circle never captures the pointer)', () => {
+    const { lengthInput, controller } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    expect(lengthInput.focus).not.toHaveBeenCalled();
+  });
+
+  it('auto-focuses on first appearance when asked — grip-editing an existing circle keeps the pointer captured', () => {
+    const { lengthInput, controller } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 }, true);
+    expect(lengthInput.focus).toHaveBeenCalledTimes(1);
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 5, y: 5 }, true);
+    expect(lengthInput.focus).toHaveBeenCalledTimes(1); // only the initial auto-focus
+  });
 });

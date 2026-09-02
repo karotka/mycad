@@ -36,7 +36,7 @@ export interface ViewportPointerHelpers {
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
   updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
-  updateDynamicDiameterInput(center: Vec2, cursor: Vec2): Vec2;
+  updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus?: boolean): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -296,6 +296,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       const rectangleFixedCorner = cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedCorner() : null;
       const rectangleFixedEdge = !rectangleFixedCorner && cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedEdge() : null;
       const lineFixedEnd = !rectangleFixedCorner && !rectangleFixedEdge && cadDocument.viewMode === '2d' ? gripController.draggingLineFixedEnd() : null;
+      const circleFixedCenter = !rectangleFixedCorner && !rectangleFixedEdge && !lineFixedEnd && cadDocument.viewMode === '2d' ? gripController.draggingCircleFixedCenter() : null;
       if (rectangleFixedCorner) {
         gripController.update(updateDynamicRectangleInput(rectangleFixedCorner, p));
       } else if (rectangleFixedEdge) {
@@ -307,6 +308,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         // the whole click-move-click gesture, so the box auto-focuses —
         // a click could never reach it otherwise.
         gripController.update(updateDynamicLengthInput(lineFixedEnd, p, { emptyFinishes: false, autoFocus: true }));
+      } else if (circleFixedCenter) {
+        // Same shape as CIRCLE's own draw step, in place of the plain
+        // "R … mm · Ø … mm" toast — auto-focused for the same reason as the
+        // line-endpoint case above.
+        gripController.update(updateDynamicDiameterInput(circleFixedCenter, p, true));
       } else {
         gripController.update(p);
         showDimension(gripController.changedDimension(), sx, sy);

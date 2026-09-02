@@ -170,6 +170,30 @@ describe('GripController', () => {
     expect(grips.draggingCircleRadius()).toBeNull();
   });
 
+  it('reports the fixed centre while dragging one of a circle\'s own radius grips', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const circle = doc.createCircle({ x: 1, y: 2 }, 3);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+
+    grips.begin(circle, undefined, 2, { x: 1, y: 5 }); // dragging a radius grip
+    expect(grips.draggingCircleFixedCenter()).toEqual({ x: 1, y: 2 });
+  });
+
+  it('has no fixed centre while dragging a circle by its own centre grip (moving it)', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const circle = doc.createCircle({ x: 1, y: 2 }, 3);
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+
+    grips.begin(circle, undefined, 0, { x: 1, y: 2 });
+    expect(grips.draggingCircleFixedCenter()).toBeNull();
+  });
+
   it('reports the fixed diagonal corner while dragging one of a rectangle\'s own corner grips', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

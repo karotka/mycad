@@ -67,6 +67,20 @@ export class GripController {
   }
 
   /**
+   * The fixed centre while dragging one of a circle's own four radius
+   * grips — the same "fixed point, free point" shape CIRCLE's own draw step
+   * uses, so the dynamic diameter box works identically for resizing an
+   * existing circle. Null for the centre grip itself (index 0), which
+   * moves the whole circle rather than resizing it.
+   */
+  draggingCircleFixedCenter(): Vec2 | null {
+    if (!this.drag || this.drag.objectType !== 'entity' || !this.drag.originalEntity) return null;
+    const entity = this.drag.originalEntity;
+    if (entity.type !== 'circle' || this.drag.gripIndex === 0) return null;
+    return entity.center;
+  }
+
+  /**
    * The fixed diagonal corner while dragging one of a rectangle's own four
    * corner grips — the same "first corner fixed, opposite corner follows the
    * cursor" shape RECTANGLE's own draw step uses, so the dynamic width/height

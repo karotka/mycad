@@ -161,13 +161,19 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   }
 
   /**
-   * The single-axis counterpart for CIRCLE's own radius step: shows and
+   * The single-axis counterpart for CIRCLE's own radius step (and, with
+   * `autoFocus`, for dragging an existing circle's radius grip): shows and
    * edits the *diameter* (what the user asked to see) even though the
    * underlying geometry is radius-based — a circle looks the same
    * regardless of which way around it the boundary point sits, so there is
    * no angle to fix and the angle box stays hidden along with its labels.
+   * `autoFocus` follows the same reasoning as `update()`'s own option:
+   * grip-editing keeps the pointer captured for the whole click-move-click
+   * gesture, so a click could never reach the box otherwise; drawing a new
+   * circle never captures the pointer, so that caller leaves it false.
    */
-  function updateDiameter(center: Vec2, cursor: Vec2): Vec2 {
+  function updateDiameter(center: Vec2, cursor: Vec2, autoFocus = false): Vec2 {
+    const firstFrame = lengthInput.hidden;
     lastStart = center;
     lastCursor = cursor;
     lastEmptyFinishes = false;
@@ -179,6 +185,7 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     angleInput.hidden = true;
     separatorLabel.hidden = true;
     degreeLabel.hidden = true;
+    if (firstFrame && autoFocus) lengthInput.focus();
     return point;
   }
 
