@@ -42,8 +42,10 @@ describe('createDynamicArcInput', () => {
     expect(point).toEqual({ x: 0, y: 1 });
     expect(input.hidden).toBe(false);
     expect(input.value).toBe('5.00'); // matches the arcFromSagitta example
+    // Pushed 16px past the apex (0,10) in screen space, away from the chord
+    // midpoint (0,0) — not sitting right on the point (and the cursor).
     expect(Number.parseFloat(input.style.left)).toBeCloseTo(0, 6);
-    expect(Number.parseFloat(input.style.top)).toBeCloseTo(10, 6);
+    expect(Number.parseFloat(input.style.top)).toBeCloseTo(26, 6);
   });
 
   it('does not overwrite the box while the user is typing into it', () => {

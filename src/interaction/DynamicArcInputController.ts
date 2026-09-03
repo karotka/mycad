@@ -1,6 +1,11 @@
 import type { Vec2 } from '../math/geometry';
 import { arcFromSagitta, dynamicArcPoint } from '../math/arcFit';
 
+/** How far past the arc's own apex, in screen pixels, the box sits — not
+ *  directly on top of the point (and the cursor sitting right there too),
+ *  same reasoning as CIRCLE's own diameter box sitting outside its edge. */
+const ARC_BOX_OUTSET_PX = 16;
+
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
 export interface DynamicArcInputElement {
@@ -76,7 +81,19 @@ export function createDynamicArcInput(ctx: DynamicArcInputContext) {
       return point;
     }
     if (!overridden) input.value = arc.radius.toFixed(2);
-    const screen = project(point);
+    // Push the box past the apex rather than sitting right on it — directly
+    // on the point (and the cursor, which is also right there) buried it
+    // under the crosshair. Worked out in screen space, past the projected
+    // midpoint→apex direction, for the same reason CIRCLE's diameter box is.
+    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const midScreen = project(mid);
+    const apexScreen = project(point);
+    const dx = apexScreen.x - midScreen.x, dy = apexScreen.y - midScreen.y;
+    const outward = Math.hypot(dx, dy) || 1;
+    const screen = {
+      x: apexScreen.x + (dx / outward) * ARC_BOX_OUTSET_PX,
+      y: apexScreen.y + (dy / outward) * ARC_BOX_OUTSET_PX,
+    };
     input.style.left = `${screen.x}px`;
     input.style.top = `${screen.y}px`;
     input.hidden = false;
