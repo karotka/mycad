@@ -5,8 +5,10 @@ import { dynamicCoordinatePoint, type DynamicCoordinateFields } from './DynamicC
  *  RECTANGLE's/LINE's own controllers for why this is a fixed screen offset
  *  rather than a world-space one. */
 const Y_OFFSET_PX = 74;
-/** Where the "," between the two boxes sits — the midpoint of the gap. */
-const COMMA_OFFSET_PX = Y_OFFSET_PX / 2;
+/** How far each box's own "x:"/"y:" prefix sits to its left — the same gap
+ *  used between the two boxes, so "y:" lands in the middle of that gap and
+ *  "x:" mirrors it symmetrically before the first box. */
+const PREFIX_OFFSET_PX = Y_OFFSET_PX / 2;
 
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
@@ -20,8 +22,8 @@ export interface DynamicCoordinateInputElement {
   addEventListener(type: 'keydown', listener: (event: { key?: string; preventDefault(): void }) => void): void;
 }
 
-/** The non-interactive "," between the two boxes — just enough surface to
- *  show/hide and position it. */
+/** The non-interactive "x:"/"y:" prefixes before each box — just enough
+ *  surface to show/hide and position them. */
 export interface DynamicCoordinateLabelElement {
   hidden: boolean;
   style: { left: string; top: string };
@@ -30,7 +32,8 @@ export interface DynamicCoordinateLabelElement {
 export interface DynamicCoordinateInputContext {
   xInput: DynamicCoordinateInputElement;
   yInput: DynamicCoordinateInputElement;
-  commaLabel: DynamicCoordinateLabelElement;
+  xLabel: DynamicCoordinateLabelElement;
+  yLabel: DynamicCoordinateLabelElement;
   /** Local-plane point to screen pixels, the same frame the cursor point
    *  passed to `update()` arrives in. */
   project: (point: Vec2) => { x: number; y: number };
@@ -50,7 +53,7 @@ export interface DynamicCoordinateInputContext {
  * click could never reach a box otherwise.
  */
 export function createDynamicCoordinateInput(ctx: DynamicCoordinateInputContext) {
-  const { xInput, yInput, commaLabel, project, isActive, onCommit } = ctx;
+  const { xInput, yInput, xLabel, yLabel, project, isActive, onCommit } = ctx;
   let xOverridden = false;
   let yOverridden = false;
   let lastCursor: Vec2 | null = null;
@@ -68,13 +71,14 @@ export function createDynamicCoordinateInput(ctx: DynamicCoordinateInputContext)
     element.hidden = false;
   }
 
-  /** Hides both boxes (and the label) and drops whatever was typed — a
+  /** Hides both boxes (and their labels) and drops whatever was typed — a
    *  fresh drag starts clean. */
   function hide(): void {
     if (xInput.hidden && yInput.hidden) return;
     xInput.hidden = true;
     yInput.hidden = true;
-    commaLabel.hidden = true;
+    xLabel.hidden = true;
+    yLabel.hidden = true;
     xInput.value = '';
     yInput.value = '';
     xOverridden = false;
@@ -103,8 +107,9 @@ export function createDynamicCoordinateInput(ctx: DynamicCoordinateInputContext)
     if (!xOverridden) xInput.value = point.x.toFixed(2);
     if (!yOverridden) yInput.value = point.y.toFixed(2);
     const screen = project(point);
+    position(xLabel, { x: screen.x - PREFIX_OFFSET_PX, y: screen.y });
     position(xInput, screen);
-    position(commaLabel, { x: screen.x + COMMA_OFFSET_PX, y: screen.y });
+    position(yLabel, { x: screen.x + PREFIX_OFFSET_PX, y: screen.y });
     position(yInput, { x: screen.x + Y_OFFSET_PX, y: screen.y });
     if (firstFrame) xInput.focus();
     return point;

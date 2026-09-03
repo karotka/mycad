@@ -590,8 +590,9 @@ export class Canvas2DRenderer {
       this.ctx.beginPath();
       this.ctx.arc(c.x, c.y, r * this.zoom, 0, Math.PI * 2);
       this.ctx.stroke();
-      label = `R = ${r.toFixed(2)} mm`;
-      labelPoint = d.cursor;
+      // No on-canvas label here: the dynamic diameter box (2D CIRCLE's own
+      // radius step) already shows this and sits right where this label
+      // used to draw, right on top of it.
     } else if (preview.type === 'rectangle' && d.start && d.end) {
       const first = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const opposite = worldToScreen(d.end, w, h, this.pan, this.zoom);

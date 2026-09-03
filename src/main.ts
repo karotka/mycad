@@ -122,7 +122,8 @@ const dynDimSeparatorLabel = get<HTMLElement>('dyn-dim-length-angle-separator');
 const dynDimDegreeLabel = get<HTMLElement>('dyn-dim-angle-degree');
 const dynDimXInput = get<HTMLInputElement>('dyn-dim-x');
 const dynDimYInput = get<HTMLInputElement>('dyn-dim-y');
-const dynDimXySeparatorLabel = get<HTMLElement>('dyn-dim-xy-separator');
+const dynDimXPrefixLabel = get<HTMLElement>('dyn-dim-x-prefix');
+const dynDimYPrefixLabel = get<HTMLElement>('dyn-dim-y-prefix');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -646,7 +647,8 @@ const dynamicLengthInput = createDynamicLengthInput({
 const dynamicCoordinateInput = createDynamicCoordinateInput({
   xInput: dynDimXInput,
   yInput: dynDimYInput,
-  commaLabel: dynDimXySeparatorLabel,
+  xLabel: dynDimXPrefixLabel,
+  yLabel: dynDimYPrefixLabel,
   project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
   isActive: () => cadDocument.viewMode === '2d' && gripController.draggingCircleRadius() !== null,
   onCommit: (point) => {
