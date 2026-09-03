@@ -2745,6 +2745,74 @@ describe('ELLIPSE and CIRCLE_DIAMETER', () => {
   });
 });
 
+describe('ARC_SER (start, end, radius/point-on-arc)', () => {
+  it('draws the minor arc bulging toward the third point', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 0, y: 1 });
+    const arc = doc.entities[0];
+    expect(arc).toMatchObject({ type: 'arc' });
+    if (arc.type === 'arc') {
+      expect(arc.radius).toBeCloseTo(5, 6);
+      expect(arc.sweepAngle * 180 / Math.PI).toBeCloseTo(73.74, 1);
+    }
+  });
+
+  it('bulges to the other side for a third point below the chord', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 0, y: -1 });
+    const arc = doc.entities[0];
+    expect(arc).toMatchObject({ type: 'arc' });
+    if (arc.type === 'arc') expect(arc.radius).toBeCloseTo(5, 6);
+  });
+
+  it('reaches a major arc automatically for a third point far from the chord', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 0, y: 8 });
+    const arc = doc.entities[0];
+    expect(arc).toMatchObject({ type: 'arc' });
+    if (arc.type === 'arc') expect(arc.sweepAngle).toBeGreaterThan(Math.PI);
+  });
+
+  it('refuses a third point sitting on the start-end line', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 0, y: 0 });
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('Arc failed: point must be off the line between start and end.');
+  });
+
+  it('takes a typed radius from the command line, defaulting to the +90° side of start→end', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.submitInput('5');
+    const arc = doc.entities[0];
+    expect(arc).toMatchObject({ type: 'arc' });
+    if (arc.type === 'arc') expect(arc.radius).toBeCloseTo(5, 6);
+  });
+
+  it('restarts like the other drawing tools', async () => {
+    const { manager } = setup();
+    manager.startCommand('ARC_SER');
+    await manager.handleClick({ x: -3, y: 0 });
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 0, y: 1 });
+    expect(manager.active).toMatchObject({ name: 'ARC_SER', stepIndex: 0 });
+  });
+});
+
 describe('MOVE takes as many objects as you give it', () => {
   it('gathers several picks and moves them all', async () => {
     const { doc, manager, moveObjects } = setup();

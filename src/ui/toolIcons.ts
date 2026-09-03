@@ -14,6 +14,7 @@ export function toolIcon(command: ToolbarIcon): string {
     ELLIPSE: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/><path d="M3 12h18M12 6.5v11"/>',
     POLYGON: '<path d="M12 3l8 6-3 10H7L4 9l8-6z"/><circle cx="12" cy="12" r="1"/>',
     ARC: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/>',
+    ARC_SER: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/><path d="M12 12L16 8" stroke-dasharray="2 2"/>',
     BEZIER: '<path d="M3 18C8 3 16 21 21 6"/><path d="M3 18L8 6M21 6l-5 10" stroke-dasharray="2 2"/>',
     SPLINE: '<path d="M3 17c3-10 7-10 9-4s6 6 9-4"/><circle cx="3" cy="17" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="21" cy="9" r="1.5"/>',
     HATCH: '<path d="M4 5h16v14H4z"/><path d="M3 16L12 7M7 20L20 7M14 20l7-7"/>',

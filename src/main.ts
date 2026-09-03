@@ -32,7 +32,7 @@ import { HatchSettingsController } from './ui/HatchSettingsController';
 import { NamedUcsController } from './ui/NamedUcsController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
-  arrayFlyout, circleFlyout, circleTools, curveTools, dimensionFlyout, dimensionTools, drawTools, editTools,
+  arcTools, arrayFlyout, circleFlyout, circleTools, curveTools, dimensionFlyout, dimensionTools, drawTools, editTools,
   extrudeFlyout, modifyTools, primitiveFlyout, primitiveTools, solidTools, toolButtons, zoomFlyout, zoomTools,
 } from './ui/toolbar';
 import { toolIcon } from './ui/toolIcons';
@@ -45,6 +45,7 @@ import { createToolActions } from './interaction/ToolActions';
 import { createDynamicRectangleInput } from './interaction/DynamicRectangleInputController';
 import { createDynamicLengthInput } from './interaction/DynamicLengthInputController';
 import { createDynamicCoordinateInput } from './interaction/DynamicCoordinateInputController';
+import { createDynamicArcInput } from './interaction/DynamicArcInputController';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 import type { PrintColorMode } from './render/SvgExport';
@@ -62,6 +63,8 @@ const savedCircle = localStorage.getItem('mycad.lastCircle') as CommandName | nu
 const initialCircle: CommandName = circleTools.some(([, , command]) => command === savedCircle) ? savedCircle! : 'CIRCLE';
 const savedCurve = localStorage.getItem('mycad.lastCurve') as CommandName | null;
 const initialCurve: CommandName = curveTools.some(([, , command]) => command === savedCurve) ? savedCurve! : 'SPLINE';
+const savedArc = localStorage.getItem('mycad.lastArc') as CommandName | null;
+const initialArc: CommandName = arcTools.some(([, , command]) => command === savedArc) ? savedArc! : 'ARC';
 const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandName | null;
 const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
@@ -85,6 +88,7 @@ app.innerHTML = shellHtml({
   primitive: initialPrimitive,
   circle: initialCircle,
   curve: initialCurve,
+  arc: initialArc,
   dimension: initialDimension,
   zoom: initialZoom,
 });
@@ -124,6 +128,7 @@ const dynDimXInput = get<HTMLInputElement>('dyn-dim-x');
 const dynDimYInput = get<HTMLInputElement>('dyn-dim-y');
 const dynDimXPrefixLabel = get<HTMLElement>('dyn-dim-x-prefix');
 const dynDimYPrefixLabel = get<HTMLElement>('dyn-dim-y-prefix');
+const dynDimArcRadiusInput = get<HTMLInputElement>('dyn-dim-arc-radius');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -426,6 +431,7 @@ function drawFrame(): void {
   dynamicRectangleInput.sync();
   dynamicLengthInput.sync();
   dynamicCoordinateInput.sync();
+  dynamicArcInput.sync();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
   renderer3d.syncCutAreaFrame(cadDocument.gcode);
@@ -491,6 +497,7 @@ function drawChrome(): void {
   get<HTMLButtonElement>('extrude-main').classList.toggle('active', commands.active?.name === 'EXTRUDE' || commands.active?.name === 'SWEEP');
   get<HTMLButtonElement>('circle-main').classList.toggle('active', circleTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('curve-main').classList.toggle('active', curveTools.some(([, , command]) => command === commands.active?.name));
+  get<HTMLButtonElement>('arc-main').classList.toggle('active', arcTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
   prompt.textContent = activePromptText();
@@ -653,6 +660,19 @@ const dynamicCoordinateInput = createDynamicCoordinateInput({
   isActive: () => cadDocument.viewMode === '2d' && gripController.draggingCircleRadius() !== null,
   onCommit: (point) => {
     gripInteraction.commitTypedPoint(point);
+    redraw();
+    input.focus({ preventScroll: true });
+  },
+});
+const dynamicArcInput = createDynamicArcInput({
+  input: dynDimArcRadiusInput,
+  project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  isActive: () => {
+    const active = commands.active;
+    return active?.name === 'ARC_SER' && active.stepIndex === 2 && cadDocument.viewMode === '2d';
+  },
+  onCommit: (point) => {
+    void commands.handleClick(point);
     redraw();
     input.focus({ preventScroll: true });
   },
@@ -1162,6 +1182,10 @@ function updateDynamicCoordinateInput(cursor: Vec2): Vec2 {
   return dynamicCoordinateInput.update(cursor);
 }
 
+function updateDynamicArcInput(start: Vec2, end: Vec2, cursor: Vec2): Vec2 {
+  return dynamicArcInput.update(start, end, cursor);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1284,6 +1308,7 @@ attachViewportPointerHandlers({
     updateDynamicLengthInput,
     updateDynamicDiameterInput,
     updateDynamicCoordinateInput,
+    updateDynamicArcInput,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,
@@ -1560,6 +1585,19 @@ const curveFlyoutTool = new FlyoutTool<CommandName>({
     attribute: 'data-curve-command',
     storageKey: 'mycad.lastCurve',
     labelOf: (value) => curveTools.find((tool) => tool[2] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
+});
+
+const arcFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('arc-main'),
+  flyout: get('arc-flyout'),
+  initial: initialArc,
+  run: runTool,
+  memory: {
+    attribute: 'data-arc-command',
+    storageKey: 'mycad.lastArc',
+    labelOf: (value) => arcTools.find((tool) => tool[2] === value)?.[0] ?? value,
     iconOf: toolIcon,
   },
 });

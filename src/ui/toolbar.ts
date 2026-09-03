@@ -8,12 +8,16 @@ import { toolIcon } from './toolIcons';
  */
 
 export const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Arc', 'ARC'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
 ];
 export const circleTools: Array<[string, string, CommandName]> = [
   ['Circle', 'Circle by radius', 'CIRCLE'],
   ['Diameter', 'Circle by diameter', 'CIRCLE_DIAMETER'],
   ['Ellipse', 'Ellipse', 'ELLIPSE'],
+];
+export const arcTools: Array<[string, string, CommandName]> = [
+  ['Center, Start, End', 'Arc — pick a centre, then the start point, then the end point', 'ARC'],
+  ['Start, End, Radius', 'Arc — pick two endpoints, then a radius', 'ARC_SER'],
 ];
 // Both draw the same entity — a Bezier chain — as two different ways to place
 // it, the way AutoCAD's own SPLINE offers Fit and CV input: Fit passes the
@@ -75,6 +79,12 @@ export function circleFlyout(currentCircle: CommandName): string {
   const current = circleTools.find(([, , command]) => command === currentCircle) ?? ['Circle', 'Circle by radius', 'CIRCLE'] as const;
   const [label, tooltip] = current;
   return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="circle-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentCircle)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="circle-flyout" hidden>${circleTools.map(([name, tooltipText, command]) => `<button data-circle-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
+}
+
+export function arcFlyout(currentArc: CommandName): string {
+  const current = arcTools.find(([, , command]) => command === currentArc) ?? arcTools[0];
+  const [label, tooltip] = current;
+  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="arc-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentArc)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="arc-flyout" hidden>${arcTools.map(([name, tooltipText, command]) => `<button data-arc-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
 }
 
 export function curveFlyout(currentCurve: CommandName): string {

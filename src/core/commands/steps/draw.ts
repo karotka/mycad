@@ -17,6 +17,7 @@ import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { BezierSegment, Entity } from '../../entities/types';
 import type { WorkPlane } from '../../../math/workplane';
 import { interpolatingBeziers } from '../../../math/bezierFit';
+import { arcFromSagitta } from '../../../math/arcFit';
 
 function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<string, unknown>): T {
   const plane = data.drawingPlane as WorkPlane | undefined;
@@ -128,6 +129,27 @@ export function drawArc({ ctx, active, data, value }: CommandRun): StepOutcome {
   if (sweep <= 0) sweep += Math.PI * 2;
   ctx.history.execute(new AddEntityEdit('Arc', ctx.doc.createArc(center, radius, startAngle, sweep)));
   ctx.log(`Arc created: center ${formatPoint(center)}, r=${radius.toFixed(4)}, ${(sweep * 180 / Math.PI).toFixed(2)}°`);
+  return 'advance';
+}
+
+/**
+ * Arc by start point, end point and radius — AutoCAD's Start,End,Radius
+ * method, but resolved like a rubber-band drag rather than a typed sign: the
+ * third point's perpendicular distance from the chord (its sagitta) is the
+ * radius, and which side of the chord it's on is which way the arc bulges —
+ * see `arcFromSagitta`. Dragging past the resulting radius reaches the major
+ * arc on its own, with no separate mode to switch into.
+ */
+export function drawArcStartEndRadius({ ctx, active, data, value }: CommandRun): StepOutcome {
+  if (active.stepIndex === 0) { data.start = value; return 'advance'; }
+  if (active.stepIndex === 1) { data.end = value; return 'advance'; }
+
+  const start = data.start as Vec2, end = data.end as Vec2, third = value as Vec2;
+  const arc = arcFromSagitta(start, end, third);
+  if (!arc) { ctx.log('Arc failed: point must be off the line between start and end.'); return 'stay'; }
+
+  ctx.history.execute(new AddEntityEdit('Arc', ctx.doc.createArc(arc.center, arc.radius, arc.startAngle, arc.sweepAngle)));
+  ctx.log(`Arc created: ${formatPoint(start)} -> ${formatPoint(end)}, r=${arc.radius.toFixed(4)}, ${(arc.sweepAngle * 180 / Math.PI).toFixed(2)}°`);
   return 'advance';
 }
 

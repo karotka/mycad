@@ -11,6 +11,7 @@ import {
 import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './types';
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
+import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
@@ -407,6 +408,19 @@ export class CommandManager {
         if (this.active?.name === 'ARC' && this.active.stepIndex === 2) {
           const angle = Number(input); const center = this.active.data.center as Vec2; const start = this.active.data.start as Vec2;
           if (Number.isFinite(angle) && center && start) { const a = Math.atan2(start.y-center.y,start.x-center.x) + angle*Math.PI/180; const r=dist2(center,start); await this.advanceStep({x:center.x+Math.cos(a)*r,y:center.y+Math.sin(a)*r}); return; }
+        }
+        if (this.active?.name === 'ARC_SER' && this.active.stepIndex === 2) {
+          const typed = Number(input);
+          const start = this.active.data.start as Vec2 | undefined;
+          const end = this.active.data.end as Vec2 | undefined;
+          if (start && end && Number.isFinite(typed)) {
+            // Typed with no mouse involved, so there is no "which side" to read
+            // from a live cursor — the dynamic input box (driven by the mouse)
+            // is what offers both sides; typing here always takes the +90°
+            // side of start→end.
+            const sagitta = sagittaForRadius(dist2(start, end) / 2, 1, typed);
+            if (sagitta !== null) { await this.advanceStep(sagittaPoint(start, end, sagitta)); return; }
+          }
         }
         if ((this.active?.name === 'CIRCLE' || this.active?.name === 'CIRCLE_DIAMETER') && this.active.stepIndex === 1) {
           const entered = Number(input);

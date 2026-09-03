@@ -9,7 +9,7 @@
  */
 import { cloneEntity, expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawArc, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
+import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
@@ -154,6 +154,13 @@ export const COMMANDS = [
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
   { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
+  { name: 'ARC_SER', aliases: ['ASER', 'ARC_SER'], execute: drawArcStartEndRadius, help: 'draw arc by start point, end point, radius', suggest: true, sticky: true, pointInput: true,
+    steps: [
+      { kind: 'point', label: 'Specify arc start point:' },
+      { kind: 'point', label: 'Specify arc end point:' },
+      { kind: 'point', label: 'Specify point on arc, or type a radius:' },
+      { kind: 'done' },
+    ] },
   // Spline (CV): control points shape the curve without it passing through
   // them, same idea as AutoCAD's control-vertex SPLINE — here as a chain of
   // cubic Bezier segments, the first one 4 points, each further one 3 more.

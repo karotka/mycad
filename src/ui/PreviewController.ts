@@ -84,6 +84,23 @@ export class PreviewController {
       else if (active.stepIndex === 2 && active.data.center && active.data.start) this.setPreview({ type: 'arc', data: { center: active.data.center, start: active.data.start, cursor, workPlane: drawingPlane } });
       return;
     }
+    if (active.name === 'ARC_SER' && active.stepIndex === 1 && active.data.start) {
+      // The centre isn't known until the third point (or a typed radius)
+      // fixes it, so there's nothing arc-shaped to preview yet — just the
+      // chord being picked.
+      this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor, workPlane: drawingPlane } });
+      return;
+    }
+    if (active.name === 'ARC_SER' && active.stepIndex === 2 && active.data.start && active.data.end) {
+      const arc = arcFromSagitta(active.data.start as Vec2, active.data.end as Vec2, cursor);
+      if (arc) {
+        this.setPreview({
+          type: 'arcRadius',
+          data: { center: arc.center, radius: arc.radius, startAngle: arc.startAngle, sweepAngle: arc.sweepAngle, workPlane: drawingPlane },
+        });
+      }
+      return;
+    }
     if (active.name === 'BEZIER') {
       // Every already-placed segment shown as the real curve it is, plus one
       // more live segment following the cursor from wherever the chain — and
@@ -364,3 +381,4 @@ import { cloneEntity, transformEntityPoints, type Entity } from '../core/entitie
 import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import { interpolatingBeziers } from '../math/bezierFit';
+import { arcFromSagitta } from '../math/arcFit';

@@ -38,6 +38,7 @@ export interface ViewportPointerHelpers {
   updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
   updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus?: boolean): Vec2;
   updateDynamicCoordinateInput(cursor: Vec2): Vec2;
+  updateDynamicArcInput(start: Vec2, end: Vec2, cursor: Vec2): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -107,7 +108,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput, updateDynamicArcInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -450,6 +451,12 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     if (active?.name === 'POLYGON' && active.stepIndex === 2 && active.data.center) {
       const center = active.data.center as Vec2;
       showPreviewLabel(`Apothem ${Math.hypot(p.x - center.x, p.y - center.y).toFixed(2)} mm`, sx, sy);
+    }
+    if (active?.name === 'ARC_SER' && active.stepIndex === 2 && active.data.start && active.data.end && cadDocument.viewMode === '2d') {
+      const start = active.data.start as Vec2;
+      const end = active.data.end as Vec2;
+      const point = updateDynamicArcInput(start, end, p);
+      updatePreview(point);
     }
     if (active?.name === 'MOVE' && active.stepIndex === 2 && active.data.basePoint) {
       const base = active.data.basePoint as Vec2;

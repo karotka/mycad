@@ -1,6 +1,6 @@
 import type { CommandName } from '../core/commands/CommandManager';
 import {
-  arrayFlyout, circleFlyout, curveFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
+  arcFlyout, arrayFlyout, circleFlyout, curveFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
   modifyTools, primitiveFlyout, solidTools, toolButtons, zoomFlyout,
 } from './toolbar';
 import {
@@ -27,6 +27,7 @@ export interface ShellTools {
   primitive: CommandName;
   circle: CommandName;
   curve: CommandName;
+  arc: CommandName;
   dimension: CommandName;
   zoom: 'ZOOM_ALL' | 'ZOOM_WINDOW';
 }
@@ -40,7 +41,7 @@ export function shellHtml(tools: ShellTools): string {
   return `
   <main class="app">
     <nav class="toolbar" aria-label="CAD tools">
-      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout(tools.circle)}${curveFlyout(tools.curve)}</div>
+      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout(tools.circle)}${arcFlyout(tools.arc)}${curveFlyout(tools.curve)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="2D edit">${toolButtons(editTools)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
@@ -73,6 +74,7 @@ export function shellHtml(tools: ShellTools): string {
       <input class="dyn-dim-input" id="dyn-dim-x" type="text" inputmode="decimal" autocomplete="off" aria-label="X coordinate" hidden />
       <span class="dyn-dim-label" id="dyn-dim-y-prefix" aria-hidden="true" hidden>y:</span>
       <input class="dyn-dim-input" id="dyn-dim-y" type="text" inputmode="decimal" autocomplete="off" aria-label="Y coordinate" hidden />
+      <input class="dyn-dim-input" id="dyn-dim-arc-radius" type="text" inputmode="decimal" autocomplete="off" aria-label="Arc radius" hidden />
       <section class="mtext-editor" id="mtext-editor" hidden>
         <label class="mtext-editor-font">Font<select id="mtext-editor-font">${TEXT_FONT_OPTIONS}</select></label>
         <label class="mtext-editor-height">Height (mm)<input id="mtext-editor-height" type="number" min="0.1" step="0.5" value="2.5" /></label>

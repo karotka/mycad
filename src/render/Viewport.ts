@@ -631,6 +631,15 @@ export class Canvas2DRenderer {
       labelPoint = cursor;
     } else if (preview.type === 'arc') {
       const q=preview.data as {center:Vec2;start:Vec2;cursor:Vec2}; const c=worldToScreen(q.center,w,h,this.pan,this.zoom); const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y); let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);if(sweep<=0)sweep+=Math.PI*2; this.ctx.beginPath();this.ctx.arc(c.x,c.y,r*this.zoom,-Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x),-(Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x)+sweep),true);this.ctx.stroke();
+    } else if (preview.type === 'arcRadius') {
+      // ARC_SER's own rubber-band arc: unlike 'arc' above, the centre and
+      // sweep are already fully resolved (arcFromSagitta), not derived here
+      // from a start point and a live cursor angle around a known centre.
+      const q = preview.data as { center: Vec2; radius: number; startAngle: number; sweepAngle: number };
+      const c = worldToScreen(q.center, w, h, this.pan, this.zoom);
+      this.ctx.beginPath();
+      this.ctx.arc(c.x, c.y, q.radius * this.zoom, -q.startAngle, -(q.startAngle + q.sweepAngle), true);
+      this.ctx.stroke();
     } else if (preview.type === 'bezier') {
       const q=preview.data as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2}; const a=worldToScreen(q.start,w,h,this.pan,this.zoom),b=worldToScreen(q.control1,w,h,this.pan,this.zoom),c=worldToScreen(q.control2,w,h,this.pan,this.zoom),d2=worldToScreen(q.end,w,h,this.pan,this.zoom);this.ctx.beginPath();this.ctx.moveTo(a.x,a.y);this.ctx.bezierCurveTo(b.x,b.y,c.x,c.y,d2.x,d2.y);this.ctx.stroke();
     } else if (preview.type === 'spline') {
