@@ -44,6 +44,7 @@ import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction
 import { createToolActions } from './interaction/ToolActions';
 import { createDynamicRectangleInput } from './interaction/DynamicRectangleInputController';
 import { createDynamicLengthInput } from './interaction/DynamicLengthInputController';
+import { createDynamicCoordinateInput } from './interaction/DynamicCoordinateInputController';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
 import { CadModelApi, type EdgeModifyInput, type ExtrudeInput, type LineSegmentInput, type PressPullInput, type PrimitiveInput, type SelectionMode, type SliceInput, type TransformInput, type UcsInput } from './mcp/CadModelApi';
 import type { PrintColorMode } from './render/SvgExport';
@@ -119,6 +120,9 @@ const dynDimLengthInput = get<HTMLInputElement>('dyn-dim-length');
 const dynDimAngleInput = get<HTMLInputElement>('dyn-dim-angle');
 const dynDimSeparatorLabel = get<HTMLElement>('dyn-dim-length-angle-separator');
 const dynDimDegreeLabel = get<HTMLElement>('dyn-dim-angle-degree');
+const dynDimXInput = get<HTMLInputElement>('dyn-dim-x');
+const dynDimYInput = get<HTMLInputElement>('dyn-dim-y');
+const dynDimXySeparatorLabel = get<HTMLElement>('dyn-dim-xy-separator');
 const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
@@ -420,6 +424,7 @@ function drawFrame(): void {
   syncDynamicUcsLifecycle();
   dynamicRectangleInput.sync();
   dynamicLengthInput.sync();
+  dynamicCoordinateInput.sync();
   const is2d = cadDocument.viewMode === '2d';
   renderer3d.setGridVisible(cadDocument.gridVisible);
   renderer3d.syncCutAreaFrame(cadDocument.gcode);
@@ -634,6 +639,18 @@ const dynamicLengthInput = createDynamicLengthInput({
   },
   onEmptyCommit: () => {
     void commands.submitInput('');
+    redraw();
+    input.focus({ preventScroll: true });
+  },
+});
+const dynamicCoordinateInput = createDynamicCoordinateInput({
+  xInput: dynDimXInput,
+  yInput: dynDimYInput,
+  commaLabel: dynDimXySeparatorLabel,
+  project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  isActive: () => cadDocument.viewMode === '2d' && gripController.draggingCircleRadius() !== null,
+  onCommit: (point) => {
+    gripInteraction.commitTypedPoint(point);
     redraw();
     input.focus({ preventScroll: true });
   },
@@ -1139,6 +1156,10 @@ function updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus = fals
   return dynamicLengthInput.updateDiameter(center, cursor, autoFocus);
 }
 
+function updateDynamicCoordinateInput(cursor: Vec2): Vec2 {
+  return dynamicCoordinateInput.update(cursor);
+}
+
 function positionMeasureMarker(marker: HTMLElement, x: number, y: number): void {
   previewController.showMarker(marker, x, y);
 }
@@ -1260,6 +1281,7 @@ attachViewportPointerHandlers({
     updateDynamicRectangleEdge,
     updateDynamicLengthInput,
     updateDynamicDiameterInput,
+    updateDynamicCoordinateInput,
     positionMeasureMarker,
     positionSnapMarker,
     selectedEntity,

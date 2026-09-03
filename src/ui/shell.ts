@@ -69,6 +69,9 @@ export function shellHtml(tools: ShellTools): string {
       <span class="dyn-dim-label" id="dyn-dim-length-angle-separator" aria-hidden="true" hidden>&lt;</span>
       <input class="dyn-dim-input" id="dyn-dim-angle" type="text" inputmode="decimal" autocomplete="off" aria-label="Angle" hidden />
       <span class="dyn-dim-label" id="dyn-dim-angle-degree" aria-hidden="true" hidden>&deg;</span>
+      <input class="dyn-dim-input" id="dyn-dim-x" type="text" inputmode="decimal" autocomplete="off" aria-label="X coordinate" hidden />
+      <span class="dyn-dim-label" id="dyn-dim-xy-separator" aria-hidden="true" hidden>,</span>
+      <input class="dyn-dim-input" id="dyn-dim-y" type="text" inputmode="decimal" autocomplete="off" aria-label="Y coordinate" hidden />
       <section class="mtext-editor" id="mtext-editor" hidden>
         <label class="mtext-editor-font">Font<select id="mtext-editor-font">${TEXT_FONT_OPTIONS}</select></label>
         <label class="mtext-editor-height">Height (mm)<input id="mtext-editor-height" type="number" min="0.1" step="0.5" value="2.5" /></label>

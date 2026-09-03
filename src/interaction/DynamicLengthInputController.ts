@@ -12,6 +12,12 @@ const ANGLE_OFFSET_PX = 84;
 const SEPARATOR_OFFSET_PX = ANGLE_OFFSET_PX / 2;
 /** Where the "°" after the angle box sits, relative to the angle box itself. */
 const DEGREE_OFFSET_PX = 40;
+/** How far past the circle's own boundary, in screen pixels, the diameter
+ *  box sits — outside the circle rather than at its (world-space) half-
+ *  radius midpoint, which used to bury it inside the shape. A fixed screen
+ *  offset for the same reason the other offsets above are: it stays a
+ *  steady visual gap regardless of zoom. */
+const DIAMETER_BOX_OUTSET_PX = 14;
 
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
@@ -180,7 +186,19 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     lastDiameterMode = true;
     const point = dynamicLengthPoint(center, cursor, radiusFieldsFromDiameterBox());
     if (!lengthOverridden) lengthInput.value = (Math.hypot(point.x - center.x, point.y - center.y) * 2).toFixed(2);
-    const screen = project(dynamicLengthMidpoint(center, point));
+    // Just past the circle's own edge, not the world-space half-radius
+    // midpoint (which buried the box inside the shape) — the outward
+    // direction is worked out in screen space, since a projected circle
+    // is an ellipse under perspective and the world-space radial direction
+    // doesn't generally point the same way on screen.
+    const centerScreen = project(center);
+    const pointScreen = project(point);
+    const dx = pointScreen.x - centerScreen.x, dy = pointScreen.y - centerScreen.y;
+    const outward = Math.hypot(dx, dy) || 1;
+    const screen = {
+      x: pointScreen.x + (dx / outward) * DIAMETER_BOX_OUTSET_PX,
+      y: pointScreen.y + (dy / outward) * DIAMETER_BOX_OUTSET_PX,
+    };
     position(lengthInput, screen);
     angleInput.hidden = true;
     separatorLabel.hidden = true;

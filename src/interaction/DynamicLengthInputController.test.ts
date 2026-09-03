@@ -226,6 +226,18 @@ describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step
     expect(degreeLabel.hidden).toBe(true);
   });
 
+  it('sits just outside the circle\'s own boundary point, not at the (inside) centre-to-point midpoint', () => {
+    const { lengthInput, controller } = setup();
+    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    // project() is (x,y) -> (x*10, y*10): boundary point (3,4) projects to
+    // (30,40), 50px from the projected centre (0,0). The box must sit
+    // farther out than that — never at the (15,20) inside midpoint.
+    const boxX = Number.parseFloat(lengthInput.style.left);
+    const boxY = Number.parseFloat(lengthInput.style.top);
+    const distanceFromCentre = Math.hypot(boxX, boxY);
+    expect(distanceFromCentre).toBeGreaterThan(50);
+  });
+
   it('fixes the point at half the typed diameter — the radius-equivalent distance', () => {
     const { lengthInput, controller } = setup();
     controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });

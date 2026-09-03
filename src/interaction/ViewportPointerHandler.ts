@@ -37,6 +37,7 @@ export interface ViewportPointerHelpers {
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
   updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
   updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus?: boolean): Vec2;
+  updateDynamicCoordinateInput(cursor: Vec2): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
@@ -106,7 +107,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const { openContextMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
     profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -297,6 +298,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       const rectangleFixedEdge = !rectangleFixedCorner && cadDocument.viewMode === '2d' ? gripController.draggingRectangleFixedEdge() : null;
       const lineFixedEnd = !rectangleFixedCorner && !rectangleFixedEdge && cadDocument.viewMode === '2d' ? gripController.draggingLineFixedEnd() : null;
       const circleFixedCenter = !rectangleFixedCorner && !rectangleFixedEdge && !lineFixedEnd && cadDocument.viewMode === '2d' ? gripController.draggingCircleFixedCenter() : null;
+      // Moving a circle by its own centre grip has no fixed point to
+      // measure a distance from — X/Y coordinate boxes take over instead
+      // of the plain toast, matching the shape of that drag.
+      const movingCircleCenter = !rectangleFixedCorner && !rectangleFixedEdge && !lineFixedEnd && !circleFixedCenter
+        && cadDocument.viewMode === '2d' && gripController.draggingCircleRadius() !== null;
       if (rectangleFixedCorner) {
         gripController.update(updateDynamicRectangleInput(rectangleFixedCorner, p));
       } else if (rectangleFixedEdge) {
@@ -313,6 +319,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         // "R … mm · Ø … mm" toast — auto-focused for the same reason as the
         // line-endpoint case above.
         gripController.update(updateDynamicDiameterInput(circleFixedCenter, p, true));
+      } else if (movingCircleCenter) {
+        gripController.update(updateDynamicCoordinateInput(p));
       } else {
         gripController.update(p);
         showDimension(gripController.changedDimension(), sx, sy);
