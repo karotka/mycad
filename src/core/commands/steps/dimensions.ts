@@ -478,12 +478,48 @@ function dedupePoints(points: Vec2[]): Vec2[] {
 }
 
 /**
- * QDIM: dimension a whole selection in one action. Every distinct endpoint,
- * vertex or circle center across the gathered objects becomes one point in a
- * single continuous chain, read along whichever axis the dimension line was
- * pulled across — the same question `linearDimensionRotation` already
- * answers for a plain two-point dimension, generalised over the point set's
- * own bounding box instead of a single pair.
+ * An entity's own connected sides, in its own vertex order — never resorted
+ * by position, since that would scramble a shape that doubles back (an L,
+ * a staircase). Empty for anything without real edges (circle, arc,
+ * ellipse, bezier): those only ever contribute bare points to QDIM.
+ */
+function qdimSegments(entity: Entity): Array<[Vec2, Vec2]> {
+  switch (entity.type) {
+    case 'line': return [[entity.start, entity.end]];
+    case 'rectangle': {
+      const corners = [
+        entity.first,
+        { x: entity.opposite.x, y: entity.first.y },
+        entity.opposite,
+        { x: entity.first.x, y: entity.opposite.y },
+      ];
+      return corners.map((point, index) => [point, corners[(index + 1) % 4]]);
+    }
+    case 'polyline': {
+      const vertices = qdimPoints(entity); // already drops the closing duplicate
+      const segments: Array<[Vec2, Vec2]> = [];
+      for (let index = 0; index < vertices.length - 1; index++) segments.push([vertices[index], vertices[index + 1]]);
+      if (entity.closed && vertices.length > 2) segments.push([vertices.at(-1)!, vertices[0]]);
+      return segments;
+    }
+    case 'octagon': return entity.vertices.map((point, index) => [point, entity.vertices[(index + 1) % entity.vertices.length]]);
+    default: return [];
+  }
+}
+
+/**
+ * QDIM: dimension a whole selection in one action. A shape with more than
+ * one side (a polyline, rectangle, octagon — anything that can double back
+ * on itself) gets one aligned dimension per side, each running in that
+ * side's own direction, from the same dropped dimension-line point: an
+ * aligned dimension already derives its own direction and offset purely
+ * from its own two points (see dimensionGeometry), so reusing one shared
+ * point across differently-angled sides places each one correctly without
+ * any extra math here. A single line, or anything with no real edges at all
+ * (circle, arc, ellipse — and a two-vertex "polyline" that is really just a
+ * line), keeps the original behaviour instead: every distinct point becomes
+ * one entry in a single continuous chain, read along whichever axis the
+ * dimension line was pulled across.
  */
 export function quickDimension(run: CommandRun): StepOutcome {
   const { step, value, data, ctx, gather } = run;
@@ -498,21 +534,37 @@ export function quickDimension(run: CommandRun): StepOutcome {
   }
 
   const entities = (data.entities as Entity[] | undefined) ?? [];
-  const points = dedupePoints(entities.flatMap(qdimPoints));
-  if (points.length < 2) {
+  const offset = value as Vec2;
+  const dimensions = [];
+
+  const multiSided: Entity[] = [];
+  const plain: Entity[] = [];
+  for (const entity of entities) {
+    (qdimSegments(entity).length > 1 ? multiSided : plain).push(entity);
+  }
+
+  for (const entity of multiSided) {
+    for (const [start, end] of qdimSegments(entity)) {
+      dimensions.push(ctx.doc.createDimension(start, end, offset, 'aligned'));
+    }
+  }
+
+  const points = dedupePoints(plain.flatMap(qdimPoints));
+  if (points.length >= 2) {
+    const bounds = {
+      min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
+      max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
+    };
+    const rotation = linearDimensionRotation(bounds.min, bounds.max, offset);
+    const sorted = [...points].sort((a, b) => rotation === 0 ? a.x - b.x : a.y - b.y);
+    for (let index = 0; index < sorted.length - 1; index++) {
+      dimensions.push(ctx.doc.createDimension(sorted[index], sorted[index + 1], offset, 'linear', rotation));
+    }
+  }
+
+  if (dimensions.length === 0) {
     ctx.log('QDIM: the selection has fewer than two distinct points to dimension.');
     return 'advance';
-  }
-  const offset = value as Vec2;
-  const bounds = {
-    min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
-    max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
-  };
-  const rotation = linearDimensionRotation(bounds.min, bounds.max, offset);
-  const sorted = [...points].sort((a, b) => rotation === 0 ? a.x - b.x : a.y - b.y);
-  const dimensions = [];
-  for (let index = 0; index < sorted.length - 1; index++) {
-    dimensions.push(ctx.doc.createDimension(sorted[index], sorted[index + 1], offset, 'linear', rotation));
   }
   ctx.history.execute(new AddEntitiesEdit('Quick Dimension', dimensions));
   ctx.log(`Quick Dimension: ${dimensions.length} dimension(s) created.`);

@@ -3754,6 +3754,73 @@ describe('QDIM command', () => {
     expect(texts).toEqual(['5.00', '5.00', '5.00', '20.00']);
   });
 
+  it('dimensions each side of an L-shaped polyline in its own direction, not by sorted position', async () => {
+    const { doc, manager } = setup();
+    // An L: right along +X, then up along +Y — sorting endpoints by a single
+    // axis would pair (0,0)-(10,10) instead of the two real 10mm sides.
+    const polyline = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], false);
+    doc.entities.push(polyline);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 5, y: 0 }, polyline);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 15, y: 5 });
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    expect(dimensions).toHaveLength(2);
+    expect(dimensions.every((dimension) => dimension.type === 'dimension' && dimension.dimensionKind === 'aligned')).toBe(true);
+    const texts = dimensions.map((dimension) => dimensionGeometry(dimension).text).sort();
+    expect(texts).toEqual(['10.00', '10.00']);
+  });
+
+  it('dimensions every side of a rectangle, four aligned dimensions from one shared offset point', async () => {
+    const { doc, manager } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 4 });
+    doc.entities.push(rectangle);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 5, y: 0 }, rectangle);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 15, y: 2 });
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    expect(dimensions).toHaveLength(4);
+    expect(dimensions.every((dimension) => dimension.type === 'dimension' && dimension.dimensionKind === 'aligned')).toBe(true);
+    const texts = dimensions.map((dimension) => dimensionGeometry(dimension).text).sort();
+    // Lexical sort (default .sort()): '10.00' < '4.00' by first character.
+    expect(texts).toEqual(['10.00', '10.00', '4.00', '4.00']);
+  });
+
+  it('still chains a single line the old way — one segment is not "more than one side"', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(line);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 5, y: 0 }, line);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: -5 });
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    expect(dimensions).toHaveLength(1);
+    expect(dimensions[0]).toMatchObject({ type: 'dimension', dimensionKind: 'linear' });
+  });
+
+  it('combines per-side dimensions for a polyline with the old point-chain for a plain circle in the same selection', async () => {
+    const { doc, manager } = setup();
+    const polyline = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], false);
+    const circle = doc.createCircle({ x: 30, y: 0 }, 2);
+    doc.entities.push(polyline, circle);
+    manager.startCommand('QDIM');
+    await manager.handleClick({ x: 5, y: 0 }, polyline);
+    await manager.handleClick({ x: 30, y: 0 }, circle);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 15, y: 5 });
+
+    const dimensions = doc.entities.filter((entity) => entity.type === 'dimension');
+    // Two aligned sides from the polyline; the lone circle centre is the only
+    // point left over, too few to chain into a linear dimension on its own.
+    expect(dimensions).toHaveLength(2);
+    expect(dimensions.every((dimension) => dimension.type === 'dimension' && dimension.dimensionKind === 'aligned')).toBe(true);
+  });
+
   it('undoes every generated dimension in one step', async () => {
     const { doc, history, manager } = setup();
     const a = doc.createCircle({ x: 0, y: 0 }, 2);
