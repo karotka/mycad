@@ -1,7 +1,7 @@
 import type { CommandName } from '../core/commands/CommandManager';
 import {
   arcFlyout, arrayFlyout, circleFlyout, curveFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
-  modifyTools, primitiveFlyout, solidTools, toolButtons, zoomFlyout,
+  mlineFlyout, modifyTools, primitiveFlyout, solidTools, toolButtons, zoomFlyout,
 } from './toolbar';
 import {
   STROKE_FONT, STROKE_FONT_DUPLEX, STROKE_FONT_GOTHIC, STROKE_FONT_SCRIPT, STROKE_FONT_TRIPLEX,
@@ -29,6 +29,7 @@ export interface ShellTools {
   curve: CommandName;
   arc: CommandName;
   dimension: CommandName;
+  mline: CommandName;
   zoom: 'ZOOM_ALL' | 'ZOOM_WINDOW';
 }
 
@@ -41,7 +42,7 @@ export function shellHtml(tools: ShellTools): string {
   return `
   <main class="app">
     <nav class="toolbar" aria-label="CAD tools">
-      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${circleFlyout(tools.circle)}${arcFlyout(tools.arc)}${curveFlyout(tools.curve)}</div>
+      <div class="tool-group" role="group" aria-label="Draw">${toolButtons(drawTools)}${mlineFlyout(tools.mline)}${circleFlyout(tools.circle)}${arcFlyout(tools.arc)}${curveFlyout(tools.curve)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="2D edit">${toolButtons(editTools)}</div>
       <div class="tool-divider" aria-hidden="true"></div>

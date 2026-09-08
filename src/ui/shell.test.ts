@@ -10,6 +10,7 @@ describe('visual style controls', () => {
       curve: 'BEZIER',
       arc: 'ARC',
       dimension: 'MEASURE',
+      mline: 'MLINE',
       zoom: 'ZOOM_ALL',
     });
     const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-visual-style]')];
@@ -27,6 +28,7 @@ describe('drafting controls', () => {
       curve: 'BEZIER',
       arc: 'ARC',
       dimension: 'MEASURE',
+      mline: 'MLINE',
       zoom: 'ZOOM_ALL',
     });
 
@@ -36,7 +38,7 @@ describe('drafting controls', () => {
   });
 
   it('orders one-shot OSNAP modes and includes Midpoint', () => {
-    document.body.innerHTML = shellHtml({ primitive: 'BOX', circle: 'CIRCLE', curve: 'BEZIER', arc: 'ARC', dimension: 'MEASURE', zoom: 'ZOOM_ALL' });
+    document.body.innerHTML = shellHtml({ primitive: 'BOX', circle: 'CIRCLE', curve: 'BEZIER', arc: 'ARC', dimension: 'MEASURE', mline: 'MLINE', zoom: 'ZOOM_ALL' });
     const modes = [...document.querySelectorAll<HTMLButtonElement>('.one-shot-snaps [data-grip-mode]')]
       .map((button) => button.dataset.gripMode);
     expect(modes.slice(0, 8)).toEqual([

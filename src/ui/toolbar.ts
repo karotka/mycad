@@ -8,7 +8,16 @@ import { toolIcon } from './toolIcons';
  */
 
 export const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Mline', 'MLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
+];
+// Draw and its three edit operations together — MLINE is the default click,
+// holding for more reaches MLCUT/MLWELD/MLCORNER, so the whole multiline
+// toolset lives under one icon instead of scattering four buttons.
+export const mlineTools: Array<[string, string, CommandName]> = [
+  ['Mline', 'Draw a multiline using the current MLSTYLE', 'MLINE'],
+  ['Cut', 'MLEDIT — cut an open multiline into two', 'MLCUT'],
+  ['Weld', 'MLEDIT — weld two multilines sharing an endpoint', 'MLWELD'],
+  ['Corner', 'MLEDIT — trim two crossing multilines back to their corner', 'MLCORNER'],
 ];
 export const circleTools: Array<[string, string, CommandName]> = [
   ['Circle', 'Circle by radius', 'CIRCLE'],
@@ -45,7 +54,6 @@ export const dimensionTools: Array<[string, string, CommandName]> = [
 export const zoomTools: Array<[string, 'ZOOM_ALL' | 'ZOOM_WINDOW']> = [['Zoom All', 'ZOOM_ALL'], ['Zoom Window', 'ZOOM_WINDOW']];
 export const editTools: Array<[string, CommandName]> = [
   ['Extend', 'EXTEND'], ['Trim', 'TRIM'], ['Join', 'JOIN'], ['Explode', 'EXPLODE'], ['Offset', 'OFFSET'],
-  ['Mline Cut', 'MLCUT'], ['Mline Weld', 'MLWELD'], ['Mline Corner', 'MLCORNER'],
 ];
 
 export function toolButtons(tools: Array<[string, CommandName]>): string {
@@ -86,6 +94,12 @@ export function arcFlyout(currentArc: CommandName): string {
   const current = arcTools.find(([, , command]) => command === currentArc) ?? arcTools[0];
   const [label, tooltip] = current;
   return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="arc-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentArc)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="arc-flyout" hidden>${arcTools.map(([name, tooltipText, command]) => `<button data-arc-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
+}
+
+export function mlineFlyout(currentMline: CommandName): string {
+  const current = mlineTools.find(([, , command]) => command === currentMline) ?? mlineTools[0];
+  const [label, tooltip] = current;
+  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="mline-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentMline)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="mline-flyout" hidden>${mlineTools.map(([name, tooltipText, command]) => `<button data-mline-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
 }
 
 export function curveFlyout(currentCurve: CommandName): string {
