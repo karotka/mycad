@@ -136,6 +136,7 @@ export function shellHtml(tools: ShellTools): string {
       <button class="bar-toggle" id="properties-toggle" title="Object Properties (Ctrl/⌘+1)" aria-label="Object Properties">PROPERTIES</button>
       <button class="bar-toggle" id="layer-toggle" title="Layers" aria-label="Layers">LAYERS <span id="layer-current">0</span></button>
       <button class="bar-toggle" id="block-toggle" title="Block library" aria-label="Block library">BLOCKS <span id="block-count">0</span></button>
+      <button class="bar-toggle" id="mline-style-toggle" title="Multiline styles (MLSTYLE)" aria-label="Multiline styles">MLSTYLE</button>
       <span class="coords" id="coords">X: 0.0000 mm Y: 0.0000 mm</span>
       <div class="drafting-status" role="group" aria-label="Drafting modes">
         <button id="osnap-toggle" title="Object Snap (F3)" aria-label="Object Snap (F3)">OSNAP <kbd>F3</kbd></button>
@@ -170,6 +171,10 @@ export function shellHtml(tools: ShellTools): string {
       <section class="layer-panel block-panel" id="block-panel" hidden>
         <header><strong>Blocks</strong><span class="panel-header-actions"><button id="block-create" title="Create block from selection">+</button><button id="block-purge" title="Delete every block definition not reachable from anything placed in the drawing">Purge</button><button id="block-close" title="Close">×</button></span></header>
         <div class="block-list" id="block-list"></div>
+      </section>
+      <section class="layer-panel mline-style-panel" id="mline-style-panel" hidden>
+        <header><strong>Multiline Styles</strong><span class="panel-header-actions"><button id="mline-style-create" title="New MLSTYLE">+</button><button id="mline-style-close" title="Close">×</button></span></header>
+        <div class="mline-style-list" id="mline-style-list"></div>
       </section>
       <section class="properties-panel" id="properties-panel" hidden>
         <header><strong>Object Properties</strong><button id="properties-close" title="Close">×</button></header>

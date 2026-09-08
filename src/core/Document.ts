@@ -222,7 +222,7 @@ export class Document {
   /** Adds a new MLSTYLE, starting from STANDARD's own element layout — the
    *  natural thing to tweak from, same as AutoCAD's New Style dialog. */
   addMlineStyle(name?: string): MlineStyle {
-    let number = this.mlineStyles.length + 1;
+    let number = 1;
     while (this.mlineStyles.some((item) => item.name === `MLSTYLE${number}`)) number++;
     let id = genId('mlinestyle');
     while (this.mlineStyles.some((item) => item.id === id)) id = genId('mlinestyle');

@@ -14,6 +14,7 @@ import { GripController, type GripMode } from './interaction/GripController';
 import type { ProjectViewState } from './io/ProjectIO';
 import { LayerController } from './ui/LayerController';
 import { BlockController } from './ui/BlockController';
+import { MlineStyleController } from './ui/MlineStyleController';
 import { WindowDragController } from './interaction/WindowDragController';
 import { type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
 import { ViewportNavigationController } from './interaction/ViewportNavigationController';
@@ -133,6 +134,8 @@ const layerPanel = get<HTMLElement>('layer-panel');
 const layerList = get<HTMLElement>('layer-list');
 const blockPanel = get<HTMLElement>('block-panel');
 const blockList = get<HTMLElement>('block-list');
+const mlineStylePanel = get<HTMLElement>('mline-style-panel');
+const mlineStyleList = get<HTMLElement>('mline-style-list');
 const propertiesPanel = get<HTMLElement>('properties-panel');
 const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
@@ -701,6 +704,15 @@ const blockController = new BlockController(
   },
 );
 get('block-purge').addEventListener('click', () => commands.startCommand('PURGEBLOCKS'));
+const mlineStyleController = new MlineStyleController(
+  cadDocument,
+  mlineStylePanel,
+  mlineStyleList,
+  get('mline-style-toggle'),
+  get('mline-style-create'),
+  get('mline-style-close'),
+  { log },
+);
 const drawingInteraction = new DrawingInteractionController(commands);
 const pointResolver = createPointResolver({
   doc: cadDocument,
@@ -1265,6 +1277,7 @@ cadDocument.subscribe(() => {
   namedUcsController.render();
   if (layerController.isOpen) layerController.render();
   blockController.render();
+  if (mlineStyleController.isOpen) mlineStyleController.render();
   if (propertiesController.isOpen) propertiesController.render();
   settingsController.renderActive();
   modelTreeController.render();
@@ -1476,6 +1489,7 @@ viewport.addEventListener('pointerdown', () => {
   modelTreeController.close();
   layerController.close();
   blockController.close();
+  mlineStyleController.close();
   propertiesController.close();
 });
 

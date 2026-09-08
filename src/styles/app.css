@@ -786,6 +786,31 @@ html, body, #app {
 }
 .block-name:focus { border-color: #67c9ff; background: #11161b; color: #fff; }
 .block-copy small { display: block; overflow: hidden; padding: 0 4px; color: #76838e; font: 9px 'SF Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+
+/* MLSTYLE manager — same compact panel language as Layers/Blocks. */
+.mline-style-panel { width: 330px; padding: 6px; }
+.mline-style-list { max-height: 420px; overflow-y: auto; border-top: 1px solid #343d46; }
+.mline-style-item { border-bottom: 1px solid #2d353d; }
+.mline-style-item.active { box-shadow: inset 2px 0 #67c9ff; }
+.mline-style-header { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px 24px; align-items: center; min-height: 29px; }
+.mline-style-header:hover { background: #242d35; }
+.mline-style-activate { border: 0; background: transparent; color: #67c9ff; font-size: 13px; cursor: pointer; }
+.mline-style-name { min-width: 0; height: 23px; padding: 2px 5px; border: 1px solid transparent; background: transparent; color: #cbd5df; text-align: left; font: 11px 'SF Mono', monospace; outline: none; }
+.mline-style-name:focus { border-color: #67c9ff; background: #12171c; color: #fff; }
+.mline-style-name[readonly] { color: #8f9aa4; }
+.mline-style-name:disabled { color: #566069; }
+.mline-style-expand { border: 0; background: transparent; color: #8f9aa4; cursor: pointer; }
+.mline-style-remove { border: 0; background: transparent; color: #e18b8b; font-size: 15px; line-height: 1; cursor: pointer; }
+.mline-style-remove:hover:not(:disabled) { background: #672b31; color: #fff; }
+.mline-style-remove:disabled { color: #4e5861; cursor: default; }
+.mline-style-elements { padding: 2px 4px 8px 24px; }
+.mline-style-element { display: grid; grid-template-columns: 1fr 1fr minmax(0, 1.4fr) 20px; gap: 4px; align-items: center; padding: 2px 0; }
+.mline-style-element input { min-width: 0; height: 21px; padding: 0 5px; border: 1px solid #3a444d; border-radius: 2px; background: #12171c; color: #cbd5df; font: 10px 'SF Mono', monospace; }
+.mline-style-element input:focus { border-color: #67c9ff; outline: none; }
+.mline-style-element button { border: 0; background: transparent; color: #e18b8b; cursor: pointer; }
+.mline-style-element button:disabled { color: #4e5861; cursor: default; }
+.mline-style-add-element { margin-top: 2px; padding: 3px 6px; border: 1px dashed #3a444d; border-radius: 2px; background: transparent; color: #8f9aa4; font: 10px 'SF Mono', monospace; cursor: pointer; }
+.mline-style-add-element:hover { border-color: #67c9ff; color: #fff; }
 .block-row > button { height: 30px; border: 0; background: transparent; color: #aebbc6; cursor: pointer; }
 .block-insert { font-size: 20px; line-height: 1; }
 .block-insert:hover { background: #094771; color: #fff; }
