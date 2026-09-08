@@ -17,6 +17,7 @@ import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPl
 import { explodeObjects } from './steps/explode';
 import { deleteFaceStep, extrudeProfileStep, modifyEdgeStep, pressPullStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
+import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
 import { arrayPolar, arrayRectangular } from './steps/array';
 import { exportStepSelection, exportStlSelection } from './steps/export';
@@ -272,6 +273,19 @@ export const COMMANDS = [
       // Too few to join is finishJoin's message to give; it would only be echoed here.
       if (lines.length >= 2) ctx.log(`${lines.length} preselected object(s). Joining selection.`);
     } },
+  { name: 'MLCUT', aliases: ['MLC', 'MLCUT'], execute: mlineCut, help: 'cut an open multiline into two at a point', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select multiline to cut:' }, { kind: 'point', label: 'Specify cut point:' }, { kind: 'done' }],
+    data: () => ({}) },
+  { name: 'MLWELD', aliases: ['MLW', 'MLWELD'], execute: mlineWeld, help: 'weld two multilines sharing an endpoint into one', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select first multiline:' }, { kind: 'entity', label: 'Select second multiline:' }, { kind: 'done' }],
+    data: () => ({}) },
+  { name: 'MLCORNER', aliases: ['MLCO', 'MLCORNER'], execute: mlineCorner, help: 'trim two crossing multilines back to their corner', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select first multiline (pick the side to keep):' },
+      { kind: 'entity', label: 'Select second multiline (pick the side to keep):' },
+      { kind: 'done' },
+    ],
+    data: () => ({}) },
   { name: 'EXPLODE', aliases: ['X', 'EXPLODE'], execute: explodeObjects, help: 'break compound objects into parts', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),

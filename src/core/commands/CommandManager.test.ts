@@ -125,7 +125,7 @@ describe('CommandManager history integration', () => {
   });
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
-    expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR']);
+    expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR', 'MLCUT', 'MLWELD', 'MLCORNER']);
     expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
@@ -2390,6 +2390,93 @@ describe('MLINE command', () => {
     await manager.submitInput('');
     expect(doc.entities).toHaveLength(0);
     expect(log).toHaveBeenCalledWith('An MLINE needs at least two points.');
+  });
+});
+
+describe('MLCUT command', () => {
+  it('cuts a selected mline into two at the clicked point, undoably', async () => {
+    const { doc, history, manager } = setup();
+    const mline = doc.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], false, doc.mlineStyles[0]);
+    doc.addEntity(mline);
+
+    manager.startCommand('MLCUT');
+    await manager.handleClick({ x: 5, y: 0 }, mline);
+    await manager.handleClick({ x: 10, y: 5 });
+
+    const pieces = doc.entities.filter((entity) => entity.type === 'mline');
+    expect(pieces).toHaveLength(2);
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].id).toBe(mline.id);
+  });
+
+  it('stays put and logs a reason when the cut point is unusable', async () => {
+    const { doc, log, manager } = setup();
+    const mline = doc.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }], true, doc.mlineStyles[0]);
+    doc.addEntity(mline);
+
+    manager.startCommand('MLCUT');
+    await manager.handleClick({ x: 5, y: 0 }, mline);
+    await manager.handleClick({ x: 5, y: 0 });
+
+    expect(doc.entities).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith('MLCUT failed: pick a point along an open multiline, away from its ends.');
+  });
+});
+
+describe('MLWELD command', () => {
+  it('welds two selected mlines sharing an endpoint into one, undoably', async () => {
+    const { doc, history, manager } = setup();
+    const a = doc.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false, doc.mlineStyles[0]);
+    const b = doc.createMline([{ x: 10, y: 0 }, { x: 20, y: 0 }], false, doc.mlineStyles[0]);
+    doc.addEntity(a);
+    doc.addEntity(b);
+
+    manager.startCommand('MLWELD');
+    await manager.handleClick({ x: 5, y: 0 }, a);
+    await manager.handleClick({ x: 15, y: 0 }, b);
+
+    const remaining = doc.entities.filter((entity) => entity.type === 'mline');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].type === 'mline' && remaining[0].vertices).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }]);
+    expect(history.undo()).toBe(true);
+    expect(doc.entities.filter((entity) => entity.type === 'mline')).toHaveLength(2);
+  });
+
+  it('refuses two mlines with incompatible MLSTYLE layouts', async () => {
+    const { doc, log, manager } = setup();
+    const otherStyle = doc.addMlineStyle('Thin');
+    doc.updateMlineStyleElement(otherStyle.id, 0, { offset: 2 });
+    const a = doc.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false, doc.mlineStyles[0]);
+    const b = doc.createMline([{ x: 10, y: 0 }, { x: 20, y: 0 }], false, otherStyle);
+    doc.addEntity(a);
+    doc.addEntity(b);
+
+    manager.startCommand('MLWELD');
+    await manager.handleClick({ x: 5, y: 0 }, a);
+    await manager.handleClick({ x: 15, y: 0 }, b);
+
+    expect(doc.entities.filter((entity) => entity.type === 'mline')).toHaveLength(2);
+    expect(log).toHaveBeenCalledWith('MLWELD failed: the two multilines must share an endpoint and use matching MLSTYLE offsets.');
+  });
+});
+
+describe('MLCORNER command', () => {
+  it('trims two crossing mlines back to their corner, keeping the side each was picked on', async () => {
+    const { doc, history, manager } = setup();
+    const a = doc.createMline([{ x: 0, y: 5 }, { x: 20, y: 5 }], false, doc.mlineStyles[0]);
+    const b = doc.createMline([{ x: 10, y: 0 }, { x: 10, y: 20 }], false, doc.mlineStyles[0]);
+    doc.addEntity(a);
+    doc.addEntity(b);
+
+    manager.startCommand('MLCORNER');
+    await manager.handleClick({ x: 2, y: 5 }, a);
+    await manager.handleClick({ x: 10, y: 2 }, b);
+
+    expect(doc.getEntity(a.id)).toMatchObject({ vertices: [{ x: 0, y: 5 }, { x: 10, y: 5 }] });
+    expect(doc.getEntity(b.id)).toMatchObject({ vertices: [{ x: 10, y: 0 }, { x: 10, y: 5 }] });
+    expect(history.undo()).toBe(true);
+    expect(doc.getEntity(a.id)).toMatchObject({ vertices: [{ x: 0, y: 5 }, { x: 20, y: 5 }] });
   });
 });
 
