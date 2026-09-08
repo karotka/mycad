@@ -11,6 +11,7 @@ import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, 
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 import { hatchPatternSegments } from '../../io/DxfHatch';
+import { mlineOffsetLines } from './mline';
 
 export interface EntityPath {
   points: Vec2[];
@@ -48,6 +49,10 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
       }];
     case 'octagon':
       return [{ points: [...entity.vertices], closed: true }];
+    case 'mline':
+      return mlineOffsetLines(entity)
+        .filter((points) => points.length >= 2)
+        .map((points) => ({ points, closed: entity.closed }));
     case 'circle': {
       const points: Vec2[] = [];
       for (let index = 0; index < segments; index++) {

@@ -1,3 +1,5 @@
+import type { MlineElement } from './entities/types';
+
 export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'node' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'tangent' | 'nearest';
 
 export interface DraftingSettings {
@@ -35,6 +37,35 @@ export interface HatchSettings {
 
 export function defaultHatchSettings(): HatchSettings {
   return { pattern: 'lines', angle: 45, spacing: 2 };
+}
+
+/**
+ * A named MLINE style, kept on the Document (and the project file) the same
+ * way named UCSes and layers are — so MLINE can offer AutoCAD's MLSTYLE
+ * workflow: pick an active style, then draw against it. Drawn entities take a
+ * one-time snapshot of `elements` (see MlineEntity.elements in entities/types.ts);
+ * editing a style afterwards never reaches back into mlines already drawn with it.
+ */
+export interface MlineStyle {
+  id: string;
+  name: string;
+  elements: MlineElement[];
+  startCap: 'none' | 'line';
+  endCap: 'none' | 'line';
+}
+
+/** Every document always has this one, undeletable — AutoCAD's own MLSTYLE
+ *  default is likewise called STANDARD and cannot be removed. */
+export const STANDARD_MLINE_STYLE_ID = 'standard';
+
+export function defaultMlineStyles(): MlineStyle[] {
+  return [{
+    id: STANDARD_MLINE_STYLE_ID,
+    name: 'STANDARD',
+    elements: [{ offset: 0.5, aci: 256, linetype: 'Continuous' }, { offset: -0.5, aci: 256, linetype: 'Continuous' }],
+    startCap: 'none',
+    endCap: 'none',
+  }];
 }
 
 /**

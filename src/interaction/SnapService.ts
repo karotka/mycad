@@ -213,7 +213,7 @@ function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
   else if (entity.type === 'rectangle') {
     points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
     closed = true;
-  } else if (entity.type === 'polyline' || entity.type === 'octagon') {
+  } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
     points = entity.vertices;
     closed = entity.type === 'octagon' || entity.closed;
   } else if (entity.type === 'circle') {
@@ -452,8 +452,8 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
   else if (entity.type === 'rectangle') {
     [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]
       .forEach((point) => add(entity, point));
-  } else if (entity.type === 'polyline' || entity.type === 'octagon') {
-    const vertices = entity.type === 'polyline' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
+  } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
+    const vertices = entity.type !== 'octagon' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
     vertices.forEach((point) => add(entity, point));
   } else if (entity.type === 'arc' || entity.type === 'bezier') {
     const points = curvePoints(entity, 2);
@@ -477,8 +477,8 @@ function addEntityMiddles(entity: Entity, add: (entity: Entity, point: Vec2) => 
   else if (entity.type === 'rectangle') {
     const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
     corners.forEach((point, index) => add(entity, midpoint(point, corners[(index + 1) % corners.length])));
-  } else if (entity.type === 'polyline' || entity.type === 'octagon') {
-    const vertices = entity.type === 'polyline' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
+  } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
+    const vertices = entity.type !== 'octagon' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
     const segmentCount = entity.type === 'octagon' || entity.closed ? vertices.length : vertices.length - 1;
     for (let index = 0; index < segmentCount; index++) add(entity, midpoint(vertices[index], vertices[(index + 1) % vertices.length]));
   }

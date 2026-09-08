@@ -3,7 +3,7 @@ import { cloneBlockDefinition, ensureIdAbove, type BlockDefinition, type Entity,
 import type { AffineTransform3 } from '../core/geometry/GeometryKernel';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type ObjectSnapMode } from '../core/settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, defaultMlineStyles, STANDARD_MLINE_STYLE_ID, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type MlineStyle, type ObjectSnapMode } from '../core/settings';
 import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 
 export interface ProjectViewState {
@@ -79,6 +79,8 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
       dimensionStyle: doc.dimensionStyle,
       gcode: doc.gcode,
       hatch: doc.hatch,
+      mlineStyles: doc.mlineStyles,
+      currentMlineStyleId: doc.currentMlineStyleId,
       view,
     },
     blockDefinitions,
@@ -300,6 +302,11 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.dimensionStyle = loadDimensionStyle(settings.dimensionStyle);
     doc.gcode = loadGcodeOptions(settings.gcode);
     doc.hatch = loadHatchSettings(settings.hatch);
+    doc.mlineStyles = loadMlineStyles(settings.mlineStyles);
+    doc.currentMlineStyleId = typeof settings.currentMlineStyleId === 'string'
+      && doc.mlineStyles.some((style) => style.id === settings.currentMlineStyleId)
+      ? settings.currentMlineStyleId
+      : doc.mlineStyles[0].id;
     doc.namedWorkPlanes = loadNamedWorkPlanes(settings.namedWorkPlanes);
     const activeNamed = typeof settings.activeNamedWorkPlaneId === 'string'
       ? doc.namedWorkPlanes.find((item) => item.id === settings.activeNamedWorkPlaneId)
@@ -472,6 +479,45 @@ function loadHatchSettings(value: unknown): HatchSettings {
     angle: typeof raw.angle === 'number' && Number.isFinite(raw.angle) ? raw.angle : defaults.angle,
     spacing: typeof raw.spacing === 'number' && Number.isFinite(raw.spacing) && raw.spacing > 0 ? raw.spacing : defaults.spacing,
   };
+}
+
+/** A single element within a loaded MLSTYLE, validated field by field —
+ *  a malformed one is dropped rather than sinking the whole style. */
+function loadMlineStyleElement(value: unknown): MlineStyle['elements'][number] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { offset?: unknown; aci?: unknown; linetype?: unknown };
+  if (typeof raw.offset !== 'number' || !Number.isFinite(raw.offset)) return undefined;
+  return {
+    offset: raw.offset,
+    aci: typeof raw.aci === 'number' && Number.isInteger(raw.aci) && raw.aci >= 0 && raw.aci <= 256 ? raw.aci : 256,
+    linetype: typeof raw.linetype === 'string' && raw.linetype.trim() ? raw.linetype.trim() : 'Continuous',
+  };
+}
+
+/** Named MLINE styles from the project file — always including STANDARD, so
+ *  a file saved without one (or an older file with none at all) still has an
+ *  undeletable default MLINE can fall back to. */
+function loadMlineStyles(value: unknown): MlineStyle[] {
+  const result: MlineStyle[] = [];
+  const ids = new Set<string>();
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      if (!candidate || typeof candidate !== 'object') continue;
+      const raw = candidate as { id?: unknown; name?: unknown; elements?: unknown; startCap?: unknown; endCap?: unknown };
+      const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+      const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+      const elements = Array.isArray(raw.elements) ? raw.elements.map(loadMlineStyleElement).filter((el): el is MlineStyle['elements'][number] => el !== undefined) : [];
+      if (!id || ids.has(id) || !name || elements.length === 0) continue;
+      ids.add(id);
+      result.push({
+        id, name, elements,
+        startCap: raw.startCap === 'line' ? 'line' : 'none',
+        endCap: raw.endCap === 'line' ? 'line' : 'none',
+      });
+    }
+  }
+  if (!result.some((style) => style.id === STANDARD_MLINE_STYLE_ID)) result.unshift(defaultMlineStyles()[0]);
+  return result;
 }
 
 function validViewState(value: unknown): value is ProjectViewState {

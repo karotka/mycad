@@ -3,7 +3,7 @@ import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '..
 import { isStrokeFont, strokeTextHeight, strokeTextWidth } from '../text/strokeFont';
 import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
 
-export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert';
+export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert' | 'mline';
 
 export interface EntityBase {
   id: string;
@@ -71,6 +71,28 @@ export interface PolylineEntity extends EntityBase {
   type: 'polyline';
   vertices: Vec2[];
   closed: boolean;
+}
+/** One parallel line of an MLINE, offset from the shared centerline it and its
+ *  siblings are drawn against. */
+export interface MlineElement {
+  /** Signed perpendicular distance from the centerline. */
+  offset: number;
+  aci: number;
+  linetype: string;
+}
+export interface MlineEntity extends EntityBase {
+  type: 'mline';
+  vertices: Vec2[];
+  closed: boolean;
+  /** The MLSTYLE this was drawn with, at creation time — a label only.
+   *  `elements` below is the actual resolved snapshot; editing the style
+   *  afterwards does not retroactively change entities already drawn with
+   *  it, same as AutoCAD without a REGEN. */
+  styleName: string;
+  justification: 'top' | 'zero' | 'bottom';
+  startCap: 'none' | 'line';
+  endCap: 'none' | 'line';
+  elements: MlineElement[];
 }
 export interface ArcEntity extends EntityBase { type: 'arc'; center: Vec2; radius: number; startAngle: number; sweepAngle: number; }
 /** One cubic run: `control1`/`control2` shape it, `end` is where it meets the
@@ -174,7 +196,7 @@ export interface InsertEntity extends EntityBase {
   definition: BlockDefinition;
 }
 
-export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | HatchEntity | TextEntity | DimensionEntity | InsertEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | HatchEntity | TextEntity | DimensionEntity | InsertEntity | MlineEntity;
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -764,6 +786,7 @@ function computeExpandedInsertEntities(insert: InsertEntity): Entity[] {
       } as PolylineEntity; break;
       case 'octagon': entity = { ...cloneEntity(source), type: 'polyline', vertices: source.vertices.map(at), closed: true } as PolylineEntity; break;
       case 'polyline': entity = { ...cloneEntity(source), vertices: source.vertices.map(at) }; break;
+      case 'mline': entity = { ...cloneEntity(source), vertices: source.vertices.map(at) }; break;
       case 'circle': {
         const xAxis = transformVector({ x: source.radius, y: 0 });
         const yAxis = transformVector({ x: 0, y: source.radius });
@@ -1009,6 +1032,20 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       }
       return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
     }
+    case 'mline': {
+      // A conservative box — the centerline's own extent padded by the widest
+      // element offset — rather than the exact offset-line geometry, so this
+      // stays free of a dependency on the offset math in commands/steps/edit2d.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const v of e.vertices) {
+        minX = Math.min(minX, v.x);
+        minY = Math.min(minY, v.y);
+        maxX = Math.max(maxX, v.x);
+        maxY = Math.max(maxY, v.y);
+      }
+      const pad = Math.max(0, ...e.elements.map((element) => Math.abs(element.offset)));
+      return { min: { x: minX - pad, y: minY - pad }, max: { x: maxX + pad, y: maxY + pad } };
+    }
     case 'hatch': {
       const points = e.loops.flat();
       if (points.length === 0) return { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
@@ -1127,6 +1164,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
     case 'octagon':
       return e.vertices;
     case 'polyline':
+    case 'mline':
       return e.vertices;
     case 'hatch': return e.loops.flat();
     case 'arc': return [e.center, ...curvePoints(e, 2)];
@@ -1173,6 +1211,7 @@ export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity 
       copy.vertices = copy.vertices.map(fn);
       break;
     case 'polyline':
+    case 'mline':
       copy.vertices = copy.vertices.map(fn);
       break;
     case 'hatch':

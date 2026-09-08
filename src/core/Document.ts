@@ -23,8 +23,10 @@ import {
   type Solid,
   type SolidFeature,
   type SolidMesh,
+  type MlineElement,
+  type MlineEntity,
 } from './entities/types';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings } from './settings';
+import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, defaultMlineStyles, STANDARD_MLINE_STYLE_ID, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type MlineStyle } from './settings';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci, rgbToAci } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from './lineStyles';
 
@@ -92,6 +94,9 @@ export class Document {
   dimensionStyle: DimensionStyle = defaultDimensionStyle();
   gcode: GcodeOptions = defaultGcodeOptions();
   hatch: HatchSettings = defaultHatchSettings();
+  /** Named MLINE styles, like AutoCAD's MLSTYLE — see settings.ts. */
+  mlineStyles: MlineStyle[] = defaultMlineStyles();
+  currentMlineStyleId: string = STANDARD_MLINE_STYLE_ID;
 
   private listeners: Array<(doc: Document) => void> = [];
   private transactionDepth = 0;
@@ -212,6 +217,77 @@ export class Document {
     this.activeNamedWorkPlaneId = null;
     this.activeWorkPlane = cloneWorkPlane(WORLD_WORK_PLANE);
     this.notify();
+  }
+
+  /** Adds a new MLSTYLE, starting from STANDARD's own element layout — the
+   *  natural thing to tweak from, same as AutoCAD's New Style dialog. */
+  addMlineStyle(name?: string): MlineStyle {
+    let number = this.mlineStyles.length + 1;
+    while (this.mlineStyles.some((item) => item.name === `MLSTYLE${number}`)) number++;
+    let id = genId('mlinestyle');
+    while (this.mlineStyles.some((item) => item.id === id)) id = genId('mlinestyle');
+    const item: MlineStyle = {
+      id,
+      name: name?.trim() || `MLSTYLE${number}`,
+      elements: [{ offset: 0.5, aci: 256, linetype: 'Continuous' }, { offset: -0.5, aci: 256, linetype: 'Continuous' }],
+      startCap: 'none',
+      endCap: 'none',
+    };
+    this.mlineStyles.push(item);
+    this.notify();
+    return item;
+  }
+
+  renameMlineStyle(id: string, name: string): boolean {
+    const item = this.mlineStyles.find((candidate) => candidate.id === id);
+    const trimmed = name.trim();
+    if (!item || !trimmed || item.name === trimmed) return false;
+    item.name = trimmed;
+    this.notify();
+    return true;
+  }
+
+  /** Refuses to remove STANDARD (undeletable, like AutoCAD's) or whichever
+   *  style is currently active — drop the active style first. */
+  removeMlineStyle(id: string): boolean {
+    if (id === STANDARD_MLINE_STYLE_ID || id === this.currentMlineStyleId) return false;
+    const index = this.mlineStyles.findIndex((candidate) => candidate.id === id);
+    if (index < 0) return false;
+    this.mlineStyles.splice(index, 1);
+    this.notify();
+    return true;
+  }
+
+  setCurrentMlineStyle(id: string): boolean {
+    if (!this.mlineStyles.some((item) => item.id === id)) return false;
+    this.currentMlineStyleId = id;
+    this.notify();
+    return true;
+  }
+
+  addMlineStyleElement(id: string): boolean {
+    const style = this.mlineStyles.find((item) => item.id === id);
+    if (!style) return false;
+    style.elements.push({ offset: 0, aci: 256, linetype: 'Continuous' });
+    this.notify();
+    return true;
+  }
+
+  /** Keeps at least one element — an MLSTYLE with none would draw nothing. */
+  removeMlineStyleElement(id: string, index: number): boolean {
+    const style = this.mlineStyles.find((item) => item.id === id);
+    if (!style || style.elements.length <= 1 || index < 0 || index >= style.elements.length) return false;
+    style.elements.splice(index, 1);
+    this.notify();
+    return true;
+  }
+
+  updateMlineStyleElement(id: string, index: number, patch: Partial<MlineElement>): boolean {
+    const element = this.mlineStyles.find((item) => item.id === id)?.elements[index];
+    if (!element) return false;
+    Object.assign(element, patch);
+    this.notify();
+    return true;
   }
 
   transaction<T>(fn: () => T): T {
@@ -457,6 +533,31 @@ export class Document {
       workPlane: cloneWorkPlane(this.activeWorkPlane),
       vertices: closed ? closePolyline(vertices) : [...vertices],
       closed,
+    };
+  }
+
+  createMline(
+    vertices: Vec2[],
+    closed: boolean,
+    style: MlineStyle,
+    justification: MlineEntity['justification'] = 'zero',
+    startCap: MlineEntity['startCap'] = style.startCap,
+    endCap: MlineEntity['endCap'] = style.endCap,
+  ): MlineEntity {
+    return {
+      id: genId('mline'),
+      type: 'mline',
+      layer: this.currentLayer,
+      aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer),
+      selected: false,
+      workPlane: cloneWorkPlane(this.activeWorkPlane),
+      vertices: closed ? closePolyline(vertices) : [...vertices],
+      closed,
+      styleName: style.name,
+      justification,
+      startCap,
+      endCap,
+      elements: style.elements.map((element) => ({ ...element })),
     };
   }
 

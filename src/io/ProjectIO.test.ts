@@ -510,6 +510,38 @@ describe('ProjectIO', () => {
     expect(target.entities[0].type === 'hatch' && target.entities[0].patternLines).toHaveLength(2);
   });
 
+  it('round-trips a custom MLSTYLE, the current style choice, and an mline drawn with it', () => {
+    const source = new Document();
+    const style = source.addMlineStyle('Wall 200');
+    source.updateMlineStyleElement(style.id, 0, { offset: 1, aci: 1, linetype: 'Dashed' });
+    source.setCurrentMlineStyle(style.id);
+    const mline = source.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false, style);
+    source.addEntity(mline);
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.currentMlineStyleId).toBe(style.id);
+    const loadedStyle = target.mlineStyles.find((item) => item.id === style.id);
+    expect(loadedStyle).toMatchObject({ name: 'Wall 200', elements: style.elements });
+    // STANDARD survives alongside the custom style, undeletable, per the loader.
+    expect(target.mlineStyles.some((item) => item.id === 'standard')).toBe(true);
+    expect(target.entities[0]).toMatchObject({ type: 'mline', styleName: 'Wall 200', elements: style.elements });
+  });
+
+  it('falls back to STANDARD when a project file has no MLSTYLE at all', () => {
+    const source = new Document();
+    const saved = JSON.parse(serializeProject(source));
+    delete saved.settings.mlineStyles;
+    delete saved.settings.currentMlineStyleId;
+    const target = new Document();
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.mlineStyles.map((item) => item.id)).toEqual(['standard']);
+    expect(target.currentMlineStyleId).toBe('standard');
+  });
+
   it('refuses plotter settings a machine could not use', () => {
     const source = new Document();
     const saved = JSON.parse(serializeProject(source));
