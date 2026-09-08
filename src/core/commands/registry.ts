@@ -9,7 +9,7 @@
  */
 import { cloneEntity, expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
+import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawMline, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
@@ -146,6 +146,12 @@ interface CommandDefShape {
 export const COMMANDS = [
   { name: 'LINE', aliases: ['L', 'LINE'], help: 'draw line', suggest: true, sticky: true, pointInput: true, execute: drawLine, steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }] },
   { name: 'POLYLINE', aliases: ['PL', 'PLINE', 'POLYLINE'], execute: drawPolyline, help: 'draw a connected polyline', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }], data: () => ({ vertices: [] }) },
+  { name: 'MLINE', aliases: ['ML', 'MLINE'], execute: drawMline, help: 'draw a multiline using the current MLSTYLE', suggest: true, sticky: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify next point (Enter to finish, C to close):', optional: true }, { kind: 'done' }],
+    // Snapshot the active style at draw start — same one the preview and the
+    // finished entity both read, so a style edited mid-command (unlikely, but
+    // the manager panel does not block it) cannot change the line partway through.
+    data: (ctx) => ({ vertices: [], mlineStyle: ctx.doc.mlineStyles.find((item) => item.id === ctx.doc.currentMlineStyleId) ?? ctx.doc.mlineStyles[0] }) },
   { name: 'RECTANGLE', aliases: ['R', 'REC', 'RECTANGLE'], help: 'draw rectangle', suggest: true, sticky: true, pointInput: true, execute: drawRectangle, steps: [{ kind: 'point', label: 'Specify first rectangle corner:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'CIRCLE', aliases: ['C', 'CIRCLE'], help: 'draw circle', suggest: true, sticky: true, pointInput: true, execute: drawCircle, steps: [{ kind: 'point', label: 'Specify circle center:' }, { kind: 'point', label: 'Specify radius or point on circumference:', rememberDistanceFrom: 'center' }, { kind: 'done' }] },
   { name: 'CIRCLE_DIAMETER', aliases: ['CD', 'CIRCLEDIAMETER'], help: 'draw circle by diameter', suggest: true, sticky: true, pointInput: true, execute: drawCircleByDiameter,

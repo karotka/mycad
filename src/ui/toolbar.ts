@@ -8,7 +8,7 @@ import { toolIcon } from './toolIcons';
  */
 
 export const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Mline', 'MLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
 ];
 export const circleTools: Array<[string, string, CommandName]> = [
   ['Circle', 'Circle by radius', 'CIRCLE'],

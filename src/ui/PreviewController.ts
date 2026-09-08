@@ -55,6 +55,14 @@ export class PreviewController {
       if (vertices.length > 0) this.setPreview({ type: active.name === 'AREA' ? 'area' : 'polyline', data: { vertices, cursor, workPlane: drawingPlane } });
       return;
     }
+    if (active.name === 'MLINE') {
+      const vertices = (active.data.vertices as Vec2[]) ?? [];
+      const style = active.data.mlineStyle as MlineStyle | undefined;
+      if (vertices.length > 0 && style) {
+        this.setPreview({ type: 'mline', data: { vertices, cursor, workPlane: drawingPlane, elements: style.elements, justification: 'zero' } });
+      }
+      return;
+    }
     if (active.name === 'SPLINE') {
       const points = (active.data.points as Vec2[]) ?? [];
       if (points.length === 0) return;
@@ -363,7 +371,8 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
     case 'circle':
     case 'ellipse': result.center = rotate(result.center); break;
     case 'octagon': result.center = rotate(result.center); result.vertices = result.vertices.map(rotate); break;
-    case 'polyline': result.vertices = result.vertices.map(rotate); break;
+    case 'polyline':
+    case 'mline': result.vertices = result.vertices.map(rotate); break;
     case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
     case 'bezier':
       result.start = rotate(result.start);
@@ -382,3 +391,4 @@ import type { Vec2 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import { interpolatingBeziers } from '../math/bezierFit';
 import { arcFromSagitta } from '../math/arcFit';
+import type { MlineStyle } from '../core/settings';

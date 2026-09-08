@@ -8,6 +8,7 @@ export function toolIcon(command: ToolbarIcon): string {
   const paths: Partial<Record<ToolbarIcon, string>> = {
     LINE: '<line x1="4" y1="20" x2="20" y2="4"/><circle cx="4" cy="20" r="1.5"/><circle cx="20" cy="4" r="1.5"/>',
     POLYLINE: '<path d="M3 19l5-7 5 4 8-11"/><circle cx="3" cy="19" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="13" cy="16" r="1.5"/><circle cx="21" cy="5" r="1.5"/>',
+    MLINE: '<path d="M3 15l7-9 5 4 6-7"/><path d="M3 20l7-9 5 4 6-7" opacity=".55"/>',
     RECTANGLE: '<rect x="4" y="6" width="16" height="12"/><path d="M4 4v4M2 6h4M20 16v4M18 18h4"/>',
     CIRCLE: '<circle cx="12" cy="12" r="8"/><path d="M12 2v20M2 12h20"/>',
     CIRCLE_DIAMETER: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M6 10l-2 2 2 2M18 10l2 2-2 2"/>',

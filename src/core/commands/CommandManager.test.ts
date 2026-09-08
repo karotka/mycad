@@ -125,7 +125,7 @@ describe('CommandManager history integration', () => {
   });
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
-    expect(manager.commandSuggestions('m')).toEqual(['MTEXT', 'MEASURE', 'MOVE', 'MIRROR']);
+    expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR']);
     expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
@@ -2323,6 +2323,73 @@ describe('POLYLINE command', () => {
     await manager.submitInput('C');
     expect(doc.entities).toHaveLength(0);
     expect(log).toHaveBeenCalledWith('A closed polyline needs at least three points.');
+  });
+});
+
+describe('MLINE command', () => {
+  it('draws against STANDARD by default, resolving a two-line snapshot onto the entity', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('MLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const mline = doc.entities[0];
+    expect(mline).toMatchObject({ type: 'mline', closed: false, styleName: 'STANDARD' });
+    expect(mline.type === 'mline' && mline.vertices).toHaveLength(3);
+    expect(mline.type === 'mline' && mline.elements).toEqual(doc.mlineStyles[0].elements);
+  });
+
+  it('draws against whichever MLSTYLE is current, not always STANDARD', async () => {
+    const { doc, manager } = setup();
+    const style = doc.addMlineStyle('Wall 200');
+    doc.updateMlineStyleElement(style.id, 0, { offset: 1, aci: 3, linetype: 'Dashed' });
+    doc.setCurrentMlineStyle(style.id);
+
+    manager.startCommand('MLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('');
+
+    const mline = doc.entities[0];
+    expect(mline).toMatchObject({ type: 'mline', styleName: 'Wall 200' });
+    expect(mline.type === 'mline' && mline.elements).toEqual(style.elements);
+  });
+
+  it('keeps using the style snapshotted at draw start even if the current style changes mid-command', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('MLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    const midDrawStyle = doc.addMlineStyle('Interloper');
+    doc.setCurrentMlineStyle(midDrawStyle.id);
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('');
+
+    expect(doc.entities[0]).toMatchObject({ type: 'mline', styleName: 'STANDARD' });
+  });
+
+  it('closes the mline on C, undoably', async () => {
+    const { doc, history, manager } = setup();
+    manager.startCommand('MLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 10, y: 5 });
+    await manager.submitInput('C');
+
+    expect(doc.entities[0]).toMatchObject({ type: 'mline', closed: true });
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('drops an mline that never got a second point', async () => {
+    const { doc, log, manager } = setup();
+    manager.startCommand('MLINE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('An MLINE needs at least two points.');
   });
 });
 

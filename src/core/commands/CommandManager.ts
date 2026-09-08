@@ -374,7 +374,7 @@ export class CommandManager {
       case 'point': {
         // C closes the polyline: the same answer as Enter, with the ends
         // joined. Routed through the one path rather than a second way in.
-        if (this.active?.name === 'POLYLINE' && this.active.stepIndex > 0 && input.trim().toUpperCase() === 'C') {
+        if ((this.active?.name === 'POLYLINE' || this.active?.name === 'MLINE') && this.active.stepIndex > 0 && input.trim().toUpperCase() === 'C') {
           this.active.data.closing = true;
           await this.advanceStep(null);
           return;

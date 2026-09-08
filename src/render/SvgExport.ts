@@ -6,6 +6,8 @@ import { hatchPatternSegments } from '../io/DxfHatch';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import type { Vec2 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
+import { mlineOffsetLines } from '../core/entities/mline';
+import { aciToRgb } from '../io/DxfAci';
 
 export interface PrintWindow { min: Vec2; max: Vec2 }
 export interface PrintPage { widthMm: number; heightMm: number }
@@ -139,6 +141,19 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
       case 'polyline':
         drawPolyline(entity, entity.vertices, entity.closed);
         break;
+      case 'mline': {
+        mlineOffsetLines(entity).forEach((points, index) => {
+          const element = entity.elements[index];
+          const d = pathFromPoints(points, false); // mlineOffsetLines already closes a closed mline's own loop
+          if (!d) return;
+          const weightMm = style.keepLineweights ? (doc.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM) : DEFAULT_LINE_WEIGHT_MM;
+          const dash = lineTypeDashArray(element.linetype, scale);
+          const dashAttr = dash.length ? ` stroke-dasharray="${dash.map(fmt).join(',')}"` : '';
+          const color = element.aci === 256 ? entity.color : (aciToRgb(element.aci) ?? entity.color);
+          parts.push(`<path d="${d}" stroke="${printColorHex(color, style.colorMode)}" stroke-width="${fmt(weightMm)}" fill="none"${dashAttr}/>`);
+        });
+        break;
+      }
       case 'arc':
         drawPolyline(entity, curvePoints(entity), false);
         break;

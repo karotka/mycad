@@ -17,6 +17,9 @@ import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 import { hatchPatternSegments } from '../io/DxfHatch';
+import { aciToRgb } from '../io/DxfAci';
+import { mlineOffsetLines } from '../core/entities/mline';
+import { offsetOpenPolyline } from '../core/commands/steps/edit2d';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
@@ -358,6 +361,48 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
+      case 'mline': {
+        // Unlike every other entity, each parallel line can carry its own
+        // colour/linetype — the one strokeStyle/dash set up before this switch
+        // (for the entity as a whole) is only a starting point each element
+        // overrides for its own stroke, then restores after.
+        const lines = mlineOffsetLines(entity);
+        lines.forEach((points, index) => {
+          if (points.length < 2) return;
+          const element = entity.elements[index];
+          this.ctx.save();
+          this.ctx.strokeStyle = this.colorHex(element.aci === 256 ? entity.color : aciToRgb(element.aci) ?? entity.color, selected);
+          this.ctx.setLineDash(lineTypeDashArray(element.linetype, this.zoom));
+          this.ctx.beginPath();
+          const first = toScreen(points[0]);
+          this.ctx.moveTo(first.x, first.y);
+          for (let i = 1; i < points.length; i++) {
+            const p = toScreen(points[i]);
+            this.ctx.lineTo(p.x, p.y);
+          }
+          this.ctx.stroke();
+          this.ctx.restore();
+        });
+        if (!entity.closed && lines.length > 1) {
+          const capLine = (atStart: boolean, capStyle: 'none' | 'line'): void => {
+            if (capStyle !== 'line') return;
+            this.ctx.save();
+            this.ctx.strokeStyle = this.colorHex(entity.color, selected);
+            this.ctx.setLineDash([]);
+            this.ctx.beginPath();
+            lines.forEach((points, index) => {
+              if (points.length === 0) return;
+              const p = toScreen(atStart ? points[0] : points.at(-1)!);
+              if (index === 0) this.ctx.moveTo(p.x, p.y); else this.ctx.lineTo(p.x, p.y);
+            });
+            this.ctx.stroke();
+            this.ctx.restore();
+          };
+          capLine(true, entity.startCap);
+          capLine(false, entity.endCap);
+        }
+        break;
+      }
       case 'arc': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
       case 'bezier': {
         // Canvas already rasterizes cubic Beziers adaptively. Sampling every
@@ -563,6 +608,25 @@ export class Canvas2DRenderer {
         this.ctx.restore();
       }
       this.ctx.stroke();
+      label = `L = ${Math.hypot(chain.cursor.x - last.x, chain.cursor.y - last.y).toFixed(2)} mm`;
+      labelPoint = chain.cursor;
+    } else if (preview.type === 'mline') {
+      const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2; elements: { offset: number; aci: number; linetype: string }[] };
+      const centerline = [...chain.vertices, chain.cursor];
+      this.ctx.save();
+      this.ctx.setLineDash([4, 4]);
+      for (const element of chain.elements) {
+        const line = (centerline.length >= 2 ? offsetOpenPolyline(centerline, element.offset) : null) ?? centerline;
+        const screen = line.map((point) => worldToScreen(point, w, h, this.pan, this.zoom));
+        if (screen.length < 2) continue;
+        this.ctx.strokeStyle = element.aci === 256 ? '#888888' : `#${(aciToRgb(element.aci) ?? 0x888888).toString(16).padStart(6, '0')}`;
+        this.ctx.beginPath();
+        this.ctx.moveTo(screen[0].x, screen[0].y);
+        for (const point of screen.slice(1)) this.ctx.lineTo(point.x, point.y);
+        this.ctx.stroke();
+      }
+      this.ctx.restore();
+      const last = chain.vertices[chain.vertices.length - 1];
       label = `L = ${Math.hypot(chain.cursor.x - last.x, chain.cursor.y - last.y).toFixed(2)} mm`;
       labelPoint = chain.cursor;
     } else if (preview.type === 'circleDiameter' && d.center && d.cursor) {
@@ -1714,7 +1778,10 @@ export class Viewport3D {
     let previewPlaneOffset = 0;
     if (preview.type === 'line' && data.start && data.end) {
       points.push(data.start, data.end);
-    } else if (preview.type === 'polyline' || preview.type === 'area') {
+    } else if (preview.type === 'polyline' || preview.type === 'area' || preview.type === 'mline') {
+      // The 3D preview shows only the centerline being drawn — the full set of
+      // offset lines is a 2D-drafting concern the Canvas2DRenderer's own 'mline'
+      // preview branch handles exactly; this stays a reasonable stand-in.
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2 };
       points.push(...chain.vertices, chain.cursor);
       loop = preview.type === 'area';
@@ -1892,6 +1959,8 @@ export class Viewport3D {
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
         case 'octagon': points = entity.vertices; closed = true; break;
         case 'polyline': points = entity.vertices; closed = entity.closed; break;
+        // v1 picks the mline by its centerline only, same as PickingService's 2D pick.
+        case 'mline': points = entity.vertices; closed = entity.closed; break;
         case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
         case 'arc':
         case 'bezier': points = curvePoints(entity, 64); break;
@@ -2027,6 +2096,22 @@ export class Viewport3D {
         }));
         group.add(path.loop ? new THREE.LineLoop(geometry, material) : new THREE.Line(geometry, material));
       }
+      return group;
+    }
+    if (entity.type === 'mline') {
+      const group = new THREE.Group();
+      const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+      mlineOffsetLines(entity).forEach((line, index) => {
+        if (line.length < 2) return;
+        const element = entity.elements[index];
+        const color = entity.selected ? 0x65c7ff : element.aci === 256 ? entity.color : (aciToRgb(element.aci) ?? entity.color);
+        const geometry = new THREE.BufferGeometry().setFromPoints(line.map((point) => {
+          const world = localToWorld(plane, point, (localPointZ(point) ?? entityPlaneOffset(entity)) + 0.015);
+          return new THREE.Vector3(world.x, world.z, -world.y);
+        }));
+        group.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, depthTest: false })));
+      });
+      group.renderOrder = 10;
       return group;
     }
     const points: Vec2[] = [];
