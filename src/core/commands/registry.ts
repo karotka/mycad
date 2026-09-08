@@ -189,15 +189,24 @@ export const COMMANDS = [
   // the final step answers from the on-canvas multi-line editor (see
   // syncMtextEditor in main.ts) instead of the single-line command input.
   { name: 'MTEXT', aliases: ['MT', 'MTEXT'], execute: drawText, help: 'draw multi-line text', suggest: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
-  { name: 'TEXTEDIT', aliases: ['ED', 'DDEDIT', 'TEXTEDIT'], execute: editText, help: 'edit TEXT, DTEXT or MTEXT content', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select text object:' }, { kind: 'text', label: 'Edit text:' }, { kind: 'done' }],
+  { name: 'TEXTEDIT', aliases: ['ED', 'DDEDIT', 'TEXTEDIT'], execute: editText, help: 'edit TEXT/MTEXT content, or a dimension\'s text override', suggest: true,
+    // The text step is optional so a bare Enter reaches editText() with an
+    // empty answer instead of CommandManager cancelling the command outright
+    // — needed for a dimension, where empty is a valid answer (it clears the
+    // override back to the measured value), not an error.
+    steps: [{ kind: 'entity', label: 'Select text or dimension object:' }, { kind: 'text', label: 'Edit text:', optional: true }, { kind: 'done' }],
     data: () => ({}),
     onStart: (active, ctx) => {
-      const text = ctx.doc.getSelectedEntities().find((entity) => entity.type === 'text');
-      if (!text) return;
-      active.data.textEntity = cloneEntity(text);
+      const selected = ctx.doc.getSelectedEntities().find((entity) => entity.type === 'text' || entity.type === 'dimension');
+      if (!selected) return;
+      active.data.textEntity = cloneEntity(selected);
       active.stepIndex = 1;
-      ctx.prefillCommandInput?.(text.text);
+      if (selected.type === 'dimension') {
+        ctx.prefillCommandInput?.(selected.textOverride ?? '');
+        ctx.log('Dimension text override — type <> to include the measured value, or leave empty to clear the override.');
+        return;
+      }
+      ctx.prefillCommandInput?.(selected.text);
       ctx.log('Text selected for editing.');
     } },
   { name: 'AREA', aliases: ['AA', 'AREA'], execute: measureArea, help: 'measure polygon area and perimeter', suggest: true, pointInput: true,

@@ -1034,7 +1034,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         event.clientX,
         event.clientY,
       );
-    if (text?.type === 'text') {
+    if (text?.type === 'text' || text?.type === 'dimension') {
       cadDocument.clearSelection();
       cadDocument.selectEntity(text.id);
       commands.startCommand('TEXTEDIT');

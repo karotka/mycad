@@ -63,6 +63,41 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.getEntity(text.id)).toMatchObject({ type: 'text', text: 'Old text' });
   });
+  it('sets a dimension text override through TEXTEDIT and undo', async () => {
+    const { doc, manager, history } = setup();
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 5 });
+    doc.addEntity(dimension);
+    doc.selectEntity(dimension.id);
+
+    manager.startCommand('TEXTEDIT');
+    expect(manager.active).toMatchObject({ name: 'TEXTEDIT', stepIndex: 1 });
+    await manager.submitInput('<> mm přesně');
+    const after = doc.getEntity(dimension.id);
+    expect(after).toMatchObject({ type: 'dimension', textOverride: '<> mm přesně' });
+    expect(after?.type === 'dimension' && dimensionGeometry(after).text).toBe('10.00 mm přesně');
+
+    history.undo();
+    const reverted = doc.getEntity(dimension.id);
+    expect(reverted?.type).toBe('dimension');
+    expect(reverted?.type === 'dimension' ? reverted.textOverride : 'wrong-type').toBeUndefined();
+  });
+
+  it('clears a dimension text override back to the measured value on an empty TEXTEDIT answer', async () => {
+    const { doc, manager } = setup();
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 5 });
+    dimension.textOverride = 'custom';
+    doc.addEntity(dimension);
+    doc.selectEntity(dimension.id);
+
+    manager.startCommand('TEXTEDIT');
+    await manager.submitInput('');
+
+    const after = doc.getEntity(dimension.id);
+    expect(after?.type).toBe('dimension');
+    expect(after?.type === 'dimension' ? after.textOverride : 'wrong-type').toBeUndefined();
+    expect(after?.type === 'dimension' && dimensionGeometry(after).text).toBe('10.00');
+  });
+
   it('carries a height alongside the text when TEXTEDIT answers through submitText, not just submitInput', async () => {
     const { doc, manager } = setup();
     const text = doc.createText({ x: 2, y: 3 }, 'Old text', 2.5);
