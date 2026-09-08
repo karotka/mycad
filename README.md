@@ -29,12 +29,18 @@ npm run electron:build
 ```
 
 Produces a `.dmg` and a `.zip` under `release/`. The build is unsigned (no
-Apple Developer ID / notarization is configured), so macOS Gatekeeper will
-call the app "unidentified developer" the first time it's opened after
-installing. To run it anyway:
+Apple Developer ID / notarization is configured). On Apple Silicon, macOS
+usually refuses to open it at all — **"MyCAD is damaged and can't be
+opened"** — rather than offering an "unidentified developer" bypass; that
+message is misleading, the app isn't actually corrupt, it just isn't
+signed. Clear the quarantine flag once and it opens normally:
 
-- right-click the app in Finder → **Open** → **Open** again in the dialog, or
-- `xattr -cr /Applications/MyCAD.app` to clear the quarantine flag once.
+```bash
+xattr -cr /Applications/MyCAD.app
+```
+
+(Right-click → Open → Open sometimes works instead, but on arm64 it
+usually doesn't for an ad-hoc build like this — go straight to `xattr`.)
 
 This is expected and fine for installing on your own Mac; it isn't suitable
 for distributing to other people without a paid Apple Developer ID.
