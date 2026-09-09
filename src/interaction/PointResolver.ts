@@ -215,11 +215,18 @@ export function createPointResolver(ctx: PointResolverContext) {
       }
     }
     if (doc.viewMode === '2d') return constrainedPoint(worldPoint(event));
-    // In 3D a transform with no snap slides along the active UCS plane: the ray
+    // In 3D a point with no snap slides along the active UCS plane: the ray
     // meets that plane, so X and Y move and the height is kept. This is why moving
     // a solid used to drift across the screen instead of across its own floor.
     const point = worldPoint3d(event);
-    return point ? constrainedPoint(point) : null;
+    if (point) return constrainedPoint(point);
+    // Same edge-on-UCS fallback as the transform branch above: a UCS rotated
+    // to stand up out of the screen (UCS X/Y/Z, or a plane picked side-on) can
+    // sit near-parallel to every ray the camera casts, so the plane ray misses
+    // everywhere and the cursor would otherwise freeze — no preview, no snap
+    // retry, nothing placeable — until it happens to land within an object
+    // snap's aperture. Falling back to the view plane keeps the cursor live.
+    return renderer3d.viewPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
   }
 
   function draftingBasePoint(): Vec2 | null {
