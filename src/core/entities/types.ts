@@ -668,6 +668,10 @@ export interface LoftFeature {
   kind: 'loft';
   /** In selection order — that order is also the loft's section order. */
   profiles: Entity[];
+  /** AutoCAD LOFT's "Path" option: a guide curve the loft rides along
+   *  between its first and last section, instead of straight-interpolating
+   *  between them. */
+  path?: Entity;
 }
 
 export interface PrimitiveFeature {

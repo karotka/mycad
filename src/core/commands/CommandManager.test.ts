@@ -3494,7 +3494,8 @@ describe('LOFT', () => {
     kit.manager.startCommand('LOFT');
     await kit.manager.handleClick({ x: 0, y: 0 }, bottom);
     await kit.manager.handleClick({ x: 0, y: 0 }, top);
-    await kit.manager.submitInput('');
+    await kit.manager.submitInput(''); // finish gathering profiles
+    await kit.manager.submitInput(''); // skip the optional path
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3532,7 +3533,8 @@ describe('LOFT', () => {
     kit.manager.startCommand('LOFT');
     await kit.manager.handleClick({ x: 5, y: 0 }, bottom);
     await kit.manager.handleClick({ x: 2, y: 0 }, top);
-    await kit.manager.submitInput('');
+    await kit.manager.submitInput(''); // finish gathering profiles
+    await kit.manager.submitInput(''); // skip the optional path
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3552,6 +3554,68 @@ describe('LOFT', () => {
 
     expect(kit.doc.entities).toHaveLength(1);
     expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
+  });
+
+  it('lofts along a guide path — AutoCAD LOFT\'s Path option — instead of straight-interpolating', async () => {
+    const kit = setup();
+    const bottom = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
+    const top = kit.doc.createCircle({ x: 0, y: 0 }, 2);
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 20 } };
+    // A vertical work plane — local Y maps to world Z — so a plain local line
+    // from (0,0) to (0,20) is a real 3D path from the bottom profile's
+    // location up to the top profile's, without needing a curved path just
+    // to prove the command wires a path through at all (curvature itself is
+    // covered directly at the kernel level in OpenCascadeKernel.test.ts).
+    const verticalPlane = {
+      origin: { x: 0, y: 0, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: 0, y: -1, z: 0 },
+    };
+    const path = kit.doc.createLine({ x: 0, y: 0 }, { x: 0, y: 20 });
+    path.workPlane = verticalPlane;
+    kit.doc.addEntity(bottom);
+    kit.doc.addEntity(top);
+    kit.doc.addEntity(path);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, bottom);
+    await kit.manager.handleClick({ x: 0, y: 0, z: 20 }, top);
+    await kit.manager.submitInput(''); // finish gathering profiles
+    await kit.manager.handleClick({ x: 0, y: 10, z: 0 }, path);
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
+    if (kit.doc.solids[0].feature.kind !== 'loft') throw new Error('expected a loft feature');
+    expect(kit.doc.solids[0].feature.path?.id).toBe(path.id);
+    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.min(...zValues)).toBeCloseTo(0, 3);
+    expect(Math.max(...zValues)).toBeCloseTo(20, 3);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(3);
+  });
+
+  it('refuses a path entity of an unsupported type', async () => {
+    const kit = setup();
+    const bottom = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
+    const top = kit.doc.createCircle({ x: 0, y: 0 }, 2);
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 20 } };
+    const notAPath = kit.doc.createRectangle({ x: 20, y: 20 }, { x: 25, y: 25 });
+    kit.doc.addEntity(bottom);
+    kit.doc.addEntity(top);
+    kit.doc.addEntity(notAPath);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, bottom);
+    await kit.manager.handleClick({ x: 0, y: 0, z: 20 }, top);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 22, y: 22 }, notAPath);
+
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.log).toHaveBeenCalledWith('Loft path must be a line, polyline, arc, circle or Bezier.');
   });
 });
 

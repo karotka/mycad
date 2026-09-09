@@ -454,38 +454,53 @@ export async function draftStep(run: CommandRun): Promise<StepOutcome> {
 }
 
 export async function loftStep(run: CommandRun): Promise<StepOutcome> {
-  const { data, value, step, ctx } = run;
-  // Only two steps exist for LOFT (gather, then done) — 'done' never calls
-  // back into this function (see CommandManager.finishStep), so an empty
-  // Enter has to fall through to the finishing logic right here rather than
-  // deferring to a later step the way EXTRUDE's own extra height step does.
-  if (step.kind === 'entity' && value) {
-    const profile = value as Entity;
-    if (!isSweepProfileEntity(profile)) {
-      ctx.log('Loft profiles must be a closed circle, rectangle, octagon, polyline or Bezier.');
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    // 'done' never calls back into this function (see CommandManager's
+    // finishStep), but the step after this one is now a real optional path
+    // step, not 'done' — so unlike the first cut of this command, Enter here
+    // only needs to validate the count and move on, not build anything yet.
+    if (value) {
+      const profile = value as Entity;
+      if (!isSweepProfileEntity(profile)) {
+        ctx.log('Loft profiles must be a closed circle, rectangle, octagon, polyline or Bezier.');
+        return 'stay';
+      }
+      run.gather(profile);
       return 'stay';
     }
-    run.gather(profile);
-    return 'stay';
+    const profiles = data.entities as Entity[];
+    if (profiles.length < 2) {
+      ctx.log('LOFT requires at least two profiles.');
+      run.cancel();
+      return 'advance';
+    }
+    return 'advance';
   }
 
+  // Step 1: an optional guide path — AutoCAD LOFT's "Path" option. Enter
+  // finishes with a plain, straight-interpolated loft between the sections.
   const profiles = data.entities as Entity[];
-  if (profiles.length < 2) {
-    ctx.log('LOFT requires at least two profiles.');
-    return 'advance';
+  const path = (value as Entity | null) ?? undefined;
+  if (path && !isSweepPath(path)) {
+    ctx.log('Loft path must be a line, polyline, arc, circle or Bezier.');
+    return 'stay';
   }
   ctx.log('Lofting…');
-  const feature: LoftFeature = { kind: 'loft', profiles };
+  const feature: LoftFeature = path ? { kind: 'loft', profiles, path } : { kind: 'loft', profiles };
   const exact = await buildExactFeature(feature);
   if (!exact) {
-    ctx.log('Loft failed — check that every profile is closed and none are self-intersecting.');
+    ctx.log(path
+      ? 'Loft failed — check that the path reaches both ends and every profile is closed.'
+      : 'Loft failed — check that every profile is closed and none are self-intersecting.');
     return 'advance';
   }
-  const solid = ctx.doc.createSolid(exact.mesh, 'Loft', 0, profiles.map((profile) => profile.id), undefined, feature);
+  const consumed = path ? [...profiles, path] : profiles;
+  const solid = ctx.doc.createSolid(exact.mesh, 'Loft', 0, consumed.map((entity) => entity.id), undefined, feature);
   solid.exact = exact.exact;
-  ctx.history.execute(new ReplaceObjectsEdit('Loft', profiles, [], [], [solid]));
+  ctx.history.execute(new ReplaceObjectsEdit('Loft', consumed, [], [], [solid]));
   ctx.doc.viewMode = '3d';
-  ctx.log(`Loft complete: ${profiles.length} profiles.`);
+  ctx.log(`Loft complete: ${profiles.length} profiles${path ? ', along a path' : ''}.`);
   return 'advance';
 }
 

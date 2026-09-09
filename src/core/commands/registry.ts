@@ -397,7 +397,11 @@ export const COMMANDS = [
   { name: 'SHELL', aliases: ['SH', 'SHELL'], execute: shellStep, help: 'hollow a solid to a constant wall thickness', suggest: true,
     steps: [{ kind: 'solid', label: 'Select face to remove:' }, { kind: 'number', label: 'Enter wall thickness:' }, { kind: 'done' }] },
   { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select profiles in order, then press Enter:', multi: true }, { kind: 'done' }],
+    steps: [
+      { kind: 'entity', label: 'Select profiles in order, then press Enter:', multi: true },
+      { kind: 'entity', label: 'Select path curve, or Enter for a straight loft:', optional: true },
+      { kind: 'done' },
+    ],
     data: () => ({ entities: [] }) },
   { name: 'DRAFT', aliases: ['DFT', 'DRAFT'], execute: draftStep, help: 'taper solid faces by an angle from a neutral plane', suggest: true,
     steps: [

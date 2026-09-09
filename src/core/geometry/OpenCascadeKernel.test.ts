@@ -191,6 +191,60 @@ describe('OpenCascade exact-kernel spike', () => {
     });
   });
 
+  it('lofts a polygon section into a circle section — not only polygon-to-polygon', () => {
+    const rectangleSection = { kind: 'polygon' as const, points: [
+      { x: -5, y: -5, z: 0 }, { x: 5, y: -5, z: 0 }, { x: 5, y: 5, z: 0 }, { x: -5, y: 5, z: 0 },
+    ] };
+    const circleSection = {
+      kind: 'circle' as const,
+      center: { x: 0, y: 0, z: 20 },
+      normal: { x: 0, y: 0, z: 1 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      radius: 3,
+    };
+    const loft = keep(kernel.loftProfiles([rectangleSection, circleSection]));
+    const inspected = kernel.inspect(loft);
+    expect(inspected.valid).toBe(true);
+    expect(inspected.solidCount).toBe(1);
+    expect(inspected.bounds).toMatchObject({
+      min: { x: expect.closeTo(-5, 4), y: expect.closeTo(-5, 4), z: expect.closeTo(0, 4) },
+      max: { x: expect.closeTo(5, 4), y: expect.closeTo(5, 4), z: expect.closeTo(20, 4) },
+    });
+  });
+
+  it('lofts along a curved guide path, not just straight-interpolating between sections', () => {
+    const rectangleSection = { kind: 'polygon' as const, points: [
+      { x: -5, y: -5, z: 0 }, { x: 5, y: -5, z: 0 }, { x: 5, y: 5, z: 0 }, { x: -5, y: 5, z: 0 },
+    ] };
+    const circleSection = {
+      kind: 'circle' as const,
+      center: { x: 0, y: 0, z: 20 },
+      normal: { x: 0, y: 0, z: 1 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      radius: 3,
+    };
+    // A quarter-circle path bulging toward +x, from (0,0,0) up to (0,0,20).
+    const arcPath = [{
+      kind: 'arc' as const,
+      center: { x: 10, y: 0, z: 10 },
+      normal: { x: 0, y: 1, z: 0 },
+      xAxis: { x: -1, y: 0, z: 0 },
+      radius: 10,
+      startAngle: Math.PI,
+      sweepAngle: Math.PI / 2,
+    }];
+    const straightPath = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: 20 } }];
+
+    const guided = keep(kernel.loftAlongPath([rectangleSection, circleSection], arcPath));
+    const straight = keep(kernel.loftAlongPath([rectangleSection, circleSection], straightPath));
+
+    expect(kernel.inspect(guided).valid).toBe(true);
+    expect(kernel.inspect(straight).valid).toBe(true);
+    // The arc path bulges toward +x, so that loft reaches further in x than
+    // the same two sections lofted along a plain straight path.
+    expect(kernel.inspect(guided).bounds.max.x).toBeGreaterThan(kernel.inspect(straight).bounds.max.x + 1);
+  });
+
   it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
     const wire = keep(kernel.extrudeWire([
       { kind: 'line', start: { x: -2, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },

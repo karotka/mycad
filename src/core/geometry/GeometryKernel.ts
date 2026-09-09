@@ -111,6 +111,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   loftPolygons(sections: readonly (readonly Point3[])[]): Solid;
   /** Each section a circle, a closed Bezier wire, or a straight-edged polygon. */
   loftProfiles(sections: readonly SweepProfile3[]): Solid;
+  /** AutoCAD LOFT's "Path" option — sections ride along a guide curve instead
+   *  of straight-interpolating between each other. */
+  loftAlongPath(sections: readonly SweepProfile3[], path: readonly SweepPathSegment3[]): Solid;
   sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): Solid;
   fillet(solid: Solid, edge: EdgeReference3, radius: number): Solid;
   chamfer(solid: Solid, edge: EdgeReference3, distance1: number, distance2: number): Solid;

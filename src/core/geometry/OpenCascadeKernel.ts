@@ -508,6 +508,49 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * AutoCAD LOFT's "Path" option: instead of straight-interpolating between
+   * sections (loftProfiles/ThruSections), each section rides along one guide
+   * curve — a shape that morphs from the first cross-section to the last as
+   * it follows the path, same underlying operation SWEEP's own single-profile
+   * pipe is a special case of.
+   */
+  loftAlongPath(sections: readonly SweepProfile3[], path: readonly SweepPathSegment3[]): OpenCascadeSolid {
+    if (sections.length < 2) throw new Error('Loft along a path requires at least two sections.');
+    if (path.length === 0) throw new Error('Loft path requires at least one segment.');
+
+    const owned: Array<{ delete(): void }> = [];
+    const wires: TopoDS_Wire[] = [];
+    let spine: TopoDS_Wire | null = null;
+    let maker: InstanceType<typeof this.oc.BRepOffsetAPI_MakePipeShell> | null = null;
+    let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
+    try {
+      spine = this.buildWireFromEdges(path, owned, 'OpenCascade could not join the loft path.');
+      maker = new this.oc.BRepOffsetAPI_MakePipeShell(spine);
+      for (const section of sections) {
+        const wire = this.makeSweepProfileWire(section, owned);
+        wires.push(wire);
+        maker.Add_1(wire, false, false);
+      }
+      progress = new this.oc.Message_ProgressRange_1();
+      maker.Build(progress);
+      if (!maker.IsReady()) throw new Error('OpenCascade could not build the guided loft.');
+      maker.MakeSolid();
+      const shape = maker.Shape();
+      if (shape.IsNull() || !this.hasSolid(shape)) {
+        shape.delete();
+        throw new Error('The guided loft did not produce a solid.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress?.delete();
+      maker?.delete();
+      wires.forEach((wire) => wire.delete());
+      spine?.delete();
+      owned.reverse().forEach((item) => item.delete());
+    }
+  }
+
   sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): OpenCascadeSolid {
     if (path.length === 0) throw new Error('Sweep path requires at least one segment.');
 
