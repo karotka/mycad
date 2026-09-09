@@ -1104,6 +1104,52 @@ describe('CommandManager history integration', () => {
     expect(localToWorld(circle.workPlane!, circle.center)).toEqual({ x: 2, y: 3, z: 8 });
   });
 
+  // ARC (and RECTANGLE/OCTAGON/ELLIPSE alongside it) used to drop
+  // data.drawingPlane at the final createXxx() call — every other point-input
+  // command re-stamped it via keepCommandDrawingPlane, but these didn't, so
+  // the committed entity silently reverted to the document's own active UCS
+  // instead of the offset plane its points were actually resolved against.
+  // Reported as: draw two shapes, rotate the UCS near (not exactly through)
+  // them, then an ARC snapped to one of them ends up on the wrong plane.
+  it('keeps ARC, RECTANGLE, OCTAGON and ELLIPSE on the parallel plane established by an off-UCS endpoint snap', async () => {
+    const { doc, manager } = setup();
+    const plane = { ...cloneWorkPlane(WORLD_WORK_PLANE), origin: { x: 0, y: 0, z: 8 } };
+
+    manager.startCommand('ARC');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 }); // center
+    await manager.handleClick({ x: 6, y: 3 }); // start
+    await manager.handleClick({ x: 2, y: 7 }); // end
+    manager.cancelActive();
+
+    manager.startCommand('RECTANGLE');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 });
+    await manager.handleClick({ x: 6, y: 7 });
+    manager.cancelActive();
+
+    manager.startCommand('OCTAGON');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 });
+    await manager.handleClick({ x: 6, y: 3 });
+    manager.cancelActive();
+
+    manager.startCommand('ELLIPSE');
+    manager.active!.data.drawingPlane = plane;
+    await manager.handleClick({ x: 2, y: 3 });
+    await manager.handleClick({ x: 6, y: 3 });
+    await manager.handleClick({ x: 2, y: 5 });
+
+    const arc = doc.entities.find((entity) => entity.type === 'arc')!;
+    const rectangle = doc.entities.find((entity) => entity.type === 'rectangle')!;
+    const octagon = doc.entities.find((entity) => entity.type === 'octagon')!;
+    const ellipse = doc.entities.find((entity) => entity.type === 'ellipse')!;
+    expect(localToWorld(arc.workPlane!, arc.center)).toEqual({ x: 2, y: 3, z: 8 });
+    expect(localToWorld(rectangle.workPlane!, rectangle.first)).toEqual({ x: 2, y: 3, z: 8 });
+    expect(localToWorld(octagon.workPlane!, octagon.center)).toEqual({ x: 2, y: 3, z: 8 });
+    expect(localToWorld(ellipse.workPlane!, ellipse.center)).toEqual({ x: 2, y: 3, z: 8 });
+  });
+
   it('keeps line and rectangle tools active for repeated drawing', async () => {
     const { doc, manager } = setup();
     manager.startCommand('LINE');

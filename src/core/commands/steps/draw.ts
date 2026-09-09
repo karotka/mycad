@@ -42,7 +42,7 @@ export function drawRectangle({ ctx, active, data, value }: CommandRun): StepOut
     data.start = value;
     return 'advance';
   }
-  const rectangle = ctx.doc.createRectangle(data.start as Vec2, value as Vec2);
+  const rectangle = keepCommandDrawingPlane(ctx.doc.createRectangle(data.start as Vec2, value as Vec2), data);
   ctx.history.execute(new AddEntityEdit('Rectangle', rectangle));
   ctx.log(`Rectangle created: ${formatPoint(data.start as Vec2)} -> ${formatPoint(value as Vec2)}`);
   return 'advance';
@@ -85,7 +85,7 @@ export function drawOctagon({ ctx, active, data, value }: CommandRun): StepOutco
   }
   const center = data.center as Vec2;
   const radius = dist2(center, value as Vec2);
-  ctx.history.execute(new AddEntityEdit('Osmiuhelnik', ctx.doc.createOctagon(center, radius)));
+  ctx.history.execute(new AddEntityEdit('Osmiuhelnik', keepCommandDrawingPlane(ctx.doc.createOctagon(center, radius), data)));
   ctx.log(`Octagon created: center ${formatPoint(center)}, r=${radius.toFixed(4)}`);
   return 'advance';
 }
@@ -111,7 +111,7 @@ export function drawEllipse({ ctx, active, data, value }: CommandRun): StepOutco
     ctx.log('Ellipse radii must be greater than zero.');
     return 'stay';
   }
-  ctx.history.execute(new AddEntityEdit('Ellipse', ctx.doc.createEllipse(center, radiusX, radiusY, rotation)));
+  ctx.history.execute(new AddEntityEdit('Ellipse', keepCommandDrawingPlane(ctx.doc.createEllipse(center, radiusX, radiusY, rotation), data)));
   ctx.log(`Ellipse created: RX ${radiusX.toFixed(3)}, RY ${radiusY.toFixed(3)}`);
   return 'advance';
 }
@@ -128,7 +128,7 @@ export function drawArc({ ctx, active, data, value }: CommandRun): StepOutcome {
   // anticlockwise from its start, so a negative sweep is the same arc named
   // from the other end.
   if (sweep <= 0) sweep += Math.PI * 2;
-  ctx.history.execute(new AddEntityEdit('Arc', ctx.doc.createArc(center, radius, startAngle, sweep)));
+  ctx.history.execute(new AddEntityEdit('Arc', keepCommandDrawingPlane(ctx.doc.createArc(center, radius, startAngle, sweep), data)));
   ctx.log(`Arc created: center ${formatPoint(center)}, r=${radius.toFixed(4)}, ${(sweep * 180 / Math.PI).toFixed(2)}°`);
   return 'advance';
 }
@@ -149,7 +149,7 @@ export function drawArcStartEndRadius({ ctx, active, data, value }: CommandRun):
   const arc = arcFromSagitta(start, end, third);
   if (!arc) { ctx.log('Arc failed: point must be off the line between start and end.'); return 'stay'; }
 
-  ctx.history.execute(new AddEntityEdit('Arc', ctx.doc.createArc(arc.center, arc.radius, arc.startAngle, arc.sweepAngle)));
+  ctx.history.execute(new AddEntityEdit('Arc', keepCommandDrawingPlane(ctx.doc.createArc(arc.center, arc.radius, arc.startAngle, arc.sweepAngle), data)));
   ctx.log(`Arc created: ${formatPoint(start)} -> ${formatPoint(end)}, r=${arc.radius.toFixed(4)}, ${(arc.sweepAngle * 180 / Math.PI).toFixed(2)}°`);
   return 'advance';
 }
@@ -221,7 +221,7 @@ export function drawPolygon({ ctx, active, data, value }: CommandRun): StepOutco
     const angle = normalAngle + Math.PI / sides + index * Math.PI * 2 / sides;
     vertices.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
   }
-  ctx.history.execute(new AddEntityEdit('Polygon', ctx.doc.createPolyline(vertices, true)));
+  ctx.history.execute(new AddEntityEdit('Polygon', keepCommandDrawingPlane(ctx.doc.createPolyline(vertices, true), data)));
   ctx.log(`Polygon created: ${sides} sides, apothem=${apothem.toFixed(3)} mm`);
   return 'advance';
 }
@@ -240,7 +240,7 @@ export function drawText({ ctx, active, data, value }: CommandRun): StepOutcome 
   if (active.stepIndex === 2) { data.position = value; return 'advance'; }
 
   const { text: content, height, font } = textStepValue(value);
-  const text = ctx.doc.createText(data.position as Vec2, content, height ?? (data.height as number), font ?? (data.font as string));
+  const text = keepCommandDrawingPlane(ctx.doc.createText(data.position as Vec2, content, height ?? (data.height as number), font ?? (data.font as string)), data);
   ctx.history.execute(new AddEntityEdit('Text', text));
   ctx.log(`Text created: "${text.text}" in ${text.font}`);
   return 'advance';
