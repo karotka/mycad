@@ -652,6 +652,51 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * Tapers each face in `faceIds` by `angleRadians` about `neutralPlane` —
+   * the plane pivots the face and stays undeformed itself, the rest of the
+   * face tilts away from it. Pull direction is always the neutral plane's
+   * own normal (no separate direction the caller can override yet).
+   */
+  draft(solid: OpenCascadeSolid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): OpenCascadeSolid {
+    if (faceIds.length === 0) throw new Error('Draft requires at least one B-rep face.');
+    const normalLength = Math.hypot(neutralPlane.normal.x, neutralPlane.normal.y, neutralPlane.normal.z);
+    if (normalLength <= Number.EPSILON) throw new Error('Draft neutral plane normal must be non-zero.');
+    const faces = this.subShapes(solid.shape(this), this.oc.TopAbs_ShapeEnum.TopAbs_FACE);
+    const unique = [...new Set(faceIds)];
+    if (unique.some((faceId) => !Number.isInteger(faceId) || faceId < 0 || faceId >= faces.length)) {
+      faces.forEach((face) => face.delete());
+      throw new Error('Draft refers to an invalid B-rep face.');
+    }
+    const point = new this.oc.gp_Pnt_3(neutralPlane.origin.x, neutralPlane.origin.y, neutralPlane.origin.z);
+    const direction = new this.oc.gp_Dir_4(
+      neutralPlane.normal.x / normalLength,
+      neutralPlane.normal.y / normalLength,
+      neutralPlane.normal.z / normalLength,
+    );
+    const plane = new this.oc.gp_Pln_3(point, direction);
+    const maker = new this.oc.BRepOffsetAPI_DraftAngle_2(solid.shape(this));
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      unique.forEach((faceId) => maker.Add(this.oc.TopoDS.Face_1(faces[faceId]), direction, angleRadians, plane, false));
+      if (!maker.AddDone()) throw new Error('OpenCascade could not add every face to the draft.');
+      maker.Build(progress);
+      const shape = maker.Shape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade failed to draft the solid.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress.delete();
+      maker.delete();
+      plane.delete();
+      direction.delete();
+      point.delete();
+      faces.forEach((face) => face.delete());
+    }
+  }
+
   splitByPlane(solid: OpenCascadeSolid, plane: Plane3): OpenCascadeSolid[] {
     const normalLength = Math.hypot(plane.normal.x, plane.normal.y, plane.normal.z);
     if (normalLength <= Number.EPSILON) throw new Error('Slice plane normal must be non-zero.');

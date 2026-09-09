@@ -3534,6 +3534,114 @@ describe('LOFT', () => {
   });
 });
 
+describe('DRAFT', () => {
+  it('rejects a solid hit without a planar face instead of drafting the whole body', async () => {
+    const kit = setup();
+    const solid = kit.doc.createSolid(createBoxMesh(10, 6, 4), 'Box', 4, []);
+    kit.doc.addSolid(solid);
+
+    kit.manager.startCommand('DRAFT');
+    await kit.manager.handleClick({ x: 0, y: 0, z: 0 }, undefined, solid.id);
+
+    expect(kit.manager.active?.stepIndex).toBe(0);
+    expect(kit.log).toHaveBeenCalledWith('Draft requires a planar solid face.');
+  });
+
+  it('tapers a face away from its neutral plane, undoably', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
+    kit.doc.addSolid(solid);
+    const sideX = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.x > 0.9)!;
+    const bottom = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.z < -0.9)!;
+
+    kit.manager.startCommand('DRAFT');
+    await kit.manager.handleClick(
+      { x: 5, y: 0, z: 2 },
+      undefined,
+      solid.id,
+      { solidId: solid.id, vertexIndices: sideX.vertexIndices, normal: sideX.normal, hitPoint: { x: 5, y: 0, z: 2 } },
+    );
+    await kit.manager.handleClick(
+      { x: 0, y: 0, z: 0 },
+      undefined,
+      solid.id,
+      { solidId: solid.id, vertexIndices: bottom.vertexIndices, normal: bottom.normal, hitPoint: { x: 0, y: 0, z: 0 } },
+    );
+    await kit.manager.submitInput('10');
+
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'draft', angle: 10 });
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
+    const positions = Array.from(kit.doc.solids[0].mesh.positions);
+    let maxXAtTop = -Infinity;
+    for (let index = 0; index < positions.length; index += 3) {
+      if (positions[index + 2] > 3.999) maxXAtTop = Math.max(maxXAtTop, positions[index]);
+    }
+    // The far end (z=4) is farthest from the neutral plane at z=0, so it has
+    // pushed outward by height * tan(angle).
+    expect(maxXAtTop).toBeCloseTo(5 + 4 * Math.tan(10 * Math.PI / 180), 3);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(kit.doc.solids[0].mesh.positions).toEqual(sourceMesh.positions);
+  });
+
+  it('refuses an angle of zero', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
+    kit.doc.addSolid(solid);
+    const sideX = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.x > 0.9)!;
+    const bottom = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.z < -0.9)!;
+
+    kit.manager.startCommand('DRAFT');
+    await kit.manager.handleClick(
+      { x: 5, y: 0, z: 2 }, undefined, solid.id,
+      { solidId: solid.id, vertexIndices: sideX.vertexIndices, normal: sideX.normal, hitPoint: { x: 5, y: 0, z: 2 } },
+    );
+    await kit.manager.handleClick(
+      { x: 0, y: 0, z: 0 }, undefined, solid.id,
+      { solidId: solid.id, vertexIndices: bottom.vertexIndices, normal: bottom.normal, hitPoint: { x: 0, y: 0, z: 0 } },
+    );
+    await kit.manager.submitInput('0');
+
+    expect(kit.manager.active?.name).toBe('DRAFT');
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive' });
+  });
+
+  it('refuses a neutral face picked on a different solid', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
+    kit.doc.addSolid(solid);
+    const otherSolid = kit.doc.createSolid(createBoxMesh(10, 6, 4), 'Other', 4, []);
+    kit.doc.addSolid(otherSolid);
+    const sideX = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.x > 0.9)!;
+
+    kit.manager.startCommand('DRAFT');
+    await kit.manager.handleClick(
+      { x: 5, y: 0, z: 2 }, undefined, solid.id,
+      { solidId: solid.id, vertexIndices: sideX.vertexIndices, normal: sideX.normal, hitPoint: { x: 5, y: 0, z: 2 } },
+    );
+    await kit.manager.handleClick(
+      { x: 0, y: 0, z: 0 }, undefined, otherSolid.id,
+      { solidId: otherSolid.id, vertexIndices: [], normal: { x: 0, y: 0, z: -1 }, hitPoint: { x: 0, y: 0, z: 0 } },
+    );
+
+    expect(kit.manager.active?.stepIndex).toBe(1);
+    expect(kit.log).toHaveBeenCalledWith('DRAFT: the neutral face must be on the same solid.');
+  });
+});
+
 describe('remembered command values', () => {
   it('uses the previous circle radius when Enter answers the next radius prompt', async () => {
     const { doc, manager } = setup();

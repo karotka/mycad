@@ -639,6 +639,27 @@ export interface ShellFeature {
 }
 
 /**
+ * A reversible taper of one or more solid faces, pivoting about a neutral
+ * plane — its normal is always the pull direction. `faceIds` are B-rep
+ * topology indices (stable across translate/rotate/mirror/scale, since none
+ * of those change a solid's topology); `neutralPlane` is captured once, in
+ * world space, at the moment the face was picked — like
+ * PressPullFeature.region.plane, it travels with those same transforms
+ * rather than being re-derived from a face id on every regeneration.
+ */
+export interface DraftFeature {
+  kind: 'draft';
+  source: SolidFeature;
+  faceIds: number[];
+  neutralPlane: { origin: Vec3; normal: Vec3 };
+  /** Degrees, like ExtrusionFeature.taperAngle. */
+  angle: number;
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
+}
+
+/**
  * A solid built directly through an ordered sequence of closed profiles —
  * a leaf feature, like ExtrusionFeature/SweepFeature, since there is no
  * single "source" solid it modifies.
@@ -678,7 +699,7 @@ export interface PrimitiveFeature {
   workPlane?: WorkPlane;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature;
 
 export interface Solid {
   id: string;

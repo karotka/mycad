@@ -74,6 +74,8 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       };
     case 'loft':
       return { label: 'Loft', detail: `${feature.profiles.length} profiles` };
+    case 'draft':
+      return { label: 'Draft', detail: `${Number(feature.angle.toFixed(2))}°` };
     case 'mesh':
       return { label: 'Mesh', detail: 'no history' };
   }
@@ -81,7 +83,7 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
 
 function featureChildren(feature: SolidFeature): SolidFeature[] {
   if (feature.kind === 'boolean') return feature.operands;
-  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell') return [feature.source];
+  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell' || feature.kind === 'draft') return [feature.source];
   return [];
 }
 
@@ -108,7 +110,7 @@ export function featureRows(
     collapsed,
     [...path, index],
     depth + 1,
-    blockedByEdge || feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell',
+    blockedByEdge || feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell' || feature.kind === 'draft',
   ));
   return [row, ...children];
 }
@@ -166,7 +168,7 @@ export async function removedFeatureSolid(solid: Solid, path: readonly number[])
     if (parent.kind === 'boolean') {
       if (!parent.operands[index]) return null;
       parent.operands[index] = target.source;
-    } else if ((parent.kind === 'edge-modification' || parent.kind === 'presspull-region' || parent.kind === 'shell') && index === 0) {
+    } else if ((parent.kind === 'edge-modification' || parent.kind === 'presspull-region' || parent.kind === 'shell' || parent.kind === 'draft') && index === 0) {
       parent.source = target.source;
       // If the removed operation began with a baked mesh, this is now also the
       // geometry on which the parent operation must work.
@@ -218,5 +220,5 @@ export function featureAt(root: SolidFeature, path: readonly number[]): SolidFea
 
 const isRemovableFeature = (
   feature: SolidFeature,
-): feature is Extract<SolidFeature, { kind: 'edge-modification' | 'presspull-region' | 'shell' }> =>
-  feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell';
+): feature is Extract<SolidFeature, { kind: 'edge-modification' | 'presspull-region' | 'shell' | 'draft' }> =>
+  feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell' || feature.kind === 'draft';

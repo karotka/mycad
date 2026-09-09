@@ -326,13 +326,15 @@ export class CommandManager {
       this.ctx.doc.selectSolid(pickSolidId, this.isAdditiveStep);
       await this.advanceStep(pickSolidId);
     } else if (step.kind === 'solid' && (pickSolidId || pickFace)) {
-      const faceCommand = this.active.name === 'PRESSPULL' || this.active.name === 'DELETEFACE' || this.active.name === 'SHELL';
+      const faceCommand = this.active.name === 'PRESSPULL' || this.active.name === 'DELETEFACE' || this.active.name === 'SHELL' || this.active.name === 'DRAFT';
       if (faceCommand && !pickFace) {
         this.ctx.log(this.active.name === 'DELETEFACE'
           ? 'Delete Face requires a planar solid face.'
           : this.active.name === 'SHELL'
             ? 'Shell requires a planar solid face.'
-            : 'PressPull requires a planar face or bounded face region.');
+            : this.active.name === 'DRAFT'
+              ? 'Draft requires a planar solid face.'
+              : 'PressPull requires a planar face or bounded face region.');
         return;
       }
       const solidId = pickFace?.solidId ?? pickSolidId!;

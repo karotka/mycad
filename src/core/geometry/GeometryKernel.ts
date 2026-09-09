@@ -116,6 +116,8 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** null faceId hollows the solid completely closed; a given face opens as
    *  the shell's mouth. thickness always hollows inward. */
   shell(solid: Solid, faceId: number | null, thickness: number): Solid;
+  /** Pull direction is always the neutral plane's own normal. */
+  draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];
   union(solids: readonly Solid[]): Solid;
   subtract(base: Solid, tools: readonly Solid[]): Solid;

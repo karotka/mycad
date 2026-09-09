@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, draftExactSolid, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -386,6 +386,70 @@ export async function shellStep(run: CommandRun): Promise<StepOutcome> {
   ctx.history.recordApplied(new UpdateSolidEdit('Shell', before, cloneSolid(solid)));
   ctx.doc.notify();
   ctx.log(`Shell complete, thickness=${thickness}`);
+  return 'advance';
+}
+
+export async function draftStep(run: CommandRun): Promise<StepOutcome> {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    const face = value as SolidFaceSelection | undefined;
+    if (!face) {
+      ctx.log('DRAFT requires a planar solid face.');
+      return 'stay';
+    }
+    data.solidId = face.solidId;
+    data.face = face;
+    return 'advance';
+  }
+  if (active.stepIndex === 1) {
+    const neutral = value as SolidFaceSelection | undefined;
+    if (!neutral) {
+      ctx.log('DRAFT requires a planar neutral face.');
+      return 'stay';
+    }
+    if (neutral.solidId !== data.solidId) {
+      ctx.log('DRAFT: the neutral face must be on the same solid.');
+      return 'stay';
+    }
+    data.neutralFace = neutral;
+    return 'advance';
+  }
+
+  const solid = ctx.doc.getSolid(data.solidId as string);
+  if (!solid) {
+    ctx.log('Solid not found.');
+    return 'advance';
+  }
+  const angle = value as number;
+  if (!Number.isFinite(angle) || Math.abs(angle) >= 89.9 || Math.abs(angle) < 1e-6) {
+    ctx.log('Draft angle must be between -89.9 and 89.9 degrees, and non-zero.');
+    return 'stay';
+  }
+  const before = cloneSolid(solid);
+  ctx.log('Applying Draft…');
+  const face = data.face as SolidFaceSelection;
+  const neutralFace = data.neutralFace as SolidFaceSelection;
+  const exact = await draftExactSolid(solid, face, neutralFace, angle, solid.revision + 1);
+  if (!exact) {
+    ctx.log('DRAFT failed — try a smaller angle or different faces.');
+    return 'stay';
+  }
+  solid.mesh = exact.mesh;
+  solid.feature = {
+    kind: 'draft',
+    source: JSON.parse(JSON.stringify(before.feature)),
+    faceIds: [face.topologyFaceId!],
+    neutralPlane: { origin: neutralFace.hitPoint!, normal: neutralFace.normal },
+    angle,
+    sourceMesh: { positions: Array.from(before.mesh.positions), indices: Array.from(before.mesh.indices) },
+  };
+  solid.exact = exact.exact;
+  const zValues = Array.from(exact.mesh.positions).filter((_coordinate, index) => index % 3 === 2);
+  solid.height = Math.max(0.01, Math.max(...zValues) - Math.min(...zValues));
+  solid.revision++;
+  ctx.history.recordApplied(new UpdateSolidEdit('Draft', before, cloneSolid(solid)));
+  ctx.doc.notify();
+  ctx.log(`Draft complete, angle=${angle}°`);
   return 'advance';
 }
 

@@ -15,7 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { deleteFaceStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, sweepProfileStep } from './steps/solidOps';
+import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, sweepProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
@@ -399,6 +399,13 @@ export const COMMANDS = [
   { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles', suggest: true,
     steps: [{ kind: 'entity', label: 'Select profiles in order, then press Enter:', multi: true }, { kind: 'done' }],
     data: () => ({ entities: [] }) },
+  { name: 'DRAFT', aliases: ['DFT', 'DRAFT'], execute: draftStep, help: 'taper solid faces by an angle from a neutral plane', suggest: true,
+    steps: [
+      { kind: 'solid', label: 'Select face(s) to draft:' },
+      { kind: 'solid', label: 'Select the neutral (reference) face:' },
+      { kind: 'number', label: 'Enter draft angle (degrees):' },
+      { kind: 'done' },
+    ] },
   { name: 'UNION', aliases: ['U', 'UNI', 'UNION'], execute: unionSolids, help: 'join solids', suggest: true, steps: [{ kind: 'solid', label: 'Select first solid:', additive: true }, { kind: 'solid', label: 'Select second solid:', additive: true }, { kind: 'done' }], data: () => ({ solids: [] }) },
   { name: 'SUBTRACT', aliases: ['S', 'SUB', 'SUBTRACT', 'SUBSTRACT'], execute: subtractSolids, help: 'subtract solids', suggest: true,
     steps: [

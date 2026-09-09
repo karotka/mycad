@@ -46,6 +46,7 @@ export const primitiveTools: Array<[string, CommandName]> = [['Box', 'BOX'], ['W
 export const solidModifyTools: Array<[string, string, CommandName]> = [
   ['Shell', 'Hollow a solid to a constant wall thickness', 'SHELL'],
   ['Loft', 'Loft a solid through a sequence of profiles', 'LOFT'],
+  ['Draft', 'Taper solid faces by an angle from a neutral plane', 'DRAFT'],
 ];
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
 export const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', 'Extrude', 'EXTRUDE'], ['Sweep', 'Sweep Along Path', 'SWEEP']];

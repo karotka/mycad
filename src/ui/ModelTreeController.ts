@@ -84,7 +84,7 @@ export class ModelTreeController {
     const twist = row.hasChildren ? (this.collapsed.has(pathKey(row.path)) ? '▸' : '▾') : '·';
     element.innerHTML = `<span class="tree-twist">${twist}</span><span class="tree-label">${escapeHtml(row.label)}</span><span class="tree-detail">${escapeHtml(row.detail)}</span>`;
 
-    if (row.feature.kind === 'edge-modification' || row.feature.kind === 'presspull-region' || row.feature.kind === 'shell') {
+    if (row.feature.kind === 'edge-modification' || row.feature.kind === 'presspull-region' || row.feature.kind === 'shell' || row.feature.kind === 'draft') {
       const remove = document.createElement('button');
       remove.className = 'tree-delete';
       remove.type = 'button';

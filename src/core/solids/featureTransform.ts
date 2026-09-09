@@ -105,6 +105,22 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
         sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
         thickness: feature.thickness * Math.abs(factor),
       };
+    // A draft angle is a pure angle — uniform scaling never changes it, so
+    // unlike shell's thickness there is no scalar here to carry along. The
+    // neutral plane's origin/normal do move, the same way presspull-region's
+    // own plane does just above.
+    case 'draft': {
+      const scaleFlip = factor < 0 ? -1 : 1;
+      return {
+        ...feature,
+        source: scaledFeature(feature.source, base, factor) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
+        neutralPlane: {
+          origin: scaledPoint(feature.neutralPlane.origin, base, factor),
+          normal: scaleDirection(feature.neutralPlane.normal, scaleFlip),
+        },
+      };
+    }
     case 'sweep':
     // A loft has no single work plane of its own — each profile is a live
     // document entity with its own — so there is nothing here to scale about
@@ -154,6 +170,15 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
         ...feature,
         source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, move),
+      };
+    }
+    case 'draft': {
+      const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
+      return {
+        ...feature,
+        source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, move),
+        neutralPlane: { origin: move(feature.neutralPlane.origin), normal: feature.neutralPlane.normal },
       };
     }
     // An extrusion goes through its plane too, not through its transform: the
@@ -222,6 +247,15 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
         ...feature,
         source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, turn),
+      };
+    }
+    case 'draft': {
+      const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
+      return {
+        ...feature,
+        source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, turn),
+        neutralPlane: { origin: turn(feature.neutralPlane.origin), normal: turnDirection(feature.neutralPlane.normal, unit, angle) },
       };
     }
     case 'primitive':
@@ -294,6 +328,13 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
         ...feature,
         source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
+      };
+    case 'draft':
+      return {
+        ...feature,
+        source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
+        neutralPlane: { origin: reflectPoint(feature.neutralPlane.origin), normal: reflectDirection(feature.neutralPlane.normal) },
       };
     case 'boolean': {
       const operands = feature.operands.map((operand) => mirroredFeature(operand, mirrorPlane, axisStart, axisEnd));

@@ -1,4 +1,4 @@
-import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -70,6 +70,7 @@ function exactShapeFromFeature(feature: SolidFeature, kernel: OpenCascadeKernel)
   if (feature.kind === 'edge-modification') return exactEdgeModificationShape(feature, kernel);
   if (feature.kind === 'shell') return exactShellShape(feature, kernel);
   if (feature.kind === 'loft') return exactLoftShape(feature, kernel);
+  if (feature.kind === 'draft') return exactDraftShape(feature, kernel);
   if (feature.kind !== 'boolean' || feature.operands.length === 0) return null;
 
   const operands: OpenCascadeSolid[] = [];
@@ -133,6 +134,17 @@ function exactShellShape(feature: ShellFeature, kernel: OpenCascadeKernel): Open
   if (!source) return null;
   try {
     return kernel.shell(source, feature.faceId, feature.thickness);
+  } finally {
+    source.dispose();
+  }
+}
+
+function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  if (feature.faceIds.length === 0) return null;
+  const source = exactFeatureSource(feature.source, feature.sourceMesh, kernel);
+  if (!source) return null;
+  try {
+    return kernel.draft(source, feature.faceIds, feature.neutralPlane, feature.angle * Math.PI / 180);
   } finally {
     source.dispose();
   }
@@ -782,6 +794,42 @@ export async function shellExactSolid(
   let result: OpenCascadeSolid | null = null;
   try {
     result = kernel.shell(source, faceId, thickness);
+    return exactResult(kernel, result, revision);
+  } catch {
+    return null;
+  } finally {
+    result?.dispose();
+    source.dispose();
+  }
+}
+
+/** `neutralSelection`'s own normal/hitPoint become the neutral plane, captured
+ *  once in world space here — not re-derived from a face id on every replay,
+ *  same as PressPullFeature's own region.plane. */
+export async function draftExactSolid(
+  solid: Solid,
+  faceSelection: SolidFaceSelection,
+  neutralSelection: SolidFaceSelection,
+  angleDegrees: number,
+  revision: number,
+): Promise<ExactSolidResult | null> {
+  if (!Number.isFinite(angleDegrees) || Math.abs(angleDegrees) >= 89.9) return null;
+  if (!neutralSelection.hitPoint) return null;
+  if (!await promoteSolidToExact(solid)) return null;
+  const faceId = faceSelection.topologyFaceId ?? topologyFaceIdAtPoint(solid.mesh, faceSelection);
+  if (faceId === undefined) return null;
+  faceSelection.topologyFaceId = faceId;
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(solid, kernel);
+  if (!source) return null;
+  let result: OpenCascadeSolid | null = null;
+  try {
+    result = kernel.draft(
+      source,
+      [faceId],
+      { origin: neutralSelection.hitPoint, normal: neutralSelection.normal },
+      angleDegrees * Math.PI / 180,
+    );
     return exactResult(kernel, result, revision);
   } catch {
     return null;
