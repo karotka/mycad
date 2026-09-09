@@ -34,7 +34,7 @@ import { NamedUcsController } from './ui/NamedUcsController';
 import { DraftingSettingsController } from './ui/DraftingSettingsController';
 import {
   arcTools, arrayFlyout, circleFlyout, circleTools, curveTools, dimensionFlyout, dimensionTools, drawTools, editTools,
-  extrudeFlyout, mlineTools, modifyTools, primitiveFlyout, primitiveTools, solidTools, toolButtons, zoomFlyout, zoomTools,
+  extrudeFlyout, mlineTools, modifyTools, primitiveFlyout, primitiveTools, solidModifyTools, solidTools, toolButtons, zoomFlyout, zoomTools,
 } from './ui/toolbar';
 import { toolIcon } from './ui/toolIcons';
 import { shellHtml } from './ui/shell';
@@ -70,6 +70,8 @@ const savedDimension = localStorage.getItem('mycad.lastDimension') as CommandNam
 const initialDimension: CommandName = dimensionTools.some(([, , command]) => command === savedDimension) ? savedDimension! : 'MEASURE';
 const savedMline = localStorage.getItem('mycad.lastMline') as CommandName | null;
 const initialMline: CommandName = mlineTools.some(([, , command]) => command === savedMline) ? savedMline! : 'MLINE';
+const savedSolidModify = localStorage.getItem('mycad.lastSolidModify') as CommandName | null;
+const initialSolidModify: CommandName = solidModifyTools.some(([, , command]) => command === savedSolidModify) ? savedSolidModify! : 'SHELL';
 const savedZoom = localStorage.getItem('mycad.lastZoom') as 'ZOOM_ALL' | 'ZOOM_WINDOW' | null;
 const initialZoom: 'ZOOM_ALL' | 'ZOOM_WINDOW' = zoomTools.some(([, action]) => action === savedZoom) ? savedZoom! : 'ZOOM_ALL';
 const dynamicUcsController = new DynamicUcsController(localStorage.getItem('mycad.dynamicUcs') !== 'off');
@@ -94,6 +96,7 @@ app.innerHTML = shellHtml({
   arc: initialArc,
   dimension: initialDimension,
   mline: initialMline,
+  solidModify: initialSolidModify,
   zoom: initialZoom,
 });
 
@@ -506,6 +509,7 @@ function drawChrome(): void {
   get<HTMLButtonElement>('arc-main').classList.toggle('active', arcTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('dimension-main').classList.toggle('active', dimensionTools.some(([, command]) => command === commands.active?.name));
   get<HTMLButtonElement>('mline-main').classList.toggle('active', mlineTools.some(([, , command]) => command === commands.active?.name));
+  get<HTMLButtonElement>('solid-modify-main').classList.toggle('active', solidModifyTools.some(([, , command]) => command === commands.active?.name));
   get<HTMLButtonElement>('zoom-main').classList.toggle('active', zoomWindowMode);
   prompt.textContent = activePromptText();
 }
@@ -1642,6 +1646,19 @@ const mlineFlyoutTool = new FlyoutTool<CommandName>({
     attribute: 'data-mline-command',
     storageKey: 'mycad.lastMline',
     labelOf: (value) => mlineTools.find((tool) => tool[2] === value)?.[0] ?? value,
+    iconOf: toolIcon,
+  },
+});
+
+const solidModifyFlyoutTool = new FlyoutTool<CommandName>({
+  main: get<HTMLButtonElement>('solid-modify-main'),
+  flyout: get('solid-modify-flyout'),
+  initial: initialSolidModify,
+  run: runTool,
+  memory: {
+    attribute: 'data-solid-modify-command',
+    storageKey: 'mycad.lastSolidModify',
+    labelOf: (value) => solidModifyTools.find((tool) => tool[2] === value)?.[0] ?? value,
     iconOf: toolIcon,
   },
 });

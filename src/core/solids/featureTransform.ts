@@ -98,7 +98,18 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
         },
         workPlane: movedOrigin(planeOf(feature.workPlane), base, factor),
       };
+    case 'shell':
+      return {
+        ...feature,
+        source: scaledFeature(feature.source, base, factor) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
+        thickness: feature.thickness * Math.abs(factor),
+      };
     case 'sweep':
+    // A loft has no single work plane of its own — each profile is a live
+    // document entity with its own — so there is nothing here to scale about
+    // `base` without reaching outside the feature tree. Honestly baked.
+    case 'loft':
     case 'mesh':
       return null;
   }
@@ -137,6 +148,14 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
       if (operands.some((operand) => operand === null)) return null;
       return { ...feature, operands: operands as SolidFeature[] };
     }
+    case 'shell': {
+      const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
+      return {
+        ...feature,
+        source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, move),
+      };
+    }
     // An extrusion goes through its plane too, not through its transform: the
     // transform moves the *profile*, in the plane's own coordinates, so adding a
     // world delta to it is only right when the plane happens to be the world's.
@@ -153,6 +172,8 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
         },
       };
     }
+    // A loft has no single work plane of its own to carry along — see scaledFeature.
+    case 'loft':
     case 'mesh':
       return null;
   }
@@ -195,6 +216,14 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
       if (operands.some((operand) => operand === null)) return null;
       return { ...feature, operands: operands as SolidFeature[] };
     }
+    case 'shell': {
+      const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
+      return {
+        ...feature,
+        source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, turn),
+      };
+    }
     case 'primitive':
     case 'extrusion':
     case 'sweep': {
@@ -212,6 +241,7 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
         },
       };
     }
+    case 'loft':
     case 'mesh':
       return null;
   }
@@ -259,6 +289,12 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
         sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
         edge: transformedEdge(feature.edge, reflectPoint, reflectDirection),
       };
+    case 'shell':
+      return {
+        ...feature,
+        source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
+      };
     case 'boolean': {
       const operands = feature.operands.map((operand) => mirroredFeature(operand, mirrorPlane, axisStart, axisEnd));
       if (operands.some((operand) => operand === null)) return null;
@@ -281,6 +317,7 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
     // work plane is not enough to guarantee those frames keep their handedness,
     // so the caller keeps the correct mirrored mesh and honestly bakes it.
     case 'sweep':
+    case 'loft':
     case 'mesh':
       return null;
   }

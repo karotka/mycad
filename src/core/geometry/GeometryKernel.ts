@@ -113,6 +113,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   fillet(solid: Solid, edge: EdgeReference3, radius: number): Solid;
   chamfer(solid: Solid, edge: EdgeReference3, distance1: number, distance2: number): Solid;
   deleteFaces(solid: Solid, faceIds: readonly number[]): Solid;
+  /** null faceId hollows the solid completely closed; a given face opens as
+   *  the shell's mouth. thickness always hollows inward. */
+  shell(solid: Solid, faceId: number | null, thickness: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];
   union(solids: readonly Solid[]): Solid;
   subtract(base: Solid, tools: readonly Solid[]): Solid;

@@ -1,7 +1,7 @@
 import type { CommandName } from '../core/commands/CommandManager';
 import {
   arcFlyout, arrayFlyout, circleFlyout, curveFlyout, dimensionFlyout, drawTools, editTools, extrudeFlyout,
-  mlineFlyout, modifyTools, primitiveFlyout, solidTools, toolButtons, zoomFlyout,
+  mlineFlyout, modifyTools, primitiveFlyout, solidModifyFlyout, solidTools, toolButtons, zoomFlyout,
 } from './toolbar';
 import {
   STROKE_FONT, STROKE_FONT_DUPLEX, STROKE_FONT_GOTHIC, STROKE_FONT_SCRIPT, STROKE_FONT_TRIPLEX,
@@ -30,6 +30,7 @@ export interface ShellTools {
   arc: CommandName;
   dimension: CommandName;
   mline: CommandName;
+  solidModify: CommandName;
   zoom: 'ZOOM_ALL' | 'ZOOM_WINDOW';
 }
 
@@ -48,7 +49,7 @@ export function shellHtml(tools: ShellTools): string {
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="Modify">${toolButtons(modifyTools)}${arrayFlyout()}${dimensionFlyout(tools.dimension)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
-      <div class="tool-group" role="group" aria-label="3D operations">${primitiveFlyout(tools.primitive)}${extrudeFlyout()}${toolButtons(solidTools)}</div>
+      <div class="tool-group" role="group" aria-label="3D operations">${primitiveFlyout(tools.primitive)}${extrudeFlyout()}${toolButtons(solidTools)}${solidModifyFlyout(tools.solidModify)}</div>
       <div class="tool-divider" aria-hidden="true"></div>
       <div class="tool-group" role="group" aria-label="View and coordinate system">
         ${zoomFlyout(tools.zoom)}

@@ -1,4 +1,4 @@
-import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type Entity, type ExtrusionFeature, type PressPullFeature, type PrimitiveFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -68,6 +68,8 @@ function exactShapeFromFeature(feature: SolidFeature, kernel: OpenCascadeKernel)
   if (feature.kind === 'sweep') return exactSweepShape(feature, kernel);
   if (feature.kind === 'presspull-region') return exactPressPullShape(feature, kernel);
   if (feature.kind === 'edge-modification') return exactEdgeModificationShape(feature, kernel);
+  if (feature.kind === 'shell') return exactShellShape(feature, kernel);
+  if (feature.kind === 'loft') return exactLoftShape(feature, kernel);
   if (feature.kind !== 'boolean' || feature.operands.length === 0) return null;
 
   const operands: OpenCascadeSolid[] = [];
@@ -124,6 +126,33 @@ function exactPressPullShape(feature: PressPullFeature, kernel: OpenCascadeKerne
   } finally {
     source.dispose();
   }
+}
+
+function exactShellShape(feature: ShellFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  const source = exactFeatureSource(feature.source, feature.sourceMesh, kernel);
+  if (!source) return null;
+  try {
+    return kernel.shell(source, feature.faceId, feature.thickness);
+  } finally {
+    source.dispose();
+  }
+}
+
+/**
+ * Each profile is placed independently through its own work plane — unlike
+ * extrusion/sweep, a loft has no single shared plane its sections all live
+ * in (that is the whole point of lofting between different sketches).
+ */
+function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  if (feature.profiles.length < 2) return null;
+  const sections: Point3[][] = [];
+  for (const profile of feature.profiles) {
+    const vertices = closedVertices(profile);
+    if (!vertices || vertices.length < 3) return null;
+    const plane = profile.workPlane ?? WORLD_WORK_PLANE;
+    sections.push(vertices.map((point) => localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0)));
+  }
+  return kernel.loftPolygons(sections);
 }
 
 /** A recorded legacy mesh is promoted only at the boundary of its exact child feature. */
@@ -721,6 +750,38 @@ export async function deleteExactSolidFace(
   let result: OpenCascadeSolid | null = null;
   try {
     result = kernel.deleteFaces(source, [faceId]);
+    return exactResult(kernel, result, revision);
+  } catch {
+    return null;
+  } finally {
+    result?.dispose();
+    source.dispose();
+  }
+}
+
+/** `selection === null` hollows the solid completely closed; otherwise the
+ *  picked face becomes the shell's one opening. */
+export async function shellExactSolid(
+  solid: Solid,
+  selection: SolidFaceSelection | null,
+  thickness: number,
+  revision: number,
+): Promise<ExactSolidResult | null> {
+  if (!Number.isFinite(thickness) || Math.abs(thickness) < 1e-6) return null;
+  if (!await promoteSolidToExact(solid)) return null;
+  let faceId: number | null = null;
+  if (selection) {
+    const resolved = selection.topologyFaceId ?? topologyFaceIdAtPoint(solid.mesh, selection);
+    if (resolved === undefined) return null;
+    selection.topologyFaceId = resolved;
+    faceId = resolved;
+  }
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(solid, kernel);
+  if (!source) return null;
+  let result: OpenCascadeSolid | null = null;
+  try {
+    result = kernel.shell(source, faceId, thickness);
     return exactResult(kernel, result, revision);
   } catch {
     return null;

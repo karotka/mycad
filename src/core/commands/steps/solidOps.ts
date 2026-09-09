@@ -7,7 +7,7 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, isSweepProfileEntity, type Entity, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
+import { closedVertices, cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -337,6 +337,91 @@ export async function pressPullStep(run: CommandRun): Promise<StepOutcome> {
   ctx.history.recordApplied(new UpdateSolidEdit('Press/Pull', before, cloneSolid(solid)));
   ctx.doc.notify();
   ctx.log(`PressPull complete, delta=${delta}`);
+  return 'advance';
+}
+
+export async function shellStep(run: CommandRun): Promise<StepOutcome> {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    const face = value as SolidFaceSelection | undefined;
+    if (!face) {
+      ctx.log('SHELL requires a planar solid face.');
+      return 'stay';
+    }
+    data.solidId = face.solidId;
+    data.face = face;
+    return 'advance';
+  }
+
+  const solid = ctx.doc.getSolid(data.solidId as string);
+  if (!solid) {
+    ctx.log('Solid not found.');
+    return 'advance';
+  }
+  const thickness = value as number;
+  if (!Number.isFinite(thickness) || thickness <= 1e-6) {
+    ctx.log('Wall thickness must be greater than zero.');
+    return 'stay';
+  }
+  const before = cloneSolid(solid);
+  ctx.log('Applying Shell…');
+  const face = data.face as SolidFaceSelection;
+  const exact = await shellExactSolid(solid, face, thickness, solid.revision + 1);
+  if (!exact) {
+    ctx.log('SHELL failed — try a smaller thickness or a different face.');
+    return 'stay';
+  }
+  solid.mesh = exact.mesh;
+  solid.feature = {
+    kind: 'shell',
+    source: JSON.parse(JSON.stringify(before.feature)),
+    faceId: face.topologyFaceId ?? null,
+    thickness,
+    sourceMesh: { positions: Array.from(before.mesh.positions), indices: Array.from(before.mesh.indices) },
+  };
+  solid.exact = exact.exact;
+  const zValues = Array.from(exact.mesh.positions).filter((_coordinate, index) => index % 3 === 2);
+  solid.height = Math.max(0.01, Math.max(...zValues) - Math.min(...zValues));
+  solid.revision++;
+  ctx.history.recordApplied(new UpdateSolidEdit('Shell', before, cloneSolid(solid)));
+  ctx.doc.notify();
+  ctx.log(`Shell complete, thickness=${thickness}`);
+  return 'advance';
+}
+
+export async function loftStep(run: CommandRun): Promise<StepOutcome> {
+  const { data, value, step, ctx } = run;
+  // Only two steps exist for LOFT (gather, then done) — 'done' never calls
+  // back into this function (see CommandManager.finishStep), so an empty
+  // Enter has to fall through to the finishing logic right here rather than
+  // deferring to a later step the way EXTRUDE's own extra height step does.
+  if (step.kind === 'entity' && value) {
+    const profile = value as Entity;
+    if (!closedVertices(profile)) {
+      ctx.log('Loft profiles must be a closed rectangle, polygon, octagon or polyline.');
+      return 'stay';
+    }
+    run.gather(profile);
+    return 'stay';
+  }
+
+  const profiles = data.entities as Entity[];
+  if (profiles.length < 2) {
+    ctx.log('LOFT requires at least two profiles.');
+    return 'advance';
+  }
+  ctx.log('Lofting…');
+  const feature: LoftFeature = { kind: 'loft', profiles };
+  const exact = await buildExactFeature(feature);
+  if (!exact) {
+    ctx.log('Loft failed — check that every profile is closed and none are self-intersecting.');
+    return 'advance';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Loft', 0, profiles.map((profile) => profile.id), undefined, feature);
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Loft', profiles, [], [], [solid]));
+  ctx.doc.viewMode = '3d';
+  ctx.log(`Loft complete: ${profiles.length} profiles.`);
   return 'advance';
 }
 

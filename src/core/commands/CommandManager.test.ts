@@ -3415,6 +3415,125 @@ describe('PRESSPULL', () => {
   });
 });
 
+describe('SHELL', () => {
+  it('rejects a solid hit without a planar face instead of hollowing the whole body', async () => {
+    const kit = setup();
+    const solid = kit.doc.createSolid(createBoxMesh(10, 6, 4), 'Box', 4, []);
+    kit.doc.addSolid(solid);
+
+    kit.manager.startCommand('SHELL');
+    await kit.manager.handleClick({ x: 0, y: 0, z: 0 }, undefined, solid.id);
+
+    expect(kit.manager.active?.stepIndex).toBe(0);
+    expect(kit.log).toHaveBeenCalledWith('Shell requires a planar solid face.');
+  });
+
+  it('hollows a box open on one face and one undo restores the solid source', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
+    kit.doc.addSolid(solid);
+    const top = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.z > 0.9)!;
+
+    kit.manager.startCommand('SHELL');
+    await kit.manager.handleClick(
+      { x: 0, y: 0, z: 4 },
+      undefined,
+      solid.id,
+      { solidId: solid.id, vertexIndices: top.vertexIndices, normal: top.normal, hitPoint: { x: 0, y: 0, z: 4 } },
+    );
+    await kit.manager.submitInput('1');
+
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'shell', thickness: 1, faceId: expect.any(Number) });
+    expect(kit.doc.solids[0].exact?.revision).toBe(kit.doc.solids[0].revision);
+    // A hollowed box has interior wall faces a solid box never does, so it
+    // triangulates into strictly more geometry.
+    expect(kit.doc.solids[0].mesh.indices.length).toBeGreaterThan(sourceMesh.indices.length);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive', primitive: 'box' });
+    expect(kit.doc.solids[0].mesh.positions).toEqual(sourceMesh.positions);
+  });
+
+  it('refuses a wall thickness that is not positive', async () => {
+    const kit = setup();
+    const feature = boxLikePrimitiveFeature('box', { x: -5, y: -3 }, { x: 5, y: 3 }, 4, WORLD_WORK_PLANE)!;
+    const sourceExact = await buildExactFeature(feature);
+    const sourceMesh = sourceExact!.mesh;
+    const solid = kit.doc.createSolid(sourceMesh, 'Box', 4, [], undefined, feature);
+    solid.exact = sourceExact!.exact;
+    kit.doc.addSolid(solid);
+    const top = solidPlanarFaces(sourceMesh).find((candidate) => candidate.normal.z > 0.9)!;
+
+    kit.manager.startCommand('SHELL');
+    await kit.manager.handleClick(
+      { x: 0, y: 0, z: 4 },
+      undefined,
+      solid.id,
+      { solidId: solid.id, vertexIndices: top.vertexIndices, normal: top.normal, hitPoint: { x: 0, y: 0, z: 4 } },
+    );
+    await kit.manager.submitInput('0');
+
+    expect(kit.manager.active?.name).toBe('SHELL');
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'primitive' });
+  });
+});
+
+describe('LOFT', () => {
+  it('lofts two rectangles at different heights into one solid, undoably', async () => {
+    const kit = setup();
+    const bottom = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
+    const top = kit.doc.createRectangle({ x: -2, y: -2 }, { x: 2, y: 2 });
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 10 } };
+    kit.doc.addEntity(bottom);
+    kit.doc.addEntity(top);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, bottom);
+    await kit.manager.handleClick({ x: 0, y: 0 }, top);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
+    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.min(...zValues)).toBeCloseTo(0, 4);
+    expect(Math.max(...zValues)).toBeCloseTo(10, 4);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(2);
+  });
+
+  it('refuses to loft with only one profile', async () => {
+    const kit = setup();
+    const only = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
+    kit.doc.addEntity(only);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, only);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles.');
+  });
+
+  it('refuses a non-polygon profile', async () => {
+    const kit = setup();
+    const circle = kit.doc.createCircle({ x: 0, y: 0 }, 5);
+    kit.doc.addEntity(circle);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 5, y: 0 }, circle);
+
+    expect(kit.doc.entities).toHaveLength(1);
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed rectangle, polygon, octagon or polyline'));
+  });
+});
+
 describe('remembered command values', () => {
   it('uses the previous circle radius when Enter answers the next radius prompt', async () => {
     const { doc, manager } = setup();

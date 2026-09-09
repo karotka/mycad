@@ -36,6 +36,8 @@ export function featureParams(feature: SolidFeature): FeatureParam[] {
     value: feature.distance,
     min: -Infinity,
   }];
+  if (feature.kind === 'shell') return [{ key: 'thickness', label: 'Thickness', value: feature.thickness, min: 1e-6 }];
+  // A loft's profiles are shapes, not numbers — same reasoning as sweep above.
   return [];
 }
 
@@ -53,6 +55,10 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   }
   if (feature.kind === 'presspull-region' && key === 'distance' && Number.isFinite(value) && Math.abs(value) >= 1e-6) {
     feature.distance = value;
+    return true;
+  }
+  if (feature.kind === 'shell' && key === 'thickness' && Number.isFinite(value) && value >= 1e-6) {
+    feature.thickness = value;
     return true;
   }
   return false;

@@ -1,6 +1,8 @@
 import type {
   OpenCascadeInstance,
+  BRepOffset_Mode,
   ChFi3d_FilletShape,
+  GeomAbs_JoinType,
   gp_Ax2,
   IFSelect_ReturnStatus,
   STEPControl_StepModelType,
@@ -601,6 +603,51 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     } finally {
       progress.delete();
       defeaturing.delete();
+      faces.forEach((face) => face.delete());
+    }
+  }
+
+  /**
+   * `faceId === null` hollows the solid out completely (`MakeThickSolidBySimple`
+   * — a closed cavity, no opening); a given face is removed and the rest
+   * thickened into a shell that stays joined at that opening
+   * (`MakeThickSolidByJoin`, the closing-faces idiom every "Shell" tool in
+   * mainstream CAD uses). `thickness` always hollows inward — OCCT's own
+   * sign convention for this offset — never grows the solid outward.
+   */
+  shell(solid: OpenCascadeSolid, faceId: number | null, thickness: number): OpenCascadeSolid {
+    const offset = -Math.abs(thickness);
+    const faces = faceId === null ? [] : this.subShapes(solid.shape(this), this.oc.TopAbs_ShapeEnum.TopAbs_FACE);
+    if (faceId !== null && (!Number.isInteger(faceId) || faceId < 0 || faceId >= faces.length)) {
+      faces.forEach((face) => face.delete());
+      throw new Error('Shell refers to an invalid B-rep face.');
+    }
+    const maker = new this.oc.BRepOffsetAPI_MakeThickSolid();
+    const progress = new this.oc.Message_ProgressRange_1();
+    let closingFaces: InstanceType<typeof this.oc.TopTools_ListOfShape_1> | null = null;
+    try {
+      if (faceId === null) {
+        maker.MakeThickSolidBySimple(solid.shape(this), offset);
+      } else {
+        closingFaces = new this.oc.TopTools_ListOfShape_1();
+        closingFaces.Append_1(faces[faceId]);
+        maker.MakeThickSolidByJoin(
+          solid.shape(this), closingFaces, offset, 1e-3,
+          this.oc.BRepOffset_Mode.BRepOffset_Skin as unknown as BRepOffset_Mode, false, false,
+          this.oc.GeomAbs_JoinType.GeomAbs_Arc as unknown as GeomAbs_JoinType, false, progress,
+        );
+      }
+      maker.Build(progress);
+      const shape = maker.Shape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade failed to shell the solid.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress.delete();
+      maker.delete();
+      closingFaces?.delete();
       faces.forEach((face) => face.delete());
     }
   }

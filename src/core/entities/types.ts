@@ -625,6 +625,30 @@ export interface PressPullFeature {
   sourceMesh?: SerializedSolidMesh;
 }
 
+/** A reversible hollowing-out of a solid to a constant wall thickness. */
+export interface ShellFeature {
+  kind: 'shell';
+  source: SolidFeature;
+  /** null hollows the solid completely closed; otherwise the B-rep face that
+   *  opens as the shell's mouth (see topologyFaceId on SolidFaceSelection). */
+  faceId: number | null;
+  thickness: number;
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
+}
+
+/**
+ * A solid built directly through an ordered sequence of closed profiles —
+ * a leaf feature, like ExtrusionFeature/SweepFeature, since there is no
+ * single "source" solid it modifies.
+ */
+export interface LoftFeature {
+  kind: 'loft';
+  /** In selection order — that order is also the loft's section order. */
+  profiles: Entity[];
+}
+
 export interface PrimitiveFeature {
   kind: 'primitive';
   primitive: 'box' | 'wedge' | 'sphere' | 'cone' | 'cylinder' | 'pyramid' | 'torus';
@@ -654,7 +678,7 @@ export interface PrimitiveFeature {
   workPlane?: WorkPlane;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature;
 
 export interface Solid {
   id: string;

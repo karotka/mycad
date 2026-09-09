@@ -221,8 +221,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // Highlighting follows the cursor only while a face is still being chosen.
     // Once one is picked the cursor is dragging it, and re-picking under the
     // cursor would light up whatever it happens to pass over instead.
-    const choosingModellingFace = (commands.active?.name === 'PRESSPULL' || commands.active?.name === 'DELETEFACE')
-      && commands.active.stepIndex === 0;
+    const choosingModellingFace = (commands.active?.name === 'PRESSPULL' || commands.active?.name === 'DELETEFACE' || commands.active?.name === 'SHELL')
+      && commands.active.steps[commands.active.stepIndex]?.kind === 'solid';
     const choosingSlicePlane = commands.active?.name === 'SLICE'
       && commands.active.steps[commands.active.stepIndex]?.kind === 'plane';
     const choosingDynamicUcs = canAcquireDynamicUcs();
@@ -256,7 +256,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         cadDocument.solids,
         cadDocument.entities.filter((item) => !cadDocument.hiddenLayers.has(item.layer)),
       );
-    } else if (commands.active?.name !== 'PRESSPULL' && commands.active?.name !== 'DELETEFACE' && !dynamicUcsController.isTemporary) {
+    } else if (commands.active?.name !== 'PRESSPULL' && commands.active?.name !== 'DELETEFACE' && commands.active?.name !== 'SHELL' && !dynamicUcsController.isTemporary) {
       renderer3d.clearFaceHighlight();
     }
     if (windowDrag.active) {
@@ -958,6 +958,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         : null;
       let face = commands.active?.name === 'PRESSPULL'
         || commands.active?.name === 'DELETEFACE'
+        || commands.active?.name === 'SHELL'
         || (choosingSlicePlane && !slicePointSnap)
         ? renderer3d.pickSolidFace(
           renderer3d.renderer.domElement,

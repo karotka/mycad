@@ -52,6 +52,8 @@ export function toolIcon(command: ToolbarIcon): string {
     FILLET: '<path d="M4 20V5h15M4 20c0-8.3 6.7-15 15-15"/>',
     DELETEFACE: '<path d="M4 8l8-4 8 4v9l-8 4-8-4V8zm0 0l8 4 8-4M12 12v9"/><path d="M7 7l10 10M17 7L7 17" stroke-width="1.8"/>',
     PRESSPULL: '<path d="M3 17l9 4 9-4-9-4-9 4zM12 13V4M9 7l3-3 3 3M9 10l3 3 3-3"/>',
+    SHELL: '<path d="M4 8l8-4 8 4v9l-8 4-8-4V8zm0 0l8 4 8-4M12 12v9"/><path d="M8 9.5l4 2 4-2" opacity=".55"/>',
+    LOFT: '<ellipse cx="12" cy="5" rx="7" ry="2.4"/><ellipse cx="12" cy="19" rx="4" ry="1.6"/><path d="M5 5v.2C5 9 8 11 12 12.5M19 5v.2c0 3.8-3 5.8-7 7.3M12 12.5c-4.4 1.6-7 3.7-7 5.9M12 12.5c4.4 1.6 7 3.7 7 5.9"/>',
     SLICE: '<path d="M4 7l8-4 8 4-8 4-8-4zm0 10l8 4 8-4-8-4-8 4z"/><path d="M2 12h20M5 10l-3 2 3 2M19 10l3 2-3 2"/>',
     ERASE: '<path d="M4 16L14 4l6 5-9 11H7l-3-4zM11 20h10"/>',
     MEASURE: '<path d="M4 19L19 4M3 15l6 6M15 3l6 6M8 14l2 2M11 11l2 2M14 8l2 2"/>',

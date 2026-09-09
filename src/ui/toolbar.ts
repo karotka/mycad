@@ -41,6 +41,12 @@ export const solidTools: Array<[string, CommandName]> = [
   ['Chamfer', 'CHAMFER'], ['Fillet', 'FILLET'], ['Delete Face', 'DELETEFACE'], ['Slice', 'SLICE'],
 ];
 export const primitiveTools: Array<[string, CommandName]> = [['Box', 'BOX'], ['Wedge', 'WEDGE'], ['Sphere', 'SPHERE'], ['Cone', 'CONE'], ['Cylinder', 'CYLINDER'], ['Pyramid', 'PYRAMID'], ['Torus', 'TORUS']];
+// Higher-level solid-modelling moves grouped under one icon, same idea as
+// mlineTools — SHELL is the default click, more reached for by holding.
+export const solidModifyTools: Array<[string, string, CommandName]> = [
+  ['Shell', 'Hollow a solid to a constant wall thickness', 'SHELL'],
+  ['Loft', 'Loft a solid through a sequence of profiles', 'LOFT'],
+];
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
 export const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', 'Extrude', 'EXTRUDE'], ['Sweep', 'Sweep Along Path', 'SWEEP']];
 export const dimensionTools: Array<[string, string, CommandName]> = [
@@ -100,6 +106,12 @@ export function mlineFlyout(currentMline: CommandName): string {
   const current = mlineTools.find(([, , command]) => command === currentMline) ?? mlineTools[0];
   const [label, tooltip] = current;
   return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="mline-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(currentMline)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="mline-flyout" hidden>${mlineTools.map(([name, tooltipText, command]) => `<button data-mline-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
+}
+
+export function solidModifyFlyout(current: CommandName): string {
+  const tool = solidModifyTools.find(([, , command]) => command === current) ?? solidModifyTools[0];
+  const [label, tooltip] = tool;
+  return `<div class="primitive-tool"><button class="tool-btn primitive-main" id="solid-modify-main" data-label="${label}" title="${tooltip} · hold for more" aria-label="${tooltip} · hold for more">${toolIcon(current)}<span class="flyout-caret">▾</span></button><div class="primitive-flyout" id="solid-modify-flyout" hidden>${solidModifyTools.map(([name, tooltipText, command]) => `<button data-solid-modify-command="${command}" title="${tooltipText}">${toolIcon(command)}<span>${name}</span></button>`).join('')}</div></div>`;
 }
 
 export function curveFlyout(currentCurve: CommandName): string {
