@@ -18,6 +18,7 @@ import {
   type WorkPlane,
 } from '../../../math/workplane';
 import { dist2, dist3, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry';
+import { rotateWorkPlaneAboutAxis, type UcsAxisName } from '../../../math/ucsAxisRotation';
 import type { CommandRun, StepOutcome } from '../types';
 
 type SpatialLocalPoint = Vec2 & { z?: number };
@@ -572,6 +573,24 @@ export function quickDimension(run: CommandRun): StepOutcome {
 }
 
 export function setWorkPlane({ active, data, value, ctx }: CommandRun): StepOutcome {
+  // The X/Y/Z keyword shortcut (see CommandManager's UCS interception)
+  // replaces the whole step list with a single angle prompt, so this is the
+  // only branch that ever runs once data.rotateAxis is set.
+  if (data.rotateAxis) {
+    const degrees = value as number;
+    if (!Number.isFinite(degrees)) {
+      ctx.log('Enter a rotation angle in degrees.');
+      return 'stay';
+    }
+    const axis = data.rotateAxis as UcsAxisName;
+    const rotated = rotateWorkPlaneAboutAxis(ctx.doc.activeWorkPlane, axis, degrees * Math.PI / 180);
+    const named = ctx.doc.addNamedWorkPlane(rotated);
+    ctx.doc.viewMode = '3d';
+    ctx.workPlaneChanged?.();
+    ctx.log(`${named.name} saved: rotated ${degrees}° about its own ${axis.toUpperCase()} axis.`);
+    return 'advance';
+  }
+
   if (active.stepIndex === 0) { data.origin = value; return 'advance'; }
   if (active.stepIndex === 1) { data.xPoint = value; return 'advance'; }
 

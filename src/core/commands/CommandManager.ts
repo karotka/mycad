@@ -383,6 +383,22 @@ export class CommandManager {
           await this.advanceStep(null);
           return;
         }
+        // UCS's X/Y/Z shortcut: rotate the current UCS about its own axis by
+        // a typed angle, instead of the 3-point flow's precise origin/X/Y
+        // picks — the point that matters when the geometry to snap onto has
+        // no convenient symmetric points to click. Swaps in a single angle
+        // step; setWorkPlane's own data.rotateAxis branch takes it from there.
+        if (this.active?.name === 'UCS' && this.active.stepIndex === 0) {
+          const axis = input.trim().toUpperCase();
+          if (axis === 'X' || axis === 'Y' || axis === 'Z') {
+            this.active.data.rotateAxis = axis.toLowerCase();
+            this.active.steps = [{ kind: 'number', label: `Specify rotation angle about the ${axis} axis (degrees):` }, { kind: 'done' }];
+            this.active.stepIndex = 0;
+            this.showCurrentPrompt();
+            this.ctx.redraw();
+            return;
+          }
+        }
         if (this.active?.name === 'SCALE' && this.active.stepIndex >= 2 && this.active.stepIndex <= 3) {
           const entered = Number(input);
           if (Number.isFinite(entered)) {

@@ -1929,6 +1929,41 @@ describe('CommandManager history integration', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('UCS 1 saved'));
   });
 
+  it('rotates the current UCS about its own X/Y/Z axis via a typed keyword, no 3-point pick needed', async () => {
+    const { doc, manager, log } = setup();
+    const workPlaneChanged = vi.fn();
+    manager.updateContext({ workPlaneChanged });
+
+    manager.startCommand('UCS');
+    await manager.submitInput('X');
+    expect(manager.active).toMatchObject({ name: 'UCS', stepIndex: 0 });
+    await manager.submitInput('90');
+
+    expect(doc.namedWorkPlanes).toHaveLength(1);
+    const plane = doc.namedWorkPlanes[0].workPlane;
+    // Rotating the world UCS 90° about its own X axis turns Y into Z and Z into -Y.
+    expect(plane.xAxis).toEqual({ x: 1, y: 0, z: 0 });
+    expect(plane.yAxis.x).toBeCloseTo(0, 9);
+    expect(plane.yAxis.y).toBeCloseTo(0, 9);
+    expect(plane.yAxis.z).toBeCloseTo(1, 9);
+    expect(plane.zAxis.x).toBeCloseTo(0, 9);
+    expect(plane.zAxis.y).toBeCloseTo(-1, 9);
+    expect(plane.zAxis.z).toBeCloseTo(0, 9);
+    expect(doc.activeWorkPlane).toEqual(plane);
+    expect(workPlaneChanged).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('rotated 90° about its own X axis'));
+  });
+
+  it('refuses a non-numeric UCS rotation angle and stays in the command', async () => {
+    const { manager, log } = setup();
+    manager.startCommand('UCS');
+    await manager.submitInput('Z');
+    await manager.submitInput('not a number');
+
+    expect(manager.active).toMatchObject({ name: 'UCS', stepIndex: 0 });
+    expect(log).toHaveBeenCalledWith('Invalid number.');
+  });
+
   it('creates parametric box and cylinder primitives with undo support', async () => {
     const { doc, history, manager } = setup();
     manager.startCommand('BOX');

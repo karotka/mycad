@@ -28,6 +28,34 @@ export function pointWorkPlaneAxisAt(plane: WorkPlane, axis: UcsAxisName, target
   return result;
 }
 
+/**
+ * Turns a plane about one of its own axes, origin fixed — AutoCAD's
+ * `UCS X/Y/Z <angle>`. The alternative to the 3-point UCS's precise
+ * origin/X-point/Y-point picks: no snapping onto asymmetric geometry
+ * required, just a typed angle about whichever axis the current UCS
+ * already has.
+ */
+export function rotateWorkPlaneAboutAxis(plane: WorkPlane, axis: UcsAxisName, angleRadians: number): WorkPlane {
+  const rotationAxis = axis === 'x' ? plane.xAxis : axis === 'y' ? plane.yAxis : plane.zAxis;
+  const result = cloneWorkPlane(plane);
+  result.xAxis = rotateAround(plane.xAxis, rotationAxis, angleRadians);
+  result.yAxis = rotateAround(plane.yAxis, rotationAxis, angleRadians);
+  result.zAxis = rotateAround(plane.zAxis, rotationAxis, angleRadians);
+  return result;
+}
+
+/** Rodrigues' rotation formula. */
+function rotateAround(vector: Vec3, axis: Vec3, angle: number): Vec3 {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const axisDotVector = dot(axis, vector);
+  const axisCrossVector = cross(axis, vector);
+  return {
+    x: vector.x * cos + axisCrossVector.x * sin + axis.x * axisDotVector * (1 - cos),
+    y: vector.y * cos + axisCrossVector.y * sin + axis.y * axisDotVector * (1 - cos),
+    z: vector.z * cos + axisCrossVector.z * sin + axis.z * axisDotVector * (1 - cos),
+  };
+}
+
 function perpendicularized(value: Vec3, axis: Vec3): Vec3 | null {
   const projection = dot(value, axis);
   return normalized({ x: value.x - axis.x * projection, y: value.y - axis.y * projection, z: value.z - axis.z * projection });
