@@ -3521,16 +3521,37 @@ describe('LOFT', () => {
     expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles.');
   });
 
-  it('refuses a non-polygon profile', async () => {
+  it('lofts two circles into a solid — a circle is a valid loft section, not only a polygon', async () => {
     const kit = setup();
-    const circle = kit.doc.createCircle({ x: 0, y: 0 }, 5);
-    kit.doc.addEntity(circle);
+    const bottom = kit.doc.createCircle({ x: 0, y: 0 }, 5);
+    const top = kit.doc.createCircle({ x: 0, y: 0 }, 2);
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 10 } };
+    kit.doc.addEntity(bottom);
+    kit.doc.addEntity(top);
 
     kit.manager.startCommand('LOFT');
-    await kit.manager.handleClick({ x: 5, y: 0 }, circle);
+    await kit.manager.handleClick({ x: 5, y: 0 }, bottom);
+    await kit.manager.handleClick({ x: 2, y: 0 }, top);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
+    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.min(...zValues)).toBeCloseTo(0, 4);
+    expect(Math.max(...zValues)).toBeCloseTo(10, 4);
+  });
+
+  it('refuses an open polyline profile', async () => {
+    const kit = setup();
+    const openLine = kit.doc.createPolyline([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }], false);
+    kit.doc.addEntity(openLine);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 2, y: 0 }, openLine);
 
     expect(kit.doc.entities).toHaveLength(1);
-    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed rectangle, polygon, octagon or polyline'));
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
   });
 });
 

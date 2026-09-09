@@ -157,14 +157,15 @@ function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): Open
  */
 function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
   if (feature.profiles.length < 2) return null;
-  const sections: Point3[][] = [];
+  const sections: SweepProfile3[] = [];
   for (const profile of feature.profiles) {
-    const vertices = closedVertices(profile);
-    if (!vertices || vertices.length < 3) return null;
-    const plane = profile.workPlane ?? WORLD_WORK_PLANE;
-    sections.push(vertices.map((point) => localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0)));
+    // The same profile-to-wire conversion SWEEP uses — a circle or a closed
+    // Bezier loft section, not only a straight-edged polygon.
+    const section = exactSweepProfile(profile, profile.workPlane ?? WORLD_WORK_PLANE);
+    if (!section) return null;
+    sections.push(section);
   }
-  return kernel.loftPolygons(sections);
+  return kernel.loftProfiles(sections);
 }
 
 /** A recorded legacy mesh is promoted only at the boundary of its exact child feature. */

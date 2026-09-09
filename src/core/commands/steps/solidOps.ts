@@ -7,7 +7,7 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { closedVertices, cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
+import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -461,8 +461,8 @@ export async function loftStep(run: CommandRun): Promise<StepOutcome> {
   // deferring to a later step the way EXTRUDE's own extra height step does.
   if (step.kind === 'entity' && value) {
     const profile = value as Entity;
-    if (!closedVertices(profile)) {
-      ctx.log('Loft profiles must be a closed rectangle, polygon, octagon or polyline.');
+    if (!isSweepProfileEntity(profile)) {
+      ctx.log('Loft profiles must be a closed circle, rectangle, octagon, polyline or Bezier.');
       return 'stay';
     }
     run.gather(profile);

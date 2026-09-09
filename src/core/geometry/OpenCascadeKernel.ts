@@ -475,6 +475,39 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * The general LOFT: each section can be a circle or a closed Bezier wire,
+   * not only a straight-edged polygon — `makeSweepProfileWire` already knows
+   * how to build all three, since SWEEP's own profile needed exactly that.
+   */
+  loftProfiles(sections: readonly SweepProfile3[]): OpenCascadeSolid {
+    if (sections.length < 2) throw new Error('Loft requires at least two sections.');
+    const owned: Array<{ delete(): void }> = [];
+    const wires: TopoDS_Wire[] = [];
+    const loft = new this.oc.BRepOffsetAPI_ThruSections(true, true, 1e-7);
+    let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
+    try {
+      loft.CheckCompatibility(true);
+      for (const section of sections) {
+        const wire = this.makeSweepProfileWire(section, owned);
+        wires.push(wire);
+        loft.AddWire(wire);
+      }
+      progress = new this.oc.Message_ProgressRange_1();
+      loft.Build(progress);
+      const shape = loft.Shape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade failed to loft the sections.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress?.delete();
+      loft.delete();
+      owned.reverse().forEach((item) => item.delete());
+    }
+  }
+
   sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): OpenCascadeSolid {
     if (path.length === 0) throw new Error('Sweep path requires at least one segment.');
 
