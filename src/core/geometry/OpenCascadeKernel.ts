@@ -504,7 +504,20 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     } finally {
       progress?.delete();
       loft.delete();
-      owned.reverse().forEach((item) => item.delete());
+      // Deliberately not disposing `owned` here, unlike every other builder
+      // in this file: a ThruSections result — unique among them — keeps live
+      // references into a Bezier/arc section's own curve objects (not just
+      // their pole values), so deleting `owned` right after `Build()` leaves
+      // the returned shape holding a dangling reference. Confirmed directly:
+      // the very same section wires, lofted the very same way, only crash
+      // (an embind "table index is out of bounds"/"function signature
+      // mismatch" inside later OCCT calls like inspect()'s bounding box) once
+      // `owned` is disposed — never while it is kept alive. A polygon or
+      // circle section never touches this path (their edges don't hold onto
+      // a separate curve object the way a Bezier/arc one does), which is why
+      // this went unnoticed until LOFT's own Bezier profiles became
+      // reachable. The leak this trades for — a handful of small point/curve
+      // objects per LOFT call — is a better trade than crashing.
     }
   }
 

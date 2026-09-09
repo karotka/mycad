@@ -212,6 +212,32 @@ describe('OpenCascade exact-kernel spike', () => {
     });
   });
 
+  it('lofts two closed Bezier-wire sections without corrupting the result — regression for a real crash', () => {
+    // A section built from two Bezier edges (the same shape LOFT's own Bezier
+    // profile support produces) at two different sizes/heights. ThruSections
+    // itself used to build this fine, but disposing the section's pole/curve
+    // objects right after Build() left the returned shape holding a dangling
+    // reference into them — invisible until something evaluates the surface
+    // (inspect()'s bounding box), which then crashed the whole OCCT instance
+    // (an embind "table index is out of bounds"). A polygon or circle section
+    // never exercises this, which is why it went unnoticed until a real
+    // closed Bezier profile reached this far.
+    const ovalSection = (size: number, z: number) => {
+      const start = { x: 0, y: 0, z };
+      const c1 = { x: 0, y: size, z };
+      const c2 = { x: size, y: size, z };
+      const mid = { x: size, y: 0, z };
+      const c3 = { x: size * 0.6, y: -size * 0.4, z };
+      const c4 = { x: size * 0.2, y: -size * 0.4, z };
+      return { kind: 'wire' as const, edges: [
+        { kind: 'bezier' as const, poles: [start, c1, c2, mid] },
+        { kind: 'bezier' as const, poles: [mid, c3, c4, start] },
+      ] };
+    };
+    const loft = keep(kernel.loftProfiles([ovalSection(10, 0), ovalSection(6, 10)]));
+    expect(kernel.inspect(loft)).toMatchObject({ solidCount: 1, valid: true });
+  });
+
   it('lofts along a curved guide path, not just straight-interpolating between sections', () => {
     const rectangleSection = { kind: 'polygon' as const, points: [
       { x: -5, y: -5, z: 0 }, { x: 5, y: -5, z: 0 }, { x: 5, y: 5, z: 0 }, { x: -5, y: 5, z: 0 },
