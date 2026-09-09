@@ -194,6 +194,45 @@ describe('GripController', () => {
     expect(grips.draggingCircleFixedCenter()).toBeNull();
   });
 
+  it('reshapes an arc from its midpoint grip, keeping both endpoints fixed', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    // A quarter circle from (10,0) to (0,10), centred on the origin.
+    const arc = doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI / 2);
+    doc.addEntity(arc);
+    doc.selectEntity(arc.id);
+    const start = { x: 10, y: 0 };
+    const end = { x: 0, y: 10 };
+
+    grips.begin(arc, undefined, 3, { x: Math.SQRT1_2 * 10, y: Math.SQRT1_2 * 10 });
+    // Drag the midpoint bulge far out along the same side — a bigger sagitta,
+    // so a bigger radius (past the chord-half minimum at sagitta == half).
+    grips.update({ x: 30, y: 30 });
+
+    const pointAt = (angle: number) => ({ x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius });
+    expect(pointAt(arc.startAngle).x).toBeCloseTo(start.x, 6);
+    expect(pointAt(arc.startAngle).y).toBeCloseTo(start.y, 6);
+    expect(pointAt(arc.startAngle + arc.sweepAngle).x).toBeCloseTo(end.x, 6);
+    expect(pointAt(arc.startAngle + arc.sweepAngle).y).toBeCloseTo(end.y, 6);
+    expect(arc.radius).toBeGreaterThan(15);
+  });
+
+  it('leaves an arc unchanged when its midpoint grip is dragged back onto the chord', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const arc = doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI / 2);
+    doc.addEntity(arc);
+    doc.selectEntity(arc.id);
+
+    grips.begin(arc, undefined, 3, { x: Math.SQRT1_2 * 10, y: Math.SQRT1_2 * 10 });
+    grips.update({ x: 5, y: 5 }); // sits on the chord — arcFromSagitta returns null
+
+    expect(arc.radius).toBe(10);
+    expect(arc.center).toEqual({ x: 0, y: 0 });
+  });
+
   it('reports the fixed diagonal corner while dragging one of a rectangle\'s own corner grips', () => {
     const doc = new Document();
     const history = new CommandHistory(doc);

@@ -2,6 +2,7 @@ import type { Document } from '../core/Document';
 import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type ExactSolidGeometry, type Solid, type SolidFeature } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
+import { arcFromSagitta } from '../math/arcFit';
 import { midpoint2, type Vec2, type Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
 import { solidBounds } from './PickingService';
@@ -352,7 +353,7 @@ export class GripController {
       const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
       return points.map((point, index) => ({ point, index, shape: 'square' as const }));
     }
-    if (entity?.type === 'arc' && !this.mode) { const z=(entity.center as Vec2 & {z?:number}).z; const point=(a:number):Vec2=>{const p:Vec2={x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}; return z===undefined?p:{...p,z} as Vec2;}; return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'}]; }
+    if (entity?.type === 'arc' && !this.mode) { const z=(entity.center as Vec2 & {z?:number}).z; const point=(a:number):Vec2=>{const p:Vec2={x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}; return z===undefined?p:{...p,z} as Vec2;}; return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle/2),index:3,shape:'edge'}]; }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (entity?.type === 'dimension' && !this.mode) {
       const geometry = dimensionGeometry(entity);
@@ -588,7 +589,17 @@ export class GripController {
         else if (field === 1) segment.control2 = { ...cursor };
         else segment.end = { ...cursor };
       }
-    } else if(entity.type==='arc'&&original.type==='arc'){ if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
+    } else if(entity.type==='arc'&&original.type==='arc'){
+      if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};
+      else if(this.drag.gripIndex===3){
+        // Midpoint grip: reshape via the arc's own start/end (the sagitta
+        // construction ARC_SER uses), so both endpoints stay put — unlike
+        // grips 1/2, which move whichever endpoint they belong to.
+        const point=(a:number):Vec2=>({x:original.center.x+Math.cos(a)*original.radius,y:original.center.y+Math.sin(a)*original.radius});
+        const arc=arcFromSagitta(point(original.startAngle),point(original.startAngle+original.sweepAngle),cursor);
+        if(arc){entity.center=arc.center;entity.radius=arc.radius;entity.startAngle=arc.startAngle;entity.sweepAngle=arc.sweepAngle;}
+      }
+      else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
     else if (entity.type === 'dimension' && original.type === 'dimension') {
       if (this.drag.gripIndex === 0) entity.start = { ...cursor };
