@@ -173,22 +173,40 @@ export function drawBezier(run: CommandRun): StepOutcome {
     data.start = { x: point.x, y: point.y };
     if (points.length <= 4) return 'advance';
     if ((points.length - 1) % 3 === 0) {
-      ctx.log(`Segment ${(points.length - 1) / 3} added. 3 more points to continue, or Enter to finish.`);
+      ctx.log(`Segment ${(points.length - 1) / 3} added. Enter to finish, C to close, or 3 more points to continue.`);
     }
     return 'stay';
   }
 
   // Enter only reaches here once the mandatory first segment (4 points) is
-  // already down — every point before that is on a mandatory step.
+  // already down — every point before that is on a mandatory step. C asks
+  // for the same thing and closes the loop, same as POLYLINE's own C.
+  const closing = data.closing === true;
   const leftover = (points.length - 1) % 3;
   if (leftover > 0) ctx.log(`Ignored ${leftover} trailing point(s) — not enough left to complete another segment.`);
   const segments: BezierSegment[] = [];
   for (let index = 1; index + 2 <= points.length - 1 - leftover; index += 3) {
     segments.push({ control1: points[index], control2: points[index + 1], end: points[index + 2] });
   }
+  if (closing) {
+    // A Bezier has no separate "closed" flag the way a polyline does — LOFT,
+    // EXTRUDE and SWEEP recognise a closed one only by its last segment's end
+    // exactly meeting its start (see isClosedBezierEntity), which a hand-drawn
+    // final point could never land on exactly. The closing segment is a
+    // straight line back to the start, matching what POLYLINE's own C draws.
+    const start = points[0];
+    const last = segments.at(-1)?.end ?? start;
+    if (dist2(last, start) > 1e-9) {
+      segments.push({
+        control1: { x: last.x + (start.x - last.x) / 3, y: last.y + (start.y - last.y) / 3 },
+        control2: { x: last.x + (start.x - last.x) * 2 / 3, y: last.y + (start.y - last.y) * 2 / 3 },
+        end: { x: start.x, y: start.y },
+      });
+    }
+  }
   const bezier = keepCommandDrawingPlane(ctx.doc.createSpline(points[0], segments), data);
   ctx.history.execute(new AddEntityEdit('Bezier', bezier));
-  ctx.log(`Bezier created: ${segments.length} segment(s).`);
+  ctx.log(`Bezier created: ${segments.length} segment(s)${closing ? ', closed' : ''}.`);
   return 'advance';
 }
 

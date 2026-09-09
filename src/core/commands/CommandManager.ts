@@ -383,6 +383,15 @@ export class CommandManager {
           await this.advanceStep(null);
           return;
         }
+        // Same 'C' for BEZIER, once its mandatory first segment (4 points) is
+        // down — a Bezier has no separate "closed" flag like a polyline, so
+        // this closes it the same way LOFT and friends recognise one: a final
+        // segment whose end exactly meets the start.
+        if (this.active?.name === 'BEZIER' && this.active.stepIndex >= 4 && input.trim().toUpperCase() === 'C') {
+          this.active.data.closing = true;
+          await this.advanceStep(null);
+          return;
+        }
         // UCS's X/Y/Z shortcut: rotate the current UCS about its own axis by
         // a typed angle, instead of the 3-point flow's precise origin/X/Y
         // picks — the point that matters when the geometry to snap onto has

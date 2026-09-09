@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
-import { ellipsePoints, expandedInsertSolids, linearDimensionRotation } from '../entities/types';
+import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
@@ -2693,6 +2693,41 @@ describe('BEZIER command (Spline CV)', () => {
     if (bezier.type === 'bezier') expect(bezier.segments).toHaveLength(1);
     expect(log).toHaveBeenCalledWith('Ignored 1 trailing point(s) — not enough left to complete another segment.');
   });
+
+  it('closes with C, adding a straight final segment exactly back to the start', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 10, y: 10 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.submitInput('C');
+
+    expect(doc.entities).toHaveLength(1);
+    const bezier = doc.entities[0];
+    if (bezier.type === 'bezier') {
+      expect(bezier.segments).toHaveLength(2);
+      expect(bezier.segments.at(-1)!.end).toEqual({ x: 0, y: 0 });
+      expect(isClosedBezierEntity(bezier)).toBe(true);
+    }
+  });
+
+  it('ignores a redundant C once already sitting exactly back on the start', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 10 });
+    await manager.handleClick({ x: 10, y: 10 });
+    await manager.handleClick({ x: 0, y: 0 }); // already back at the start
+    await manager.submitInput('C');
+
+    const bezier = doc.entities[0];
+    if (bezier.type === 'bezier') {
+      expect(bezier.segments).toHaveLength(1); // no zero-length closing segment appended
+      expect(isClosedBezierEntity(bezier)).toBe(true);
+    }
+  });
+
 });
 
 describe('commands built from the registry', () => {
@@ -3635,6 +3670,53 @@ describe('LOFT', () => {
 
     expect(kit.doc.entities).toHaveLength(1);
     expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
+  });
+
+  it('refuses an open Bezier profile — the same rejection hit by two mirrored, unjoined halves', async () => {
+    const kit = setup();
+    // An open spline, e.g. one half of a silhouette mirrored into another
+    // separate entity: it looks closed once both halves are drawn together,
+    // but neither one is closed on its own.
+    const openSpline = kit.doc.createSpline({ x: 0, y: 0 }, [{ control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0.5 } }]);
+    kit.doc.addEntity(openSpline);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 5, y: 8 }, openSpline);
+
+    expect(kit.doc.entities).toHaveLength(1);
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
+  });
+
+  it('lofts two closed Beziers, closed via BEZIER\'s own C, into a solid', async () => {
+    const kit = setup();
+    kit.manager.startCommand('BEZIER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 10 });
+    await kit.manager.handleClick({ x: 10, y: 10 });
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.submitInput('C');
+    const bottom = kit.doc.entities[0];
+    if (bottom.type === 'bezier') expect(isClosedBezierEntity(bottom)).toBe(true);
+
+    kit.manager.startCommand('BEZIER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 6 });
+    await kit.manager.handleClick({ x: 6, y: 6 });
+    await kit.manager.handleClick({ x: 6, y: 0 });
+    await kit.manager.submitInput('C');
+    const top = kit.doc.entities[1];
+    if (top.type === 'bezier') expect(isClosedBezierEntity(top)).toBe(true);
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 10 } };
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 5, y: 5 }, bottom);
+    await kit.manager.handleClick({ x: 3, y: 3 }, top);
+    await kit.manager.submitInput(''); // finish gathering profiles
+    await kit.manager.submitInput(''); // skip the optional path
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
   });
 
   it('lofts along a guide path — AutoCAD LOFT\'s Path option — instead of straight-interpolating', async () => {
