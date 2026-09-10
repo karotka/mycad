@@ -668,9 +668,21 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         const guideStart = guideCurve.StartPoint();
         const guideEnd = guideCurve.EndPoint();
         // Which end of the guide touches rail1 vs rail2 -- by nearest
-        // distance, not an assumed order (a hand-drawn guide can run either way).
-        const startNearRail1 = Math.min(distance(guideStart, c1Start), distance(guideStart, c1End))
-          <= Math.min(distance(guideEnd, c1Start), distance(guideEnd, c1End));
+        // distance to each RAIL AS A WHOLE (via a real curve projection, not
+        // just its two corners), not an assumed order (a hand-drawn guide
+        // can run either way). Confirmed directly why the corners alone are
+        // the wrong proxy: a real guide's own endpoint can legitimately sit
+        // closer to one rail's CORNER than to the middle of the rail it
+        // actually touches — e.g. a guide ending right next to a sharp bend
+        // in the OTHER rail's own path — which flipped this the wrong way
+        // and fed a touch point nowhere near the rail it was assigned to
+        // into the fill. Whichever pairing has the smaller total distance
+        // wins.
+        const startToC1 = this.projectPointDistance(c1, guideStart);
+        const startToC2 = this.projectPointDistance(c2, guideStart);
+        const endToC1 = this.projectPointDistance(c1, guideEnd);
+        const endToC2 = this.projectPointDistance(c2, guideEnd);
+        const startNearRail1 = (startToC1 + endToC2) <= (startToC2 + endToC1);
         const rail1Point = startNearRail1 ? guideStart : guideEnd;
         const rail2Point = startNearRail1 ? guideEnd : guideStart;
         const u1 = this.projectPointParam(c1, rail1Point);
@@ -818,6 +830,15 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
     const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
     return projector.LowerDistanceParameter();
+  }
+
+  /** How far `point` actually sits from `curveHandle` — nearest point on the
+   *  whole curve, not just its two corners. See `loftGuidedSurface`'s own
+   *  use of this for why the corners alone are the wrong proxy. */
+  private projectPointDistance(curveHandle: Handle_Geom_BSplineCurve, point: gp_Pnt): number {
+    const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
+    const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
+    return projector.LowerDistance();
   }
 
   /** `curveHandle` trimmed to [u1, u2] (u1 <= u2) and re-expressed as its own

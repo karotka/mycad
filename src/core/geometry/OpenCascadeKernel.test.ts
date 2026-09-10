@@ -436,6 +436,58 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(inspected.faceCount).toBeGreaterThan(0);
   });
 
+  it('assigns a guide\'s touch points to the rail they actually sit on, not whichever rail happens to have a nearer CORNER — order of the two rails must not change the result', () => {
+    // Real regression, found live against a user's own project file
+    // (exact rail/guide shape reproduced here): the guide's own endpoint at
+    // (26.5,-24,~0) sits almost exactly ON one rail's own interior vertex —
+    // much closer to that vertex than to anywhere on the OTHER rail's
+    // actual path — but the old heuristic only ever compared each guide
+    // endpoint's distance to the two rails' own CORNERS (not the rails'
+    // own middles), so it picked whichever rail's corner happened to be
+    // nearer, regardless of which rail the touch point actually sat on.
+    // That fed a touch point nowhere near the rail it was assigned to into
+    // the fill, collapsing one of the two patches into a near-degenerate
+    // sliver — purely depending on which rail was passed as "rail1" vs
+    // "rail2", even though a loft between two rails is not supposed to
+    // care about that order at all. Confirmed directly: reverting the fix
+    // reproduces exactly this — one order stays a full patch, the other
+    // collapses to under 20 mesh nodes.
+    const rail1 = [
+      { kind: 'line' as const, start: { x: 18.5, y: -11.5, z: 0 }, end: { x: 26.5, y: -24, z: 0 } },
+      { kind: 'line' as const, start: { x: 26.5, y: -24, z: 0 }, end: { x: 36.5, y: -24.5, z: 0 } },
+      { kind: 'line' as const, start: { x: 36.5, y: -24.5, z: 0 }, end: { x: 42.5, y: -17.5, z: 0 } },
+    ];
+    const rail2 = [
+      { kind: 'line' as const, start: { x: 18.5, y: -11.5, z: 0 }, end: { x: 31.441176470588232, y: -4.235294117647058, z: 0 } },
+      { kind: 'line' as const, start: { x: 31.441176470588232, y: -4.235294117647058, z: 0 }, end: { x: 40.5, y: -8.5, z: 0 } },
+      { kind: 'line' as const, start: { x: 40.5, y: -8.5, z: 0 }, end: { x: 42.5, y: -17.5, z: 0 } },
+    ];
+    // The real arc guide — touches rail1 near (26.5,-24) (its own middle
+    // vertex, above) and rail2 near (36.08,-6.42).
+    const guide = [{
+      kind: 'arc' as const,
+      center: { x: 31.292, y: -15.210, z: -17.3142 },
+      normal: { x: 0.878, y: -0.4787, z: 0 },
+      xAxis: { x: 0.4787, y: 0.878, z: 0 },
+      radius: 20,
+      startAngle: 1.0465666710613326,
+      sweepAngle: 1.048459311467128,
+    }];
+
+    function nodeCount(shape: any): number {
+      return kernel.tessellate(shape).positions.length / 3;
+    }
+    const forward = keep(kernel.loftGuidedSurface(rail1, rail2, [guide]));
+    const swapped = keep(kernel.loftGuidedSurface(rail2, rail1, [guide]));
+    const forwardNodes = nodeCount(forward);
+    const swappedNodes = nodeCount(swapped);
+    // Same real shape either way, so a similar mesh density either way —
+    // before the fix these differed by close to two orders of magnitude
+    // (one order's mis-assigned patch collapsed to a sliver).
+    const ratio = Math.max(forwardNodes, swappedNodes) / Math.min(forwardNodes, swappedNodes);
+    expect(ratio).toBeLessThan(3);
+  });
+
   it('rejects a guided loft whose two rails do not share both their own endpoints', () => {
     const rail1 = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }];
     const rail2 = [{ kind: 'line' as const, start: { x: 0, y: 5, z: 0 }, end: { x: 10, y: 5, z: 0 } }];
