@@ -10,22 +10,27 @@ import { createPointResolver, type PointResolverContext } from './PointResolver'
 function makeCtx(overrides: {
   workPlanePoint?: ReturnType<typeof vi.fn>;
   viewPlanePoint?: ReturnType<typeof vi.fn>;
+  doc?: Document;
+  screenToWorld?: (sx: number, sy: number, width: number, height: number) => { x: number; y: number };
 } = {}): PointResolverContext {
-  const doc = new Document();
-  doc.viewMode = '3d';
+  const doc = overrides.doc ?? new Document();
+  if (!overrides.doc) doc.viewMode = '3d';
   return {
     doc,
     commands: { active: undefined } as unknown as PointResolverContext['commands'],
-    gripController: { isDragging: false } as unknown as PointResolverContext['gripController'],
+    gripController: { isDragging: false, draggingObjectId: null, dragReferencePoint: () => null } as unknown as PointResolverContext['gripController'],
     gripInteraction: { targetSnapMode: null } as unknown as PointResolverContext['gripInteraction'],
     drawingInteraction: { targetSnapMode: null } as unknown as PointResolverContext['drawingInteraction'],
-    renderer2d: {} as unknown as PointResolverContext['renderer2d'],
+    renderer2d: {
+      screenToWorld: overrides.screenToWorld ?? (() => ({ x: 0, y: 0 })),
+      zoom: 1,
+    } as unknown as PointResolverContext['renderer2d'],
     renderer3d: {
       workPlanePoint: overrides.workPlanePoint ?? vi.fn(() => null),
       viewPlanePoint: overrides.viewPlanePoint ?? vi.fn(() => ({ x: 3, y: 4 })),
       renderer: { domElement: {} as HTMLCanvasElement },
     } as unknown as PointResolverContext['renderer3d'],
-    viewport: {} as unknown as HTMLElement,
+    viewport: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) } as unknown as HTMLElement,
     trackingLine: {} as unknown as HTMLElement,
     size: () => ({ width: 800, height: 600 }),
     state: { activeTracking: null, activeEndpointAnchor: null },
@@ -60,5 +65,28 @@ describe('interactionPoint (3D, no active command)', () => {
 
     expect(viewPlanePoint).not.toHaveBeenCalled();
     expect(result).toEqual({ x: 7, y: 9 });
+  });
+});
+
+describe('nearestPersistentSnap', () => {
+  it('finds the "Nearest" point on an edge in 2D view too, not only in 3D', () => {
+    // "Nearest" used to be resolved only for the 3D branch (via a camera ray);
+    // 2D view fell straight through to nothing, so a curve that only lived on
+    // the 2D canvas could never be snapped to at all.
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.drafting.objectSnapEnabled = true;
+    doc.drafting.objectSnapModes = ['nearest'];
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    // The cursor at screen (100,100) resolves to world (5, 3) on the 2D canvas —
+    // near, but not on, the line.
+    const ctx = makeCtx({ doc, screenToWorld: () => ({ x: 5, y: 3 }) });
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.nearestPersistentSnap({ clientX: 100, clientY: 100 });
+
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('nearest');
+    expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
   });
 });

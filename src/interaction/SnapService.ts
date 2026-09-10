@@ -205,6 +205,55 @@ export function nearestEdgeWorldPoint(
   return bestWorld;
 }
 
+/**
+ * The 2D-view counterpart of `nearestEdgeWorldPoint`: no camera to ray-cast
+ * from, so "closest to the cursor" is measured directly as an orthographic
+ * 2D distance in the active work plane's own local coordinates — the same
+ * space `nearestCandidate2d` already compares every discrete candidate in.
+ * The returned point still keeps its true 3D position (interpolated along
+ * the edge's real endpoints at the same parameter the local-space closest
+ * point landed on), so an entity that is not actually on the active plane
+ * does not get flattened onto it.
+ */
+export function nearestEdgeLocalPoint(
+  doc: Document,
+  cursor: Vec2,
+  plane: WorkPlane,
+  tolerance: number,
+  excludedId?: string | null,
+): Vec3 | null {
+  let bestWorld: Vec3 | null = null;
+  let bestDistance = Infinity;
+  const consider = (a: Vec3, b: Vec3): void => {
+    const localA = worldToLocal(plane, a);
+    const localB = worldToLocal(plane, b);
+    const ux = localB.x - localA.x, uy = localB.y - localA.y;
+    const lengthSquared = ux * ux + uy * uy;
+    const t = lengthSquared > 1e-12
+      ? Math.max(0, Math.min(1, ((cursor.x - localA.x) * ux + (cursor.y - localA.y) * uy) / lengthSquared))
+      : 0;
+    const distance = Math.hypot(localA.x + ux * t - cursor.x, localA.y + uy * t - cursor.y);
+    if (distance > tolerance || distance >= bestDistance) return;
+    bestDistance = distance;
+    bestWorld = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+  };
+  for (const { solid } of visibleSnapSolids(doc, excludedId)) {
+    for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);
+  }
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const entityPlane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const offset = entityPlaneOffset(entity);
+    for (const [a, b] of entitySegments(entity)) {
+      consider(
+        localToWorld(entityPlane, a, localPointZ(a) ?? offset),
+        localToWorld(entityPlane, b, localPointZ(b) ?? offset),
+      );
+    }
+  }
+  return bestWorld;
+}
+
 function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
   if (entity.type === 'insert') return expandedInsertEntities(entity).flatMap(entitySegments);
   let points: Vec2[] = [];

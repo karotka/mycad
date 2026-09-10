@@ -11,6 +11,7 @@ import {
   measurementCandidates,
   nearestCandidate2d,
   nearestCandidateProjected,
+  nearestEdgeLocalPoint,
   nearestEdgeWorldPoint,
   objectSnapCandidates,
   tangentDragCandidates,
@@ -428,15 +429,23 @@ export function createPointResolver(ctx: PointResolverContext) {
     // in when none of them is under the cursor, so ending a line on an edge keeps
     // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
     // takes a tighter aperture so a nearby endpoint or midpoint clearly wins.
-    if (discrete || doc.viewMode !== '3d' || !modes.includes('nearest')) return discrete;
-    const world = nearestEdgeWorldPoint(
-      doc,
-      cursor,
-      renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
-      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-      pixelTolerance * 0.6,
-      gripController.draggingObjectId,
-    );
+    if (discrete || !modes.includes('nearest')) return discrete;
+    const world = doc.viewMode === '3d'
+      ? nearestEdgeWorldPoint(
+        doc,
+        cursor,
+        renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
+        (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+        pixelTolerance * 0.6,
+        gripController.draggingObjectId,
+      )
+      : nearestEdgeLocalPoint(
+        doc,
+        rawWorldPoint(event),
+        doc.activeWorkPlane,
+        pixelTolerance * 0.6 / renderer2d.zoom,
+        gripController.draggingObjectId,
+      );
     if (!world) return null;
     const local = worldToLocal(doc.activeWorkPlane, world);
     return { point: { x: local.x, y: local.y }, world, mode: 'nearest' };

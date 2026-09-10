@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
+import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -197,6 +197,38 @@ describe('SnapService', () => {
     const ray = { origin: { x: 5, y: 10, z: 0 }, direction: { x: 0, y: -1, z: 0 } };
     const project = (point: { x: number; y: number; z: number }) => ({ x: point.x, y: point.z });
     expect(nearestEdgeWorldPoint(doc, { x: 100, y: 100 }, ray, project, 14)).toBeNull();
+  });
+
+  it('nearest edge snap (2D view) returns the point on the edge closest to the cursor, no camera involved', () => {
+    // "Nearest" used to be silently unavailable in 2D view — objectSnapCandidates
+    // returns nothing for it (resolved separately, same as the 3D version), and
+    // nothing filled in the gap the way nearestEdgeWorldPoint does for 3D.
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    const world = nearestEdgeLocalPoint(doc, { x: 5, y: 3 }, WORLD_WORK_PLANE, 5);
+    expect(world).toEqual({ x: 5, y: 0, z: 0 });
+  });
+
+  it('nearest edge snap (2D view) rejects an edge outside the local-plane aperture', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    expect(nearestEdgeLocalPoint(doc, { x: 5, y: 20 }, WORLD_WORK_PLANE, 5)).toBeNull();
+  });
+
+  it('nearest edge snap (2D view) keeps a Bezier curve\'s true world point, not a straight-line approximation', () => {
+    const doc = new Document();
+    // A closed Bezier the way JOIN produces one from two mirrored halves —
+    // the exact case that was failing to snap at all in 2D view.
+    const bezier = doc.createSpline({ x: 0, y: 0 }, [
+      { control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0 } },
+    ]);
+    doc.addEntity(bezier);
+    const world = nearestEdgeLocalPoint(doc, { x: 5, y: 7.5 }, WORLD_WORK_PLANE, 3);
+    expect(world).not.toBeNull();
+    // Off the straight chord between the endpoints (which nearestEdgeLocalPoint
+    // must not fall back to) — a real point sampled off the curve itself.
+    expect(world!.y).toBeGreaterThan(6);
+    expect(world!.z).toBeCloseTo(0, 6);
   });
 });
 
