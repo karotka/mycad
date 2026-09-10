@@ -405,6 +405,71 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(bounds.min.x).toBeCloseTo(4.5, 0);
   });
 
+  it('subdivides each strip into several smaller patches instead of one, to soften the crease at every guide', () => {
+    // Real regression: the user's own spoon bowl (this exact rail/guide data,
+    // pulled from their project file) rendered with a sharp tent-like crease
+    // at each guide, confirmed visually (matplotlib render of the tessellated
+    // mesh) — because each strip above is filled independently with no
+    // shared tangent across the guide it meets its neighbour at. Spreading
+    // each strip's own total bulge over several smaller sub-strips (see
+    // loftGuidedSurface's own comment on this) makes that seam mismatch
+    // imperceptible without needing a true C1 network-surface fill (OCCT has
+    // no single class for that; BRepFill_Filling — the obvious candidate —
+    // was tried directly against this data and was numerically unstable).
+    // Confirmed this is really happening, not just plausible in theory: with
+    // the subdivision disabled this exact case produces 3 patches (one per
+    // rail-corner-to-guide-to-corner strip), not 21.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const guideA = [{ kind: 'bezier' as const, poles: [
+      { x: 18, y: 16, z: 0 }, { x: 18, y: 16, z: 5 }, { x: 18, y: 9, z: 5 }, { x: 18, y: 9, z: 0 },
+    ] }];
+    const guideB = [{ kind: 'bezier' as const, poles: [
+      { x: 38, y: 14, z: 0 }, { x: 38, y: 14, z: 5 }, { x: 38, y: 8, z: 5 }, { x: 38, y: 8, z: 0 },
+    ] }];
+
+    const bent = keep(kernel.loftGuidedSurface(rail1, rail2, [guideA, guideB]));
+    const inspection = kernel.inspect(bent);
+    expect(inspection.valid).toBe(true);
+    // 3 strips (corner->guideA, guideA->guideB, guideB->corner), each split
+    // into 7 sub-patches (6 synthesized virtual guides + the strip's own far
+    // end) = 21.
+    expect(inspection.faceCount).toBe(21);
+    expect(inspection.bounds.max.z - inspection.bounds.min.z).toBeGreaterThan(3);
+  });
+
+  it('does not collapse a plain (guideless) strip into a degenerate curve while subdividing it', () => {
+    // Real regression, caught by this exact test failing while developing
+    // the subdivision above: a rail-corner-to-rail-corner strip has no guide
+    // at either end, so its own "cross-section shape" is a single point at
+    // each end (there is nothing to blend along its width) — blending that
+    // naively as absolute 3D points made every one of the strip's own sample
+    // points collapse onto the same straight-line location regardless of
+    // its position across the strip's width, which GeomAPI_PointsToBSpline
+    // rightly refused to fit a curve through ("Knots interval values too
+    // close"). Fixed by blending DISPLACEMENT from each boundary's own
+    // local chord instead of blending absolute points — see
+    // loftGuidedSurface's own comment. A guideless loft (0 guides at all,
+    // the flattest possible case: a single corner-to-corner strip spanning
+    // the WHOLE rail) is exactly this case with nothing else going on.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+
+    const flat = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    const inspection = kernel.inspect(flat);
+    expect(inspection.valid).toBe(true);
+    expect(inspection.faceCount).toBe(7);
+    expect(inspection.bounds.max.z - inspection.bounds.min.z).toBeLessThan(1e-6);
+  });
+
   it('lofts two straight-edged (multi-segment polyline) rails through an arc guide — GeomFill_CoonsStyle rejected this outright', () => {
     // Real regression: a user's own two-rail pair, both plain 3-segment
     // polylines (no curvature at all), threw "GeomFill_BSplineCurves:

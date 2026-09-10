@@ -4,6 +4,7 @@ import type {
   ChFi3d_FilletShape,
   Convert_ParameterisationType,
   GeomAbs_JoinType,
+  GeomAbs_Shape,
   GeomFill_FillingStyle,
   gp_Ax2,
   gp_Pnt,
@@ -655,7 +656,7 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       const u2AtRailStart = sameDirection ? c2Curve.FirstParameter() : c2Curve.LastParameter();
       const u2AtRailEnd = sameDirection ? c2Curve.LastParameter() : c2Curve.FirstParameter();
 
-      const boundaries: Boundary[] = [
+      let boundaries: Boundary[] = [
         { u1: c1Curve.FirstParameter(), u2: u2AtRailStart, snap1: c1Start, snap2: c1Start, guide: null },
         { u1: c1Curve.LastParameter(), u2: u2AtRailEnd, snap1: c1End, snap2: c1End, guide: null },
       ];
@@ -691,6 +692,113 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         boundaries.push({ u1, u2, snap1: rail1Point, snap2: rail2Point, guide: orientedGuide });
       }
       boundaries.sort((a, b) => a.u1 - b.u1);
+
+      // Each patch above is filled independently, with no shared tangent
+      // enforced across the guide it meets its neighbour at (C0, not C1) —
+      // and because a guide's own dip is confined entirely to its own two
+      // patches (tapering back to a flat rail-to-rail corner, or to a
+      // neighbouring guide's own unrelated shape, on the far side), the
+      // guide's full sagitta shows up as one visible crease right at the
+      // touch point instead of a smooth transition. Confirmed against the
+      // user's real spoon-bowl data: the crease's sharpness tracked the
+      // guide arc's own sagitta almost exactly.
+      //
+      // There is no single OCCT class that fills a whole network of curves
+      // as one C1 surface (BRepFill_Filling — the GeomPlate-based "N-sided
+      // patch with per-edge continuity" tool that looks purpose-built for
+      // this — was tried directly against this same data across three
+      // configurations; all three produced numerically unstable surfaces,
+      // wildly outside the guide curves' own bounds). Instead: synthesize
+      // extra "virtual" guides between each real pair by blending their
+      // sampled cross-section shapes, and feed the existing, already-proven
+      // independent-patch fill many smaller strips instead of one big one.
+      // The total dip between two real guides doesn't change, but spreading
+      // it over many small, closely-matched seams instead of one big jump
+      // makes the per-seam tangent mismatch — and so the visible crease —
+      // imperceptible, without touching the (working) per-patch fill itself.
+      const SUBDIVISIONS = 6;
+      const SAMPLES = SUBDIVISIONS + 2;
+      // A cross-section's *shape* is captured as its displacement away from
+      // its OWN straight rail1-touch -> rail2-touch chord, sampled at SAMPLES
+      // evenly spaced fractions — not as absolute points. A corner (no
+      // guide) is exactly zero displacement everywhere, by construction. A
+      // real guide's displacement at fraction 0 and 1 is ~0 too (it touches
+      // the rails there), rising to its full bulge in the middle. Blending
+      // two DISPLACEMENT profiles and adding the result onto the LOCAL
+      // chord at the virtual boundary's own (possibly different) rail
+      // touch points is what makes a corner-to-guide gap taper the bulge in
+      // from zero, and a corner-to-corner gap (no guide anywhere on either
+      // side) come out exactly straight instead of collapsing to a
+      // degenerate curve (blending absolute points did exactly that: every
+      // sample of a corner's "shape" is the same single point, so blending
+      // index-for-index against another corner's single point produced
+      // SAMPLES coincident points — a zero-length curve GeomAPI_PointsToBSpline
+      // rightly refused as "Knots interval values too close").
+      type Displacement = { dx: number; dy: number; dz: number };
+      const sampleDisplacement = (boundary: Boundary): Displacement[] => {
+        if (!boundary.guide) return Array.from({ length: SAMPLES }, () => ({ dx: 0, dy: 0, dz: 0 }));
+        const curve = boundary.guide.get();
+        const first = curve.FirstParameter();
+        const last = curve.LastParameter();
+        const result: Displacement[] = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const s = i / (SAMPLES - 1);
+          const point = curve.Value(first + (last - first) * s);
+          result.push({
+            dx: point.X() - (boundary.snap1.X() + (boundary.snap2.X() - boundary.snap1.X()) * s),
+            dy: point.Y() - (boundary.snap1.Y() + (boundary.snap2.Y() - boundary.snap1.Y()) * s),
+            dz: point.Z() - (boundary.snap1.Z() + (boundary.snap2.Z() - boundary.snap1.Z()) * s),
+          });
+        }
+        return result;
+      };
+
+      const expanded: Boundary[] = [boundaries[0]];
+      for (let index = 0; index + 1 < boundaries.length; index++) {
+        const a = boundaries[index];
+        const b = boundaries[index + 1];
+        const dispA = sampleDisplacement(a);
+        const dispB = sampleDisplacement(b);
+        for (let step = 1; step <= SUBDIVISIONS; step++) {
+          const t = step / (SUBDIVISIONS + 1);
+          const u1 = a.u1 + (b.u1 - a.u1) * t;
+          const u2 = a.u2 + (b.u2 - a.u2) * t;
+          const rail1Point = c1Curve.Value(u1);
+          const rail2Point = c2Curve.Value(u2);
+          owned.push(rail1Point, rail2Point);
+          const blended = new this.oc.TColgp_Array1OfPnt_2(1, SAMPLES);
+          owned.push(blended);
+          for (let i = 0; i < SAMPLES; i++) {
+            const s = i / (SAMPLES - 1);
+            const dx = dispA[i].dx + (dispB[i].dx - dispA[i].dx) * t;
+            const dy = dispA[i].dy + (dispB[i].dy - dispA[i].dy) * t;
+            const dz = dispA[i].dz + (dispB[i].dz - dispA[i].dz) * t;
+            const point = new this.oc.gp_Pnt_3(
+              rail1Point.X() + (rail2Point.X() - rail1Point.X()) * s + dx,
+              rail1Point.Y() + (rail2Point.Y() - rail1Point.Y()) * s + dy,
+              rail1Point.Z() + (rail2Point.Z() - rail1Point.Z()) * s + dz,
+            );
+            blended.SetValue(i + 1, point);
+            owned.push(point);
+          }
+          // Snap the blended cross-section's own two ends exactly onto the
+          // rails, same discipline as snapPole below — a blended point is
+          // only ever approximately on the rail, and GeomFill's coincidence
+          // check is much tighter than that.
+          blended.SetValue(1, rail1Point);
+          blended.SetValue(SAMPLES, rail2Point);
+          const fitter = new this.oc.GeomAPI_PointsToBSpline_2(
+            blended, 3, 8,
+            this.oc.GeomAbs_Shape.GeomAbs_C2 as unknown as GeomAbs_Shape,
+            1e-6,
+          );
+          owned.push(fitter);
+          if (!fitter.IsDone()) throw new Error('OpenCascade could not fit a virtual guide while smoothing a guided loft.');
+          expanded.push({ u1, u2, snap1: rail1Point, snap2: rail2Point, guide: fitter.Curve() });
+        }
+        expanded.push(b);
+      }
+      boundaries = expanded;
 
       const faces: TopoDS_Face[] = [];
       for (let index = 0; index + 1 < boundaries.length; index++) {
