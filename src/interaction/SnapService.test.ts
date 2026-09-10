@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
+import { derivedRectangleCenterCandidates, measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, rectangleMidpointOwner, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -62,6 +62,31 @@ describe('SnapService', () => {
     expect(points(doc, 'middle')).toContainEqual({ x: 5, y: 0, z: 0 });
     expect(points(doc, 'center')).toContainEqual({ x: 20, y: 5, z: 0 });
     expect(points(doc, 'end', line.id)).not.toContainEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('identifies which rectangle and which edge a Middle snap point belongs to', () => {
+    const doc = new Document();
+    const rect = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 6 });
+    doc.entities.push(rect);
+
+    expect(rectangleMidpointOwner(doc, { x: 5, y: 0, z: 0 })).toEqual({ entityId: rect.id, edgeIndex: 0 });
+    expect(rectangleMidpointOwner(doc, { x: 10, y: 3, z: 0 })).toEqual({ entityId: rect.id, edgeIndex: 1 });
+    expect(rectangleMidpointOwner(doc, { x: 5, y: 6, z: 0 })).toEqual({ entityId: rect.id, edgeIndex: 2 });
+    expect(rectangleMidpointOwner(doc, { x: 0, y: 3, z: 0 })).toEqual({ entityId: rect.id, edgeIndex: 3 });
+    // Not near any edge midpoint at all.
+    expect(rectangleMidpointOwner(doc, { x: 5, y: 3, z: 0 })).toBeNull();
+    // Excluding the rectangle's own id (e.g. while it is being dragged) hides it.
+    expect(rectangleMidpointOwner(doc, { x: 5, y: 0, z: 0 }, rect.id)).toBeNull();
+  });
+
+  it('offers a primed rectangle\'s true centre as a Center candidate, and nothing for an un-primed one', () => {
+    const doc = new Document();
+    const primed = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 6 });
+    const untouched = doc.createRectangle({ x: 20, y: 20 }, { x: 30, y: 26 });
+    doc.entities.push(primed, untouched);
+
+    const candidates = derivedRectangleCenterCandidates(doc, new Set([primed.id]));
+    expect(candidates).toEqual([{ world: { x: 5, y: 3, z: 0 }, mode: 'center' }]);
   });
 
   it('does not expose hidden-layer points and picks the nearest candidate in the active plane', () => {

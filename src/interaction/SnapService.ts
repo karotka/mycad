@@ -550,6 +550,50 @@ function addSolidEdgeMiddles(positions: Float32Array, indices: Uint32Array, cand
   }
 }
 
+/**
+ * Which rectangle, and which of its four edges, a resolved 'middle' snap
+ * point actually came from — reconstructed by matching world coordinates,
+ * rather than threading an owning-entity id through every SnapCandidate
+ * (which every other snap consumer would then have to carry and ignore).
+ * Only rectangles need this: they are the one shape whose true centre isn't
+ * itself a drawn point, so recognising "the user just grazed two of its edge
+ * midpoints" is what lets that centre become snappable at all.
+ */
+export function rectangleMidpointOwner(doc: Document, world: Vec3, excludedId?: string | null): { entityId: string; edgeIndex: number } | null {
+  for (const entity of doc.entities) {
+    if (entity.type !== 'rectangle' || entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const offset = entityPlaneOffset(entity);
+    const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
+    for (let index = 0; index < 4; index++) {
+      const mid = midpoint(corners[index], corners[(index + 1) % 4]);
+      const midWorld = localToWorld(plane, mid, localPointZ(mid) ?? offset);
+      if (Math.hypot(midWorld.x - world.x, midWorld.y - world.y, midWorld.z - world.z) < 1e-6) return { entityId: entity.id, edgeIndex: index };
+    }
+  }
+  return null;
+}
+
+/**
+ * The true geometric centre of every rectangle the cursor has, this session,
+ * grazed two different edge midpoints of — offered as an ordinary 'center'
+ * candidate once "primed" this way, so it becomes reachable without the
+ * ambient Center object snap turned on, and without drawing a diagonal
+ * construction line to find it by hand.
+ */
+export function derivedRectangleCenterCandidates(doc: Document, primedRectangleIds: ReadonlySet<string>, excludedId?: string | null): SnapCandidate[] {
+  if (primedRectangleIds.size === 0) return [];
+  const candidates: SnapCandidate[] = [];
+  for (const entity of doc.entities) {
+    if (entity.type !== 'rectangle' || entity.id === excludedId || !primedRectangleIds.has(entity.id) || doc.hiddenLayers.has(entity.layer)) continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const offset = entityPlaneOffset(entity);
+    const center = midpoint(entity.first, entity.opposite);
+    candidates.push({ world: localToWorld(plane, center, localPointZ(center) ?? offset), mode: 'center' });
+  }
+  return candidates;
+}
+
 export function nearestCandidate2d(candidates: readonly SnapCandidate[], cursor: Vec2, plane: WorkPlane, tolerance: number): SnapTarget | null {
   let best = tolerance;
   let result: SnapTarget | null = null;

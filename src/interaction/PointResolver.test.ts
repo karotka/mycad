@@ -91,6 +91,66 @@ describe('nearestPersistentSnap', () => {
   });
 });
 
+describe('nearestPersistentSnap: a rectangle\'s derived centre, earned by grazing two of its edge midpoints', () => {
+  // A big rectangle (0,0)->(100,60) so the default 10-unit snap aperture
+  // cannot accidentally reach a neighbouring edge midpoint from the centre —
+  // this is about which candidates exist, not about aperture tuning. Edge
+  // midpoints at (50,0), (100,30), (50,60), (0,30); true centre at (50,30) —
+  // not itself a drawn point, so only reachable this way or via the ambient
+  // Center object snap (deliberately left off below, to prove this path does
+  // not depend on it).
+  function setupRectangle() {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.drafting.objectSnapEnabled = true;
+    doc.drafting.objectSnapModes = ['middle'];
+    doc.addEntity(doc.createRectangle({ x: 0, y: 0 }, { x: 100, y: 60 }));
+    return doc;
+  }
+  // Keyed by clientX alone (rect.left is 0 in the mock, and sy is unused by
+  // any of these points) so each call in a test can ask for a specific world
+  // point just by picking which clientX it passes.
+  function screenToWorldAt(points: Record<number, { x: number; y: number }>) {
+    return (sx: number) => points[sx] ?? { x: 999, y: 999 };
+  }
+
+  it('offers the true centre once two different edge midpoints have been hovered', () => {
+    const doc = setupRectangle();
+    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 20: { x: 0, y: 30 }, 30: { x: 50, y: 30 } }) });
+    const resolver = createPointResolver(ctx);
+
+    const first = resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
+    expect(first?.mode).toBe('middle');
+    const second = resolver.nearestPersistentSnap({ clientX: 20, clientY: 0 });
+    expect(second?.mode).toBe('middle');
+
+    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
+    expect(atCenter?.mode).toBe('center');
+    expect(atCenter?.world).toEqual({ x: 50, y: 30, z: 0 });
+  });
+
+  it('offers nothing at the centre after only one edge midpoint has been hovered', () => {
+    const doc = setupRectangle();
+    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 30: { x: 50, y: 30 } }) });
+    const resolver = createPointResolver(ctx);
+
+    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
+    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
+    expect(atCenter).toBeNull();
+  });
+
+  it('offers nothing at the centre after hovering the same edge midpoint twice (not two different edges)', () => {
+    const doc = setupRectangle();
+    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 30: { x: 50, y: 30 } }) });
+    const resolver = createPointResolver(ctx);
+
+    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
+    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
+    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
+    expect(atCenter).toBeNull();
+  });
+});
+
 describe('nearestGripTargetSnap (forced one-shot override)', () => {
   it('resolves a forced "Nearest" override even where a competing Endpoint would otherwise win', () => {
     // objectSnapCandidates returns nothing at all for 'nearest' — it has no

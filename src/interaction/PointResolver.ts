@@ -8,12 +8,14 @@ import type { CommandManager } from '../core/commands/CommandManager';
 import { takesPointInput, transformsObjects } from '../core/commands/registry';
 import { resolveDraftingPoint } from './DraftingService';
 import {
+  derivedRectangleCenterCandidates,
   measurementCandidates,
   nearestCandidate2d,
   nearestCandidateProjected,
   nearestEdgeLocalPoint,
   nearestEdgeWorldPoint,
   objectSnapCandidates,
+  rectangleMidpointOwner,
   tangentDragCandidates,
   type ObjectSnapMode,
   type SnapTarget,
@@ -59,6 +61,25 @@ export interface PointResolverContext {
  */
 export function createPointResolver(ctx: PointResolverContext) {
   const { doc, commands, gripController, gripInteraction, drawingInteraction, renderer2d, renderer3d, viewport, trackingLine, state } = ctx;
+
+  // Rectangles a Middle-snap hover has, this session, caught on two of their
+  // own different edges — once that happens, the rectangle's true centre
+  // (not itself a drawn point) becomes an ordinary snap candidate too, so
+  // aiming toward it catches it without a diagonal construction line and
+  // without needing Center object-snap separately enabled. Session-lived by
+  // design: once earned for a given rectangle, re-priming it every time
+  // would defeat the point ("no need to keep re-finding it by hand").
+  const primedRectangleCenters = new Set<string>();
+  let lastMidpointHover: { entityId: string; edgeIndex: number } | null = null;
+  function notePotentialRectangleMidpoint(target: GripSnapTarget | null): void {
+    if (target?.mode !== 'middle') return;
+    const owner = rectangleMidpointOwner(doc, target.world, gripController.draggingObjectId);
+    if (!owner) return;
+    if (lastMidpointHover && lastMidpointHover.entityId === owner.entityId && lastMidpointHover.edgeIndex !== owner.edgeIndex) {
+      primedRectangleCenters.add(owner.entityId);
+    }
+    lastMidpointHover = owner;
+  }
 
   function worldPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 {
     const raw = rawWorldPoint(event);
@@ -461,6 +482,9 @@ export function createPointResolver(ctx: PointResolverContext) {
     const candidates = modes.flatMap((mode) =>
       objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference));
     if (modes.includes('tangent')) candidates.push(...tangentCircleDragCandidates(event));
+    // Not gated on 'center' being an active running osnap — this candidate is
+    // earned by the priming gesture itself, not by the ambient mode list.
+    candidates.push(...derivedRectangleCenterCandidates(doc, primedRectangleCenters, gripController.draggingObjectId));
     const rect = viewport.getBoundingClientRect();
     const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const discrete = doc.viewMode === '3d'
@@ -472,6 +496,7 @@ export function createPointResolver(ctx: PointResolverContext) {
         doc.activeWorkPlane,
       )
       : nearestCandidate2d(candidates, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom);
+    notePotentialRectangleMidpoint(discrete);
     // Discrete snaps (end, mid, centre…) win; the "Nearest" edge snap only fills
     // in when none of them is under the cursor, so ending a line on an edge keeps
     // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
