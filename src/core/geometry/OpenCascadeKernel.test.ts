@@ -303,6 +303,49 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(inspected.bounds.max.z - inspected.bounds.min.z).toBeGreaterThan(1);
   });
 
+  it('keeps a single-profile guided loft close to its own flat size with a fixed orientation, instead of ballooning', () => {
+    // The exact same profile and path as the test above — reported directly
+    // as the result coming out "noticeably bigger" than the original flat
+    // outline. Without a fixed reference, MakePipeShell's default law rotates
+    // the section to track the path's own Frenet frame as it moves — right
+    // for a pipe, wrong for bending a flat silhouette that should roughly
+    // keep its own orientation. Confirmed directly against this exact
+    // profile: the default law let it balloon from z ∈ [0,0] out to roughly
+    // [-9, 1.3] for a path meant to bend it only gently.
+    const flatOutline = {
+      kind: 'wire' as const,
+      edges: [
+        { kind: 'bezier' as const, poles: [
+          { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+        ] },
+        { kind: 'bezier' as const, poles: [
+          { x: 51.5, y: 11.5, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 4.5, y: 12, z: 0 },
+        ] },
+      ],
+    };
+    const path = [{
+      kind: 'arc' as const,
+      center: { x: 20, y: 0, z: -20 },
+      normal: { x: 0, y: -1, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      radius: 20,
+      startAngle: Math.PI * 0.3,
+      sweepAngle: Math.PI * 0.4,
+    }];
+    const unpinned = keep(kernel.loftAlongPath([flatOutline], path));
+    const pinned = keep(kernel.loftAlongPath([flatOutline], path, {
+      origin: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 }, xAxis: { x: 1, y: 0, z: 0 },
+    }));
+    const unpinnedBounds = kernel.inspect(unpinned).bounds;
+    const pinnedBounds = kernel.inspect(pinned).bounds;
+    const unpinnedZSpan = unpinnedBounds.max.z - unpinnedBounds.min.z;
+    const pinnedZSpan = pinnedBounds.max.z - pinnedBounds.min.z;
+    // Still genuinely bent (the whole point of the path)…
+    expect(pinnedZSpan).toBeGreaterThan(0.1);
+    // …but nowhere near as exaggerated as the unpinned default.
+    expect(pinnedZSpan).toBeLessThan(unpinnedZSpan / 2);
+  });
+
   it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
     const wire = keep(kernel.extrudeWire([
       { kind: 'line', start: { x: -2, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },

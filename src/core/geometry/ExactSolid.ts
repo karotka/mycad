@@ -172,7 +172,12 @@ function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCa
   if (!feature.path) return kernel.loftProfiles(sections);
   // AutoCAD LOFT's "Path" option — same path-to-edges conversion SWEEP uses.
   const path = exactSweepPath(feature.path, feature.path.workPlane ?? WORLD_WORK_PLANE);
-  return path ? kernel.loftAlongPath(sections, path) : null;
+  if (!path) return null;
+  // Keep the first profile's own plane as the fixed reference the section's
+  // orientation is measured against, instead of letting it rotate to track
+  // the path's own tangent — see loftAlongPath's own comment for why.
+  const firstPlane = feature.profiles[0].workPlane ?? WORLD_WORK_PLANE;
+  return kernel.loftAlongPath(sections, path, { origin: firstPlane.origin, normal: firstPlane.zAxis, xAxis: firstPlane.xAxis });
 }
 
 /** A recorded legacy mesh is promoted only at the boundary of its exact child feature. */

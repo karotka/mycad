@@ -528,7 +528,11 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
    * it follows the path, same underlying operation SWEEP's own single-profile
    * pipe is a special case of.
    */
-  loftAlongPath(sections: readonly SweepProfile3[], path: readonly SweepPathSegment3[]): OpenCascadeSolid {
+  loftAlongPath(
+    sections: readonly SweepProfile3[],
+    path: readonly SweepPathSegment3[],
+    fixedOrientation?: { origin: Point3; normal: Point3; xAxis: Point3 },
+  ): OpenCascadeSolid {
     // A single section is a real case, not a degenerate one: a single closed
     // profile bent along a path (confirmed directly — MakePipeShell handles
     // one profile natively; the two-or-more requirement only ever applied to
@@ -544,6 +548,23 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     try {
       spine = this.buildWireFromEdges(path, owned, 'OpenCascade could not join the loft path.');
       maker = new this.oc.BRepOffsetAPI_MakePipeShell(spine);
+      if (fixedOrientation) {
+        // The default (Frenet-tracking) mode rotates the section to follow
+        // the spine's own tangent at every point — right for a pipe, wrong
+        // for bending a flat silhouette that is meant to keep roughly its
+        // own orientation throughout. Confirmed directly: the default mode
+        // let a gently-curved path balloon a profile's own bounding box by
+        // tens of units past its flat original size, in both the sweep
+        // direction and out of plane; pinning the section's frame to its own
+        // original plane instead keeps the result close to that original
+        // size, only genuinely bent by the path.
+        const origin = new this.oc.gp_Pnt_3(fixedOrientation.origin.x, fixedOrientation.origin.y, fixedOrientation.origin.z);
+        const mainDir = new this.oc.gp_Dir_4(fixedOrientation.normal.x, fixedOrientation.normal.y, fixedOrientation.normal.z);
+        const xDir = new this.oc.gp_Dir_4(fixedOrientation.xAxis.x, fixedOrientation.xAxis.y, fixedOrientation.xAxis.z);
+        const axis = new this.oc.gp_Ax2_2(origin, mainDir, xDir);
+        maker.SetMode_2(axis);
+        owned.push(origin, mainDir, xDir, axis);
+      }
       for (const section of sections) {
         const wire = this.makeSweepProfileWire(section, owned);
         wires.push(wire);
