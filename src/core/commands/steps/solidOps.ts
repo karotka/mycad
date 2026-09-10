@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, draftExactSolid, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, draftExactSolid, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -559,6 +559,44 @@ async function finishRailsLoft(run: CommandRun, profiles: Entity[], guides: Enti
   ctx.history.execute(new ReplaceObjectsEdit('Loft', consumed, [], [], [], [], [surface]));
   ctx.doc.viewMode = '3d';
   ctx.log(`Loft complete: 2 rails, ${guides.length} guide${guides.length === 1 ? '' : 's'} — surface.`);
+  return 'advance';
+}
+
+/** THICKEN: one Surface (LOFT's Guides result, typically) plus a wall
+ *  thickness, giving it a real solid volume — SHELL's own mirror image,
+ *  which hollows an existing solid out rather than filling one in. */
+export async function thickenSurfaceStep(run: CommandRun): Promise<StepOutcome> {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    const surfaceId = value as string | undefined;
+    if (!surfaceId) {
+      ctx.log('THICKEN requires a surface.');
+      return 'stay';
+    }
+    data.surfaceId = surfaceId;
+    return 'advance';
+  }
+
+  const surface = ctx.doc.getSurface(data.surfaceId as string);
+  if (!surface) {
+    ctx.log('Surface not found.');
+    return 'advance';
+  }
+  const thickness = value as number;
+  if (!Number.isFinite(thickness) || thickness <= 1e-6) {
+    ctx.log('Wall thickness must be greater than zero.');
+    return 'stay';
+  }
+  ctx.log('Thickening…');
+  const exact = await thickenExactSurface(surface, thickness, surface.revision);
+  if (!exact) {
+    ctx.log('Thicken failed — check the surface is a single connected sheet and the thickness is not too large.');
+    return 'advance';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Thicken', thickness, [surface.id], undefined, { kind: 'mesh' });
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Thicken', [], [], [], [solid], [surface], []));
+  ctx.log(`Thicken complete: wall thickness ${thickness}.`);
   return 'advance';
 }
 

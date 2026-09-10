@@ -3967,6 +3967,66 @@ describe('LOFT', () => {
     expect(kit.doc.surfaces[0].feature).toMatchObject({ kind: 'loft', guides: [] });
   });
 
+  describe('THICKEN', () => {
+    /** A real LOFTed Surface (genuine OpenCascade B-rep, not a synthetic
+     *  mesh) — THICKEN's own real precedent, SHELL, is exercised the same
+     *  way elsewhere in this file against a real exact solid. */
+    const loftedSurface = async (kit: ReturnType<typeof setup>) => {
+      const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
+      const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
+      kit.doc.addEntity(rail1);
+      kit.doc.addEntity(rail2);
+      kit.manager.startCommand('LOFT');
+      await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
+      await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
+      await kit.manager.submitInput('');
+      await kit.manager.submitInput('');
+      return kit.doc.surfaces[0];
+    };
+
+    it('turns a surface into a solid with the given wall thickness', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+
+      kit.manager.startCommand('THICKEN');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('2');
+
+      expect(kit.log, 'thicken failed').not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      expect(kit.doc.surfaces).toHaveLength(0);
+      expect(kit.doc.solids).toHaveLength(1);
+      expect(kit.doc.solids[0].mesh.indices.length).toBeGreaterThan(0);
+    });
+
+    it('undoes back to the surface', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+
+      kit.manager.startCommand('THICKEN');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('2');
+      expect(kit.doc.solids).toHaveLength(1);
+
+      kit.history.undo();
+      expect(kit.doc.solids).toHaveLength(0);
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.surfaces[0].id).toBe(surface.id);
+    });
+
+    it('refuses a non-positive thickness rather than building nothing silently', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+
+      kit.manager.startCommand('THICKEN');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('0');
+
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('greater than zero'));
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.solids).toHaveLength(0);
+    });
+  });
+
   it('drops an invalid profile caught by a window selection instead of failing the whole loft', async () => {
     // syncWindowSelection sets data.entities directly, bypassing the
     // per-click validation above entirely — a stray non-curve entity caught

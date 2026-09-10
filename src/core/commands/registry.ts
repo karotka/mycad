@@ -15,7 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, sweepProfileStep } from './steps/solidOps';
+import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
@@ -399,13 +399,22 @@ export const COMMANDS = [
   { name: 'SHELL', aliases: ['SH', 'SHELL'], execute: shellStep, help: 'hollow a solid to a constant wall thickness', suggest: true,
     steps: [{ kind: 'solid', label: 'Select face to remove:' }, { kind: 'number', label: 'Enter wall thickness:' }, { kind: 'done' }] },
   { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles, or two open rails through guide curves', suggest: true,
+    // loftStep always overwrites steps[2] to { kind: 'done' } itself (both
+    // modes are fully decided after step 1) — this static 3rd step is never
+    // actually reached; declared as 'done' directly so there's no misleading
+    // "wall thickness" prompt sitting in the registry looking reachable.
     steps: [
       { kind: 'entity', label: 'Select profiles in order, then press Enter:', multi: true },
       { kind: 'entity', label: 'Select a path curve, or guide curves (two open rails only), then Enter — or Enter to skip:', multi: true, optional: true },
-      { kind: 'number', label: 'Enter wall thickness (guided loft only), or Enter to skip:', optional: true },
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },
+  { name: 'THICKEN', aliases: ['TH', 'THICKEN'], execute: thickenSurfaceStep, help: 'give a surface a wall thickness, turning it into a solid', suggest: true,
+    steps: [
+      { kind: 'surface', label: 'Select surface to thicken:' },
+      { kind: 'number', label: 'Enter wall thickness:' },
+      { kind: 'done' },
+    ] },
   { name: 'DRAFT', aliases: ['DFT', 'DRAFT'], execute: draftStep, help: 'taper solid faces by an angle from a neutral plane', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select face(s) to draft:' },

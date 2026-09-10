@@ -106,6 +106,11 @@ export type CommandStep =
   | { kind: 'number-pair'; label: string; optional?: boolean; remember?: boolean; defaultValue?: [number, number] }
   | { kind: 'entity'; label: string; optional?: boolean; multi?: boolean; additive?: boolean; accepts?: PickTarget[] }
   | { kind: 'solid'; label: string; optional?: boolean; multi?: boolean; additive?: boolean }
+  /** Exactly one Surface, whole-object (never a face on it) — THICKEN's own
+   *  pick. Unlike 'entity'/'surface' picks above, this is never mixed with
+   *  other object kinds in the same step, so it needs neither multi nor
+   *  additive nor accepts. */
+  | { kind: 'surface'; label: string; optional?: boolean }
   | { kind: 'edge'; label: string; optional?: boolean }
   | { kind: 'text'; label: string; optional?: boolean }
   | { kind: 'done' };

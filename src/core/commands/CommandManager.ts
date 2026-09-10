@@ -90,6 +90,7 @@ export class CommandManager {
   stepAccepts(target: PickTarget): boolean {
     const step = this.activeStep;
     if (step?.kind === 'solid') return target === 'solid';
+    if (step?.kind === 'surface') return target === 'surface';
     if (step?.kind !== 'entity') return false;
     return (step.accepts ?? ['entity']).includes(target);
   }
@@ -354,6 +355,9 @@ export class CommandManager {
       const solidId = pickFace?.solidId ?? pickSolidId!;
       this.ctx.doc.selectSolid(solidId, this.isAdditiveStep);
       await this.advanceStep(faceCommand && pickFace ? pickFace : pickSolidId);
+    } else if (step.kind === 'surface' && pickSurfaceId) {
+      this.ctx.doc.selectSurface(pickSurfaceId);
+      await this.advanceStep(pickSurfaceId);
     }
   }
 
