@@ -5,7 +5,7 @@ import { CommandManager, hitTestEntity } from './CommandManager';
 import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
-import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, WORLD_WORK_PLANE } from '../../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
@@ -3141,6 +3141,62 @@ describe('ARC_SER (start, end, radius/point-on-arc)', () => {
     await manager.handleClick({ x: 3, y: 0 });
     await manager.handleClick({ x: 0, y: 1 });
     expect(manager.active).toMatchObject({ name: 'ARC_SER', stepIndex: 0 });
+  });
+
+  it('refits the drawing plane when end independently snaps off a different point than start, keeping the UCS\'s own bulge direction', async () => {
+    const { doc, manager } = setup();
+    // "UCS X 90": local Y becomes world Z — rotated specifically so a
+    // bulge (the third point) can be dragged in world Z.
+    const rotatedUcs = { origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 } };
+    doc.activeWorkPlane = rotatedUcs;
+    // Two points on a profile that is actually flat in world XY (z = 0) —
+    // neither lies on the rotated UCS, and they differ in world y, so no
+    // plane parallel to the UCS (only translated) can contain both.
+    const startWorld = { x: 10, y: 5, z: 0 };
+    const endWorld = { x: 30, y: -3, z: 0 };
+    const startLocal = worldToLocal(rotatedUcs, startWorld);
+    const endLocal = worldToLocal(rotatedUcs, endWorld);
+
+    manager.startCommand('ARC_SER');
+    // Start establishes a plane parallel to the UCS through it — exactly
+    // what interactionPoint's own off-plane logic does; simulated here since
+    // handleClick bypasses that pointer-driven resolution in these tests
+    // (see the LINE/CIRCLE off-UCS tests above for the same convention).
+    manager.active!.data.drawingPlane = { ...cloneWorkPlane(rotatedUcs), origin: { x: 0, y: 5, z: 0 } };
+    await manager.handleClick({ x: startLocal.x, y: startLocal.y, world: startWorld } as unknown as { x: number; y: number });
+    await manager.handleClick({ x: endLocal.x, y: endLocal.y, world: endWorld } as unknown as { x: number; y: number });
+
+    // The refit must have happened: the plane now actually contains both
+    // real points (z-offset ~0), not just start.
+    const refit = manager.active!.data.drawingPlane as { origin: { x: number; y: number; z: number }; xAxis: { x: number; y: number; z: number }; yAxis: { x: number; y: number; z: number }; zAxis: { x: number; y: number; z: number } };
+    expect(worldToLocal(refit, startWorld).z).toBeCloseTo(0, 6);
+    expect(worldToLocal(refit, endWorld).z).toBeCloseTo(0, 6);
+    // And the bulge direction (the plane's own Y axis) is still world Z —
+    // the whole reason the UCS was rotated in the first place.
+    expect(refit.yAxis).toEqual({ x: 0, y: 0, z: 1 });
+
+    // Bulge point, dragged in world Z from roughly the chord's midpoint.
+    const bulgeWorld = { x: 20, y: 1, z: 10 };
+    const bulgeLocal = worldToLocal(refit, bulgeWorld);
+    await manager.handleClick({ x: bulgeLocal.x, y: bulgeLocal.y });
+
+    const arc = doc.entities[0];
+    expect(arc).toMatchObject({ type: 'arc' });
+    if (arc.type !== 'arc') return;
+    // The finished arc actually passes through the two real world points —
+    // not a flattened approximation of them.
+    const arcStart = { x: arc.center.x + Math.cos(arc.startAngle) * arc.radius, y: arc.center.y + Math.sin(arc.startAngle) * arc.radius };
+    const arcEnd = { x: arc.center.x + Math.cos(arc.startAngle + arc.sweepAngle) * arc.radius, y: arc.center.y + Math.sin(arc.startAngle + arc.sweepAngle) * arc.radius };
+    const worldArcStart = localToWorld(arc.workPlane!, arcStart);
+    const worldArcEnd = localToWorld(arc.workPlane!, arcEnd);
+    // arcFromSagitta may put the geometric startAngle at either input point,
+    // depending on which side of the chord the bulge apex falls — the pair
+    // of real endpoints matters here, not which is labelled which.
+    const close = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): boolean =>
+      Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6 && Math.abs(a.z - b.z) < 1e-6;
+    const matchesBothEndpoints = (close(worldArcStart, startWorld) && close(worldArcEnd, endWorld))
+      || (close(worldArcStart, endWorld) && close(worldArcEnd, startWorld));
+    expect(matchesBothEndpoints).toBe(true);
   });
 });
 

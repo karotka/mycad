@@ -162,7 +162,13 @@ export function createPointResolver(ctx: PointResolverContext) {
           }
         }
         const local = worldToLocal(plane ?? doc.activeWorkPlane, targetedSnap.world);
-        return { x: local.x, y: local.y };
+        // Carried alongside for commands that snap more than one point off the
+        // UCS independently (e.g. ARC_SER's start and end, each Nearest-caught
+        // on a curve that is not itself parallel to the UCS): the plane above
+        // only ever fits the *first* such point, so a second one silently gets
+        // flattened onto it unless the command itself notices and refits — see
+        // drawArcStartEndRadius. Every other command is free to ignore this.
+        return { x: local.x, y: local.y, world: targetedSnap.world } as Vec2;
       }
       // Once an off-plane first point established a parallel drawing plane,
       // every free point and every Ortho constraint must stay in that plane.

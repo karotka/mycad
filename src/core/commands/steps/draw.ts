@@ -12,11 +12,11 @@
  * reached into it is how the two used to get out of step.
  */
 import { AddEntityEdit } from '../../history/edits';
-import { dist2, formatPoint, type Vec2 } from '../../../math/geometry';
+import { dist2, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry';
 import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { BezierSegment, Entity } from '../../entities/types';
 import type { MlineStyle } from '../../settings';
-import type { WorkPlane } from '../../../math/workplane';
+import { workPlaneFromXYAxes, worldToLocal, type WorkPlane } from '../../../math/workplane';
 import { interpolatingBeziers } from '../../../math/bezierFit';
 import { arcFromSagitta } from '../../../math/arcFit';
 
@@ -142,8 +142,45 @@ export function drawArc({ ctx, active, data, value }: CommandRun): StepOutcome {
  * arc on its own, with no separate mode to switch into.
  */
 export function drawArcStartEndRadius({ ctx, active, data, value }: CommandRun): StepOutcome {
-  if (active.stepIndex === 0) { data.start = value; return 'advance'; }
-  if (active.stepIndex === 1) { data.end = value; return 'advance'; }
+  if (active.stepIndex === 0) {
+    data.start = value;
+    const world = (value as Vec2 & { world?: Vec3 }).world;
+    if (world) data.startWorld = world;
+    return 'advance';
+  }
+  if (active.stepIndex === 1) {
+    // Start and end can each snap independently off the UCS — Nearest onto
+    // two different points of a curve that is not itself parallel to it, a
+    // closed profile's own silhouette being the ordinary case. The plane
+    // established from start alone only ever passes through start; nothing
+    // says end also lies on it. Refit one that actually contains both real
+    // points when it does not, keeping the UCS's own normal as the "up"
+    // reference — the same direction a plain, on-UCS arc would bulge in —
+    // and re-express the already-accepted start point against it too.
+    const plane = data.drawingPlane as WorkPlane | undefined;
+    const startWorld = data.startWorld as Vec3 | undefined;
+    const endWorld = (value as Vec2 & { world?: Vec3 }).world;
+    if (plane && startWorld && endWorld) {
+      const localEnd = worldToLocal(plane, endWorld);
+      if (Math.abs(localEnd.z) > 1e-6) {
+        // The chord (start→end) becomes the new plane's X axis exactly, so
+        // both real points land on it precisely; the established plane's own
+        // Y axis — what the bulge would already have used, had end turned
+        // out to sit on that first plane after all — is only a *reference*
+        // now, refit to whatever is left perpendicular to the chord.
+        const yReference = { x: startWorld.x + plane.yAxis.x, y: startWorld.y + plane.yAxis.y, z: startWorld.z + plane.yAxis.z };
+        const refit = workPlaneFromXYAxes(startWorld, endWorld, yReference);
+        data.drawingPlane = refit;
+        const start2d = worldToLocal(refit, startWorld);
+        const end2d = worldToLocal(refit, endWorld);
+        data.start = { x: start2d.x, y: start2d.y };
+        data.end = { x: end2d.x, y: end2d.y };
+        return 'advance';
+      }
+    }
+    data.end = value;
+    return 'advance';
+  }
 
   const start = data.start as Vec2, end = data.end as Vec2, third = value as Vec2;
   const arc = arcFromSagitta(start, end, third);
