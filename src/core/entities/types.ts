@@ -672,6 +672,21 @@ export interface LoftFeature {
    *  between its first and last section, instead of straight-interpolating
    *  between them. */
   path?: Entity;
+  /**
+   * AutoCAD LOFT's "Guides" option: open curves that each touch both
+   * profiles once, steering the loft's local shape at that point instead of
+   * straight-interpolating there. Requires `profiles` to be exactly two
+   * OPEN curves sharing both their own true endpoints — the loft's two
+   * rails — the way mirroring one curve into a second half naturally does.
+   */
+  guides?: Entity[];
+  /**
+   * Wall thickness applied (via SHELL's own primitive) to the raw guided
+   * surface. Two open rails loft into a surface, not a solid — same as
+   * AutoCAD's own open-cross-section LOFT — so guided lofts thicken that
+   * surface into a printable solid as part of the same command.
+   */
+  guideThickness?: number;
 }
 
 export interface PrimitiveFeature {

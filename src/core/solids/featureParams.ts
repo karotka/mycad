@@ -38,7 +38,12 @@ export function featureParams(feature: SolidFeature): FeatureParam[] {
   }];
   if (feature.kind === 'shell') return [{ key: 'thickness', label: 'Thickness', value: feature.thickness, min: 1e-6 }];
   if (feature.kind === 'draft') return [{ key: 'angle', label: 'Angle', value: feature.angle, min: -89.9 }];
-  // A loft's profiles are shapes, not numbers — same reasoning as sweep above.
+  // A loft's profiles (and guides) are shapes, not numbers — same reasoning
+  // as sweep above — except a guided loft's own wall thickness, its one
+  // actual number, the same param SHELL itself exposes.
+  if (feature.kind === 'loft' && feature.guides?.length) {
+    return [{ key: 'guideThickness', label: 'Thickness', value: feature.guideThickness ?? 0, min: 1e-6 }];
+  }
   return [];
 }
 
@@ -60,6 +65,10 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   }
   if (feature.kind === 'shell' && key === 'thickness' && Number.isFinite(value) && value >= 1e-6) {
     feature.thickness = value;
+    return true;
+  }
+  if (feature.kind === 'loft' && feature.guides?.length && key === 'guideThickness' && Number.isFinite(value) && value >= 1e-6) {
+    feature.guideThickness = value;
     return true;
   }
   if (feature.kind === 'draft' && key === 'angle' && Math.abs(value) < 89.9) {

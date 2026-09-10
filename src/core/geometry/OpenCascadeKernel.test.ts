@@ -346,6 +346,71 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(pinnedZSpan).toBeLessThan(unpinnedZSpan / 2);
   });
 
+  it('lofts two open rails through a guide curve, bending the surface to follow it — AutoCAD LOFT\'s "Guides" option', () => {
+    // The same flat, z=0 silhouette as the tests above, but as two SEPARATE
+    // open rails (never joined into one wire) — exactly the real workflow:
+    // draw one Bezier, mirror it into the other half, and loft between the
+    // two halves directly rather than a single closed outline.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    // Touches each rail near its own true endpoints (z=0) but bulges to
+    // z=8 in between — the only way a flat pair of rails can end up bent.
+    const guide = [{ kind: 'bezier' as const, poles: [
+      { x: 28, y: 15, z: 0 }, { x: 28, y: 15, z: 8 }, { x: 28, y: 8, z: 8 }, { x: 28, y: 8, z: 0 },
+    ] }];
+
+    const flat = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    const bent = keep(kernel.loftGuidedSurface(rail1, rail2, [guide]));
+
+    const flatBounds = kernel.inspect(flat).bounds;
+    const bentBounds = kernel.inspect(bent).bounds;
+    // No guide at all: a plain two-rail Coons fill between two z=0 curves
+    // stays flat, same as the plain 2-curve case validated separately.
+    expect(flatBounds.max.z - flatBounds.min.z).toBeLessThan(1e-6);
+    // With the guide: the surface actually leaves the z=0 plane to follow it.
+    expect(bentBounds.max.z - bentBounds.min.z).toBeGreaterThan(3);
+    // Still roughly the same footprint in x/y as the original flat outline —
+    // this bends the existing rails, it does not balloon past them.
+    expect(bentBounds.max.x).toBeCloseTo(flatBounds.max.x, 0);
+    expect(bentBounds.min.x).toBeCloseTo(flatBounds.min.x, 0);
+  });
+
+  it('lofts two open rails through TWO guide curves, bending each interior strip on its own', () => {
+    // Same rails as above, but with a second guide further along — exercises
+    // the interior (guide-to-guide) patch, the one case with no rail corner
+    // on either side to anchor against.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const guideA = [{ kind: 'bezier' as const, poles: [
+      { x: 18, y: 16, z: 0 }, { x: 18, y: 16, z: 5 }, { x: 18, y: 9, z: 5 }, { x: 18, y: 9, z: 0 },
+    ] }];
+    const guideB = [{ kind: 'bezier' as const, poles: [
+      { x: 38, y: 14, z: 0 }, { x: 38, y: 14, z: 5 }, { x: 38, y: 8, z: 5 }, { x: 38, y: 8, z: 0 },
+    ] }];
+
+    // Guide order shouldn't matter — they are sorted by where they actually
+    // touch the first rail, not by selection order.
+    const bent = keep(kernel.loftGuidedSurface(rail1, rail2, [guideB, guideA]));
+    const bounds = kernel.inspect(bent).bounds;
+    expect(bounds.max.z - bounds.min.z).toBeGreaterThan(3);
+    expect(bounds.max.x).toBeCloseTo(51.5, 0);
+    expect(bounds.min.x).toBeCloseTo(4.5, 0);
+  });
+
+  it('rejects a guided loft whose two rails do not share both their own endpoints', () => {
+    const rail1 = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }];
+    const rail2 = [{ kind: 'line' as const, start: { x: 0, y: 5, z: 0 }, end: { x: 10, y: 5, z: 0 } }];
+    expect(() => kernel.loftGuidedSurface(rail1, rail2, [])).toThrow(/share both their own endpoints/);
+  });
+
   it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
     const wire = keep(kernel.extrudeWire([
       { kind: 'line', start: { x: -2, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },

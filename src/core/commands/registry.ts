@@ -396,10 +396,11 @@ export const COMMANDS = [
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a planar face region', suggest: true, steps: [{ kind: 'solid', label: 'Select planar face or bounded region:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'SHELL', aliases: ['SH', 'SHELL'], execute: shellStep, help: 'hollow a solid to a constant wall thickness', suggest: true,
     steps: [{ kind: 'solid', label: 'Select face to remove:' }, { kind: 'number', label: 'Enter wall thickness:' }, { kind: 'done' }] },
-  { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles', suggest: true,
+  { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles, or two open rails through guide curves', suggest: true,
     steps: [
       { kind: 'entity', label: 'Select profiles in order, then press Enter:', multi: true },
-      { kind: 'entity', label: 'Select path curve, or Enter for a straight loft:', optional: true },
+      { kind: 'entity', label: 'Select a path curve, or guide curves (two open rails only), then Enter — or Enter to skip:', multi: true, optional: true },
+      { kind: 'number', label: 'Enter wall thickness (guided loft only), or Enter to skip:', optional: true },
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },

@@ -2,8 +2,12 @@ import type {
   OpenCascadeInstance,
   BRepOffset_Mode,
   ChFi3d_FilletShape,
+  Convert_ParameterisationType,
   GeomAbs_JoinType,
+  GeomFill_FillingStyle,
   gp_Ax2,
+  gp_Pnt,
+  Handle_Geom_BSplineCurve,
   IFSelect_ReturnStatus,
   STEPControl_StepModelType,
   TopAbs_ShapeEnum,
@@ -587,6 +591,248 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       spine?.delete();
       owned.reverse().forEach((item) => item.delete());
     }
+  }
+
+  /**
+   * AutoCAD LOFT's "Guides" option — see GeometryKernel.loftGuidedSurface's
+   * own doc comment for the shape of the problem this solves. Builds one
+   * Coons-style surface patch per strip between consecutive guide touch
+   * points (plus the two end strips against each rail's own true corner),
+   * and sews all patches into one open shell.
+   *
+   * OCCT's own loft (BRepOffsetAPI_ThruSections, used by loftProfiles/
+   * loftAlongPath) has no guide-curve support at all — confirmed directly
+   * against the bound API surface, not just its docs — so this is built
+   * from GeomFill_BSplineCurves (a Coons-style 2/3/4-boundary-curve surface
+   * fill) instead, one strip at a time. A guide only ever touches each rail
+   * at ONE point (the middle of both curves, not their shared corner), so
+   * each strip is filled between whichever of: the two rails' own true
+   * corner (no guide there), or a guide (touching both rails once).
+   */
+  loftGuidedSurface(
+    rail1: readonly SweepPathSegment3[],
+    rail2: readonly SweepPathSegment3[],
+    guides: readonly (readonly SweepPathSegment3[])[],
+  ): OpenCascadeSolid {
+    if (rail1.length === 0 || rail2.length === 0) throw new Error('Loft with guides requires two open rail curves.');
+    const owned: Array<{ delete(): void }> = [];
+    let sewing: InstanceType<typeof this.oc.BRepBuilderAPI_Sewing> | null = null;
+    let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
+    try {
+      const rail1Wire = this.buildWireFromEdges(rail1, owned, 'OpenCascade could not join the first guided-loft rail.');
+      const rail2Wire = this.buildWireFromEdges(rail2, owned, 'OpenCascade could not join the second guided-loft rail.');
+      const c1 = this.wireToCompositeBSpline(rail1Wire, owned);
+      const c2 = this.wireToCompositeBSpline(rail2Wire, owned);
+      const c1Curve = c1.get();
+      const c2Curve = c2.get();
+      const c1Start = c1Curve.StartPoint();
+      const c1End = c1Curve.EndPoint();
+      const c2Start = c2Curve.StartPoint();
+      const c2End = c2Curve.EndPoint();
+
+      // Coincidence tolerance between the two rails' own endpoints — looser
+      // than GeomFill's own internal tolerance (which the later per-strip
+      // pole-snap satisfies exactly), just to detect which of the two rails'
+      // ends correspond to each other at all.
+      const CORNER_TOLERANCE = 1e-2;
+      const distance = (a: gp_Pnt, b: gp_Pnt): number => Math.hypot(a.X() - b.X(), a.Y() - b.Y(), a.Z() - b.Z());
+
+      type Boundary = {
+        u1: number;
+        u2: number;
+        snap1: gp_Pnt;
+        snap2: gp_Pnt;
+        // Oriented rail1-side -> rail2-side; null at the rails' own true
+        // corners, where there is no guide to fill that gap.
+        guide: Handle_Geom_BSplineCurve | null;
+      };
+
+      const sameDirection = distance(c1Start, c2Start) <= CORNER_TOLERANCE && distance(c1End, c2End) <= CORNER_TOLERANCE;
+      const crossDirection = distance(c1Start, c2End) <= CORNER_TOLERANCE && distance(c1End, c2Start) <= CORNER_TOLERANCE;
+      if (!sameDirection && !crossDirection) {
+        throw new Error('Loft with guides requires two rails that share both their own endpoints (e.g. one curve mirrored into the other).');
+      }
+      const u2AtRailStart = sameDirection ? c2Curve.FirstParameter() : c2Curve.LastParameter();
+      const u2AtRailEnd = sameDirection ? c2Curve.LastParameter() : c2Curve.FirstParameter();
+
+      const boundaries: Boundary[] = [
+        { u1: c1Curve.FirstParameter(), u2: u2AtRailStart, snap1: c1Start, snap2: c1Start, guide: null },
+        { u1: c1Curve.LastParameter(), u2: u2AtRailEnd, snap1: c1End, snap2: c1End, guide: null },
+      ];
+
+      for (const guideEdges of guides) {
+        if (guideEdges.length === 0) continue;
+        const guideWire = this.buildWireFromEdges(guideEdges, owned, 'OpenCascade could not join a loft guide curve.');
+        const guideComposite = this.wireToCompositeBSpline(guideWire, owned);
+        const guideCurve = guideComposite.get();
+        const guideStart = guideCurve.StartPoint();
+        const guideEnd = guideCurve.EndPoint();
+        // Which end of the guide touches rail1 vs rail2 -- by nearest
+        // distance, not an assumed order (a hand-drawn guide can run either way).
+        const startNearRail1 = Math.min(distance(guideStart, c1Start), distance(guideStart, c1End))
+          <= Math.min(distance(guideEnd, c1Start), distance(guideEnd, c1End));
+        const rail1Point = startNearRail1 ? guideStart : guideEnd;
+        const rail2Point = startNearRail1 ? guideEnd : guideStart;
+        const u1 = this.projectPointParam(c1, rail1Point);
+        const u2 = this.projectPointParam(c2, rail2Point);
+        const orientedGuide = this.trimBSplineBetween(guideComposite, guideCurve.FirstParameter(), guideCurve.LastParameter(), startNearRail1);
+        boundaries.push({ u1, u2, snap1: rail1Point, snap2: rail2Point, guide: orientedGuide });
+      }
+      boundaries.sort((a, b) => a.u1 - b.u1);
+
+      const faces: TopoDS_Face[] = [];
+      for (let index = 0; index + 1 < boundaries.length; index++) {
+        const a = boundaries[index];
+        const b = boundaries[index + 1];
+        const rail1Seg = this.trimBSplineBetween(c1, a.u1, b.u1, true);
+        this.snapPole(rail1Seg, true, a.snap1);
+        this.snapPole(rail1Seg, false, b.snap1);
+        const rail2Lo = Math.min(a.u2, b.u2);
+        const rail2Hi = Math.max(a.u2, b.u2);
+        // Start at whichever end is boundary b's own touch point, so the
+        // strip's four sides connect tip-to-tail all the way around.
+        const rail2Sense = b.u2 < a.u2;
+        const rail2Seg = this.trimBSplineBetween(c2, rail2Lo, rail2Hi, rail2Sense);
+        this.snapPole(rail2Seg, true, b.snap2);
+        this.snapPole(rail2Seg, false, a.snap2);
+
+        const style = this.oc.GeomFill_FillingStyle.GeomFill_CoonsStyle as unknown as GeomFill_FillingStyle;
+        let surface: ReturnType<InstanceType<typeof this.oc.GeomFill_BSplineCurves>['Surface']>;
+        if (!a.guide && !b.guide) {
+          const filler = new this.oc.GeomFill_BSplineCurves_4(rail1Seg, rail2Seg, style);
+          owned.push(filler);
+          surface = filler.Surface();
+        } else if (a.guide && b.guide) {
+          const aGuideReversed = this.reverseBSpline(a.guide);
+          const filler = new this.oc.GeomFill_BSplineCurves_2(rail1Seg, b.guide, rail2Seg, aGuideReversed, style);
+          owned.push(filler);
+          surface = filler.Surface();
+        } else if (b.guide) {
+          // Corner at a, guide at b: the guide already runs rail1-touch ->
+          // rail2-touch, sitting naturally between rail1Seg's end and
+          // rail2Seg's start.
+          const filler = new this.oc.GeomFill_BSplineCurves_3(rail1Seg, b.guide, rail2Seg, style);
+          owned.push(filler);
+          surface = filler.Surface();
+        } else {
+          // Guide at a, corner at b: there is no boundary curve between
+          // rail1Seg's end and rail2Seg's start (both land on the same true
+          // corner point already) — the guide instead closes the LAST gap,
+          // from rail2Seg's end back to rail1Seg's start, so it needs to run
+          // rail2-touch -> rail1-touch: the reverse of its own orientation.
+          const oriented = this.reverseBSpline(a.guide!);
+          const filler = new this.oc.GeomFill_BSplineCurves_3(rail1Seg, rail2Seg, oriented, style);
+          owned.push(filler);
+          surface = filler.Surface();
+        }
+        if (surface.IsNull()) throw new Error('OpenCascade could not fill a guided-loft patch.');
+        const surfaceBase = new this.oc.Handle_Geom_Surface_2(surface.get());
+        const faceMaker = new this.oc.BRepBuilderAPI_MakeFace_8(surfaceBase, 1e-6);
+        owned.push(surfaceBase, faceMaker);
+        const face = faceMaker.Face();
+        if (face.IsNull()) throw new Error('OpenCascade could not build a guided-loft patch face.');
+        faces.push(face);
+      }
+
+      sewing = new this.oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+      progress = new this.oc.Message_ProgressRange_1();
+      for (const face of faces) sewing.Add(face);
+      sewing.Perform(progress);
+      const shape = sewing.SewedShape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade could not stitch the guided-loft patches together.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress?.delete();
+      sewing?.delete();
+      // Same deliberate small leak as loftProfiles, and for the same reason:
+      // the composite/trimmed curve objects built above keep live references
+      // into the wires' own edge curves, so disposing `owned` here risks the
+      // exact "dangling reference" crash documented on loftProfiles.
+    }
+  }
+
+  /** Joins a wire's chain of edges (line/arc/Bezier, any mix) into one
+   *  composite Geom_BSplineCurve, so it can be projected onto, trimmed, or
+   *  fed into a GeomFill surface builder as a single curve. */
+  private wireToCompositeBSpline(wire: TopoDS_Wire, owned: Array<{ delete(): void }>): Handle_Geom_BSplineCurve {
+    const explorer = new this.oc.TopExp_Explorer_2(
+      wire,
+      this.oc.TopAbs_ShapeEnum.TopAbs_EDGE as unknown as TopAbs_ShapeEnum,
+      this.oc.TopAbs_ShapeEnum.TopAbs_SHAPE as unknown as TopAbs_ShapeEnum,
+    );
+    owned.push(explorer);
+    let composite: InstanceType<typeof this.oc.GeomConvert_CompCurveToBSplineCurve_2> | null = null;
+    while (explorer.More()) {
+      const edge = this.oc.TopoDS.Edge_1(explorer.Current());
+      const first = { current: 0 };
+      const last = { current: 0 };
+      // BRep_Tool.Curve_2 returns the edge's UNDERLYING curve at full extent
+      // (e.g. a whole circle for one arc edge) plus the edge's own [first,
+      // last] trim range as out-params — trimming explicitly here is what
+      // keeps a single-edge arc guide from silently becoming a full circle.
+      // opencascade.js types these out-params as plain numbers although the
+      // binding actually mutates a passed-in ref object at runtime — same
+      // embind/`.d.ts` mismatch as the TopAbs_ShapeEnum casts above.
+      const curveHandle = this.oc.BRep_Tool.Curve_2(edge, first as unknown as number, last as unknown as number);
+      const trimmedHandle = new this.oc.Handle_Geom_Curve_2(new this.oc.Geom_TrimmedCurve(curveHandle, first.current, last.current, true, true));
+      const bspline = this.oc.GeomConvert.CurveToBSplineCurve(
+        trimmedHandle,
+        this.oc.Convert_ParameterisationType.Convert_QuasiAngular as unknown as Convert_ParameterisationType,
+      );
+      const bounded = new this.oc.Handle_Geom_BoundedCurve_2(bspline.get());
+      owned.push(edge, trimmedHandle, bspline, bounded);
+      if (!composite) {
+        composite = new this.oc.GeomConvert_CompCurveToBSplineCurve_2(
+          bounded,
+          this.oc.Convert_ParameterisationType.Convert_QuasiAngular as unknown as Convert_ParameterisationType,
+        );
+      } else composite.Add_1(bounded, 1e-4, true, false, 1);
+      explorer.Next();
+    }
+    if (!composite) throw new Error('OpenCascade found no edges in a guided-loft curve.');
+    owned.push(composite);
+    return composite.BSplineCurve();
+  }
+
+  /** The parameter on `curveHandle` nearest `point` — used to find where a
+   *  guide curve actually touches a rail. */
+  private projectPointParam(curveHandle: Handle_Geom_BSplineCurve, point: gp_Pnt): number {
+    const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
+    const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
+    return projector.LowerDistanceParameter();
+  }
+
+  /** `curveHandle` trimmed to [u1, u2] (u1 <= u2) and re-expressed as its own
+   *  Geom_BSplineCurve, traversed low-to-high when `sense` or high-to-low
+   *  otherwise — the building block both a rail's own sub-segment and a
+   *  guide's oriented copy are built from. */
+  private trimBSplineBetween(curveHandle: Handle_Geom_BSplineCurve, u1: number, u2: number, sense: boolean): Handle_Geom_BSplineCurve {
+    const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
+    const trimmedCurve = new this.oc.Geom_TrimmedCurve(asCurve, u1, u2, sense, true);
+    const asTrimmedCurve = new this.oc.Handle_Geom_Curve_2(trimmedCurve);
+    return this.oc.GeomConvert.CurveToBSplineCurve(
+      asTrimmedCurve,
+      this.oc.Convert_ParameterisationType.Convert_QuasiAngular as unknown as Convert_ParameterisationType,
+    );
+  }
+
+  private reverseBSpline(curveHandle: Handle_Geom_BSplineCurve): Handle_Geom_BSplineCurve {
+    const curve = curveHandle.get();
+    return this.trimBSplineBetween(curveHandle, curve.FirstParameter(), curve.LastParameter(), false);
+  }
+
+  /** Moves a BSpline's own start or end pole exactly onto `target` — real
+   *  hand-drawn geometry only has a guide touching a rail at its NEAREST
+   *  point, not bit-identical to it, which is well within a real part's own
+   *  tolerance but not within GeomFill_BSplineCurves' much tighter internal
+   *  coincidence check ("Courbes non jointives" otherwise). */
+  private snapPole(curveHandle: Handle_Geom_BSplineCurve, atStart: boolean, target: gp_Pnt): void {
+    const curve = curveHandle.get();
+    const index = atStart ? 1 : curve.NbPoles();
+    curve.SetPole_1(index, target);
   }
 
   sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): OpenCascadeSolid {

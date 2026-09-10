@@ -453,17 +453,21 @@ export async function draftStep(run: CommandRun): Promise<StepOutcome> {
   return 'advance';
 }
 
+/** A closed profile (the classic loft) or an open rail (AutoCAD LOFT's
+ *  "Guides" option, where the two sections are open curves instead). */
+const isLoftSectionEntity = (entity: Entity): boolean => isSweepProfileEntity(entity) || isSweepPath(entity);
+
 export async function loftStep(run: CommandRun): Promise<StepOutcome> {
   const { active, data, value, ctx } = run;
   if (active.stepIndex === 0) {
     // 'done' never calls back into this function (see CommandManager's
-    // finishStep), but the step after this one is now a real optional path
-    // step, not 'done' — so unlike the first cut of this command, Enter here
-    // only needs to validate the count and move on, not build anything yet.
+    // finishStep), but the steps after this one are real optional steps, not
+    // 'done' — so Enter here only needs to validate the count and move on,
+    // not build anything yet.
     if (value) {
       const profile = value as Entity;
-      if (!isSweepProfileEntity(profile)) {
-        ctx.log('Loft profiles must be a closed circle, rectangle, octagon, polyline or Bezier.');
+      if (!isLoftSectionEntity(profile)) {
+        ctx.log('Loft profiles must be a circle, rectangle, octagon, polyline or Bezier — closed, or open for a two-rail loft with guides.');
         return 'stay';
       }
       run.gather(profile);
@@ -475,33 +479,94 @@ export async function loftStep(run: CommandRun): Promise<StepOutcome> {
     // the same box as the real profiles, say) would otherwise ride along
     // silently and fail the whole loft with no indication why.
     const gathered = data.entities as Entity[];
-    const profiles = gathered.filter(isSweepProfileEntity);
+    const profiles = gathered.filter(isLoftSectionEntity);
     if (profiles.length < gathered.length) {
-      ctx.log(`Ignored ${gathered.length - profiles.length} selected object(s) that are not closed circle, rectangle, octagon, polyline or Bezier profiles.`);
-      data.entities = profiles;
+      ctx.log(`Ignored ${gathered.length - profiles.length} selected object(s) that are not valid loft profiles.`);
     }
     if (profiles.length < 1) {
       ctx.log('LOFT requires at least one profile.');
       run.cancel();
       return 'advance';
     }
-    // A single profile only becomes a loft with a path to bend it along —
-    // AutoCAD's own single-cross-section LOFT-with-guide, the same way a
-    // closed 2D outline (one spline mirrored into a second half and joined)
-    // gets swept into a curved solid instead of staying flat. The path step
-    // ahead still lets a lone profile through; the check below, once the
-    // path answer is in, is what actually enforces this.
+    // Move the gathered profiles out of data.entities and reset it, so the
+    // guides step below can reuse the exact same generic click/window-select
+    // gather mechanism for its own, separate pick.
+    data.profiles = profiles;
+    data.entities = [];
     return 'advance';
   }
 
-  // Step 1: an optional guide path — AutoCAD LOFT's "Path" option. Enter
-  // finishes with a plain, straight-interpolated loft between the sections.
-  const profiles = data.entities as Entity[];
-  const path = (value as Entity | null) ?? undefined;
-  if (path && !isSweepPath(path)) {
-    ctx.log('Loft path must be a line, polyline, arc, circle or Bezier.');
-    return 'stay';
+  if (active.stepIndex === 1) {
+    // An optional guide path (AutoCAD LOFT's "Path" option) OR, with exactly
+    // two OPEN rail profiles, one or more guide curves (AutoCAD LOFT's
+    // "Guides" option) — the two are mutually exclusive alternatives in
+    // AutoCAD itself, so sharing one step avoids asking twice for the
+    // overwhelmingly common case (neither). Which one this is only becomes
+    // clear once every pick is in (a path is a single curve; guides need
+    // both rails open), so this reuses data.entities' generic multi-gather
+    // (reset to empty at the end of step 0) for either.
+    if (value) {
+      const candidate = value as Entity;
+      if (!isSweepPath(candidate)) {
+        ctx.log('Loft path/guide must be a line, polyline, arc, circle or Bezier.');
+        return 'stay';
+      }
+      run.gather(candidate);
+      return 'stay';
+    }
+    const profiles = data.profiles as Entity[];
+    const gathered = data.entities as Entity[];
+    const candidates = gathered.filter(isSweepPath);
+    if (candidates.length < gathered.length) {
+      ctx.log(`Ignored ${gathered.length - candidates.length} selected object(s) that are not valid path/guide curves.`);
+    }
+    const bothRailsOpen = profiles.length === 2 && profiles.every((profile) => !isSweepProfileEntity(profile));
+    if (bothRailsOpen && candidates.length > 0) {
+      data.guides = candidates;
+    } else {
+      if (candidates.length > 1) {
+        ctx.log(`Loft path must be a single curve — keeping the first of ${candidates.length} selected and ignoring the rest.`);
+      }
+      data.path = candidates[0];
+      data.guides = [];
+    }
+    return 'advance';
   }
+
+  // Step 2: wall thickness — only meaningful for a guided loft (two open
+  // rails loft into a surface, not a solid, so it needs thickening into one
+  // as part of the same command; a classic loft between closed profiles
+  // already produces a solid on its own and ignores this).
+  const profiles = data.profiles as Entity[];
+  const path = data.path as Entity | undefined;
+  const guides = (data.guides ?? []) as Entity[];
+
+  if (guides.length > 0) {
+    if (profiles.length !== 2) {
+      ctx.log(`Loft with guides requires exactly two profiles (rails) — ${profiles.length} selected.`);
+      return 'advance';
+    }
+    const thickness = typeof value === 'number' ? value : undefined;
+    if (thickness === undefined || thickness <= 0) {
+      ctx.log('Loft with guides requires a positive wall thickness.');
+      return 'stay';
+    }
+    ctx.log('Lofting…');
+    const feature: LoftFeature = { kind: 'loft', profiles, guides, guideThickness: thickness };
+    const exact = await buildExactFeature(feature);
+    if (!exact) {
+      ctx.log('Loft failed — check that the two rails share both their own endpoints and each guide touches both rails.');
+      return 'advance';
+    }
+    const consumed = [...profiles, ...guides];
+    const solid = ctx.doc.createSolid(exact.mesh, 'Loft', 0, consumed.map((entity) => entity.id), undefined, feature);
+    solid.exact = exact.exact;
+    ctx.history.execute(new ReplaceObjectsEdit('Loft', consumed, [], [], [solid]));
+    ctx.doc.viewMode = '3d';
+    ctx.log(`Loft complete: 2 rails, ${guides.length} guide${guides.length === 1 ? '' : 's'}.`);
+    return 'advance';
+  }
+
   if (!path && profiles.length < 2) {
     ctx.log('LOFT requires at least two profiles, or one profile with a path to bend it along.');
     return 'advance';

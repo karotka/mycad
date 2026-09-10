@@ -118,6 +118,19 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
     path: readonly SweepPathSegment3[],
     fixedOrientation?: { origin: Point3; normal: Point3; xAxis: Point3 },
   ): Solid;
+  /**
+   * AutoCAD LOFT's "Guides" option: two open rails plus one or more open
+   * guide curves, each touching both rails once, steering the loft's local
+   * shape at that point instead of straight-interpolating there. Produces
+   * the bent surface only — the caller thickens it into a solid separately
+   * (e.g. via `shell(surface, null, thickness)`), the same way AutoCAD's own
+   * open-cross-section loft yields a surface, not a solid.
+   */
+  loftGuidedSurface(
+    rail1: readonly SweepPathSegment3[],
+    rail2: readonly SweepPathSegment3[],
+    guides: readonly (readonly SweepPathSegment3[])[],
+  ): Solid;
   sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): Solid;
   fillet(solid: Solid, edge: EdgeReference3, radius: number): Solid;
   chamfer(solid: Solid, edge: EdgeReference3, distance1: number, distance2: number): Solid;

@@ -156,6 +156,7 @@ function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): Open
  * in (that is the whole point of lofting between different sketches).
  */
 function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  if (feature.guides && feature.guides.length > 0) return exactGuidedLoftShape(feature, kernel);
   // Straight-interpolating between sections needs at least two; a single
   // closed profile is only valid bent along a path (AutoCAD's own
   // single-cross-section LOFT-with-guide).
@@ -178,6 +179,42 @@ function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCa
   // the path's own tangent — see loftAlongPath's own comment for why.
   const firstPlane = feature.profiles[0].workPlane ?? WORLD_WORK_PLANE;
   return kernel.loftAlongPath(sections, path, { origin: firstPlane.origin, normal: firstPlane.zAxis, xAxis: firstPlane.xAxis });
+}
+
+/**
+ * AutoCAD LOFT's "Guides" option: `profiles` are the loft's two open rails
+ * (not sections in the usual sense), `guides` are open curves each touching
+ * both rails once. Two open rails loft into a surface, not a solid — same
+ * as AutoCAD's own open-cross-section loft — so `guideThickness` thickens
+ * that surface into a solid as part of the same command, via SHELL's own
+ * primitive.
+ */
+function exactGuidedLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  if (feature.profiles.length !== 2) return null;
+  if (!feature.guideThickness || feature.guideThickness <= 0) return null;
+  const [rail1Entity, rail2Entity] = feature.profiles;
+  const rail1 = exactSweepPath(rail1Entity, rail1Entity.workPlane ?? WORLD_WORK_PLANE);
+  const rail2 = exactSweepPath(rail2Entity, rail2Entity.workPlane ?? WORLD_WORK_PLANE);
+  if (!rail1 || !rail2) return null;
+  const guides: SweepPathSegment3[][] = [];
+  for (const guideEntity of feature.guides ?? []) {
+    const guide = exactSweepPath(guideEntity, guideEntity.workPlane ?? WORLD_WORK_PLANE);
+    if (!guide) return null;
+    guides.push(guide);
+  }
+  // Unlike the other leaf feature builders exactShapeFromFeature dispatches
+  // to, this one can genuinely throw on bad-but-plausible input (rails that
+  // don't share both endpoints, a guide OCCT can't fit a surface through) —
+  // same as SHELL/DRAFT's own kernel calls, so it gets the same try/catch.
+  let surface: OpenCascadeSolid | null = null;
+  try {
+    surface = kernel.loftGuidedSurface(rail1, rail2, guides);
+    return kernel.shell(surface, null, feature.guideThickness);
+  } catch {
+    return null;
+  } finally {
+    surface?.dispose();
+  }
 }
 
 /** A recorded legacy mesh is promoted only at the boundary of its exact child feature. */

@@ -3693,7 +3693,8 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 0, y: 0 }, bottom);
     await kit.manager.handleClick({ x: 0, y: 0 }, top);
     await kit.manager.submitInput(''); // finish gathering profiles
-    await kit.manager.submitInput(''); // skip the optional path
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3715,7 +3716,8 @@ describe('LOFT', () => {
     kit.manager.startCommand('LOFT');
     await kit.manager.handleClick({ x: 0, y: 0 }, only);
     await kit.manager.submitInput(''); // finish gathering profiles (just the one)
-    await kit.manager.submitInput(''); // skip the path too — now it must fail
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness — now it must fail
 
     expect(kit.doc.solids).toHaveLength(0);
     expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles, or one profile with a path to bend it along.');
@@ -3745,6 +3747,8 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 25, y: 15 }, profile);
     await kit.manager.submitInput(''); // finish gathering profiles (just the one)
     await kit.manager.handleClick({ x: 30, y: -5 }, path);
+    await kit.manager.submitInput(''); // finish gathering the (single) path pick
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.doc.solids).toHaveLength(1);
     expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
@@ -3766,7 +3770,8 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 5, y: 0 }, bottom);
     await kit.manager.handleClick({ x: 2, y: 0 }, top);
     await kit.manager.submitInput(''); // finish gathering profiles
-    await kit.manager.submitInput(''); // skip the optional path
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3776,61 +3781,114 @@ describe('LOFT', () => {
     expect(Math.max(...zValues)).toBeCloseTo(10, 4);
   });
 
-  it('refuses an open polyline profile', async () => {
+  it('accepts an open polyline as a profile, but still refuses it without a second open rail or a path', async () => {
+    // Open curves are now valid LOFT profiles too — AutoCAD's own "Guides"
+    // option needs exactly two OPEN rails, not closed ones — but a single
+    // open profile with nothing to pair it against still can't build.
     const kit = setup();
     const openLine = kit.doc.createPolyline([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }], false);
     kit.doc.addEntity(openLine);
 
     kit.manager.startCommand('LOFT');
     await kit.manager.handleClick({ x: 2, y: 0 }, openLine);
+    expect(kit.doc.entities).toHaveLength(1); // accepted, not rejected at click time
+    await kit.manager.submitInput(''); // finish gathering profiles (just the one)
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness — now it must fail
 
-    expect(kit.doc.entities).toHaveLength(1);
-    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles, or one profile with a path to bend it along.');
   });
 
-  it('refuses an open Bezier profile — the same rejection hit by two mirrored, unjoined halves', async () => {
+  it('lofts two open Beziers directly (no JOIN needed) through a guide curve — AutoCAD LOFT\'s "Guides" option', async () => {
+    // The user's actual AutoCAD workflow: draw one Bezier half, mirror it
+    // into a second, SEPARATE (never joined) half, then loft directly
+    // between the two open rails through guide curves around the perimeter.
     const kit = setup();
-    // An open spline, e.g. one half of a silhouette mirrored into another
-    // separate entity: it looks closed once both halves are drawn together,
-    // but neither one is closed on its own.
-    const openSpline = kit.doc.createSpline({ x: 0, y: 0 }, [{ control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0.5 } }]);
-    kit.doc.addEntity(openSpline);
+    const rail1 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+    const rail2 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+    kit.doc.addEntity(rail1);
+    kit.doc.addEntity(rail2);
+    // Drawn flat in its own local plane, touching each rail near its own
+    // world z=0 point (local y=0) but bulging in local y — which this
+    // plane's own yAxis maps to world Z, so it comes out genuinely bent.
+    const guide = kit.doc.createBezier({ x: 0, y: 0 }, { x: 0, y: 6 }, { x: 7, y: 6 }, { x: 7, y: 0 });
+    guide.workPlane = {
+      origin: { x: 28, y: 15, z: 0 },
+      xAxis: { x: 0, y: -1, z: 0 },
+      yAxis: { x: 0, y: 0, z: 1 },
+      zAxis: { x: -1, y: 0, z: 0 },
+    };
+    kit.doc.addEntity(guide);
 
     kit.manager.startCommand('LOFT');
-    await kit.manager.handleClick({ x: 5, y: 8 }, openSpline);
+    await kit.manager.handleClick({ x: 25, y: 15 }, rail1);
+    await kit.manager.handleClick({ x: 25, y: 8 }, rail2);
+    await kit.manager.submitInput(''); // finish gathering profiles (the two open rails)
+    await kit.manager.handleClick({ x: 28, y: 11.5 }, guide);
+    await kit.manager.submitInput(''); // finish gathering guides (just the one)
+    await kit.manager.submitInput('2'); // wall thickness
 
-    expect(kit.doc.entities).toHaveLength(1);
-    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft', guideThickness: 2 });
+    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zValues) - Math.min(...zValues)).toBeGreaterThan(3);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(3);
+  });
+
+  it('refuses a guided loft with no wall thickness', async () => {
+    const kit = setup();
+    const rail1 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+    const rail2 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+    kit.doc.addEntity(rail1);
+    kit.doc.addEntity(rail2);
+    const guide = kit.doc.createLine({ x: 28, y: 15 }, { x: 28, y: 8 });
+    kit.doc.addEntity(guide);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 25, y: 15 }, rail1);
+    await kit.manager.handleClick({ x: 25, y: 8 }, rail2);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 28, y: 11.5 }, guide);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput(''); // skip thickness — must refuse, not silently drop the guides
+
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.log).toHaveBeenCalledWith('Loft with guides requires a positive wall thickness.');
   });
 
   it('drops an invalid profile caught by a window selection instead of failing the whole loft', async () => {
     // syncWindowSelection sets data.entities directly, bypassing the
-    // per-click validation above entirely — a guide arc caught in the same
-    // drag box as the real profiles (an easy mistake, and the reported
-    // trigger for this) used to ride along silently and fail the build with
-    // no indication why.
+    // per-click validation above entirely — a stray non-curve entity caught
+    // in the same drag box as the real profiles (an easy mistake) used to
+    // ride along silently and fail the build with no indication why.
     const kit = setup();
     const bottom = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
     const top = kit.doc.createRectangle({ x: -3, y: -3 }, { x: 3, y: 3 });
     top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 10 } };
-    const strayGuide = kit.doc.createArc({ x: 0, y: 0 }, 4, 0, Math.PI);
+    const strayPoint = kit.doc.createPoint({ x: 0, y: 0 });
     kit.doc.addEntity(bottom);
     kit.doc.addEntity(top);
-    kit.doc.addEntity(strayGuide);
+    kit.doc.addEntity(strayPoint);
 
     kit.manager.startCommand('LOFT');
     kit.doc.selectEntity(bottom.id, true);
     kit.doc.selectEntity(top.id, true);
-    kit.doc.selectEntity(strayGuide.id, true);
+    kit.doc.selectEntity(strayPoint.id, true);
     expect(kit.manager.syncWindowSelection()).toBe(true);
     await kit.manager.submitInput(''); // finish gathering profiles
-    await kit.manager.submitInput(''); // skip the optional path
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('Ignored 1 selected object(s)'));
     expect(kit.doc.solids).toHaveLength(1);
     expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
-    // The stray arc took no part in it — only the two rectangles were consumed.
-    expect(kit.doc.entities).toEqual([strayGuide]);
+    // The stray point took no part in it — only the two rectangles were consumed.
+    expect(kit.doc.entities).toEqual([strayPoint]);
   });
 
   it('lofts two closed Beziers, closed via BEZIER\'s own C, into a solid', async () => {
@@ -3858,7 +3916,8 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 5, y: 5 }, bottom);
     await kit.manager.handleClick({ x: 3, y: 3 }, top);
     await kit.manager.submitInput(''); // finish gathering profiles
-    await kit.manager.submitInput(''); // skip the optional path
+    await kit.manager.submitInput(''); // skip the optional path/guides
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3892,6 +3951,8 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 0, y: 0, z: 20 }, top);
     await kit.manager.submitInput(''); // finish gathering profiles
     await kit.manager.handleClick({ x: 0, y: 10, z: 0 }, path);
+    await kit.manager.submitInput(''); // finish gathering the (single) path pick
+    await kit.manager.submitInput(''); // skip the optional thickness
 
     expect(kit.doc.entities).toHaveLength(0);
     expect(kit.doc.solids).toHaveLength(1);
@@ -3924,7 +3985,7 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 22, y: 22 }, notAPath);
 
     expect(kit.doc.solids).toHaveLength(0);
-    expect(kit.log).toHaveBeenCalledWith('Loft path must be a line, polyline, arc, circle or Bezier.');
+    expect(kit.log).toHaveBeenCalledWith('Loft path/guide must be a line, polyline, arc, circle or Bezier.');
   });
 });
 

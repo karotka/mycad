@@ -73,7 +73,12 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
         detail: `${Number(feature.thickness.toFixed(2))} mm${feature.faceId === null ? ' · closed' : ''}`,
       };
     case 'loft':
-      return { label: 'Loft', detail: `${feature.profiles.length} profiles` };
+      return {
+        label: 'Loft',
+        detail: feature.guides?.length
+          ? `2 rails, ${feature.guides.length} guide${feature.guides.length === 1 ? '' : 's'}`
+          : `${feature.profiles.length} profiles`,
+      };
     case 'draft':
       return { label: 'Draft', detail: `${Number(feature.angle.toFixed(2))}°` };
     case 'mesh':
