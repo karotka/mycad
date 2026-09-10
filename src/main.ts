@@ -111,6 +111,7 @@ const logElement = get<HTMLElement>('command-log');
 const commandResizeHandle = get<HTMLElement>('command-resize-handle');
 const coords = get<HTMLElement>('coords');
 const crosshair = get<HTMLElement>('crosshair');
+const ucsCursor = get<HTMLElement>('ucs-cursor');
 const selectionWindowElement = get<HTMLElement>('selection-window');
 const measureOrigin = get<HTMLElement>('measure-origin');
 const measureTarget = get<HTMLElement>('measure-target');
@@ -1333,6 +1334,7 @@ attachViewportPointerHandlers({
   viewport,
   gripMenu,
   crosshair,
+  ucsCursor,
   prompt,
   snapMarker,
   coords,

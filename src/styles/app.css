@@ -431,7 +431,29 @@ html, body, #app {
 .viewport-wrap.object-pick .crosshair::before,
 .viewport-wrap.object-pick .crosshair::after { display: none; }
 
-.viewport-wrap.context-menu-cursor-pending .crosshair { visibility: hidden; }
+.viewport-wrap.context-menu-cursor-pending .crosshair,
+.viewport-wrap.context-menu-cursor-pending .ucs-cursor { visibility: hidden; }
+
+/* A second, smaller cross laid over the cursor in the 3D view only,
+   showing the CURRENT work plane's own X/Y/Z axes (red/green/blue, the
+   same convention the UCS triad in the scene already uses) — so which way
+   "flat" actually points is visible right at the cursor, not only back at
+   the triad's own origin. Rotates with the plane: on a dynamic UCS
+   (hovering a solid face) its legs tilt to match that face, not the WCS. */
+.ucs-cursor {
+  position: absolute;
+  z-index: 33;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  display: none;
+}
+.ucs-cursor line {
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.ucs-cursor-x { stroke: #ff4d4d; }
+.ucs-cursor-y { stroke: #35d94c; }
+.ucs-cursor-z { stroke: #4d9bff; }
 
 .dimension-toast {
   position: absolute;

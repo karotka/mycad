@@ -60,6 +60,11 @@ export function shellHtml(tools: ShellTools): string {
       <canvas id="canvas2d"></canvas>
       <div id="viewport3d"></div>
       <div class="crosshair" id="crosshair"></div>
+      <svg class="ucs-cursor" id="ucs-cursor" width="36" height="36">
+        <line id="ucs-cursor-x" class="ucs-cursor-x" x1="18" y1="18" x2="18" y2="18"/>
+        <line id="ucs-cursor-y" class="ucs-cursor-y" x1="18" y1="18" x2="18" y2="18"/>
+        <line id="ucs-cursor-z" class="ucs-cursor-z" x1="18" y1="18" x2="18" y2="18"/>
+      </svg>
       <div class="selection-window" id="selection-window" hidden></div>
       <div class="measure-marker measure-origin" id="measure-origin" hidden></div>
       <div class="measure-marker measure-target" id="measure-target" hidden></div>

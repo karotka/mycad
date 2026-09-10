@@ -66,6 +66,7 @@ export interface ViewportPointerContext {
   viewport: HTMLElement;
   gripMenu: HTMLElement;
   crosshair: HTMLElement;
+  ucsCursor: HTMLElement;
   prompt: HTMLElement;
   snapMarker: HTMLElement;
   coords: HTMLElement;
@@ -85,6 +86,55 @@ export interface ViewportPointerContext {
   log: (message: string) => void;
 }
 
+/** Local origin the `.ucs-cursor` SVG's three legs are all drawn from —
+ *  the centre of its 36×36 viewBox (see `src/ui/shell.ts`). */
+const UCS_CURSOR_CENTER = 18;
+/** Fixed screen-space leg length (px) for the plane-oriented cursor cross —
+ *  smaller than the plain crosshair's own 22px half-length, so it reads as
+ *  a secondary indicator layered on the primary one, not a replacement for
+ *  it, regardless of zoom (unlike a world-space length, which would grow
+ *  or shrink with the camera). */
+const UCS_CURSOR_LEG_LENGTH = 15;
+
+/**
+ * Screen-space endpoints for the plane-oriented cursor cross's three axis
+ * legs, drawn from `UCS_CURSOR_CENTER`. Pure function, no DOM — `project`
+ * is whatever world-to-screen projection the caller already has (real
+ * camera in production, a stand-in in a test). `world` is the cursor's own
+ * 3D point on `plane`; `probe` is a small local-plane distance used only to
+ * sample each axis's own screen DIRECTION (its magnitude does not matter,
+ * only that it is not degenerate) — the actual drawn leg is always exactly
+ * `UCS_CURSOR_LEG_LENGTH` screen pixels once normalized.
+ *
+ * An axis pointing (near) straight into or out of the screen projects to
+ * (near) zero length — rather than draw a direction guessed from rounding
+ * noise, that leg collapses to a dot at the centre. `anyVisible` is false
+ * only when every axis did (looking straight down one of them), the signal
+ * to hide the whole cross rather than show three overlapping dots.
+ */
+export function ucsCursorLegEndpoints(
+  plane: WorkPlane,
+  world: Vec3,
+  project: (point: Vec3) => Vec2 | null,
+  probe: number,
+): { x: Vec2; y: Vec2; z: Vec2; anyVisible: boolean } | null {
+  const center = project(world);
+  if (!center) return null;
+  const axes: Array<[Vec3, 'x' | 'y' | 'z']> = [[plane.xAxis, 'x'], [plane.yAxis, 'y'], [plane.zAxis, 'z']];
+  const legs: { x: Vec2; y: Vec2; z: Vec2 } = { x: { x: UCS_CURSOR_CENTER, y: UCS_CURSOR_CENTER }, y: { x: UCS_CURSOR_CENTER, y: UCS_CURSOR_CENTER }, z: { x: UCS_CURSOR_CENTER, y: UCS_CURSOR_CENTER } };
+  let anyVisible = false;
+  for (const [axis, key] of axes) {
+    const tip = project({ x: world.x + axis.x * probe, y: world.y + axis.y * probe, z: world.z + axis.z * probe });
+    if (!tip) continue;
+    const dx = tip.x - center.x, dy = tip.y - center.y;
+    const length = Math.hypot(dx, dy);
+    if (length <= 1e-6) continue;
+    legs[key] = { x: UCS_CURSOR_CENTER + (dx / length) * UCS_CURSOR_LEG_LENGTH, y: UCS_CURSOR_CENTER + (dy / length) * UCS_CURSOR_LEG_LENGTH };
+    anyVisible = true;
+  }
+  return { ...legs, anyVisible };
+}
+
 /**
  * Registers the three viewport pointer listeners. This is the app's central
  * event orchestration — hover feedback, drag commits, grip editing, dynamic
@@ -96,7 +146,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const {
     cadDocument, commands, renderer2d, renderer3d, navigation, windowDrag,
     gripController, gripInteraction, drawingInteraction, selectionController,
-    dynamicUcsController, previewController, viewport, gripMenu, crosshair, prompt,
+    dynamicUcsController, previewController, viewport, gripMenu, crosshair, ucsCursor, prompt,
     snapMarker, coords, trackingLine, measureTarget, measureOrigin, input,
     pointerState, hoverState, zoomWindowMode, redraw, log,
   } = ctx;
@@ -114,6 +164,44 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid, selectedSurface,
     profileContainingPoint, solidSelectionExclusions, surfaceSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
+
+  // The plane-oriented cursor cross's own three legs (red/green/blue X/Y/Z),
+  // queried once — updateUcsCursor below only ever changes their endpoints.
+  const ucsCursorLines = {
+    x: ucsCursor.querySelector<SVGLineElement>('.ucs-cursor-x')!,
+    y: ucsCursor.querySelector<SVGLineElement>('.ucs-cursor-y')!,
+    z: ucsCursor.querySelector<SVGLineElement>('.ucs-cursor-z')!,
+  };
+  /** The 3D-view-only cross at the cursor showing the CURRENT work plane's
+   *  own axes (WCS by default, or a dynamic/named UCS's own tilt) — see
+   *  the CSS comment on `.ucs-cursor` for why this exists alongside the
+   *  plain screen-aligned crosshair.
+   *
+   *  Visibility is toggled through `style.display`, not the `hidden`
+   *  property/attribute every other overlay in this file uses (`crosshair`,
+   *  `snapMarker`, ...) — confirmed directly that setting `.hidden = false`
+   *  on this particular `<svg>` root element does not reliably clear its
+   *  `hidden` content attribute here (the property read-back says `false`
+   *  while `hasAttribute('hidden')` still says `true`, and CSS's `[hidden]`
+   *  selector matches the attribute, not the property) — so the cross
+   *  stayed invisible even once every leg was already computed correctly. */
+  function hideUcsCursor(): void { ucsCursor.style.display = 'none'; }
+  function updateUcsCursor(event: PointerEvent, sx: number, sy: number): void {
+    if (cadDocument.viewMode !== '3d') { hideUcsCursor(); return; }
+    const canvas = renderer3d.renderer.domElement;
+    const plane = cadDocument.activeWorkPlane;
+    const local = renderer3d.workPlanePoint(canvas, event.clientX, event.clientY, plane);
+    if (!local) { hideUcsCursor(); return; }
+    const world = localToWorld(plane, local);
+    const legs = ucsCursorLegEndpoints(plane, world, (point) => renderer3d.projectCadPoint(canvas, point), Math.max(0.2, renderer3d.orbitRadius * 0.02));
+    if (!legs) { hideUcsCursor(); return; }
+    ucsCursorLines.x.setAttribute('x2', String(legs.x.x)); ucsCursorLines.x.setAttribute('y2', String(legs.x.y));
+    ucsCursorLines.y.setAttribute('x2', String(legs.y.x)); ucsCursorLines.y.setAttribute('y2', String(legs.y.y));
+    ucsCursorLines.z.setAttribute('x2', String(legs.z.x)); ucsCursorLines.z.setAttribute('y2', String(legs.z.y));
+    ucsCursor.style.left = `${sx}px`;
+    ucsCursor.style.top = `${sy}px`;
+    ucsCursor.style.display = legs.anyVisible ? 'block' : 'none';
+  }
 
   /** Set by a right-button press: a release that never moved opens the menu. */
   let menuOnStillRelease = false;
@@ -149,6 +237,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // (selection window, pan, etc.) returns before geometric hover processing.
     crosshair.style.left = `${sx}px`;
     crosshair.style.top = `${sy}px`;
+    updateUcsCursor(event, sx, sy);
     // AutoCAD's own convention: a cross where a picked point established a
     // temporary, UCS-parallel drawing plane, so a later point landing
     // somewhere unexpected in the same command has an obvious reason why —
