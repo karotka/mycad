@@ -405,6 +405,37 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(bounds.min.x).toBeCloseTo(4.5, 0);
   });
 
+  it('lofts two straight-edged (multi-segment polyline) rails through an arc guide — GeomFill_CoonsStyle rejected this outright', () => {
+    // Real regression: a user's own two-rail pair, both plain 3-segment
+    // polylines (no curvature at all), threw "GeomFill_BSplineCurves:
+    // invalid filling style" with the original GeomFill_CoonsStyle choice —
+    // confirmed directly against their real project file, not just this
+    // synthetic shape. The same real file's OTHER pair (curved Bezier
+    // rails), which did build, visibly twisted between patches wherever a
+    // hand-drawn guide's own tangent didn't closely match the rails' at the
+    // touch point — Coons tries to match tangents it has no good data for.
+    // GeomFill_StretchStyle has neither failure mode.
+    const rail1 = [
+      { kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: -5, z: 0 } },
+      { kind: 'line' as const, start: { x: 10, y: -5, z: 0 }, end: { x: 20, y: -8, z: 0 } },
+      { kind: 'line' as const, start: { x: 20, y: -8, z: 0 }, end: { x: 30, y: -3, z: 0 } },
+    ];
+    const rail2 = [
+      { kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 3, z: 0 } },
+      { kind: 'line' as const, start: { x: 10, y: 3, z: 0 }, end: { x: 20, y: 5, z: 0 } },
+      { kind: 'line' as const, start: { x: 20, y: 5, z: 0 }, end: { x: 30, y: -3, z: 0 } },
+    ];
+    const guide = [{
+      kind: 'arc' as const, center: { x: 15, y: 1, z: -5 }, normal: { x: 0, y: 1, z: 0 }, xAxis: { x: 1, y: 0, z: 0 },
+      radius: 5, startAngle: 0, sweepAngle: Math.PI,
+    }];
+
+    const bent = keep(kernel.loftGuidedSurface(rail1, rail2, [guide]));
+    const inspected = kernel.inspect(bent);
+    expect(inspected.valid).toBe(true);
+    expect(inspected.faceCount).toBeGreaterThan(0);
+  });
+
   it('rejects a guided loft whose two rails do not share both their own endpoints', () => {
     const rail1 = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }];
     const rail2 = [{ kind: 'line' as const, start: { x: 0, y: 5, z: 0 }, end: { x: 10, y: 5, z: 0 } }];

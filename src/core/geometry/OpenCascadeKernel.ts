@@ -596,9 +596,9 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
   /**
    * AutoCAD LOFT's "Guides" option — see GeometryKernel.loftGuidedSurface's
    * own doc comment for the shape of the problem this solves. Builds one
-   * Coons-style surface patch per strip between consecutive guide touch
-   * points (plus the two end strips against each rail's own true corner),
-   * and sews all patches into one open shell.
+   * surface patch per strip between consecutive guide touch points (plus the
+   * two end strips against each rail's own true corner), and sews all
+   * patches into one open shell.
    *
    * OCCT's own loft (BRepOffsetAPI_ThruSections, used by loftProfiles/
    * loftAlongPath) has no guide-curve support at all — confirmed directly
@@ -696,7 +696,22 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         this.snapPole(rail2Seg, true, b.snap2);
         this.snapPole(rail2Seg, false, a.snap2);
 
-        const style = this.oc.GeomFill_FillingStyle.GeomFill_CoonsStyle as unknown as GeomFill_FillingStyle;
+        // GeomFill_CoonsStyle (tangent-matched at the boundaries — the
+        // "nicer" looking fill) was the first choice, but two real problems
+        // showed up against real hand-drawn guide data once this actually
+        // shipped: straight-line rails (an all-polyline pair of profiles,
+        // no curvature at all) made GeomFill_BSplineCurves throw "invalid
+        // filling style" outright, and even where it didn't throw, a real
+        // guide whose own tangent at the touch point didn't closely match
+        // the rails' tangent there (the common case — nothing forces a
+        // hand-drawn guide to line up that precisely) made Coons visibly
+        // overshoot and twist between patches trying to satisfy continuity
+        // it had no good data for. GeomFill_StretchStyle (a plain isoparametric
+        // blend between the boundaries, no tangent-matching attempted) has
+        // neither failure mode on any real or synthetic case tried — less
+        // "organic" close to a sharp guide, but correct and stable, which
+        // matters more than smoothness for a first working version.
+        const style = this.oc.GeomFill_FillingStyle.GeomFill_StretchStyle as unknown as GeomFill_FillingStyle;
         let surface: ReturnType<InstanceType<typeof this.oc.GeomFill_BSplineCurves>['Surface']>;
         if (!a.guide && !b.guide) {
           const filler = new this.oc.GeomFill_BSplineCurves_4(rail1Seg, rail2Seg, style);
