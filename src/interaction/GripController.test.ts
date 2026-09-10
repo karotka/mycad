@@ -792,6 +792,76 @@ describe('a Surface\'s embedded loft rails/guides', () => {
       segments: [{ control1: { x: 5.3, y: 12.9 } }],
     });
   });
+
+  it('catches the mesh up even when commit() fires before the kernel rebuild resolves, and a second drag right after still lands', async () => {
+    // Real regression, reported directly: dragged two different vertices of
+    // a real rail polyline (mouse released — commit() — right after each
+    // drag, well before a real ~1-2s OpenCascade rebuild of a loft this
+    // size finishes) and the surface never redrew at all. updateSurface's
+    // rebuild callback used to also require the drag to still be active
+    // (`!this.drag`) before applying — but committing ends the drag long
+    // before its own last rebuild resolves in normal use, so the result was
+    // silently thrown away every time, forever freezing the mesh at
+    // whatever it looked like before the very first drag.
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    // The user's own real rail pair (poly_17/polyline_18): two 3-segment
+    // polylines sharing both their own true endpoints.
+    const rail1 = doc.createPolyline([
+      { x: 18.5, y: -11.5 }, { x: 26.5, y: -24 }, { x: 36.5, y: -24.5 }, { x: 42.5, y: -17.5 },
+    ], false);
+    const rail2 = doc.createPolyline([
+      { x: 18.5, y: -11.5 }, { x: 31.441176470588232, y: -4.235294117647058 }, { x: 40.5, y: -8.5 }, { x: 42.5, y: -17.5 },
+    ], false);
+    const feature: LoftFeature = { kind: 'loft', profiles: [rail1, rail2] };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    grips.begin(undefined, undefined, 1, { x: 26.5, y: -24 }, surface); // rail1's interior vertex 1
+    grips.update({ x: 24, y: -20 });
+    grips.commit(); // released well before its own rebuild resolves
+    await vi.waitFor(() => expect(doc.getSurface(surface.id)!.revision).toBe(1), { timeout: 30_000 });
+    const afterFirstDrag = doc.getSurface(surface.id)!.mesh.positions.length;
+    expect(afterFirstDrag).toBeGreaterThan(0);
+
+    grips.begin(undefined, undefined, 2, { x: 36.5, y: -24.5 }, surface); // rail1's interior vertex 2
+    grips.update({ x: 34, y: -20 });
+    grips.commit();
+    await vi.waitFor(() => expect(doc.getSurface(surface.id)!.revision).toBe(2), { timeout: 30_000 });
+    // A real, different mesh — not the first drag's result left stale.
+    expect(doc.getSurface(surface.id)!.mesh.positions.length).not.toBe(afterFirstDrag);
+    expect((doc.getSurface(surface.id)!.feature as LoftFeature).profiles[0]).toMatchObject({
+      vertices: [{ x: 18.5, y: -11.5 }, { x: 24, y: -20 }, { x: 34, y: -20 }, { x: 42.5, y: -17.5 }],
+    });
+  });
+
+  it('does not let a rebuild in flight for a cancelled drag land afterwards and clobber the restored mesh', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const rail1 = doc.createPolyline([
+      { x: 18.5, y: -11.5 }, { x: 26.5, y: -24 }, { x: 36.5, y: -24.5 }, { x: 42.5, y: -17.5 },
+    ], false);
+    const rail2 = doc.createPolyline([
+      { x: 18.5, y: -11.5 }, { x: 31.441176470588232, y: -4.235294117647058 }, { x: 40.5, y: -8.5 }, { x: 42.5, y: -17.5 },
+    ], false);
+    const feature: LoftFeature = { kind: 'loft', profiles: [rail1, rail2] };
+    const surface = doc.createSurface({ positions: new Float32Array([1, 2, 3]), indices: new Uint32Array([0]) }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    grips.begin(undefined, undefined, 1, { x: 26.5, y: -24 }, surface);
+    grips.update({ x: 24, y: -20 });
+    grips.cancel(); // thrown away before its own rebuild has a chance to resolve
+
+    // Give the in-flight kernel rebuild plenty of time to (wrongly) land.
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const after = doc.getSurface(surface.id)!;
+    expect(after.revision).toBe(0);
+    expect(Array.from(after.mesh.positions)).toEqual([1, 2, 3]);
+  });
   });
 
 

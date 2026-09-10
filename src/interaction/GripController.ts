@@ -741,6 +741,13 @@ export class GripController {
         if (this.drag.originalRevision !== undefined) solid.revision = this.drag.originalRevision;
       }
     } else if (this.drag.objectType === 'surface' && this.drag.originalPositions) {
+      // Invalidates any rebuild still in flight for the drag being thrown
+      // away — updateSurface's callback checks only this token (not
+      // whether a drag is still active, so a late rebuild can still land
+      // after a normal commit()), so without bumping it here a rebuild for
+      // the very position just being reverted could still resolve a moment
+      // later and silently overwrite the restored mesh right back to it.
+      this.dragRebuildToken++;
       const surface = this.doc.getSurface(this.drag.objectId);
       if (surface) {
         surface.mesh = { positions: this.drag.originalPositions.slice(), indices: (this.drag.originalIndices ?? surface.mesh.indices).slice() };
@@ -779,8 +786,20 @@ export class GripController {
     const targetSurfaceId = surface.id;
     const targetRevision = surface.revision + 1;
     void buildExactFeature(updatedFeature, targetRevision, /* allowOpenShell */ true).then((exact) => {
+      // Only the token guards staleness here — NOT whether a drag is still
+      // active. A real OpenCascade rebuild of a loft this complex can take
+      // over a second (measured against the user's own real bowl data), so
+      // the LAST rebuild routinely resolves after commit() already ended
+      // the drag; discarding it on that basis alone left the mesh frozen at
+      // a stale shape forever — reported directly ("polyline se
+      // neprekreslila" after moving two grip points and releasing before
+      // the rebuild caught up). commit() itself does not bump the token, so
+      // this still lands and the mesh catches up moments later, matching
+      // the feature tree it already committed. cancel() DOES bump the
+      // token (see cancel() below), so a rebuild in flight for a drag the
+      // user explicitly threw away is correctly discarded instead of
+      // clobbering the just-restored mesh.
       if (!exact || token !== this.dragRebuildToken) return;
-      if (!this.drag || this.drag.objectType !== 'surface' || this.drag.objectId !== targetSurfaceId) return;
       const live = this.doc.getSurface(targetSurfaceId);
       if (!live) return;
       live.mesh = exact.mesh;
