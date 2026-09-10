@@ -216,6 +216,41 @@ html, body, #app {
    right angle = perpendicular. Colour reinforces it a second way — endpoint
    cyan, any centre/midpoint yellow, perpendicular orange, intersection green —
    since the shape alone is easy to mistake for a nearby one at a glance. */
+/* AutoCAD's own convention for where a point established a temporary,
+   UCS-parallel drawing plane: a plain cross, distinct from every object-snap
+   symbol above (those mark a candidate under the cursor; this one marks a
+   plane the rest of the command is now committed to, and stays up rather
+   than following the pointer). */
+.drawing-plane-marker {
+  position: absolute;
+  z-index: 45;
+  width: 17px;
+  height: 17px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.drawing-plane-marker::before,
+.drawing-plane-marker::after {
+  content: '';
+  position: absolute;
+  background: #ffb347;
+  box-shadow: 0 0 2px 1px rgba(13, 17, 23, 0.85);
+}
+.drawing-plane-marker::before {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+}
+.drawing-plane-marker::after {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
+}
+
 .snap-marker {
   position: absolute;
   z-index: 46;

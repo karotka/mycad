@@ -147,6 +147,18 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // (selection window, pan, etc.) returns before geometric hover processing.
     crosshair.style.left = `${sx}px`;
     crosshair.style.top = `${sy}px`;
+    // AutoCAD's own convention: a cross where a picked point established a
+    // temporary, UCS-parallel drawing plane, so a later point landing
+    // somewhere unexpected in the same command has an obvious reason why —
+    // see PointResolver's own "drawing" branch for where this gets set.
+    // 2D view has no camera to project the plane's true 3D origin through,
+    // so it only ever shows in 3D, where this actually arises.
+    const drawingPlane = commands.active?.data.drawingPlane as WorkPlane | undefined;
+    if (drawingPlane && cadDocument.viewMode === '3d') {
+      previewController.showDrawingPlaneOrigin(drawingPlane.origin, sx, sy);
+    } else {
+      previewController.hideDrawingPlaneOrigin();
+    }
     if (ucsAxisDrag) {
       // Prefer an exact model vertex, but keep the grip following the pointer
       // between snap points as well.  The projection must use the plane captured

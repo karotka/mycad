@@ -115,6 +115,7 @@ const selectionWindowElement = get<HTMLElement>('selection-window');
 const measureOrigin = get<HTMLElement>('measure-origin');
 const measureTarget = get<HTMLElement>('measure-target');
 const snapMarker = get<HTMLElement>('snap-marker');
+const drawingPlaneMarker = get<HTMLElement>('drawing-plane-marker');
 const trackingLine = get<HTMLElement>('tracking-line');
 const gripMenu = get<HTMLElement>('grip-menu');
 const dimensionToast = get<HTMLElement>('dimension-toast');
@@ -156,6 +157,7 @@ const previewController = new PreviewController(
     ? renderer3d.projectCadPoint(renderer3d.renderer.domElement, point)
     : null,
   (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
+  drawingPlaneMarker,
 );
 const navigation = new ViewportNavigationController(
   cadDocument,

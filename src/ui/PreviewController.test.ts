@@ -20,6 +20,42 @@ describe('PreviewController', () => {
     expect([origin.hidden, target.hidden, snap.hidden]).toEqual([true, true, true]);
   });
 
+  it('shows a cross at an established drawing plane\'s origin, projected the same way a snap marker is', () => {
+    const dimension = element(), origin = element(), target = element(), snap = element(), planeMarker = element();
+    const project = vi.fn(() => ({ x: 111, y: 222 }));
+    const controller = new PreviewController(dimension, origin, target, snap, project, undefined, planeMarker);
+
+    controller.showDrawingPlaneOrigin({ x: 1, y: 2, z: 3 }, 9, 9);
+
+    expect(project).toHaveBeenCalledWith({ x: 1, y: 2, z: 3 });
+    expect(planeMarker.hidden).toBe(false);
+    expect(planeMarker.style.left).toBe('111px');
+    expect(planeMarker.style.top).toBe('222px');
+
+    controller.hideDrawingPlaneOrigin();
+    expect(planeMarker.hidden).toBe(true);
+  });
+
+  it('falls back to the raw screen position when there is nothing to project against (2D view)', () => {
+    const dimension = element(), origin = element(), target = element(), snap = element(), planeMarker = element();
+    const controller = new PreviewController(dimension, origin, target, snap, undefined, undefined, planeMarker);
+
+    controller.showDrawingPlaneOrigin({ x: 1, y: 2, z: 3 }, 44, 55);
+
+    expect(planeMarker.style.left).toBe('44px');
+    expect(planeMarker.style.top).toBe('55px');
+  });
+
+  it('hides the drawing-plane marker on reset, alongside every other transient marker', () => {
+    const dimension = element(), origin = element(), target = element(), snap = element(), planeMarker = element();
+    const controller = new PreviewController(dimension, origin, target, snap, undefined, undefined, planeMarker);
+    controller.showDrawingPlaneOrigin({ x: 0, y: 0, z: 0 }, 0, 0);
+
+    controller.reset();
+
+    expect(planeMarker.hidden).toBe(true);
+  });
+
   const active = (name: string, stepIndex: number, data: Record<string, unknown>) =>
     ({ name, stepIndex, data, steps: [] }) as unknown as Parameters<PreviewController['update']>[0];
 

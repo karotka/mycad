@@ -14,6 +14,7 @@ export class PreviewController {
     readonly snapMarker: HTMLElement,
     private readonly projectPoint?: (point: { x: number; y: number; z: number }) => { x: number; y: number } | null,
     private readonly copyWorldDelta?: (delta: Vec2) => { x: number; y: number; z: number } | undefined,
+    private readonly drawingPlaneMarker: HTMLElement = snapMarker,
   ) {}
 
   get preview(): PreviewFrame | undefined { return this.frame; }
@@ -338,6 +339,17 @@ export class PreviewController {
 
   hideSnap(): void { this.snapMarker.hidden = true; }
 
+  /** AutoCAD's own convention when a picked point establishes a temporary,
+   *  UCS-parallel drawing plane: a cross where the plane sits, so a point
+   *  landing somewhere unexpected later in the same command has an obvious
+   *  reason why — not just an implicit rule the user has to remember. */
+  showDrawingPlaneOrigin(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number): void {
+    const projected = this.projectPoint?.(point);
+    this.showMarker(this.drawingPlaneMarker, projected?.x ?? fallbackX, projected?.y ?? fallbackY);
+  }
+
+  hideDrawingPlaneOrigin(): void { this.drawingPlaneMarker.hidden = true; }
+
   hideMeasurements(): void {
     this.measureOrigin.hidden = true;
     this.measureTarget.hidden = true;
@@ -346,6 +358,7 @@ export class PreviewController {
   reset(): void {
     this.clearPreview();
     this.hideSnap();
+    this.hideDrawingPlaneOrigin();
     this.hideMeasurements();
     this.dimension.hidden = true;
     if (this.dimensionTimer) clearTimeout(this.dimensionTimer);
