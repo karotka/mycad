@@ -154,6 +154,17 @@ export function createToolActions(ctx: ToolActionsContext) {
       gripMenu.style.left = `${event.clientX}px`;
       gripMenu.style.top = `${event.clientY}px`;
       gripMenu.hidden = false;
+      // Pinning to the click point can push the menu (up to ~20 snap
+      // buttons tall when both sections show) past the bottom or right
+      // edge of the window with no way to reach the clipped items — clamp
+      // it back on-screen using its real rendered size now that it's
+      // visible and laid out.
+      const margin = 4;
+      const rect = gripMenu.getBoundingClientRect();
+      const maxLeft = window.innerWidth - rect.width - margin;
+      const maxTop = window.innerHeight - rect.height - margin;
+      if (rect.left > maxLeft) gripMenu.style.left = `${Math.max(margin, maxLeft)}px`;
+      if (rect.top > maxTop) gripMenu.style.top = `${Math.max(margin, maxTop)}px`;
       viewport.classList.add('context-menu-cursor-pending');
     };
     showPersistentSnaps();
