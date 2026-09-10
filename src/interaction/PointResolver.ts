@@ -372,6 +372,28 @@ export function createPointResolver(ctx: PointResolverContext) {
     pixelTolerance = 10,
   ): GripSnapTarget | null {
     if (!mode) return null;
+    // 'nearest' has no discrete candidates (objectSnapCandidates deliberately
+    // returns none for it — see its own comment) — same edge resolution
+    // nearestPersistentSnap's own tail uses, just forced instead of only
+    // filling in when no discrete snap wins. Forcing this one explicitly is
+    // the point of the override menu: no more losing to a nearby Endpoint.
+    if (mode === 'nearest') {
+      const rect = viewport.getBoundingClientRect();
+      const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      const world = doc.viewMode === '3d'
+        ? nearestEdgeWorldPoint(
+          doc,
+          cursor,
+          renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
+          (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+          pixelTolerance,
+          gripController.draggingObjectId,
+        )
+        : nearestEdgeLocalPoint(doc, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom, gripController.draggingObjectId);
+      if (!world) return null;
+      const local = worldToLocal(doc.activeWorkPlane, world);
+      return { point: { x: local.x, y: local.y }, world, mode: 'nearest' };
+    }
     const reference = commandOrDragReferencePoint();
     const candidates = objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference);
     if (mode === 'tangent') candidates.push(...tangentCircleDragCandidates(event));

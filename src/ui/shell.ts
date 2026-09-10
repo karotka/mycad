@@ -271,6 +271,7 @@ export function shellHtml(tools: ShellTools): string {
       <button data-grip-mode="apparent-intersection">Apparent intersection</button>
       <button data-grip-mode="mid2p">Mid between 2P</button>
       <button data-grip-mode="node">Node</button>
+      <button data-grip-mode="nearest">Nearest</button>
     </section>
     <section class="vertex-actions" hidden>
       <button data-grip-action="delete-vertex">Delete vertex</button>

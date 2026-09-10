@@ -46,5 +46,8 @@ describe('drafting controls', () => {
     expect(modes.slice(0, 8)).toEqual([
       'end', 'middle', 'perpendicular', 'tangent', 'intersection', 'center', 'apparent-intersection', 'mid2p',
     ]);
+    // Forceable as a one-shot override too — not only a running toggle — so
+    // it stops losing to a nearby Endpoint/Midpoint candidate every time.
+    expect(modes).toContain('nearest');
   });
 });

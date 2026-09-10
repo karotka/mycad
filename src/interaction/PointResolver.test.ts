@@ -90,3 +90,22 @@ describe('nearestPersistentSnap', () => {
     expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
   });
 });
+
+describe('nearestGripTargetSnap (forced one-shot override)', () => {
+  it('resolves a forced "Nearest" override even where a competing Endpoint would otherwise win', () => {
+    // objectSnapCandidates returns nothing at all for 'nearest' — it has no
+    // discrete points — so a forced override needs its own resolution path,
+    // the same edge-lookup nearestPersistentSnap's own tail uses.
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    const ctx = makeCtx({ doc, screenToWorld: () => ({ x: 5, y: 3 }) });
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.nearestGripTargetSnap({ clientX: 100, clientY: 100 }, 'nearest');
+
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('nearest');
+    expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
+  });
+});
