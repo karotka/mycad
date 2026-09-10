@@ -22,7 +22,12 @@ export class SelectionController {
     private readonly callbacks: SelectionControllerCallbacks,
   ) {}
 
-  selectHit(entity: Entity | null | undefined, solidId: string | null | undefined, additive: boolean): boolean {
+  selectHit(
+    entity: Entity | null | undefined,
+    solidId: string | null | undefined,
+    additive: boolean,
+    surfaceId?: string | null,
+  ): boolean {
     if (entity) {
       this.doc.selectEntity(entity.id, additive);
       this.callbacks.selectionChanged();
@@ -30,6 +35,11 @@ export class SelectionController {
     }
     if (solidId) {
       this.doc.selectSolid(solidId, additive);
+      this.callbacks.selectionChanged();
+      return true;
+    }
+    if (surfaceId) {
+      this.doc.selectSurface(surfaceId, additive);
       this.callbacks.selectionChanged();
       return true;
     }
@@ -95,7 +105,7 @@ export class SelectionController {
       // click on whatever sat directly under it — the thing starting the drag
       // here in the first place was what let a window selection begin from on
       // top of a busy cluster of objects instead of only from empty space.
-      this.selectHit(selection.clickFallback.entity, selection.clickFallback.solidId, selection.additive);
+      this.selectHit(selection.clickFallback.entity, selection.clickFallback.solidId, selection.additive, selection.clickFallback.surfaceId);
     }
     this.callbacks.selectionChanged();
     this.callbacks.redraw();

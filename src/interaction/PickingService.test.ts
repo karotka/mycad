@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { applyProjectedWindowSelection, applyWindowSelection, pickEntityAt } from './PickingService';
+import { applyProjectedWindowSelection, applyWindowSelection, hitTestSurface2d, pickEntityAt } from './PickingService';
 import { snapPoint2 } from '../math/geometry';
 import { createBoxMesh } from '../core/geometry/PrimitiveMesh';
 
@@ -23,7 +23,20 @@ describe('window selection', () => {
     expect([...doc.selectedEntityIds]).toEqual([inside.id, crossing.id]);
   });
 
-  it('selects projected entities and solids in the 3D view', () => {
+  // A Surface is a real 3D body (LOFT with Guides), same as a Solid — it
+  // isn't rendered in 2D either, so this is the same bounds-only convenience
+  // the box mesh below already gets.
+  it('window-selects a surface by its mesh bounds, same as a solid', () => {
+    const doc = new Document();
+    const surface = doc.createSurface(createBoxMesh(4, 4, 3, 5, 5), 'Surface', []);
+    doc.addSurface(surface);
+    const box = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+
+    applyWindowSelection(doc, box, false, false);
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
+  });
+
+  it('selects projected entities, solids and surfaces in the 3D view', () => {
     const doc = new Document();
     doc.viewMode = '3d';
     const inside = doc.createLine({ x: 2, y: 2 }, { x: 4, y: 4 });
@@ -31,16 +44,20 @@ describe('window selection', () => {
     doc.entities.push(inside, crossing);
     const solid = doc.createSolid(createBoxMesh(4, 4, 3, 5, 5), 'box', 3, []);
     doc.solids.push(solid);
+    const surface = doc.createSurface(createBoxMesh(4, 4, 3, 5, 5), 'Surface', []);
+    doc.addSurface(surface);
     const project = (point: { x: number; y: number }) => ({ x: point.x, y: point.y });
     const box = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
 
     applyProjectedWindowSelection(doc, box, false, false, project);
     expect([...doc.selectedEntityIds]).toEqual([inside.id]);
     expect([...doc.selectedSolidIds]).toEqual([solid.id]);
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
 
     applyProjectedWindowSelection(doc, box, true, false, project);
     expect([...doc.selectedEntityIds]).toEqual([inside.id, crossing.id]);
     expect([...doc.selectedSolidIds]).toEqual([solid.id]);
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
   });
 
   it('selects a projected 3D block as its INSERT owner', () => {
@@ -102,6 +119,32 @@ describe('window selection', () => {
     applyProjectedWindowSelection(doc, { minX: -3, maxX: 3, minY: 2, maxY: 8 }, true, false, project);
     expect(doc.selectedEntityIds.has(ellipse.id)).toBe(true);
     expect(doc.selectedEntityIds.has(arc.id)).toBe(true);
+  });
+});
+
+describe('hitTestSurface2d', () => {
+  it('picks a surface under a 2D point by its mesh bounds', () => {
+    const doc = new Document();
+    const surface = doc.createSurface(createBoxMesh(4, 4, 3, 5, 5), 'Surface', []);
+    doc.addSurface(surface);
+
+    expect(hitTestSurface2d(doc, { x: 5, y: 5 })?.id).toBe(surface.id);
+    expect(hitTestSurface2d(doc, { x: 99, y: 99 })).toBeUndefined();
+  });
+
+  it('prefers an unexcluded surface among overlapping candidates, but still falls back to an excluded one alone', () => {
+    const doc = new Document();
+    const under = doc.createSurface(createBoxMesh(4, 4, 3, 5, 5), 'Under', []);
+    const over = doc.createSurface(createBoxMesh(4, 4, 3, 5, 5), 'Over', []);
+    doc.addSurface(under);
+    doc.addSurface(over);
+
+    // Both overlap the same point; `over` is drawn last so it is picked first,
+    // but excluding it should fall through to `under` instead of nothing.
+    expect(hitTestSurface2d(doc, { x: 5, y: 5 }, new Set([over.id]))?.id).toBe(under.id);
+    // With only the excluded one under the point, it is returned anyway — a
+    // fallback beats returning nothing, matching hitTestSolid2d's own rule.
+    expect(hitTestSurface2d(doc, { x: 5, y: 5 }, new Set([under.id, over.id]))?.id).toBe(over.id);
   });
 });
 

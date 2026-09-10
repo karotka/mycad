@@ -31,6 +31,21 @@ describe('SelectionController', () => {
     expect(selectionChanged).toHaveBeenCalledTimes(2);
   });
 
+  it('selects a surface when neither an entity nor a solid was hit', () => {
+    const doc = new Document();
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', []);
+    doc.addSurface(surface);
+    const selectionChanged = vi.fn();
+    const controller = new SelectionController(
+      doc, {} as HTMLElement, {} as Canvas2DRenderer, {} as Viewport3D, {} as WindowDragController,
+      { viewportSize: () => ({ width: 100, height: 100 }), selectionChanged, zoomFinished: vi.fn(), redraw: vi.fn() },
+    );
+
+    expect(controller.selectHit(null, null, false, surface.id)).toBe(true);
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
+    expect(selectionChanged).toHaveBeenCalledTimes(1);
+  });
+
   it('finishes a 3D selection window in projected screen space', () => {
     const doc = new Document();
     doc.viewMode = '3d';
@@ -75,6 +90,25 @@ describe('SelectionController', () => {
 
     expect(controller.finishWindow(7)).toBe(true);
     expect([...doc.selectedEntityIds]).toEqual(['under-the-press']);
+  });
+
+  it('selects a surface from the click fallback the same way, when that is what the press landed on', () => {
+    const doc = new Document();
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', []);
+    doc.addSurface(surface);
+    const windowDrag = {
+      finish: () => ({
+        start: { x: 50, y: 50 }, current: { x: 51, y: 51 }, additive: true, pointerId: 8, purpose: 'select' as const,
+        clickFallback: { entity: null, solidId: null, surfaceId: surface.id },
+      }),
+    } as unknown as WindowDragController;
+    const controller = new SelectionController(
+      doc, {} as HTMLElement, {} as Canvas2DRenderer, {} as Viewport3D, windowDrag,
+      { viewportSize: () => ({ width: 100, height: 100 }), selectionChanged: vi.fn(), zoomFinished: vi.fn(), redraw: vi.fn() },
+    );
+
+    expect(controller.finishWindow(8)).toBe(true);
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
   });
 
   it('ignores the click fallback once the press moved enough to be a real selection window', () => {

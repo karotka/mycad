@@ -8,6 +8,7 @@ const click = (overrides: Partial<ViewportPick> = {}): ViewportPick => ({
   hasSelection: false,
   entityHit: false,
   solidHit: false,
+  surfaceHit: false,
   canWindowSelect: true,
   ...overrides,
 });
@@ -30,19 +31,22 @@ describe('what a click in the viewport does', () => {
   });
 
   it('feeds a running command whatever was picked', () => {
-    for (const hit of [{ entityHit: true }, { solidHit: true }, {}]) {
+    for (const hit of [{ entityHit: true }, { solidHit: true }, { surfaceHit: true }, {}]) {
       expect(resolveViewportAction(click({ commandActive: true, ...hit })))
         .toEqual({ kind: 'commandClick' });
     }
   });
 
-  it('selects an entity, and a solid when there is no entity', () => {
+  it('selects an entity, a solid when there is no entity, and a surface when there is neither', () => {
     expect(resolveViewportAction(click({ entityHit: true }))).toEqual({ kind: 'selectEntity' });
     expect(resolveViewportAction(click({ solidHit: true }))).toEqual({ kind: 'selectSolid' });
+    expect(resolveViewportAction(click({ surfaceHit: true }))).toEqual({ kind: 'selectSurface' });
   });
 
   it('prefers the entity when both are under the cursor', () => {
     expect(resolveViewportAction(click({ entityHit: true, solidHit: true })))
+      .toEqual({ kind: 'selectEntity' });
+    expect(resolveViewportAction(click({ entityHit: true, surfaceHit: true })))
       .toEqual({ kind: 'selectEntity' });
   });
 
@@ -62,6 +66,8 @@ describe('what a click in the viewport does', () => {
       expect(resolveViewportAction(click({ commandActive: true, multiObjectStep: true, entityHit: true })))
         .toEqual({ kind: 'commandClick' });
       expect(resolveViewportAction(click({ commandActive: true, multiObjectStep: true, solidHit: true })))
+        .toEqual({ kind: 'commandClick' });
+      expect(resolveViewportAction(click({ commandActive: true, multiObjectStep: true, surfaceHit: true })))
         .toEqual({ kind: 'commandClick' });
     });
   });
@@ -94,7 +100,7 @@ describe('grabsGrip', () => {
         for (const hasSelection of [false, true]) {
           for (const entityHit of [false, true]) {
             for (const canWindowSelect of [false, true]) {
-              const pick = { commandActive, gripIndex, hasSelection, entityHit, solidHit: false, multiObjectStep: false, canWindowSelect };
+              const pick = { commandActive, gripIndex, hasSelection, entityHit, solidHit: false, surfaceHit: false, multiObjectStep: false, canWindowSelect };
               expect(grabsGrip(pick), JSON.stringify(pick)).toBe(resolveViewportAction(pick).kind === 'dragGrip');
             }
           }

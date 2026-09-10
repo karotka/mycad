@@ -1,7 +1,7 @@
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
-import type { Entity, Solid, SolidFaceSelection } from '../core/entities/types';
+import type { Entity, Solid, SolidFaceSelection, Surface } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
 import type { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { Viewport3D } from '../render/Viewport3D';
@@ -16,7 +16,7 @@ import type { PreviewController } from '../ui/PreviewController';
 import type { ObjectSnapMode, SnapTarget } from './SnapService';
 import { resolvePointerGesture } from './PointerGesture';
 import { grabsGrip, resolveViewportAction } from './ViewportAction';
-import { hitTestSolid2d, pickEntityAt } from './PickingService';
+import { hitTestSolid2d, hitTestSurface2d, pickEntityAt } from './PickingService';
 import { createPointResolver, type PointResolverState } from './PointResolver';
 import { createSolidDragPreview } from './DragEditing';
 import { createDynamicUcsCoordinator } from './DynamicUcsCoordinator';
@@ -43,8 +43,10 @@ export interface ViewportPointerHelpers {
   positionSnapMarker(point: { x: number; y: number; z: number }, fallbackX: number, fallbackY: number, mode?: ObjectSnapMode): void;
   selectedEntity(): Entity | undefined;
   selectedSolid(): Solid | undefined;
+  selectedSurface(): Surface | undefined;
   profileContainingPoint(point: Vec2): Entity | undefined;
   solidSelectionExclusions(): Set<string>;
+  surfaceSelectionExclusions(): Set<string>;
   activeGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge' }>;
 }
 
@@ -109,8 +111,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
     updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput, updateDynamicArcInput,
-    positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid,
-    profileContainingPoint, solidSelectionExclusions, activeGripsInWorld,
+    positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid, selectedSurface,
+    profileContainingPoint, solidSelectionExclusions, surfaceSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
 
   /** Set by a right-button press: a release that never moved opens the menu. */
@@ -724,6 +726,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       const entity = pickEntityAt(cadDocument, pickPoint, 8 / renderer2d.zoom)
         ?? (commands.active?.name === 'EXTRUDE' ? profileContainingPoint(pickPoint) : undefined);
       const solid = hitTestSolid2d(cadDocument, pickPoint, solidSelectionExclusions());
+      const surface = hitTestSurface2d(cadDocument, pickPoint, surfaceSelectionExclusions());
       const action = resolveViewportAction({
         commandActive: Boolean(commands.active),
         multiObjectStep: commands.isMultiObjectStep,
@@ -731,6 +734,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         hasSelection: Boolean(selected || selectedBody),
         entityHit: Boolean(entity),
         solidHit: Boolean(solid),
+        surfaceHit: Boolean(surface),
         canWindowSelect: true,
       });
 
@@ -762,12 +766,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         // start one from on top of a busy cluster of objects rather than only
         // from empty space.
         if (!cadDocument.selectedEntityIds.has(entity.id)) gripController.mode = null;
-        selectionController.beginWindow(event, 'select', { entity, solidId: null });
+        selectionController.beginWindow(event, 'select', { entity, solidId: null, surfaceId: null });
         event.preventDefault();
         return;
       } else if (action.kind === 'selectSolid' && solid) {
         if (!cadDocument.selectedSolidIds.has(solid.id)) gripController.mode = null;
-        selectionController.beginWindow(event, 'select', { entity: null, solidId: solid.id });
+        selectionController.beginWindow(event, 'select', { entity: null, solidId: solid.id, surfaceId: null });
+        event.preventDefault();
+        return;
+      } else if (action.kind === 'selectSurface' && surface) {
+        if (!cadDocument.selectedSurfaceIds.has(surface.id)) gripController.mode = null;
+        selectionController.beginWindow(event, 'select', { entity: null, solidId: null, surfaceId: surface.id });
         event.preventDefault();
         return;
       }
@@ -964,6 +973,12 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         event.clientY,
         solidSelectionExclusions()
       );
+      const surfaceId = renderer3d.pickSurface(
+        renderer3d.renderer.domElement,
+        event.clientX,
+        event.clientY,
+        surfaceSelectionExclusions()
+      );
       const choosingSlicePlane = commands.active?.name === 'SLICE' && activeStep?.kind === 'plane';
       // A requested or persistent object snap means the click is the first of
       // three plane points. Away from a snap, clicking the face interior chooses
@@ -1010,6 +1025,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         hasSelection: Boolean(selected || selectedBody),
         entityHit: Boolean(entity),
         solidHit: Boolean(solidId),
+        surfaceHit: Boolean(surfaceId),
         canWindowSelect: true,
       });
 
@@ -1028,10 +1044,10 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         const dynamicAnswer = beforeDynamicUcsAnswer();
         await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined);
         afterDynamicUcsAnswer(dynamicAnswer);
-      } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid') {
+      } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid' || action.kind === 'selectSurface') {
         // Same deferral as the 2D view: let a drag from here become a
         // selection window instead of committing to this hit immediately.
-        selectionController.beginWindow(event, 'select', { entity: entity ?? null, solidId: solidId ?? null });
+        selectionController.beginWindow(event, 'select', { entity: entity ?? null, solidId: solidId ?? null, surfaceId: surfaceId ?? null });
         event.preventDefault();
         return;
       } else if (action.kind === 'clearSelection') {

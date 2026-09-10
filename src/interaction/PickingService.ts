@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type Entity, type Solid } from '../core/entities/types';
+import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
@@ -17,6 +17,7 @@ export function applyWindowSelection(doc: Document, box: WindowBounds, crossing:
   if (!additive) {
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
+    doc.selectedSurfaceIds.clear();
   }
   const matches = (bounds: WindowBounds): boolean => {
     const inside = bounds.minX >= box.minX && bounds.maxX <= box.maxX
@@ -34,7 +35,14 @@ export function applyWindowSelection(doc: Document, box: WindowBounds, crossing:
     }
   }
   for (const solid of doc.solids) {
-    if (!doc.hiddenLayers.has(solid.layer) && matches(solidBounds(solid))) doc.selectedSolidIds.add(solid.id);
+    if (!doc.hiddenLayers.has(solid.layer) && matches(objectBounds(solid))) doc.selectedSolidIds.add(solid.id);
+  }
+  // Solids aren't rendered in 2D at all — this bounds check exists purely as
+  // a 2D window-select convenience for anyone with a 3D body in the drawing.
+  // A Surface is the same kind of object (a real 3D body, just with no
+  // volume), so it gets the identical treatment.
+  for (const surface of doc.surfaces) {
+    if (!doc.hiddenLayers.has(surface.layer) && matches(objectBounds(surface))) doc.selectedSurfaceIds.add(surface.id);
   }
   doc.pruneSelection();
   doc.notify();
@@ -156,6 +164,7 @@ export function applyProjectedWindowSelection(
   if (!additive) {
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
+    doc.selectedSurfaceIds.clear();
   }
   for (const entity of doc.entities) {
     if (doc.hiddenLayers.has(entity.layer)) continue;
@@ -194,43 +203,60 @@ export function applyProjectedWindowSelection(
   }
   for (const solid of doc.solids) {
     if (doc.hiddenLayers.has(solid.layer)) continue;
-    const projected: Array<Vec2 | null> = [];
-    for (let index = 0; index < solid.mesh.positions.length; index += 3) {
-      projected.push(project({
-        x: solid.mesh.positions[index],
-        y: solid.mesh.positions[index + 1],
-        z: solid.mesh.positions[index + 2],
-      }));
-    }
-    const contained = projected.length > 0 && projected.every((point) => point !== null && pointInsideBox(point, box));
-    let intersects = false;
-    if (crossing && !contained) {
-      for (let offset = 0; offset + 2 < solid.mesh.indices.length; offset += 3) {
-        const triangle = [projected[solid.mesh.indices[offset]], projected[solid.mesh.indices[offset + 1]], projected[solid.mesh.indices[offset + 2]]];
-        if (triangle.every((point): point is Vec2 => point !== null) && polygonIntersectsBox(triangle, box, true)) {
-          intersects = true;
-          break;
-        }
-      }
-    }
-    if (contained || intersects) doc.selectedSolidIds.add(solid.id);
+    if (projectedMeshHitsBox(solid.mesh, box, crossing, project)) doc.selectedSolidIds.add(solid.id);
+  }
+  // Same treatment as applyWindowSelection above: a Surface is a real 3D
+  // body just like a Solid, so it gets an identical projected-mesh test.
+  for (const surface of doc.surfaces) {
+    if (doc.hiddenLayers.has(surface.layer)) continue;
+    if (projectedMeshHitsBox(surface.mesh, box, crossing, project)) doc.selectedSurfaceIds.add(surface.id);
   }
   doc.pruneSelection();
   doc.notify();
 }
 
-export function solidBounds(solid: Solid): SolidBounds {
+function projectedMeshHitsBox(
+  mesh: SolidMesh,
+  box: WindowBounds,
+  crossing: boolean,
+  project: (point: Vec3) => Vec2 | null,
+): boolean {
+  const projected: Array<Vec2 | null> = [];
+  for (let index = 0; index < mesh.positions.length; index += 3) {
+    projected.push(project({ x: mesh.positions[index], y: mesh.positions[index + 1], z: mesh.positions[index + 2] }));
+  }
+  const contained = projected.length > 0 && projected.every((point) => point !== null && pointInsideBox(point, box));
+  let intersects = false;
+  if (crossing && !contained) {
+    for (let offset = 0; offset + 2 < mesh.indices.length; offset += 3) {
+      const triangle = [projected[mesh.indices[offset]], projected[mesh.indices[offset + 1]], projected[mesh.indices[offset + 2]]];
+      if (triangle.every((point): point is Vec2 => point !== null) && polygonIntersectsBox(triangle, box, true)) {
+        intersects = true;
+        break;
+      }
+    }
+  }
+  return contained || intersects;
+}
+
+export function objectBounds(object: { mesh: SolidMesh }): SolidBounds {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (let i = 0; i < solid.mesh.positions.length; i += 3) {
-    minX = Math.min(minX, solid.mesh.positions[i]);
-    minY = Math.min(minY, solid.mesh.positions[i + 1]);
-    minZ = Math.min(minZ, solid.mesh.positions[i + 2]);
-    maxX = Math.max(maxX, solid.mesh.positions[i]);
-    maxY = Math.max(maxY, solid.mesh.positions[i + 1]);
-    maxZ = Math.max(maxZ, solid.mesh.positions[i + 2]);
+  for (let i = 0; i < object.mesh.positions.length; i += 3) {
+    minX = Math.min(minX, object.mesh.positions[i]);
+    minY = Math.min(minY, object.mesh.positions[i + 1]);
+    minZ = Math.min(minZ, object.mesh.positions[i + 2]);
+    maxX = Math.max(maxX, object.mesh.positions[i]);
+    maxY = Math.max(maxY, object.mesh.positions[i + 1]);
+    maxZ = Math.max(maxZ, object.mesh.positions[i + 2]);
   }
   return { minX, minY, minZ, maxX, maxY, maxZ };
+}
+
+/** @deprecated Same as `objectBounds`, kept under its original name for the
+ *  many Solid-only call sites that predate `Surface`. */
+export function solidBounds(solid: Solid): SolidBounds {
+  return objectBounds(solid);
 }
 
 export function hitTestSolid2d(
@@ -242,10 +268,30 @@ export function hitTestSolid2d(
   for (let i = doc.solids.length - 1; i >= 0; i--) {
     const solid = doc.solids[i];
     if (doc.hiddenLayers.has(solid.layer)) continue;
-    const bounds = solidBounds(solid);
+    const bounds = objectBounds(solid);
     if (point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY) {
       fallback ??= solid;
       if (!excludedIds.has(solid.id)) return solid;
+    }
+  }
+  return fallback;
+}
+
+/** 2D-view convenience for a Surface, mirroring `hitTestSolid2d` exactly —
+ *  a Surface isn't rendered in 2D either, this is a bounds-only pick. */
+export function hitTestSurface2d(
+  doc: Document,
+  point: Vec2,
+  excludedIds: ReadonlySet<string> = new Set()
+): Surface | undefined {
+  let fallback: Surface | undefined;
+  for (let i = doc.surfaces.length - 1; i >= 0; i--) {
+    const surface = doc.surfaces[i];
+    if (doc.hiddenLayers.has(surface.layer)) continue;
+    const bounds = objectBounds(surface);
+    if (point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY) {
+      fallback ??= surface;
+      if (!excludedIds.has(surface.id)) return surface;
     }
   }
   return fallback;
@@ -293,6 +339,19 @@ export function selectionExclusions(doc: Document, activeData?: Record<string, u
   if (typeof activeData.solidId === 'string') excluded.add(activeData.solidId);
   if (Array.isArray(activeData.solids)) {
     for (const id of activeData.solids) if (typeof id === 'string') excluded.add(id);
+  }
+  return excluded;
+}
+
+/** Mirrors `selectionExclusions` for surfaces — keeps a surface a running
+ *  command is already operating on (e.g. THICKEN's own picked surface)
+ *  from also satisfying a later "pick a surface" step of the same command. */
+export function surfaceSelectionExclusions(doc: Document, activeData?: Record<string, unknown>): Set<string> {
+  const excluded = new Set(doc.selectedSurfaceIds);
+  if (!activeData) return excluded;
+  if (typeof activeData.surfaceId === 'string') excluded.add(activeData.surfaceId);
+  if (Array.isArray(activeData.surfaces)) {
+    for (const id of activeData.surfaces) if (typeof id === 'string') excluded.add(id);
   }
   return excluded;
 }

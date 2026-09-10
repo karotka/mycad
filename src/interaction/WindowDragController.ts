@@ -8,6 +8,7 @@ export type WindowDragPurpose = 'select' | 'zoom';
 export interface WindowDragClickFallback {
   entity: Entity | null;
   solidId: string | null;
+  surfaceId: string | null;
 }
 
 export interface WindowDragState {

@@ -1,14 +1,14 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, type CommandName } from './core/commands/CommandManager';
-import { entityBounds, type Entity, type Solid, type TextEntity } from './core/entities/types';
+import { entityBounds, type Entity, type Solid, type Surface, type TextEntity } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { worldToScreen, type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
 import { viewCubeTransform } from './render/ViewportCoordinates';
-import { selectionExclusions } from './interaction/PickingService';
+import { selectionExclusions, surfaceSelectionExclusions as surfaceSelectionExclusionsOf } from './interaction/PickingService';
 import { InputController } from './interaction/InputController';
 import { GripController, type GripMode } from './interaction/GripController';
 import type { ProjectViewState } from './io/ProjectIO';
@@ -1231,6 +1231,10 @@ function selectedSolid(): Solid | undefined {
   return cadDocument.getSelectedSolids()[0];
 }
 
+function selectedSurface(): Surface | undefined {
+  return cadDocument.getSelectedSurfaces()[0];
+}
+
 function profileContainingPoint(point: Vec2): Entity | undefined {
   for (let i = cadDocument.entities.length - 1; i >= 0; i--) {
     const entity = cadDocument.entities[i];
@@ -1259,6 +1263,10 @@ type GripSnapTarget = SnapTarget;
 
 function solidSelectionExclusions(): Set<string> {
   return selectionExclusions(cadDocument, commands.active?.data);
+}
+
+function surfaceSelectionExclusions(): Set<string> {
+  return surfaceSelectionExclusionsOf(cadDocument, commands.active?.data);
 }
 
 function resize(): void {
@@ -1338,8 +1346,10 @@ attachViewportPointerHandlers({
     positionSnapMarker,
     selectedEntity,
     selectedSolid,
+    selectedSurface,
     profileContainingPoint,
     solidSelectionExclusions,
+    surfaceSelectionExclusions,
     activeGripsInWorld,
   },
   pointerState,

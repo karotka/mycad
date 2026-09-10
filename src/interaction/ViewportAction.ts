@@ -15,6 +15,10 @@ export interface ViewportPick {
   hasSelection: boolean;
   entityHit: boolean;
   solidHit: boolean;
+  /** A Surface — a real 3D body with no volume (LOFT's Guides result). Ranked
+   *  alongside solidHit: the two never actually hit on the same ray (nothing
+   *  is both), so their relative order doesn't matter in practice. */
+  surfaceHit: boolean;
   /** Whether this view can drag a selection rectangle. */
   canWindowSelect: boolean;
 }
@@ -25,6 +29,7 @@ export type ViewportAction =
   | { kind: 'commandClick' }
   | { kind: 'selectEntity' }
   | { kind: 'selectSolid' }
+  | { kind: 'selectSurface' }
   | { kind: 'clearSelection' };
 
 /**
@@ -43,7 +48,7 @@ export function resolveViewportAction(pick: ViewportPick): ViewportAction {
 
   // Missing everything while gathering objects starts a rectangle, rather than
   // handing the command a click that picked nothing.
-  if (pick.canWindowSelect && pick.multiObjectStep && !pick.entityHit && !pick.solidHit) {
+  if (pick.canWindowSelect && pick.multiObjectStep && !pick.entityHit && !pick.solidHit && !pick.surfaceHit) {
     return { kind: 'windowSelect' };
   }
 
@@ -51,5 +56,6 @@ export function resolveViewportAction(pick: ViewportPick): ViewportAction {
   // An entity in front of a solid wins: it is the smaller thing to have meant.
   if (pick.entityHit) return { kind: 'selectEntity' };
   if (pick.solidHit) return { kind: 'selectSolid' };
+  if (pick.surfaceHit) return { kind: 'selectSurface' };
   return pick.canWindowSelect ? { kind: 'windowSelect' } : { kind: 'clearSelection' };
 }

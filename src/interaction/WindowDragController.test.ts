@@ -39,7 +39,7 @@ describe('WindowDragController', () => {
     const element = { hidden: true, style: {}, classList: { remove: () => {}, toggle: () => {} } } as unknown as HTMLElement;
     const controller = new WindowDragController(viewport, element);
 
-    controller.begin({ x: 50, y: 40 }, 3, 'select', true, { entity: null, solidId: 'solid-1' });
-    expect(controller.finish(3)?.clickFallback).toEqual({ entity: null, solidId: 'solid-1' });
+    controller.begin({ x: 50, y: 40 }, 3, 'select', true, { entity: null, solidId: 'solid-1', surfaceId: null });
+    expect(controller.finish(3)?.clickFallback).toEqual({ entity: null, solidId: 'solid-1', surfaceId: null });
   });
 });
