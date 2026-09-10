@@ -12,6 +12,7 @@ import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeat
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../solids/SolidTopology';
 import { buildExactFeature, openExactShape } from '../geometry/ExactSolid';
 import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
+import { bezierLineIntersections, cubicBezierLineParameters, evaluateCubicBezier, splitCubicBezier } from './steps/edit2d';
 
 function setup() {
   const doc = new Document();
@@ -764,6 +765,141 @@ describe('CommandManager history integration', () => {
     const vertexSets = halves.map((half) => (half as { vertices: { x: number; y: number }[] }).vertices);
     expect(vertexSets).toContainEqual([{ x: 0, y: 0 }, { x: 7, y: 0 }]);
     expect(vertexSets).toContainEqual([{ x: 13, y: 0 }, { x: 20, y: 0 }]);
+  });
+
+  it('finds where a cubic Bezier crosses a line, and splits it exactly there (De Casteljau)', () => {
+    // A "degenerate" cubic whose control points are evenly spaced along its
+    // own chord traces out exactly a straight line, point-for-point — the
+    // simplest way to get an exact, hand-checkable expected crossing out of
+    // the general cubic-vs-line solver, instead of trusting it blind.
+    const p0 = { x: 0, y: 0 }, p1 = { x: 10 / 3, y: 0 }, p2 = { x: 20 / 3, y: 0 }, p3 = { x: 10, y: 0 };
+    expect(evaluateCubicBezier(p0, p1, p2, p3, 0.5).x).toBeCloseTo(5, 9);
+
+    const hits = cubicBezierLineParameters(p0, p1, p2, p3, { x: 5, y: -5 }, { x: 5, y: 5 });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].tCurve).toBeCloseTo(0.5, 9);
+    expect(hits[0].point.x).toBeCloseTo(5, 9);
+
+    const { left, right } = splitCubicBezier(p0, p1, p2, p3, 0.5);
+    expect(left[3].x).toBeCloseTo(5, 9); // left half ends exactly at the split point...
+    expect(right[0].x).toBeCloseTo(5, 9); // ...and the right half starts there.
+    const splitJoin = evaluateCubicBezier(left[0], left[1], left[2], left[3], 1);
+    const direct = evaluateCubicBezier(p0, p1, p2, p3, 0.5);
+    expect(splitJoin.x).toBeCloseTo(direct.x, 9);
+    expect(splitJoin.y).toBeCloseTo(direct.y, 9);
+  });
+
+  it('reports a multi-segment spline\'s crossings with a global s = segmentIndex + local t', async () => {
+    const { doc } = setup();
+    const spline = doc.createBezier({ x: 0, y: 0 }, { x: 10 / 3, y: 0 }, { x: 20 / 3, y: 0 }, { x: 10, y: 0 });
+    spline.segments.push({ control1: { x: 40 / 3, y: 0 }, control2: { x: 50 / 3, y: 0 }, end: { x: 20, y: 0 } });
+    const hits = bezierLineIntersections(spline, { x: 15, y: -5 }, { x: 15, y: 5 });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].s).toBeCloseTo(1.5, 6); // second segment, its own local t = 0.5
+    expect(hits[0].point.x).toBeCloseTo(15, 9);
+  });
+
+  it('trims a spline at a line cutting edge, keeping the true curve rather than a flattened approximation', async () => {
+    const { doc, manager } = setup();
+    const cutter = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    const spline = doc.createBezier({ x: 0, y: 0 }, { x: 10 / 3, y: 0 }, { x: 20 / 3, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(cutter, spline);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 0 }, cutter);
+    await manager.submitInput(''); // finish selecting cutting edges
+    await manager.handleClick({ x: 8, y: 0 }, spline); // clicked side (x > 5) is removed
+    const trimmed = doc.getEntity(spline.id);
+    expect(trimmed).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
+    if (trimmed?.type === 'bezier') {
+      expect(trimmed.segments).toHaveLength(1);
+      expect(trimmed.segments[0].end.x).toBeCloseTo(5, 6);
+      expect(trimmed.segments[0].end.y).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('splits a spline into two pieces when the clicked span sits between two cutting edges', async () => {
+    const { doc, manager, history } = setup();
+    const left = doc.createLine({ x: 3, y: -5 }, { x: 3, y: 5 });
+    const right = doc.createLine({ x: 7, y: -5 }, { x: 7, y: 5 });
+    const spline = doc.createBezier({ x: 0, y: 0 }, { x: 10 / 3, y: 0 }, { x: 20 / 3, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(left, right, spline);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 3, y: 0 }, left);
+    await manager.handleClick({ x: 7, y: 0 }, right);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 5, y: 0 }, spline); // the middle span, between both edges
+
+    expect(doc.getEntity(spline.id)).toBeUndefined();
+    const pieces = doc.entities.filter((entity) => entity.type === 'bezier');
+    expect(pieces).toHaveLength(2);
+    const ends = pieces.map((piece) => (piece.type === 'bezier' ? piece.segments.at(-1)!.end.x : NaN)).sort((a, b) => a - b);
+    const starts = pieces.map((piece) => (piece.type === 'bezier' ? piece.start.x : NaN)).sort((a, b) => a - b);
+    expect(starts[0]).toBeCloseTo(0, 6);
+    expect(starts[1]).toBeCloseTo(7, 6);
+    expect(ends[0]).toBeCloseTo(3, 6);
+    expect(ends[1]).toBeCloseTo(10, 6);
+
+    history.undo();
+    expect(doc.getEntity(spline.id)).toMatchObject({ type: 'bezier' });
+    expect(doc.entities.filter((entity) => entity.type === 'bezier')).toHaveLength(1);
+  });
+
+  it('trims a line using a spline as the cutting edge (the boundary can be a spline too)', async () => {
+    const { doc, manager } = setup();
+    // Symmetric about y=0, so it crosses y=0 at exactly t=0.5, x=6 — an exact,
+    // hand-checkable crossing to assert against.
+    const boundary = doc.createBezier({ x: 0, y: -10 }, { x: 8, y: -10 }, { x: 8, y: 10 }, { x: 0, y: 10 });
+    const target = doc.createLine({ x: -2, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(boundary, target);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 6, y: 0 }, boundary);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 8, y: 0 }, target); // clicked side (x > 6) is removed
+    const trimmed = doc.getEntity(target.id);
+    expect(trimmed).toMatchObject({ type: 'line' });
+    if (trimmed?.type === 'line') {
+      const xs = [trimmed.start.x, trimmed.end.x].sort((a, b) => a - b);
+      expect(xs[0]).toBeCloseTo(-2, 6);
+      expect(xs[1]).toBeCloseTo(6, 6);
+    }
+  });
+
+  it('extends a spline to a line boundary by a straight, tangent-continuous segment', async () => {
+    const { doc, manager } = setup();
+    const spline = doc.createBezier({ x: 0, y: 0 }, { x: 5 / 3, y: 0 }, { x: 10 / 3, y: 0 }, { x: 5, y: 0 });
+    const boundary = doc.createLine({ x: 10, y: -5 }, { x: 10, y: 5 });
+    doc.entities.push(spline, boundary);
+    manager.startCommand('EXTEND');
+    await manager.handleClick({ x: 10, y: 0 }, boundary);
+    await manager.submitInput(''); // finish selecting the boundary
+    await manager.handleClick({ x: 4, y: 0 }, spline); // clicked near the end being extended
+    const extended = doc.getEntity(spline.id);
+    expect(extended).toMatchObject({ type: 'bezier' });
+    if (extended?.type === 'bezier') {
+      expect(extended.segments).toHaveLength(2);
+      expect(extended.segments.at(-1)!.end.x).toBeCloseTo(10, 6);
+      expect(extended.segments.at(-1)!.end.y).toBeCloseTo(0, 6);
+      // The original curve is untouched, only extended past its own end.
+      expect(extended.segments[0]).toEqual(spline.segments[0]);
+    }
+  });
+
+  it('extends a line to a spline boundary (the boundary can be a spline too)', async () => {
+    const { doc, manager } = setup();
+    const boundary = doc.createBezier({ x: 0, y: -10 }, { x: 8, y: -10 }, { x: 8, y: 10 }, { x: 0, y: 10 });
+    const target = doc.createLine({ x: -2, y: 0 }, { x: 4, y: 0 }); // short of the x=6 crossing
+    doc.entities.push(boundary, target);
+    manager.startCommand('EXTEND');
+    await manager.handleClick({ x: 6, y: 0 }, boundary);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 4, y: 0 }, target); // clicked near the end being extended
+    const extended = doc.getEntity(target.id);
+    expect(extended).toMatchObject({ type: 'line' });
+    if (extended?.type === 'line') {
+      const xs = [extended.start.x, extended.end.x].sort((a, b) => a - b);
+      expect(xs[0]).toBeCloseTo(-2, 6);
+      expect(xs[1]).toBeCloseTo(6, 6);
+    }
   });
 
   it('chamfers the corner between two 2D lines', async () => {

@@ -6,7 +6,7 @@
  * had been sitting in the command manager, which is a place, not a home.
  */
 import { AddEntityEdit, ReplaceObjectsEdit, UpdateEntityEdit } from '../../history/edits';
-import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
+import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isClosedBezierEntity, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
 import { closePolyline, dist2, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
@@ -74,6 +74,117 @@ export function collectLineLikeIntersections(target: LineLikeSegment, boundary: 
     if (hit) intersections.push(hit);
   }
   return intersections;
+}
+
+/** A point on a cubic Bezier at parameter t (De Casteljau's own formula, direct form). */
+export function evaluateCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 {
+  const mt = 1 - t;
+  const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+}
+
+/** De Casteljau subdivision: splits one cubic at t into the two cubics that
+ *  together retrace it exactly, meeting at the same point the split lands on. */
+export function splitCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): { left: [Vec2, Vec2, Vec2, Vec2]; right: [Vec2, Vec2, Vec2, Vec2] } {
+  const lerp = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  const p01 = lerp(p0, p1), p12 = lerp(p1, p2), p23 = lerp(p2, p3);
+  const p012 = lerp(p01, p12), p123 = lerp(p12, p23);
+  const p0123 = lerp(p012, p123);
+  return { left: [p0, p01, p012, p0123], right: [p0123, p123, p23, p3] };
+}
+
+/**
+ * Real roots of a cubic in [lo, hi], found by sampling for sign changes and
+ * refining each bracket with bisection. Not a symbolic solver (Cardano's
+ * formula), deliberately — TRIM/EXTEND are one-shot interactive commands, a
+ * few hundred evaluations cost nothing, and bisection cannot misclassify a
+ * root the way the trigonometric cubic formula can on nearly-degenerate
+ * coefficients.
+ */
+function cubicRootsInRange(a: number, b: number, c: number, d: number, lo: number, hi: number, samples = 256): number[] {
+  const f = (t: number) => ((a * t + b) * t + c) * t + d;
+  const roots: number[] = [];
+  const step = (hi - lo) / samples;
+  let prevT = lo, prevF = f(lo);
+  if (prevF === 0) roots.push(prevT);
+  for (let index = 1; index <= samples; index++) {
+    const t = lo + step * index;
+    const value = f(t);
+    if (value === 0) { roots.push(t); prevT = t; prevF = value; continue; }
+    if (prevF !== 0 && prevF * value < 0) {
+      let a0 = prevT, b0 = t, fa = prevF;
+      for (let iter = 0; iter < 60; iter++) {
+        const mid = (a0 + b0) / 2;
+        const fm = f(mid);
+        if (fa * fm <= 0) b0 = mid; else { a0 = mid; fa = fm; }
+      }
+      roots.push((a0 + b0) / 2);
+    }
+    prevT = t; prevF = value;
+  }
+  return roots;
+}
+
+/**
+ * Where a cubic Bezier segment crosses an infinite line, as {tCurve (this
+ * segment's own [0,1]), tLine (along lineStart→lineEnd, unbounded — the
+ * caller decides what range of it counts)}. Works by projecting the four
+ * control points onto the line's normal — a point is ON the line exactly
+ * when that projection is zero — which turns "does the curve cross the
+ * line" into "where does this cubic-in-t hit zero", the same trick
+ * `lineIntersectionParameters` uses for two straight lines, one degree up.
+ */
+export function cubicBezierLineParameters(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, lineStart: Vec2, lineEnd: Vec2): Array<{ tCurve: number; tLine: number; point: Vec2 }> {
+  const dx = lineEnd.x - lineStart.x, dy = lineEnd.y - lineStart.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 1e-12) return [];
+  const nx = -dy, ny = dx;
+  const project = (p: Vec2) => (p.x - lineStart.x) * nx + (p.y - lineStart.y) * ny;
+  const b0 = project(p0), b1 = project(p1), b2 = project(p2), b3 = project(p3);
+  // Bernstein -> power-basis coefficients for f(t) = A t^3 + B t^2 + C t + D.
+  const A = -b0 + 3 * b1 - 3 * b2 + b3;
+  const B = 3 * b0 - 6 * b1 + 3 * b2;
+  const C = -3 * b0 + 3 * b1;
+  const D = b0;
+  // A small margin past [0,1] keeps bisection from missing a root that sits
+  // right at a sampled bracket's edge; callers filter tCurve to their own
+  // valid range afterward.
+  const roots = cubicRootsInRange(A, B, C, D, -0.25, 1.25);
+  const results: Array<{ tCurve: number; tLine: number; point: Vec2 }> = [];
+  for (const t of roots) {
+    const point = evaluateCubicBezier(p0, p1, p2, p3, t);
+    const tLine = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lengthSquared;
+    results.push({ tCurve: t, tLine, point });
+  }
+  return results;
+}
+
+/** Each segment's own 4 cubic control points, in the composite curve's global order. */
+function bezierSegmentControlPoints(entity: BezierEntity): Array<{ p0: Vec2; p1: Vec2; p2: Vec2; p3: Vec2 }> {
+  const points: Array<{ p0: Vec2; p1: Vec2; p2: Vec2; p3: Vec2 }> = [];
+  let previous = entity.start;
+  for (const segment of entity.segments) {
+    points.push({ p0: previous, p1: segment.control1, p2: segment.control2, p3: segment.end });
+    previous = segment.end;
+  }
+  return points;
+}
+
+/**
+ * Every point at which a (possibly multi-segment) Bezier actually crosses a
+ * line — `s` is a global curve parameter (segmentIndex + that segment's own
+ * [0,1]), already filtered to points that land on the curve as drawn, not on
+ * some segment's own extrapolation beyond its ends.
+ */
+export function bezierLineIntersections(bezier: BezierEntity, lineStart: Vec2, lineEnd: Vec2): Array<{ s: number; tLine: number; point: Vec2 }> {
+  const results: Array<{ s: number; tLine: number; point: Vec2 }> = [];
+  bezierSegmentControlPoints(bezier).forEach((segment, index) => {
+    for (const hit of cubicBezierLineParameters(segment.p0, segment.p1, segment.p2, segment.p3, lineStart, lineEnd)) {
+      if (hit.tCurve < -1e-6 || hit.tCurve > 1 + 1e-6) continue;
+      results.push({ s: index + Math.min(1, Math.max(0, hit.tCurve)), tLine: hit.tLine, point: hit.point });
+    }
+  });
+  return results;
 }
 
 export function sameWorkPlane(a: Entity, b: Entity): boolean {
@@ -177,16 +288,19 @@ export function angleWithinArc(point: Vec2, arc: ArcEntity): boolean {
   return arc.sweepAngle >= 0 ? rel <= arc.sweepAngle + 1e-9 : rel - TAU >= arc.sweepAngle - 1e-9;
 }
 
-/** A boundary a TRIM cutting edge can be: the line kinds, plus circle and arc. */
+/** A boundary a TRIM cutting edge can be: the line kinds, plus circle, arc, and spline (Bezier). */
 export function isTrimBoundary(entity: Entity): boolean {
-  return isLineLikeEntity(entity) || entity.type === 'circle' || entity.type === 'arc';
+  return isLineLikeEntity(entity) || entity.type === 'circle' || entity.type === 'arc' || entity.type === 'bezier';
 }
 
 /**
  * Where a target line segment crosses a boundary, as {point, t (along the
  * target), u (along the boundary)}. Line-like boundaries give a real u; a
  * circle or arc has no single edge to parametrise, so u is reported as 0.5 —
- * always "within" — because any crossing of a closed curve is a real one.
+ * always "within" — because any crossing of a closed curve is a real one. A
+ * Bezier boundary's u is its own global curve parameter normalised to
+ * [0, 1] over all its segments, so the usual "is this within the boundary's
+ * own span" gate still works unchanged.
  */
 function boundaryIntersections(target: LineLikeSegment, boundary: Entity): Array<{ point: Vec2; t: number; u: number }> {
   if (isLineLikeEntity(boundary)) return collectLineLikeIntersections(target, boundary);
@@ -194,6 +308,11 @@ function boundaryIntersections(target: LineLikeSegment, boundary: Entity): Array
     return segmentCircleIntersections(target.start, target.end, boundary.center, boundary.radius)
       .filter((hit) => boundary.type !== 'arc' || angleWithinArc(hit.point, boundary))
       .map((hit) => ({ point: hit.point, t: hit.t, u: 0.5 }));
+  }
+  if (boundary.type === 'bezier') {
+    const segmentCount = boundary.segments.length || 1;
+    return bezierLineIntersections(boundary, target.start, target.end)
+      .map((hit) => ({ point: hit.point, t: hit.tLine, u: hit.s / segmentCount }));
   }
   return [];
 }
@@ -462,6 +581,220 @@ function trimPolylineTarget(run: CommandRun, target: PolylineEntity, boundaries:
   return 'stay';
 }
 
+type BezierGeometry = { start: Vec2; segments: BezierSegment[] };
+
+/** The raw geometry (not yet an entity — the caller decides whether this
+ *  becomes an in-place update or a brand new object) of `target` from its
+ *  own start up to global parameter `s`, ending exactly at `exactPoint` (the
+ *  crossing itself, rather than whatever the split's own arithmetic lands
+ *  on — they agree to within floating-point noise, but the crossing point is
+ *  the one every other piece and every dedupe check was computed against). */
+function bezierGeometryUpTo(target: BezierEntity, segments: Array<{ p0: Vec2; p1: Vec2; p2: Vec2; p3: Vec2 }>, s: number, exactPoint: Vec2): BezierGeometry {
+  const index = Math.min(segments.length - 1, Math.max(0, Math.floor(s + 1e-9)));
+  const localT = Math.max(0, Math.min(1, s - index));
+  const kept: BezierSegment[] = target.segments.slice(0, index);
+  if (localT >= 1 - 1e-9) {
+    kept.push(target.segments[index]);
+  } else if (localT > 1e-9) {
+    const segment = segments[index];
+    const { left } = splitCubicBezier(segment.p0, segment.p1, segment.p2, segment.p3, localT);
+    kept.push({ control1: left[1], control2: left[2], end: exactPoint });
+  }
+  return { start: target.start, segments: kept };
+}
+
+/** The mirror of `bezierGeometryUpTo`: `target`'s segments from global
+ *  parameter `s` (starting exactly at `exactPoint`) through to its own
+ *  original end. */
+function bezierGeometryFrom(target: BezierEntity, segments: Array<{ p0: Vec2; p1: Vec2; p2: Vec2; p3: Vec2 }>, s: number, exactPoint: Vec2): BezierGeometry {
+  const index = Math.min(segments.length - 1, Math.max(0, Math.floor(s + 1e-9)));
+  const localT = Math.max(0, Math.min(1, s - index));
+  const rest: BezierSegment[] = [];
+  if (localT <= 1e-9) {
+    rest.push(target.segments[index]);
+  } else if (localT < 1 - 1e-9) {
+    const segment = segments[index];
+    const { right } = splitCubicBezier(segment.p0, segment.p1, segment.p2, segment.p3, localT);
+    rest.push({ control1: right[1], control2: right[2], end: right[3] });
+  }
+  rest.push(...target.segments.slice(index + 1));
+  return { start: exactPoint, segments: rest };
+}
+
+/**
+ * Trimming a spline works like trimming a line: every crossing with every
+ * cutting edge is found along the whole curve first (as a global parameter
+ * s = segmentIndex + that segment's own t), then whichever one or two
+ * bracket the click bound what goes — split exactly at those points with De
+ * Casteljau, rather than flattened and reassembled, so the kept pieces are
+ * still the same true cubic curve, not a polyline approximation of it.
+ * Closed splines and non-straight cutting edges are not handled here — a
+ * closed loop has no single start/end to bracket a span between, and a
+ * curved cutting edge would need a curve-curve solver this does not have.
+ */
+function trimBezierTarget(run: CommandRun, target: BezierEntity, boundaries: Entity[], click: Vec2 | null): StepOutcome {
+  const { ctx } = run;
+  if (isClosedBezierEntity(target)) {
+    ctx.log('TRIM failed: a closed spline is not supported yet.');
+    return 'stay';
+  }
+  const lineBoundaries = boundaries.filter(isLineLikeEntity);
+  if (lineBoundaries.length === 0) {
+    ctx.log('TRIM failed: a spline can only be trimmed against a line or polyline cutting edge.');
+    return 'stay';
+  }
+  const crossings: Array<{ s: number; point: Vec2 }> = [];
+  for (const boundary of lineBoundaries) {
+    for (const sub of lineLikeSegments(boundary)) {
+      for (const hit of bezierLineIntersections(target, sub.start, sub.end)) {
+        if (hit.tLine < -1e-8 || hit.tLine > 1 + 1e-8) continue;
+        if (!crossings.some((existing) => Math.abs(existing.s - hit.s) < 1e-6)) crossings.push({ s: hit.s, point: hit.point });
+      }
+    }
+  }
+  if (crossings.length === 0) {
+    ctx.log('TRIM failed: the spline does not cross the cutting edge.');
+    return 'stay';
+  }
+  crossings.sort((a, b) => a.s - b.s);
+
+  // Where the click lands along the spline, approximated by sampling each
+  // segment — exact enough to decide which side of the crossing to keep,
+  // the same standard trimPolylineTarget holds itself to for its own
+  // (straight, but per-segment-projected) parameter.
+  const segments = bezierSegmentControlPoints(target);
+  let sClick = 0, bestDistance = Infinity;
+  segments.forEach((segment, index) => {
+    const SAMPLES = 24;
+    for (let sample = 0; sample <= SAMPLES; sample++) {
+      const t = sample / SAMPLES;
+      const point = evaluateCubicBezier(segment.p0, segment.p1, segment.p2, segment.p3, t);
+      const probe = click ?? segment.p0;
+      const distance = dist2(probe, point);
+      if (distance < bestDistance) { bestDistance = distance; sClick = index + t; }
+    }
+  });
+
+  const below = [...crossings].reverse().find((cross) => cross.s < sClick - 1e-6) ?? null;
+  const above = crossings.find((cross) => cross.s > sClick + 1e-6) ?? null;
+  if (!below && !above) {
+    ctx.log('TRIM failed: the spline does not cross the cutting edge on the side you picked.');
+    return 'stay';
+  }
+  const geometries: BezierGeometry[] = [];
+  if (below) geometries.push(bezierGeometryUpTo(target, segments, below.s, below.point));
+  if (above) geometries.push(bezierGeometryFrom(target, segments, above.s, above.point));
+  const kept = geometries.filter((piece) => piece.segments.length > 0);
+  if (kept.length === 0) {
+    ctx.log('TRIM failed: nothing would be left of the spline.');
+    return 'stay';
+  }
+
+  if (kept.length === 1) {
+    // A single surviving piece keeps the target's own identity, same as
+    // trimming a line or polyline down to one remaining span.
+    const updated = cloneEntity(target) as BezierEntity;
+    updated.start = kept[0].start;
+    updated.segments = kept[0].segments;
+    ctx.history.execute(new UpdateEntityEdit('Trim', target, updated));
+    ctx.doc.selectEntity(updated.id);
+  } else {
+    // Two surviving pieces cannot both keep the original id — each needs its
+    // own, same as a line or polyline splitting into two (ctx.doc.createLine
+    // / .createPolyline there; .createSpline is the equivalent for a curve).
+    const added = kept.map((piece) => {
+      const spline = ctx.doc.createSpline(piece.start, piece.segments);
+      spline.workPlane = cloneEntity(target).workPlane;
+      spline.layer = target.layer; spline.aci = target.aci; spline.color = target.color;
+      return spline;
+    });
+    ctx.history.execute(new ReplaceObjectsEdit('Trim', [target], [], added, []));
+    added.forEach((entity, index) => ctx.doc.selectEntity(entity.id, index > 0));
+  }
+  ctx.log('Spline trimmed at cutting edge. Select another object or press Enter.');
+  return 'stay';
+}
+
+/**
+ * Extending a spline does not extrapolate its curvature — there is no single
+ * right way to keep bending a cubic past where it was drawn. Instead, the
+ * nearer end's own exit tangent becomes a straight ray, and a new straight
+ * cubic segment (control points laid evenly along that same straight line)
+ * is appended from there to wherever that ray meets the boundary — the join
+ * stays tangent-continuous with the original curve, even though the new
+ * span itself is straight rather than curved.
+ */
+function extendBezierTarget(run: CommandRun, target: BezierEntity, boundaries: Entity[], click: Vec2 | null): StepOutcome {
+  const { ctx } = run;
+  const lineBoundaries = boundaries.filter(isLineLikeEntity);
+  if (lineBoundaries.length === 0) {
+    ctx.log('EXTEND failed: a spline can only be extended to a line or polyline boundary.');
+    return 'stay';
+  }
+  const segments = bezierSegmentControlPoints(target);
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  if (!first || !last) { ctx.log('EXTEND failed: the spline has no segments.'); return 'stay'; }
+
+  const startPoint = first.p0;
+  const endPoint = last.p3;
+  const extendStart = click ? dist2(click, startPoint) < dist2(click, endPoint) : false;
+  const anchor = extendStart ? startPoint : endPoint;
+
+  const tangentFrom = (a: Vec2, b: Vec2): Vec2 | null => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const length = Math.hypot(dx, dy);
+    return length < 1e-9 ? null : { x: dx / length, y: dy / length };
+  };
+  // The exit tangent at the chosen end, pointing outward (away from the
+  // curve's own body) — falling back to a farther control point only for the
+  // rare degenerate case where the nearest one sits on top of the endpoint.
+  const direction = extendStart
+    ? tangentFrom(first.p1, first.p0) ?? tangentFrom(first.p2, first.p0) ?? tangentFrom(first.p3, first.p0)
+    : tangentFrom(last.p2, last.p3) ?? tangentFrom(last.p1, last.p3) ?? tangentFrom(last.p0, last.p3);
+  if (!direction) {
+    ctx.log('EXTEND failed: the end of the spline has no defined direction to extend along.');
+    return 'stay';
+  }
+
+  let best: { distance: number; point: Vec2 } | null = null;
+  for (const boundary of lineBoundaries) {
+    for (const sub of lineLikeSegments(boundary)) {
+      const hit = lineIntersectionParameters(anchor, { x: anchor.x + direction.x, y: anchor.y + direction.y }, sub.start, sub.end);
+      if (!hit || hit.t <= 1e-6 || hit.u < -1e-8 || hit.u > 1 + 1e-8) continue;
+      if (!best || hit.t < best.distance) best = { distance: hit.t, point: hit.point };
+    }
+  }
+  if (!best) {
+    ctx.log('EXTEND failed: no boundary lies along the direction the spline is heading.');
+    return 'stay';
+  }
+
+  const updated = cloneEntity(target) as BezierEntity;
+  if (extendStart) {
+    const step = { x: (anchor.x - best.point.x) / 3, y: (anchor.y - best.point.y) / 3 };
+    const newSegment: BezierSegment = {
+      control1: { x: best.point.x + step.x, y: best.point.y + step.y },
+      control2: { x: best.point.x + step.x * 2, y: best.point.y + step.y * 2 },
+      end: anchor,
+    };
+    updated.start = best.point;
+    updated.segments = [newSegment, ...target.segments];
+  } else {
+    const step = { x: (best.point.x - anchor.x) / 3, y: (best.point.y - anchor.y) / 3 };
+    const newSegment: BezierSegment = {
+      control1: { x: anchor.x + step.x, y: anchor.y + step.y },
+      control2: { x: anchor.x + step.x * 2, y: anchor.y + step.y * 2 },
+      end: best.point,
+    };
+    updated.segments = [...target.segments, newSegment];
+  }
+  ctx.history.execute(new UpdateEntityEdit('Extend', target, updated));
+  ctx.doc.selectEntity(updated.id);
+  ctx.log(`Spline extended by ${best.distance.toFixed(3)} mm. Select another object or press Enter.`);
+  return 'stay';
+}
+
 export function pointInClosedPolygon(point: Vec2, vertices: Vec2[]): boolean {
   let inside = false;
   for (let index = 0, previous = vertices.length - 1; index < vertices.length; previous = index++) {
@@ -610,10 +943,10 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
       const boundary = value as Entity;
       // A trim can be cut by a circle or arc as well as a line; an extend reaches
       // only toward a straight boundary.
-      if (trimming ? !isTrimBoundary(boundary) : !isLineLikeEntity(boundary)) {
+      if (trimming ? !isTrimBoundary(boundary) : !(isLineLikeEntity(boundary) || boundary.type === 'bezier')) {
         ctx.log(trimming
-          ? 'TRIM cutting edge must be a line, polyline, circle, or arc.'
-          : 'EXTEND boundary must be a line or polyline.');
+          ? 'TRIM cutting edge must be a line, polyline, circle, arc, or spline.'
+          : 'EXTEND boundary must be a line, polyline, or spline.');
         return 'stay';
       }
       run.gather(boundary);
@@ -674,6 +1007,13 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
   if (trimming && target.type === 'line') {
     return trimLineTarget(run, target, usable, localClick);
   }
+  // A spline works its own way in both directions — a curve-preserving split
+  // for trim, a tangent-ray straight extension for extend — rather than the
+  // shared "move the nearer endpoint" path below, which only knows how to
+  // move a line's or polyline's own endpoints.
+  if (target.type === 'bezier') {
+    return trimming ? trimBezierTarget(run, target, usable, localClick) : extendBezierTarget(run, target, usable, localClick);
+  }
   if (!isLineLikeEntity(target)) {
     ctx.log(trimming ? 'Select a line, polyline, or circle to trim.' : 'Select a line or polyline to extend.');
     return 'stay';
@@ -681,7 +1021,7 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
   // A line-like target can be cut by a circle or arc (trim only); an extend, and
   // both ends of a trim, still need a boundary that yields a crossing.
   const reaching = usable.filter((boundary) =>
-    isLineLikeEntity(boundary) || (trimming && (boundary.type === 'circle' || boundary.type === 'arc')));
+    isLineLikeEntity(boundary) || boundary.type === 'bezier' || (trimming && (boundary.type === 'circle' || boundary.type === 'arc')));
   if (reaching.length === 0) {
     ctx.log(`Select a line or polyline to ${mode.toLowerCase()} against.`);
     return 'stay';
