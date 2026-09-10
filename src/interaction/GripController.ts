@@ -1,13 +1,152 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, dimensionGeometry, ellipseAxisPoints, getEntityPoints, type Entity, type ExactSolidGeometry, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneEntity, cloneSurfaceValue, dimensionGeometry, ellipseAxisPoints, getEntityPoints, transformEntityPoints, type Entity, type ExactSolidGeometry, type LoftFeature, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
-import { UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
+import { UpdateEntityEdit, UpdateSolidEdit, UpdateSurfaceEdit, cloneSolid } from '../core/history/edits';
 import { arcFromSagitta } from '../math/arcFit';
 import { midpoint2, type Vec2, type Vec3 } from '../math/geometry';
-import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
+import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
 import { translatedFeature } from '../core/solids/featureTransform';
 import { scaleAffine, transformedExactGeometry, translationAffine } from '../core/geometry/ExactTransform';
+import { buildExactFeature } from '../core/geometry/ExactSolid';
+
+/** A loft's own boundary — its embedded profiles, guides and optional path,
+ *  each a real Entity value with its own work plane — flattened into one
+ *  list in a fixed order (profiles, then guides, then path), which is the
+ *  order grip indices (`objectIndex * 100 + localIndex`) and
+ *  `setEmbeddedLoftEntity` below both key off of. */
+export function embeddedLoftEntities(feature: SolidFeature): Entity[] {
+  if (feature.kind !== 'loft') return [];
+  return [...feature.profiles, ...(feature.guides ?? []), ...(feature.path ? [feature.path] : [])];
+}
+
+/** The inverse of embeddedLoftEntities' flattening: a copy of `feature` with
+ *  the entity at flat position `index` replaced by `entity`. */
+function setEmbeddedLoftEntity(feature: LoftFeature, index: number, entity: Entity): LoftFeature {
+  const profileCount = feature.profiles.length;
+  const guideCount = feature.guides?.length ?? 0;
+  if (index < profileCount) {
+    const profiles = feature.profiles.slice();
+    profiles[index] = entity;
+    return { ...feature, profiles };
+  }
+  if (index < profileCount + guideCount) {
+    const guides = (feature.guides ?? []).slice();
+    guides[index - profileCount] = entity;
+    return { ...feature, guides };
+  }
+  return { ...feature, path: entity };
+}
+
+/**
+ * Grip points for one of a loft's embedded profile/guide/path entities — a
+ * scoped-down version of activeGrips()' own per-type layouts below, covering
+ * only the shapes a rail or guide can actually be (isSweepPath: line, arc,
+ * circle, polyline, bezier) plus a generic fallback for a closed-profile
+ * type used as a rail. Deliberately does not include the "whole edge/shape"
+ * move grips (a line's midpoint, an arc's sagitta handle) that the entity's
+ * own normal grip set has — endpoint/control-point reshaping is the point
+ * of this feature, not repositioning the whole curve, which MOVE already does.
+ */
+function gripsForEmbeddedEntity(entity: Entity): Grip[] {
+  if (entity.type === 'line') {
+    return [
+      { point: entity.start, index: 0, shape: 'square' },
+      { point: entity.end, index: 1, shape: 'square' },
+    ];
+  }
+  if (entity.type === 'circle') {
+    const result: Grip[] = [{ point: entity.center, index: 0, shape: 'square' }];
+    for (let i = 0; i < 4; i++) {
+      const angle = i * Math.PI / 2;
+      result.push({
+        point: { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius },
+        index: i + 1,
+        shape: 'square',
+      });
+    }
+    return result;
+  }
+  if (entity.type === 'polyline') {
+    const vertices = entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
+    return vertices.map((point, index) => ({ point, index, shape: 'square' as const }));
+  }
+  if (entity.type === 'bezier') {
+    const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+    return points.map((point, index) => ({ point, index, shape: 'square' as const }));
+  }
+  if (entity.type === 'arc') {
+    const point = (a: number): Vec2 => ({ x: entity.center.x + Math.cos(a) * entity.radius, y: entity.center.y + Math.sin(a) * entity.radius });
+    return [
+      { point: entity.center, index: 0, shape: 'square' },
+      { point: point(entity.startAngle), index: 1, shape: 'square' },
+      { point: point(entity.startAngle + entity.sweepAngle), index: 2, shape: 'square' },
+    ];
+  }
+  // A closed-profile type (rectangle, octagon, ellipse) used as a rail: no
+  // bespoke reshape here, just its own raw point list — same fallback
+  // visibleGrips() below already uses for anything it doesn't special-case.
+  return getEntityPoints(entity).map((point, index) => ({ point, index, shape: 'square' as const }));
+}
+
+/**
+ * Applies one grip drag to a clone of `original` — the loft-embedded
+ * counterpart of updateEntity() below, but returning a new value instead of
+ * mutating a live document entity (an embedded entity is data inside a
+ * feature tree, not its own document object with an id to look up).
+ */
+function applyEmbeddedEntityGripDrag(original: Entity, gripIndex: number, cursor: Vec2, dx: number, dy: number): Entity {
+  const entity = cloneEntity(original);
+  if (entity.type === 'line' && original.type === 'line') {
+    if (gripIndex === 0) entity.start = { ...cursor };
+    else entity.end = { ...cursor };
+    return entity;
+  }
+  if (entity.type === 'circle' && original.type === 'circle') {
+    if (gripIndex === 0) entity.center = { x: original.center.x + dx, y: original.center.y + dy };
+    else entity.radius = Math.max(0.0001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
+    return entity;
+  }
+  if (entity.type === 'polyline' && original.type === 'polyline') {
+    entity.vertices[gripIndex] = { ...cursor };
+    if (entity.closed && gripIndex === 0) entity.vertices[entity.vertices.length - 1] = { ...cursor };
+    return entity;
+  }
+  if (entity.type === 'bezier' && original.type === 'bezier') {
+    if (gripIndex === 0) entity.start = { ...cursor };
+    else {
+      const segmentIndex = Math.floor((gripIndex - 1) / 3);
+      const field = (gripIndex - 1) % 3;
+      const segment = entity.segments[segmentIndex];
+      if (field === 0) segment.control1 = { ...cursor };
+      else if (field === 1) segment.control2 = { ...cursor };
+      else segment.end = { ...cursor };
+    }
+    return entity;
+  }
+  if (entity.type === 'arc' && original.type === 'arc') {
+    if (gripIndex === 0) entity.center = { x: original.center.x + dx, y: original.center.y + dy };
+    else {
+      const a = Math.atan2(cursor.y - original.center.y, cursor.x - original.center.x);
+      entity.radius = Math.max(0.001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
+      if (gripIndex === 1) {
+        entity.startAngle = a;
+        let s = original.startAngle + original.sweepAngle - a;
+        while (s <= 0) s += Math.PI * 2;
+        entity.sweepAngle = s;
+      } else {
+        let s = a - original.startAngle;
+        if (s <= 0) s += Math.PI * 2;
+        entity.sweepAngle = s;
+      }
+    }
+    return entity;
+  }
+  // Anything else (rectangle/octagon/ellipse) moves its whole raw point list
+  // by the drag delta — rigid, rather than a bespoke per-type reshape for a
+  // type unlikely to appear as a rail/guide in the first place.
+  return transformEntityPoints(entity, (point) => ({ x: point.x + dx, y: point.y + dy }));
+}
 
 export type GripMode = 'end' | 'center' | 'middle';
 /** `angle` (radians) orients an edge grip along the edge it sits on. */
@@ -15,7 +154,7 @@ export type Grip = { point: Vec2 & { z?: number }; index: number; shape?: 'squar
 
 type DragState = {
   objectId: string;
-  objectType: 'entity' | 'solid';
+  objectType: 'entity' | 'solid' | 'surface';
   gripIndex: number;
   origin: Vec2;
   originalEntity?: Entity;
@@ -24,6 +163,12 @@ type DragState = {
   originalFeature?: SolidFeature;
   originalExact?: ExactSolidGeometry;
   originalRevision?: number;
+  /** Surface-only: which flat position (embeddedLoftEntities' own ordering)
+   *  the dragged grip's entity sits at, and a clone of just that one entity
+   *  to compute the drag's delta from — the same role originalEntity plays
+   *  for a plain entity drag. */
+  embeddedIndex?: number;
+  originalEmbeddedEntity?: Entity;
 };
 
 export class GripController {
@@ -31,6 +176,11 @@ export class GripController {
   hoveredGrip = -1;
   private drag: DragState | null = null;
   private changed = false;
+  /** Guards a surface's async kernel rebuild against a slower/stale one
+   *  finishing after a newer drag frame (or after the drag itself has
+   *  ended) and clobbering it — same pattern DragEditing.ts's
+   *  updateExtrudePreview uses for EXTRUDE's own live height drag. */
+  private dragRebuildToken = 0;
 
   constructor(private readonly doc: Document, private readonly history: CommandHistory) {}
 
@@ -284,6 +434,19 @@ export class GripController {
   activeGrips(): Grip[] {
     const entity = this.doc.getSelectedEntities()[0];
     const solid = this.doc.getSelectedSolids()[0];
+    // A Surface only ever has grips when nothing else is selected (selecting
+    // an entity/solid always clears the other kinds — see Document.select*)
+    // and its feature is a live loft — a Surface whose feature already got
+    // baked to a mesh (by a transform this session's featureTransform.ts
+    // fix doesn't cover, or one loaded from an older project file) has
+    // nothing left to grip-edit this way.
+    if (!entity && !solid && !this.mode) {
+      const surface = this.doc.getSelectedSurfaces()[0];
+      if (surface?.feature.kind === 'loft') {
+        return embeddedLoftEntities(surface.feature).flatMap((embedded, objectIndex) =>
+          gripsForEmbeddedEntity(embedded).map((grip) => ({ ...grip, index: objectIndex * 100 + grip.index })));
+      }
+    }
     if (entity?.type === 'point' && !this.mode) {
       return [{ point: entity.position, index: 0, shape: 'square' }];
     }
@@ -467,8 +630,28 @@ export class GripController {
     return result;
   }
 
-  begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, origin: Vec2): boolean {
-    if (!entity && !solid) return false;
+  begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, origin: Vec2, surface?: Surface): boolean {
+    if (!entity && !solid && !surface) return false;
+    if (surface) {
+      const embeddedIndex = Math.floor(gripIndex / 100);
+      const target = embeddedLoftEntities(surface.feature)[embeddedIndex];
+      if (!target) return false;
+      this.drag = {
+        objectId: surface.id,
+        objectType: 'surface',
+        gripIndex: gripIndex % 100,
+        origin: { ...origin },
+        embeddedIndex,
+        originalEmbeddedEntity: cloneEntity(target),
+        originalPositions: surface.mesh.positions.slice(),
+        originalIndices: surface.mesh.indices.slice(),
+        originalFeature: JSON.parse(JSON.stringify(surface.feature)),
+        originalExact: surface.exact ? { ...surface.exact, shape: { ...surface.exact.shape } } : undefined,
+        originalRevision: surface.revision,
+      };
+      this.changed = false;
+      return true;
+    }
     this.drag = {
       objectId: (entity ?? solid)!.id,
       objectType: entity ? 'entity' : 'solid',
@@ -485,11 +668,22 @@ export class GripController {
     return true;
   }
 
+  /** The work plane of whichever embedded entity is currently being dragged
+   *  — null outside a surface drag. Each of a loft's embedded entities can
+   *  carry its own plane (that's how a hand-drawn guide is normally built,
+   *  mirroring one rail into another), so grip-editing one has to read and
+   *  write cursor positions in THAT plane, not a single shared one. */
+  draggingEmbeddedPlane(): WorkPlane | null {
+    if (!this.drag || this.drag.objectType !== 'surface' || !this.drag.originalEmbeddedEntity) return null;
+    return this.drag.originalEmbeddedEntity.workPlane ?? WORLD_WORK_PLANE;
+  }
+
   update(cursor: Vec2): void {
     if (!this.drag) return;
     const dx = cursor.x - this.drag.origin.x;
     const dy = cursor.y - this.drag.origin.y;
     if (this.drag.objectType === 'solid') this.updateSolid(dx, dy);
+    else if (this.drag.objectType === 'surface') this.updateSurface(cursor, dx, dy);
     else this.updateEntity(cursor, dx, dy);
     this.changed = true;
     this.doc.notify();
@@ -511,6 +705,22 @@ export class GripController {
         if (this.drag.originalRevision !== undefined) before.revision = this.drag.originalRevision;
         this.history.recordApplied(new UpdateSolidEdit('Edit solid grip', before, cloneSolid(current)));
       }
+    } else if (this.changed && this.drag.objectType === 'surface' && this.drag.originalPositions) {
+      const current = this.doc.getSurface(this.drag.objectId);
+      if (current) {
+        const before = cloneSurfaceValue(current);
+        before.mesh = { positions: this.drag.originalPositions.slice(), indices: (this.drag.originalIndices ?? current.mesh.indices).slice() };
+        if (this.drag.originalFeature) before.feature = JSON.parse(JSON.stringify(this.drag.originalFeature));
+        before.exact = this.drag.originalExact ? { ...this.drag.originalExact, shape: { ...this.drag.originalExact.shape } } : undefined;
+        if (this.drag.originalRevision !== undefined) before.revision = this.drag.originalRevision;
+        // The very last update()'s kernel rebuild may still be in flight — it
+        // will land a moment after this commit (guarded by dragRebuildToken,
+        // which a null this.drag already fails once this method returns), a
+        // brief visual catch-up rather than a correctness problem: the
+        // feature tree recorded here is already the final one, only the
+        // cached mesh snapshot might trail it by one rebuild.
+        this.history.recordApplied(new UpdateSurfaceEdit('Edit surface grip', before, cloneSurfaceValue(current)));
+      }
     }
     this.drag = null;
     this.changed = false;
@@ -530,6 +740,14 @@ export class GripController {
         solid.exact = this.drag.originalExact ? { ...this.drag.originalExact, shape: { ...this.drag.originalExact.shape } } : undefined;
         if (this.drag.originalRevision !== undefined) solid.revision = this.drag.originalRevision;
       }
+    } else if (this.drag.objectType === 'surface' && this.drag.originalPositions) {
+      const surface = this.doc.getSurface(this.drag.objectId);
+      if (surface) {
+        surface.mesh = { positions: this.drag.originalPositions.slice(), indices: (this.drag.originalIndices ?? surface.mesh.indices).slice() };
+        if (this.drag.originalFeature) surface.feature = JSON.parse(JSON.stringify(this.drag.originalFeature));
+        surface.exact = this.drag.originalExact ? { ...this.drag.originalExact, shape: { ...this.drag.originalExact.shape } } : undefined;
+        if (this.drag.originalRevision !== undefined) surface.revision = this.drag.originalRevision;
+      }
     }
     this.drag = null;
     this.changed = false;
@@ -537,6 +755,40 @@ export class GripController {
   }
 
   clear(): void { this.cancel(); this.mode = null; this.hoveredGrip = -1; }
+
+  /**
+   * Live-rebuilds a Surface while one of its embedded rail/guide curves is
+   * being dragged. Two parts, at two speeds: the dragged entity's own point
+   * moves into the feature tree immediately and synchronously (so the Model
+   * Tree and anything else reading surface.feature is never stale), while
+   * the real B-rep rebuild — genuine OpenCascade surface fitting, not a
+   * cheap affine transform — runs async per DragEditing.ts's own
+   * updateExtrudePreview precedent, guarded by dragRebuildToken so a
+   * slower/stale rebuild can never clobber a newer one or one that already
+   * ended.
+   */
+  private updateSurface(cursor: Vec2, dx: number, dy: number): void {
+    if (!this.drag || this.drag.objectType !== 'surface' || !this.drag.originalEmbeddedEntity || this.drag.embeddedIndex === undefined) return;
+    const surface = this.doc.getSurface(this.drag.objectId);
+    if (!surface || surface.feature.kind !== 'loft') return;
+    const draggedEntity = applyEmbeddedEntityGripDrag(this.drag.originalEmbeddedEntity, this.drag.gripIndex, cursor, dx, dy);
+    const updatedFeature = setEmbeddedLoftEntity(surface.feature, this.drag.embeddedIndex, draggedEntity);
+    surface.feature = updatedFeature;
+
+    const token = ++this.dragRebuildToken;
+    const targetSurfaceId = surface.id;
+    const targetRevision = surface.revision + 1;
+    void buildExactFeature(updatedFeature, targetRevision, /* allowOpenShell */ true).then((exact) => {
+      if (!exact || token !== this.dragRebuildToken) return;
+      if (!this.drag || this.drag.objectType !== 'surface' || this.drag.objectId !== targetSurfaceId) return;
+      const live = this.doc.getSurface(targetSurfaceId);
+      if (!live) return;
+      live.mesh = exact.mesh;
+      live.exact = exact.exact;
+      live.revision = targetRevision;
+      this.doc.notify();
+    });
+  }
 
   private updateEntity(cursor: Vec2, dx: number, dy: number): void {
     if (!this.drag?.originalEntity) return;

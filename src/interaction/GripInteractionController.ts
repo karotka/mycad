@@ -1,4 +1,4 @@
-import type { Entity, Solid } from '../core/entities/types';
+import type { Entity, Solid, Surface } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { GripController } from './GripController';
 import type { ObjectSnapMode } from './SnapService';
@@ -14,8 +14,8 @@ export class GripInteractionController {
 
   setTargetSnapMode(mode: ObjectSnapMode | null): void { this.snapMode = mode; }
 
-  begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, point: Vec2, pointerId: number): void {
-    this.grips.begin(entity, solid, gripIndex, point);
+  begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, point: Vec2, pointerId: number, surface?: Surface): void {
+    this.grips.begin(entity, solid, gripIndex, point, surface);
     this.latched = true;
     this.viewport.setPointerCapture(pointerId);
   }

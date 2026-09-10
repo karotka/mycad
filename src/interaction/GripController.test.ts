@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { GripController } from './GripController';
-import type { EdgeModificationFeature, PrimitiveFeature } from '../core/entities/types';
+import type { EdgeModificationFeature, LineEntity, LoftFeature, PrimitiveFeature } from '../core/entities/types';
 import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 
 describe('GripController', () => {
@@ -683,3 +683,115 @@ describe('edge grips follow their edge', () => {
     expect(isVertical(edge!.angle!)).toBe(true);
   });
 });
+
+describe('a Surface\'s embedded loft rails/guides', () => {
+  const line = (start: { x: number; y: number }, end: { x: number; y: number }): LineEntity =>
+    ({ id: 'rail', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false, start, end });
+
+  it('exposes grips for each embedded profile/guide, indexed 100 apart', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const feature: LoftFeature = {
+      kind: 'loft',
+      profiles: [line({ x: 0, y: 0 }, { x: 10, y: 0 }), line({ x: 0, y: 5 }, { x: 10, y: 5 })],
+      guides: [line({ x: 3, y: 0 }, { x: 3, y: 5 })],
+    };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    const active = grips.activeGrips();
+    // 2 grips per line (start, end) x 3 embedded entities, at flat
+    // indices 0/1 (profile 0), 100/101 (profile 1), 200/201 (guide 0).
+    expect(active.map((grip) => grip.index).sort((a, b) => a - b)).toEqual([0, 1, 100, 101, 200, 201]);
+    expect(active.find((grip) => grip.index === 100)?.point).toEqual({ x: 0, y: 5 });
+    expect(active.find((grip) => grip.index === 200)?.point).toEqual({ x: 3, y: 0 });
+  });
+
+  it('gives no grips for a Surface whose feature was baked to a plain mesh', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, { kind: 'mesh' });
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    expect(grips.activeGrips()).toEqual([]);
+  });
+
+  it('moves the dragged rail\'s endpoint into the feature tree immediately, synchronously — before any kernel rebuild resolves', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const feature: LoftFeature = {
+      kind: 'loft',
+      profiles: [line({ x: 0, y: 0 }, { x: 10, y: 0 }), line({ x: 0, y: 5 }, { x: 10, y: 5 })],
+    };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    // Grip index 1 = profile 0's own end point (start=0, end=1).
+    expect(grips.begin(undefined, undefined, 1, { x: 10, y: 0 }, surface)).toBe(true);
+    grips.update({ x: 12, y: 3 });
+
+    const rebuilt = doc.getSurface(surface.id)!.feature as LoftFeature;
+    expect(rebuilt.profiles[0]).toMatchObject({ start: { x: 0, y: 0 }, end: { x: 12, y: 3 } });
+    // The other rail is untouched.
+    expect(rebuilt.profiles[1]).toMatchObject({ start: { x: 0, y: 5 }, end: { x: 10, y: 5 } });
+  });
+
+  it('cancels back to the original feature and mesh', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const feature: LoftFeature = {
+      kind: 'loft',
+      profiles: [line({ x: 0, y: 0 }, { x: 10, y: 0 }), line({ x: 0, y: 5 }, { x: 10, y: 5 })],
+    };
+    const originalPositions = new Float32Array([1, 2, 3]);
+    const surface = doc.createSurface({ positions: originalPositions, indices: new Uint32Array([0]) }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    grips.begin(undefined, undefined, 1, { x: 10, y: 0 }, surface);
+    grips.update({ x: 99, y: 99 });
+    expect((doc.getSurface(surface.id)!.feature as LoftFeature).profiles[0]).toMatchObject({ end: { x: 99, y: 99 } });
+
+    grips.cancel();
+    const restored = doc.getSurface(surface.id)!;
+    expect((restored.feature as LoftFeature).profiles[0]).toMatchObject({ end: { x: 10, y: 0 } });
+    expect(Array.from(restored.mesh.positions)).toEqual([1, 2, 3]);
+  });
+
+  it('rebuilds the real mesh asynchronously and commits an UpdateSurfaceEdit undo can reach', async () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    // A real, kernel-buildable guided loft: two open Bezier rails sharing
+    // both their own endpoints — the exact shape this session's real
+    // Guides feature builds from.
+    const rail1 = doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+    const rail2 = doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+    const feature: LoftFeature = { kind: 'loft', profiles: [rail1, rail2] };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    const originalRevision = surface.revision;
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    // Grip index 1 = rail1's own first control point (its start and end,
+    // grips 0 and 3, are shared corners the two rails must keep matching
+    // exactly for the loft to stay buildable at all — a curvature handle
+    // is a real change that doesn't risk that).
+    grips.begin(undefined, undefined, 1, { x: 5.3, y: 12.9 }, surface);
+    grips.update({ x: 5.3, y: 14 });
+
+    await vi.waitFor(() => expect(doc.getSurface(surface.id)!.mesh.positions.length).toBeGreaterThan(0), { timeout: 30_000 });
+    expect(doc.getSurface(surface.id)!.revision).toBeGreaterThan(originalRevision);
+
+    grips.commit();
+    expect(history.undo()).toBe(true);
+    expect((doc.getSurface(surface.id)!.feature as LoftFeature).profiles[0]).toMatchObject({
+      segments: [{ control1: { x: 5.3, y: 12.9 } }],
+    });
+  });
+  });
+
+

@@ -955,15 +955,16 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       );
       const selected = selectedEntity();
       const selectedBody = selectedSolid();
+      const selectedSurf = selectedSurface();
       if (grabsGrip({
         commandActive: Boolean(commands.active),
         gripIndex,
-        hasSelection: Boolean(selected || selectedBody),
+        hasSelection: Boolean(selected || selectedBody || selectedSurf),
       })) {
         const exactGrip = gripController.activeGrips().find((grip) => grip.index === gripIndex);
         const gripPoint = exactGrip ? { x: exactGrip.point.x, y: exactGrip.point.y } : gripEditingPoint(event);
         if (!gripPoint) return;
-        gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId);
+        gripInteraction.begin(selected, selectedBody, gripIndex, gripPoint, event.pointerId, selectedSurf);
         event.preventDefault();
         return;
       }
