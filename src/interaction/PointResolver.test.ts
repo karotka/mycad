@@ -109,3 +109,48 @@ describe('nearestGripTargetSnap (forced one-shot override)', () => {
     expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
   });
 });
+
+describe('interactionPoint (drawing branch): drawingPlane only latches on a real click', () => {
+  it('does not commit a new drawingPlane from a mere hover preview, only from an actual click', () => {
+    // interactionPoint serves both the pointermove preview (called on every
+    // frame the cursor moves) and the real click that follows — merely
+    // grazing an off-UCS endpoint on the way to clicking somewhere else must
+    // not silently lock the rest of the command onto that plane. Confirmed
+    // directly: it made the drawing-plane marker appear to float free of the
+    // cursor, latched onto a past hover position instead of the current one.
+    const doc = new Document();
+    doc.viewMode = '3d';
+    doc.drafting.objectSnapEnabled = true;
+    doc.drafting.objectSnapModes = ['end'];
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line.workPlane = {
+      origin: { x: 0, y: 0, z: 5 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 1, z: 0 },
+      zAxis: { x: 0, y: 0, z: 1 },
+    };
+    doc.addEntity(line);
+    const active = {
+      name: 'LINE',
+      stepIndex: 0,
+      steps: [{ kind: 'point', label: 'Start point:' }],
+      data: {} as Record<string, unknown>,
+    };
+    const ctx = makeCtx({ doc });
+    ctx.commands = { active } as unknown as typeof ctx.commands;
+    ctx.renderer3d = {
+      ...ctx.renderer3d,
+      // Every candidate "projects" right onto the cursor — the only thing
+      // this test needs is that the endpoint snap resolves at all.
+      projectCadPoint: vi.fn(() => ({ x: 50, y: 50 })),
+    } as unknown as typeof ctx.renderer3d;
+    const resolver = createPointResolver(ctx);
+
+    resolver.interactionPoint({ clientX: 50, clientY: 50 }); // preview — no commit arg
+    expect(active.data.drawingPlane).toBeUndefined();
+
+    const committed = resolver.interactionPoint({ clientX: 50, clientY: 50 }, true);
+    expect(committed).not.toBeNull();
+    expect(active.data.drawingPlane).toBeDefined();
+  });
+});

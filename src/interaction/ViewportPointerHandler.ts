@@ -682,7 +682,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       // dimension line and its text then go is free: those steps take the cursor
       // wherever it is rather than refusing a click that snapped to nothing.
       const placingDimension = commands.active.stepIndex >= 2;
-      const point = interactionPoint(event) ?? (placingDimension
+      const point = interactionPoint(event, true) ?? (placingDimension
         ? (cadDocument.viewMode === '3d' ? worldPoint3d(event) : worldPoint(event))
         : null);
       if (point) {
@@ -708,7 +708,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     if (cadDocument.viewMode === '2d') {
       const pointStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
       const expectsPoint = pointStepKind === 'point' || pointStepKind === 'plane';
-      const point = expectsPoint ? interactionPoint(event) ?? worldPoint(event) : worldPoint(event);
+      const point = expectsPoint ? interactionPoint(event, true) ?? worldPoint(event) : worldPoint(event);
       const gripIndex = gripController.nearest2d(rawWorldPoint(event), 10 / renderer2d.zoom);
       const selected = selectedEntity();
       const selectedBody = selectedSolid();
@@ -918,7 +918,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         if (dynamicClickFace) acquireDynamicUcs(dynamicClickFace, event);
         else releaseDynamicUcs();
       }
-      const point = interactionPoint(event);
+      const point = interactionPoint(event, true);
       if (commands.active?.name === 'MOVE' && activeStep?.kind === 'point') {
         if (!point) return;
         await commands.handleClick(point);

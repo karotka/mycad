@@ -81,7 +81,18 @@ export function createPointResolver(ctx: PointResolverContext) {
     return renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY);
   }
 
-  function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 | null {
+  /**
+   * `commit` distinguishes a real click (the point is actually about to be
+   * used) from a hover preview (called on every pointermove, just to show
+   * where a click would land) — established here since this single function
+   * serves both. Only a real click may latch a new `drawingPlane` onto the
+   * active command: merely grazing an off-plane snap while the cursor is on
+   * its way somewhere else must not silently commit the rest of the command
+   * to a plane the user never actually clicked on — confirmed directly: it
+   * made the drawing-plane marker appear to float free of the cursor,
+   * because it had latched onto a past hover position, not the current one.
+   */
+  function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, commit = false): Vec2 | null {
     state.activeTracking = null;
     const active = commands.active;
     const angularPlane = active?.name === 'DIMANGULAR'
@@ -158,7 +169,7 @@ export function createPointResolver(ctx: PointResolverContext) {
             plane.origin.x += plane.zAxis.x * local.z;
             plane.origin.y += plane.zAxis.y * local.z;
             plane.origin.z += plane.zAxis.z * local.z;
-            active.data.drawingPlane = plane;
+            if (commit) active.data.drawingPlane = plane;
           }
         }
         const local = worldToLocal(plane ?? doc.activeWorkPlane, targetedSnap.world);
