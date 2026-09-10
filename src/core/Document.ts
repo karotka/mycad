@@ -23,6 +23,7 @@ import {
   type Solid,
   type SolidFeature,
   type SolidMesh,
+  type Surface,
   type MlineElement,
   type MlineEntity,
 } from './entities/types';
@@ -41,8 +42,10 @@ export interface NamedWorkPlane {
 export interface DocumentState {
   entities: Entity[];
   solids: Solid[];
+  surfaces: Surface[];
   selectedEntityIds: Set<string>;
   selectedSolidIds: Set<string>;
+  selectedSurfaceIds: Set<string>;
   currentLayer: string;
   gridSize: number;
   gridVisible: boolean;
@@ -60,8 +63,12 @@ export class Document {
   /** Named drawing geometry referenced by INSERT entities. */
   blockDefinitions: BlockDefinition[] = [];
   solids: Solid[] = [];
+  /** Meshes with no enclosed volume — LOFT's open-rails result, before
+   *  THICKEN/SURFSCULPT gives them a wall. See `Surface`'s own doc comment. */
+  surfaces: Surface[] = [];
   selectedEntityIds = new Set<string>();
   selectedSolidIds = new Set<string>();
+  selectedSurfaceIds = new Set<string>();
   currentLayer = '0';
   layers: string[] = ['0'];
   /**
@@ -142,6 +149,7 @@ export class Document {
     for (const definition of this.blockDefinitions) recolourDefinition(definition, visited);
     for (const entity of this.entities) recolourEntity(entity, visited);
     for (const solid of this.solids) recolourSolid(solid);
+    for (const surface of this.surfaces) surface.color = resolveAci(surface.aci, this.layerAci[surface.layer] ?? ACI_WHITE);
   }
 
   /** Sets a layer's colour index and repaints everything that follows it. */
@@ -306,10 +314,13 @@ export class Document {
   pruneSelection(): void {
     const entityIds = new Set(this.entities.map((entity) => entity.id));
     const solidIds = new Set(this.solids.map((solid) => solid.id));
+    const surfaceIds = new Set(this.surfaces.map((surface) => surface.id));
     for (const id of this.selectedEntityIds) if (!entityIds.has(id)) this.selectedEntityIds.delete(id);
     for (const id of this.selectedSolidIds) if (!solidIds.has(id)) this.selectedSolidIds.delete(id);
+    for (const id of this.selectedSurfaceIds) if (!surfaceIds.has(id)) this.selectedSurfaceIds.delete(id);
     for (const entity of this.entities) entity.selected = this.selectedEntityIds.has(entity.id);
     for (const solid of this.solids) solid.selected = this.selectedSolidIds.has(solid.id);
+    for (const surface of this.surfaces) surface.selected = this.selectedSurfaceIds.has(surface.id);
   }
 
   addEntity(entity: Entity): void {
@@ -319,6 +330,11 @@ export class Document {
 
   addSolid(solid: Solid): void {
     this.solids.push(solid);
+    this.notify();
+  }
+
+  addSurface(surface: Surface): void {
+    this.surfaces.push(surface);
     this.notify();
   }
 
@@ -334,6 +350,12 @@ export class Document {
     this.notify();
   }
 
+  removeSurface(id: string): void {
+    this.surfaces = this.surfaces.filter((s) => s.id !== id);
+    this.selectedSurfaceIds.delete(id);
+    this.notify();
+  }
+
   getEntity(id: string): Entity | undefined {
     return this.entities.find((e) => e.id === id);
   }
@@ -342,11 +364,17 @@ export class Document {
     return this.solids.find((s) => s.id === id);
   }
 
+  getSurface(id: string): Surface | undefined {
+    return this.surfaces.find((s) => s.id === id);
+  }
+
   clearSelection(): void {
     this.selectedEntityIds.clear();
     this.selectedSolidIds.clear();
+    this.selectedSurfaceIds.clear();
     for (const e of this.entities) e.selected = false;
     for (const s of this.solids) s.selected = false;
+    for (const s of this.surfaces) s.selected = false;
     this.notify();
   }
 
@@ -366,12 +394,24 @@ export class Document {
     this.notify();
   }
 
+  selectSurface(id: string, additive = false): void {
+    if (!additive) this.clearSelection();
+    this.selectedSurfaceIds.add(id);
+    const s = this.getSurface(id);
+    if (s) s.selected = true;
+    this.notify();
+  }
+
   getSelectedEntities(): Entity[] {
     return this.entities.filter((e) => this.selectedEntityIds.has(e.id));
   }
 
   getSelectedSolids(): Solid[] {
     return this.solids.filter((s) => this.selectedSolidIds.has(s.id));
+  }
+
+  getSelectedSurfaces(): Surface[] {
+    return this.surfaces.filter((s) => this.selectedSurfaceIds.has(s.id));
   }
 
   createPoint(position: Vec2): PointEntity {
@@ -593,6 +633,37 @@ export class Document {
     this.selectedSolidIds.clear();
     this.selectedSolidIds.add(newSolid.id);
     newSolid.selected = true;
+    this.notify();
+  }
+
+  createSurface(
+    mesh: SolidMesh,
+    name: string,
+    sourceEntityIds: string[],
+    color?: number,
+    feature: SolidFeature = { kind: 'mesh' }
+  ): Surface {
+    return {
+      id: genId('surface'),
+      name,
+      layer: this.currentLayer,
+      mesh,
+      ...(color === undefined
+        ? { aci: ACI_BYLAYER, color: this.layerColorFor(this.currentLayer) }
+        : { aci: rgbToAci(color), color }),
+      selected: false,
+      sourceEntityIds,
+      feature,
+      revision: 0,
+    };
+  }
+
+  replaceSurfaces(ids: string[], newSurface: Surface): void {
+    this.surfaces = this.surfaces.filter((s) => !ids.includes(s.id));
+    this.surfaces.push(newSurface);
+    this.selectedSurfaceIds.clear();
+    this.selectedSurfaceIds.add(newSurface.id);
+    newSurface.selected = true;
     this.notify();
   }
 }

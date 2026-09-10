@@ -3826,33 +3826,30 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 25, y: 8 }, rail2);
     await kit.manager.submitInput(''); // finish gathering profiles (the two open rails)
     await kit.manager.handleClick({ x: 28, y: 11.5 }, guide);
-    await kit.manager.submitInput(''); // finish gathering guides (just the one)
-    await kit.manager.submitInput('2'); // wall thickness
+    await kit.manager.submitInput(''); // finish gathering guides (just the one) — loft builds immediately
 
     expect(kit.doc.entities).toHaveLength(0);
-    expect(kit.doc.solids).toHaveLength(1);
-    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft', guideThickness: 2 });
-    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.surfaces[0].feature).toMatchObject({ kind: 'loft' });
+    const zValues = Array.from(kit.doc.surfaces[0].mesh.positions).filter((_value, index) => index % 3 === 2);
     expect(Math.max(...zValues) - Math.min(...zValues)).toBeGreaterThan(3);
 
     expect(kit.history.undo()).toBe(true);
-    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.surfaces).toHaveLength(0);
     expect(kit.doc.entities).toHaveLength(3);
   });
 
   it('routes two open rails with NO guides through the rails pipeline, not the classic closed-profile one', async () => {
     // Two open rails is its own mode regardless of whether any guide curve
-    // is actually picked — skipping straight to a thickness must not fall
+    // is actually picked — skipping straight past guides must not fall
     // through to the classic closed-profile path (which rejects open
-    // profiles outright with a misleading "must be closed" message). Proven
-    // here by the FAILURE message alone: whether the rails-mode build itself
-    // then succeeds for any given pair of rails is a separate, real, and
-    // still-open question — the plain (no-guide) 2-boundary-curve Coons fill
-    // this falls back to is not yet reliably thickenable for every rail
-    // shape (confirmed directly against several rail/curve combinations,
-    // straight-edged ones included — not merely a "the input was too
-    // extreme" case). Guides — GeomFill_BSplineCurves' 3/4-curve fills — are
-    // the reliably working path; this only guards the routing decision.
+    // profiles outright with a misleading "must be closed" message). LOFT no
+    // longer thickens its own result (see the Surface entity work), so a
+    // flat 2-boundary-curve Coons fill between two open rails is now just
+    // the surface itself, not something that has to survive being thickened
+    // — the earlier OCCT robustness gap that used to hit this exact case
+    // (thickening a bare open shell) is gone with the forced thickening.
     const kit = setup();
     const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
     const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
@@ -3863,32 +3860,11 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
     await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
     await kit.manager.submitInput(''); // finish gathering profiles (the two open rails)
-    await kit.manager.submitInput(''); // skip guides entirely
-    await kit.manager.submitInput('2'); // wall thickness
+    await kit.manager.submitInput(''); // skip guides entirely — loft builds immediately
 
     expect(kit.log).not.toHaveBeenCalledWith(expect.stringContaining('every profile is closed'));
-    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('share both their own endpoints'));
-  });
-
-  it('refuses a guided loft with no wall thickness', async () => {
-    const kit = setup();
-    const rail1 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
-    const rail2 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
-    kit.doc.addEntity(rail1);
-    kit.doc.addEntity(rail2);
-    const guide = kit.doc.createLine({ x: 28, y: 15 }, { x: 28, y: 8 });
-    kit.doc.addEntity(guide);
-
-    kit.manager.startCommand('LOFT');
-    await kit.manager.handleClick({ x: 25, y: 15 }, rail1);
-    await kit.manager.handleClick({ x: 25, y: 8 }, rail2);
-    await kit.manager.submitInput('');
-    await kit.manager.handleClick({ x: 28, y: 11.5 }, guide);
-    await kit.manager.submitInput('');
-    await kit.manager.submitInput(''); // skip thickness — must refuse, not silently drop the guides
-
-    expect(kit.doc.solids).toHaveLength(0);
-    expect(kit.log).toHaveBeenCalledWith('Loft with guides requires a positive wall thickness.');
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.surfaces[0].feature).toMatchObject({ kind: 'loft', guides: [] });
   });
 
   it('drops an invalid profile caught by a window selection instead of failing the whole loft', async () => {

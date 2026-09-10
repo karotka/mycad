@@ -8,7 +8,7 @@
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
-import type { Solid } from '../core/entities/types';
+import type { Solid, Surface } from '../core/entities/types';
 import { featureParams, type FeatureParam } from '../core/solids/featureParams';
 import { editedSolid, featureRows, pathKey, removedFeatureSolid, type TreeRow } from './modelTree';
 
@@ -50,11 +50,43 @@ export class ModelTreeController {
   /** Same guard as the other panels: rebuilding the rows mid-edit steals focus. */
   render(): void {
     if (this.panel.hidden || this.applying) return;
-    if (this.doc.solids.length === 0) {
+    if (this.doc.solids.length === 0 && this.doc.surfaces.length === 0) {
       this.list.innerHTML = '<div class="properties-empty">No solids yet.</div>';
       return;
     }
-    this.list.replaceChildren(...this.doc.solids.flatMap((solid) => this.solidRows(solid)));
+    this.list.replaceChildren(
+      ...this.doc.solids.flatMap((solid) => this.solidRows(solid)),
+      ...this.doc.surfaces.flatMap((surface) => this.surfaceRows(surface)),
+    );
+  }
+
+  /** A Surface has no editable/removable feature params yet (LOFT's own
+   *  'loft' feature exposes none) — a plain, read-only tree, unlike a
+   *  Solid's own interactive `featureRow`. */
+  private surfaceRows(surface: Surface): HTMLElement[] {
+    const head = document.createElement('div');
+    head.className = `tree-row tree-solid${surface.selected ? ' active' : ''}`;
+    head.innerHTML = `<span class="tree-twist">${this.collapsed.has(surface.id) ? '▸' : '▾'}</span><span class="tree-label">${escapeHtml(surface.name)}</span><span class="tree-detail">${surface.mesh.indices.length / 3} tris</span>`;
+    head.addEventListener('click', () => {
+      this.doc.selectSurface(surface.id, true);
+      this.render();
+      this.redraw();
+    });
+    head.querySelector('.tree-twist')!.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!this.collapsed.delete(surface.id)) this.collapsed.add(surface.id);
+      this.render();
+    });
+    if (this.collapsed.has(surface.id)) return [head];
+
+    const rows = featureRows(surface.feature, this.collapsed).map((row) => {
+      const element = document.createElement('div');
+      element.className = 'tree-row';
+      element.style.paddingLeft = `${8 + row.depth * 13}px`;
+      element.innerHTML = `<span class="tree-twist">·</span><span class="tree-label">${escapeHtml(row.label)}</span><span class="tree-detail">${escapeHtml(row.detail)}</span>`;
+      return element;
+    });
+    return [head, ...rows];
   }
 
   private solidRows(solid: Solid): HTMLElement[] {

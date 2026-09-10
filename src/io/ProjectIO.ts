@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { cloneBlockDefinition, ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature } from '../core/entities/types';
+import { cloneBlockDefinition, ensureIdAbove, type BlockDefinition, type Entity, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
 import type { AffineTransform3 } from '../core/geometry/GeometryKernel';
 import { ACI_WHITE, ACI_BYLAYER, rgbToAci } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from '../core/lineStyles';
@@ -99,6 +99,19 @@ export function serializeProject(doc: Document, view?: ProjectViewState): string
           : {}),
       },
     })),
+    surfaces: doc.surfaces.map((surface) => ({
+      ...surface,
+      selected: false,
+      exact: surface.exact?.revision === surface.revision ? surface.exact : undefined,
+      feature: trimFeatureForSave(surface.feature),
+      mesh: {
+        positions: Array.from(surface.mesh.positions),
+        indices: Array.from(surface.mesh.indices),
+        ...(surface.mesh.triangleFaceIds
+          ? { triangleFaceIds: Array.from(surface.mesh.triangleFaceIds) }
+          : {}),
+      },
+    })),
   }, (_key, item) => item instanceof Float32Array || item instanceof Uint32Array ? Array.from(item) : item);
 }
 
@@ -142,6 +155,28 @@ function loadSolidValue(value: unknown): Solid {
         : undefined,
     },
   } as Solid;
+}
+
+function loadSurfaceValue(value: unknown): Surface {
+  const surface = value as Record<string, unknown>;
+  const mesh = surface?.mesh as { positions?: unknown; indices?: unknown; triangleFaceIds?: unknown } | undefined;
+  if (!mesh || !Array.isArray(mesh.positions) || !Array.isArray(mesh.indices)) {
+    throw new Error('The project contains an invalid surface.');
+  }
+  return {
+    ...surface,
+    exact: loadExactGeometry(surface.exact, surface.revision),
+    selected: false,
+    aci: legacyAci(surface),
+    layer: typeof surface.layer === 'string' ? surface.layer : '0',
+    mesh: {
+      positions: new Float32Array(mesh.positions as number[]),
+      indices: new Uint32Array(mesh.indices as number[]),
+      triangleFaceIds: Array.isArray(mesh.triangleFaceIds)
+        ? new Uint32Array(mesh.triangleFaceIds as number[])
+        : undefined,
+    },
+  } as Surface;
 }
 
 function loadExactGeometry(value: unknown, revision: unknown): Solid['exact'] {
@@ -267,6 +302,9 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
   if (!Array.isArray(value.entities) || !Array.isArray(value.solids)) throw new Error('The project does not contain valid CAD data.');
   const entities = value.entities as unknown[];
   const solids = value.solids as unknown[];
+  // Absent in any file saved before Surfaces existed — an empty document
+  // section, not an error.
+  const surfaces = Array.isArray(value.surfaces) ? value.surfaces as unknown[] : [];
   const blockDefinitions = Array.isArray(value.blockDefinitions) ? value.blockDefinitions as unknown[] : [];
   // Version 1 has no pool: every INSERT's `definition` is already a full
   // object, and resolveDefinition's fallback branch loads it as such.
@@ -277,10 +315,11 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     doc.blockDefinitions = blockDefinitions.map((definition) => loadBlockDefinition(definition, resolveDefinition));
     doc.entities = entities.map((entity) => loadEntityValue(entity, resolveDefinition));
     doc.solids = solids.map(loadSolidValue);
+    doc.surfaces = surfaces.map(loadSurfaceValue);
     doc.currentLayer = typeof settings.currentLayer === 'string' ? settings.currentLayer : '0';
     doc.layers = Array.isArray(settings.layers)
       ? Array.from(new Set(['0', ...(settings.layers as unknown[]).filter((layer): layer is string => typeof layer === 'string' && layer.length > 0)]))
-      : Array.from(new Set(['0', ...doc.entities.map((entity) => entity.layer), ...doc.solids.map((solid) => solid.layer)]));
+      : Array.from(new Set(['0', ...doc.entities.map((entity) => entity.layer), ...doc.solids.map((solid) => solid.layer), ...doc.surfaces.map((surface) => surface.layer)]));
     // Layer colours are indices now. An older file stored RGB under
     // `layerColors`; its nearest palette index is close enough, and the drawing
     // would have been snapped to the palette on its next save anyway.
@@ -323,10 +362,12 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
     ensureIdAbove([
       ...doc.entities.map((entity) => entity.id),
       ...doc.solids.map((solid) => solid.id),
+      ...doc.surfaces.map((surface) => surface.id),
       ...doc.namedWorkPlanes.map((plane) => plane.id),
     ]);
     doc.selectedEntityIds.clear();
     doc.selectedSolidIds.clear();
+    doc.selectedSurfaceIds.clear();
     // The RGB every object and layer draws in is a cache of the indices just
     // loaded, so it is rebuilt rather than trusted from the file.
     doc.recolour();

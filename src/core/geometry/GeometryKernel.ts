@@ -141,6 +141,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** Same shape, every face orientation flipped — see OpenCascadeKernel's
    *  own doc comment for why a caller would want this. */
   reversed(solid: Solid): Solid;
+  /** SURFSCULPT: sews N open shells forming a watertight network into one
+   *  closed solid — see OpenCascadeKernel's own doc comment. */
+  sculptSolid(surfaces: readonly Solid[]): Solid;
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];

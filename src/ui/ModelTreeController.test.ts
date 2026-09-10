@@ -72,6 +72,25 @@ describe('ModelTreeController', () => {
     expect([...doc.selectedSolidIds]).toEqual([first.id, second.id]);
   });
 
+  it('lists a Surface alongside solids, read-only (no editable params, no delete button)', () => {
+    const { doc, controller } = setup();
+    const surface = doc.createSurface(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'Surface', [], undefined, { kind: 'loft', profiles: [], guides: [] },
+    );
+    doc.addSurface(surface);
+    controller.toggle();
+
+    expect(rows().map((row) => row.querySelector('.tree-label')?.textContent)).toEqual(['Surface', 'Loft']);
+    expect(document.querySelector('.tree-delete')).toBeNull();
+
+    rowLabelled('Loft').click();
+    expect(fields()).toHaveLength(0);
+
+    rows()[0].click();
+    expect([...doc.selectedSurfaceIds]).toEqual([surface.id]);
+  });
+
   it('shows an extrusion and opens its values', () => {
     const { doc, controller } = setup();
     extrusion(doc);

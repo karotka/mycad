@@ -204,6 +204,41 @@ describe('ProjectIO', () => {
     expect(target.solids[0].exact).toEqual(solid.exact);
   });
 
+  it('round-trips a Surface — a mesh with no enclosed volume, e.g. LOFT between two open rails', () => {
+    const source = new Document();
+    const surface = source.createSurface({
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+    }, 'Surface', [], undefined, { kind: 'loft', profiles: [], guides: [] });
+    surface.exact = {
+      kernel: 'opencascade',
+      revision: surface.revision,
+      shape: { format: 'occt-brep-v1', data: 'CASCADE Topology V3 fixture' },
+    };
+    source.addSurface(surface);
+    const target = new Document();
+
+    loadProject(target, serializeProject(source));
+
+    expect(target.solids).toHaveLength(0);
+    expect(target.surfaces).toHaveLength(1);
+    expect(target.surfaces[0].mesh.positions).toEqual(surface.mesh.positions);
+    expect(target.surfaces[0].exact).toEqual(surface.exact);
+    expect(target.surfaces[0].feature).toMatchObject({ kind: 'loft' });
+  });
+
+  it('loads an older project file with no surfaces section as an empty one, not an error', () => {
+    const source = new Document();
+    source.addEntity(source.createPoint({ x: 1, y: 2 }));
+    const target = new Document();
+    const saved = JSON.parse(serializeProject(source)) as Record<string, unknown>;
+    delete saved.surfaces;
+
+    loadProject(target, JSON.stringify(saved));
+
+    expect(target.surfaces).toEqual([]);
+  });
+
   it('advances the id counter on load so a new solid cannot overwrite a loaded one', () => {
     resetIdCounter();
     const source = new Document();

@@ -3,7 +3,7 @@ import type { Document } from '../core/Document';
 import type { GcodeOptions } from '../core/settings';
 import type { ProjectViewState } from '../io/ProjectIO';
 import { entityRenderKey } from './entityRenderKey';
-import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh } from '../core/entities/types';
+import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, SolidFaceRegion, SolidFaceSelection, SolidMesh, Surface } from '../core/entities/types';
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import type { UcsHandleName } from '../math/ucsAxisRotation';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
@@ -808,6 +808,10 @@ export class Viewport3D {
   camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   renderer: THREE.WebGLRenderer;
   private solidMeshes = new Map<string, THREE.Mesh>();
+  /** Meshes with no enclosed volume (LOFT's open-rails result) — a separate
+   *  map so a Surface is never mistaken for a pickable Solid, e.g. by a
+   *  boolean or PRESSPULL's own face-picking. */
+  private surfaceMeshes = new Map<string, THREE.Mesh>();
   private entityObjects = new Map<string, THREE.Object3D>();
   private entityRenderKeys = new Map<string, string>();
   private previewObject: THREE.Object3D | null = null;
@@ -1482,6 +1486,49 @@ export class Viewport3D {
           || mesh.userData.styledSelected !== solid.selected
           || mesh.userData.styledColor !== solid.color) {
           this.applySolidStyle(mesh, solid.selected);
+        }
+      }
+    }
+  }
+
+  /** Same shape as `syncSolids` — see `surfaceMeshes`'s own doc comment for
+   *  why this is a separate map rather than folded into that one. */
+  syncSurfaces(surfaces: Surface[]): void {
+    const ids = new Set(surfaces.map((s) => s.id));
+
+    for (const [id, mesh] of this.surfaceMeshes) {
+      if (!ids.has(id)) {
+        this.disposeSolidEdges(mesh);
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+        this.surfaceMeshes.delete(id);
+      }
+    }
+
+    for (const surface of surfaces) {
+      let mesh = this.surfaceMeshes.get(surface.id);
+      if (!mesh) {
+        mesh = this.solidToObject(surface);
+        this.surfaceMeshes.set(surface.id, mesh);
+        this.scene.add(mesh);
+      } else {
+        let geometryChanged = false;
+        if (mesh.userData.revision !== surface.revision) {
+          this.disposeSolidEdges(mesh);
+          mesh.geometry.dispose();
+          mesh.geometry = this.solidToGeometry(surface.mesh);
+          mesh.userData.cadMesh = surface.mesh;
+          mesh.userData.revision = surface.revision;
+          geometryChanged = true;
+        }
+        mesh.userData.selected = surface.selected;
+        mesh.userData.baseColor = surface.color;
+        if (geometryChanged
+          || mesh.userData.styledVisualStyle !== this.visualStyle
+          || mesh.userData.styledSelected !== surface.selected
+          || mesh.userData.styledColor !== surface.color) {
+          this.applySolidStyle(mesh, surface.selected);
         }
       }
     }
@@ -2269,7 +2316,9 @@ export class Viewport3D {
     return geom;
   }
 
-  private solidToObject(solid: Solid): THREE.Mesh {
+  /** `solidToObject`/`syncSurfaces` reuse this — a Surface has every field
+   *  the mesh/material setup here actually touches. */
+  private solidToObject(solid: Pick<Solid, 'mesh' | 'selected' | 'revision' | 'color'>): THREE.Mesh {
     const mesh = new THREE.Mesh(this.solidToGeometry(solid.mesh), new THREE.MeshPhongMaterial({
       color: solid.selected ? 0x65c7ff : 0xffffff,
       side: THREE.DoubleSide,
@@ -2618,6 +2667,10 @@ export class Viewport3D {
 
   pickSolid(canvas: HTMLCanvasElement, sx: number, sy: number, excludedIds: ReadonlySet<string> = new Set()): string | null {
     return this.picking.pickObjectId(canvas, sx, sy, this.solidMeshes, excludedIds);
+  }
+
+  pickSurface(canvas: HTMLCanvasElement, sx: number, sy: number, excludedIds: ReadonlySet<string> = new Set()): string | null {
+    return this.picking.pickObjectId(canvas, sx, sy, this.surfaceMeshes, excludedIds);
   }
 
   groundPoint(canvas: HTMLCanvasElement, sx: number, sy: number): Vec2 | null {

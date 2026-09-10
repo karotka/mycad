@@ -680,13 +680,6 @@ export interface LoftFeature {
    * rails — the way mirroring one curve into a second half naturally does.
    */
   guides?: Entity[];
-  /**
-   * Wall thickness applied (via SHELL's own primitive) to the raw guided
-   * surface. Two open rails loft into a surface, not a solid — same as
-   * AutoCAD's own open-cross-section LOFT — so guided lofts thicken that
-   * surface into a printable solid as part of the same command.
-   */
-  guideThickness?: number;
 }
 
 export interface PrimitiveFeature {
@@ -734,6 +727,33 @@ export interface Solid {
   sourceEntityIds: string[];
   feature: SolidFeature;
   /** Exact source geometry. `mesh` remains a disposable rendering/picking cache. */
+  exact?: ExactSolidGeometry;
+  revision: number;
+}
+
+/**
+ * A mesh with no enclosed volume — a LOFT between two open rails (AutoCAD's
+ * own LOFT "Guides"/open-cross-section behaviour) produces one of these, not
+ * a `Solid`. THICKEN and SURFSCULPT are what turn a Surface into a real
+ * `Solid`, the same way AutoCAD keeps LOFT/THICKEN/SURFSCULPT as separate
+ * commands rather than having LOFT guess a wall thickness on its own.
+ *
+ * Deliberately its own type, not `Solid` plus a flag: kept the two concepts
+ * (has volume vs. does not) unambiguous everywhere a `Solid` is handled,
+ * rather than adding an "is this one actually a surface?" question to every
+ * one of those call sites.
+ */
+export interface Surface {
+  id: string;
+  name: string;
+  layer: string;
+  mesh: SolidMesh;
+  aci: number;
+  color: number;
+  selected: boolean;
+  sourceEntityIds: string[];
+  /** Shares Solid's feature union — only 'loft' appears here today. */
+  feature: SolidFeature;
   exact?: ExactSolidGeometry;
   revision: number;
 }
@@ -786,6 +806,25 @@ export function cloneSolidValue(solid: Solid): Solid {
     } : undefined,
     sourceEntityIds: [...solid.sourceEntityIds],
     feature: JSON.parse(JSON.stringify(solid.feature)) as SolidFeature,
+  };
+}
+
+/** Same reasoning as `cloneSolidValue` — typed mesh arrays need a real copy. */
+export function cloneSurfaceValue(surface: Surface): Surface {
+  return {
+    ...surface,
+    mesh: {
+      positions: surface.mesh.positions.slice(),
+      indices: surface.mesh.indices.slice(),
+      triangleFaceIds: surface.mesh.triangleFaceIds?.slice(),
+    },
+    exact: surface.exact ? {
+      ...surface.exact,
+      shape: { ...surface.exact.shape },
+      transform: surface.exact.transform ? [...surface.exact.transform] as AffineTransform3 : undefined,
+    } : undefined,
+    sourceEntityIds: [...surface.sourceEntityIds],
+    feature: JSON.parse(JSON.stringify(surface.feature)) as SolidFeature,
   };
 }
 

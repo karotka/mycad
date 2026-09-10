@@ -1199,6 +1199,61 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     return this.wrap(solid.shape(this).Reversed());
   }
 
+  /**
+   * SURFSCULPT: sews N open shells that together form a watertight boundary
+   * (no free edges) into one closed shell, then builds a real solid from it
+   * — same sewing-then-MakeSolid shape as `fromMesh`'s own per-triangle
+   * version, just starting from whole surfaces instead of raw triangles.
+   */
+  sculptSolid(surfaces: readonly OpenCascadeSolid[]): OpenCascadeSolid {
+    if (surfaces.length < 2) throw new Error('Surfsculpt requires at least two surfaces.');
+    const sewing = new this.oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+    let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
+    let sewed: TopoDS_Shape | null = null;
+    const shells: TopoDS_Shape[] = [];
+    const typedShells: ReturnType<typeof this.oc.TopoDS.Shell_1>[] = [];
+    let solidMaker: InstanceType<typeof this.oc.BRepBuilderAPI_MakeSolid_1> | null = null;
+    let solid: ReturnType<InstanceType<typeof this.oc.BRepBuilderAPI_MakeSolid_1>['Solid']> | null = null;
+    try {
+      for (const surface of surfaces) sewing.Add(surface.shape(this));
+      progress = new this.oc.Message_ProgressRange_1();
+      sewing.Perform(progress);
+      if (sewing.NbFreeEdges() !== 0) {
+        throw new Error(`Surfsculpt requires a watertight network — ${sewing.NbFreeEdges()} free edge(s) remain.`);
+      }
+      sewed = sewing.SewedShape();
+      if (sewed.IsNull()) throw new Error('OpenCascade could not sew the selected surfaces.');
+      if (sewed.ShapeType() === this.oc.TopAbs_ShapeEnum.TopAbs_SHELL as unknown as TopAbs_ShapeEnum) {
+        shells.push(this.copyShape(sewed));
+      } else {
+        shells.push(...this.subShapes(sewed, this.oc.TopAbs_ShapeEnum.TopAbs_SHELL));
+      }
+      if (shells.length === 0) throw new Error('The sewn surfaces contain no closed shell.');
+      solidMaker = new this.oc.BRepBuilderAPI_MakeSolid_1();
+      for (const shellShape of shells) {
+        const shell = this.oc.TopoDS.Shell_1(shellShape);
+        typedShells.push(shell);
+        solidMaker.Add(shell);
+      }
+      if (!solidMaker.IsDone()) throw new Error('OpenCascade could not make a solid from the sewn surfaces.');
+      solid = solidMaker.Solid();
+      this.oc.BRepLib.OrientClosedSolid(solid);
+      const analyzer = new this.oc.BRepCheck_Analyzer(solid, true, false);
+      const valid = analyzer.IsValid_2();
+      analyzer.delete();
+      if (!valid) throw new Error('The sculpted solid is invalid.');
+      return this.wrap(this.copyShape(solid));
+    } finally {
+      solid?.delete();
+      solidMaker?.delete();
+      typedShells.forEach((shell) => shell.delete());
+      shells.forEach((shell) => shell.delete());
+      sewed?.delete();
+      progress?.delete();
+      sewing.delete();
+    }
+  }
+
   heal(solid: OpenCascadeSolid): OpenCascadeSolid {
     const unifier = new this.oc.ShapeUpgrade_UnifySameDomain_2(
       solid.shape(this),

@@ -478,10 +478,12 @@ function drawFrame(): void {
     }));
     const visibleEntities = cadDocument.entities.filter((entity) => !cadDocument.hiddenLayers.has(entity.layer) && !cadDocument.hiddenObjects.has(entity.id));
     const visibleSolids = cadDocument.solids.filter((solid) => !cadDocument.hiddenLayers.has(solid.layer) && !cadDocument.hiddenObjects.has(solid.id));
+    const visibleSurfaces = cadDocument.surfaces.filter((surface) => !cadDocument.hiddenLayers.has(surface.layer) && !cadDocument.hiddenObjects.has(surface.id));
     renderer3d.syncEntities(visibleEntities);
     renderer3d.syncPreview(previewController.preview);
     renderer3d.syncGrips(grips);
     renderer3d.syncSolids(visibleSolids);
+    renderer3d.syncSurfaces(visibleSurfaces);
     renderer3d.render();
   }
   // The view cube turns with the camera, so it is the one piece of chrome that

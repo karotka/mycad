@@ -1,4 +1,4 @@
-import { closedVertices, getEntityPoints, isClosedBezierEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -11,20 +11,35 @@ export interface ExactSolidResult {
   exact: NonNullable<Solid['exact']>;
 }
 
-export function hasCurrentExactGeometry(solid: Solid): boolean {
+/**
+ * What `promoteSolidToExact`/`openExactShape`/the THICKEN and SURFSCULPT
+ * builders actually touch — both `Solid` and `Surface` satisfy this
+ * structurally, so none of those functions' bodies need to change to work
+ * on either. The only real difference between the two is `solidCount`
+ * (enforced once, in `exactResult`), not anything about how their exact
+ * geometry gets built or reopened.
+ */
+export type ExactBody = Pick<Solid, 'mesh' | 'feature' | 'exact' | 'revision'>;
+
+export function hasCurrentExactGeometry(solid: ExactBody): boolean {
   return solid.exact?.kernel === 'opencascade' && solid.exact.revision === solid.revision;
 }
 
-/** Upgrades an old feature/mesh solid to the exact kernel without changing its revision. */
-export async function promoteSolidToExact(solid: Solid): Promise<boolean> {
+/** Upgrades an old feature/mesh solid to the exact kernel without changing its revision.
+ *  `allowOpenShell` must be true for a Surface — see `buildExactFeature`'s own doc comment. */
+export async function promoteSolidToExact(solid: ExactBody, allowOpenShell = false): Promise<boolean> {
   if (hasCurrentExactGeometry(solid)) return true;
   try {
-    const rebuilt = await buildExactFeature(solid.feature, solid.revision);
+    const rebuilt = await buildExactFeature(solid.feature, solid.revision, allowOpenShell);
     if (rebuilt) {
       solid.mesh = rebuilt.mesh;
       solid.exact = rebuilt.exact;
       return true;
     }
+    // A legacy mesh-only fallback is always a real, closed body (fromMesh
+    // itself requires a two-manifold mesh) — never reached for a Surface,
+    // which always has a live feature tree (rebuilt above) from the moment
+    // LOFT creates it.
     const kernel = await openCascadeKernel();
     const faceted = kernel.fromMesh(solid.mesh.positions, solid.mesh.indices);
     let healed: OpenCascadeSolid | null = null;
@@ -50,13 +65,19 @@ export async function buildExactBox(feature: PrimitiveFeature, revision = 0): Pr
   return result;
 }
 
-/** Builds the exact subset of the feature tree currently supported in production. */
-export async function buildExactFeature(feature: SolidFeature, revision = 0): Promise<ExactSolidResult | null> {
+/**
+ * Builds the exact subset of the feature tree currently supported in
+ * production. `allowOpenShell` must be true for a LOFT between two open
+ * rails (AutoCAD's own LOFT "Guides"/open-cross-section behaviour) — that
+ * builds a Surface, which has no enclosed volume by definition, and
+ * `exactResult` otherwise rejects exactly that.
+ */
+export async function buildExactFeature(feature: SolidFeature, revision = 0, allowOpenShell = false): Promise<ExactSolidResult | null> {
   const kernel = await openCascadeKernel();
   const shape = exactShapeFromFeature(feature, kernel);
   if (!shape) return null;
   try {
-    return exactResult(kernel, shape, revision);
+    return exactResult(kernel, shape, revision, allowOpenShell);
   } finally {
     shape.dispose();
   }
@@ -156,10 +177,11 @@ function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): Open
  * in (that is the whole point of lofting between different sketches).
  */
 function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
-  // guideThickness (unlike `guides`, which can legitimately be empty — two
-  // open rails with a flat wall between them, no bend) is the one field only
-  // ever set for a rails-mode loft, never a classic one — see loftStep.
-  if (feature.guideThickness !== undefined) return exactGuidedLoftShape(feature, kernel);
+  // Exactly two open rails is its own mode, guides or not (a plain flat wall
+  // between them is still valid, see loftGuidedSurface) — the same dispatch
+  // loftStep itself uses to decide the command's own flow.
+  const bothRailsOpen = feature.profiles.length === 2 && feature.profiles.every((profile) => !isSweepProfileEntity(profile));
+  if (bothRailsOpen) return exactGuidedLoftShape(feature, kernel);
   // Straight-interpolating between sections needs at least two; a single
   // closed profile is only valid bent along a path (AutoCAD's own
   // single-cross-section LOFT-with-guide).
@@ -221,7 +243,6 @@ function survivesTessellation(kernel: OpenCascadeKernel, shape: OpenCascadeSolid
  */
 function exactGuidedLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
   if (feature.profiles.length !== 2) return null;
-  if (!feature.guideThickness || feature.guideThickness <= 0) return null;
   const [rail1Entity, rail2Entity] = feature.profiles;
   const rail1 = exactSweepPath(rail1Entity, rail1Entity.workPlane ?? WORLD_WORK_PLANE);
   const rail2 = exactSweepPath(rail2Entity, rail2Entity.workPlane ?? WORLD_WORK_PLANE);
@@ -236,36 +257,80 @@ function exactGuidedLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): 
   // to, this one can genuinely throw on bad-but-plausible input (rails that
   // don't share both endpoints, a guide OCCT can't fit a surface through) —
   // same as SHELL/DRAFT's own kernel calls, so it gets the same try/catch.
-  let surface: OpenCascadeSolid | null = null;
+  // The bare open shell is the whole result — see loftGuidedSurface's own
+  // doc comment. Whoever calls buildExactFeature for this feature passes
+  // allowOpenShell so exactResult doesn't reject it for lacking a volume.
   try {
-    surface = kernel.loftGuidedSurface(rail1, rail2, guides);
-    // A real solid has an unambiguous inside, which is what
-    // MakeThickSolidBySimple's own offset direction relies on; a bare open
-    // shell (what this always is — see loftGuidedSurface's own doc comment)
-    // does not, and which way it resolves "inward" for one can depend on
-    // how that surface's own faces happened to come out oriented, not on
-    // anything about the geometry the caller actually cares about.
-    // Confirmed directly: the identical shape, sewn from curves that only
-    // differ in which way they were wound, thickened cleanly one way and
-    // came back self-intersecting the other. Retrying with every face
-    // flipped is the same fix a person would reach for by hand.
-    const attempt = kernel.shell(surface, null, feature.guideThickness);
-    if (survivesTessellation(kernel, attempt)) return attempt;
-    attempt.dispose();
-    const flipped = kernel.reversed(surface);
-    const retry = kernel.shell(flipped, null, feature.guideThickness);
-    flipped.dispose();
-    // buildExactFeature's own finalization (exactResult) throws on an
-    // invalid shape rather than returning null — this contract's own caller
-    // (loftStep) only expects a clean null on failure, so that check happens
-    // here instead of letting it surface as an uncaught rejection.
-    if (survivesTessellation(kernel, retry)) return retry;
-    retry.dispose();
+    return kernel.loftGuidedSurface(rail1, rail2, guides);
+  } catch {
     return null;
+  }
+}
+
+/**
+ * THICKEN: a Surface has no enclosed volume, so `kernel.shell`'s own offset
+ * direction (which relies on a real solid's unambiguous inside) is not
+ * guaranteed to land the right way — confirmed directly: the identical
+ * shape, sewn from curves that only differ in which way they were wound,
+ * thickened cleanly one way and came back self-intersecting the other.
+ * Retrying with every face flipped is the same fix a person would reach for
+ * by hand; `survivesTessellation` is the real check, since a shape can pass
+ * `BRepCheck_Analyzer` and still fail to mesh (see its own doc comment).
+ */
+export async function thickenExactSurface(surface: ExactBody, thickness: number, revision: number): Promise<ExactSolidResult | null> {
+  if (!Number.isFinite(thickness) || thickness <= 0) return null;
+  if (!await promoteSolidToExact(surface, true)) return null;
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(surface, kernel);
+  if (!source) return null;
+  let attempt: OpenCascadeSolid | null = null;
+  let flipped: OpenCascadeSolid | null = null;
+  let retry: OpenCascadeSolid | null = null;
+  try {
+    attempt = kernel.shell(source, null, thickness);
+    const result = survivesTessellation(kernel, attempt) ? attempt : null;
+    if (result) return exactResult(kernel, result, revision);
+    flipped = kernel.reversed(source);
+    retry = kernel.shell(flipped, null, thickness);
+    if (!survivesTessellation(kernel, retry)) return null;
+    return exactResult(kernel, retry, revision);
   } catch {
     return null;
   } finally {
-    surface?.dispose();
+    attempt?.dispose();
+    flipped?.dispose();
+    retry?.dispose();
+    source.dispose();
+  }
+}
+
+/**
+ * SURFSCULPT: sews N surfaces that together form a watertight boundary into
+ * one closed shell, then builds a real solid from it. `NbFreeEdges() > 0`
+ * (a gap somewhere in the network) is the one expected failure mode, given
+ * a clear count rather than a generic OCCT error.
+ */
+export async function sculptExactSolid(surfaces: readonly ExactBody[], revision: number): Promise<ExactSolidResult | null> {
+  if (surfaces.length < 2) return null;
+  const kernel = await openCascadeKernel();
+  const sources: OpenCascadeSolid[] = [];
+  try {
+    for (const surface of surfaces) {
+      if (!await promoteSolidToExact(surface, true)) return null;
+      const source = await openExactShape(surface, kernel);
+      if (!source) return null;
+      sources.push(source);
+    }
+    const sculpted = kernel.sculptSolid(sources);
+    try {
+      return exactResult(kernel, sculpted, revision);
+    } finally {
+      sculpted.dispose();
+    }
+  } catch {
+    return null;
+  } finally {
+    sources.forEach((source) => source.dispose());
   }
 }
 
@@ -657,7 +722,7 @@ function isIdentity(transform: AffineTransform3): boolean {
 }
 
 export async function openExactShape(
-  solid: Solid,
+  solid: ExactBody,
   kernel: OpenCascadeKernel,
 ): Promise<OpenCascadeSolid | null> {
   if (!hasCurrentExactGeometry(solid)) return null;
@@ -1045,9 +1110,10 @@ export function exactResult(
   kernel: OpenCascadeKernel,
   shape: OpenCascadeSolid,
   revision: number,
+  allowOpenShell = false,
 ): ExactSolidResult {
   const inspection = kernel.inspect(shape);
-  if (!inspection.valid || inspection.solidCount < 1) {
+  if (!inspection.valid || (!allowOpenShell && inspection.solidCount < 1)) {
     throw new Error('OpenCascade produced an invalid or empty exact solid.');
   }
   const serialized = kernel.serialize(shape);

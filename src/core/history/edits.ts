@@ -1,5 +1,5 @@
 import type { Document, NamedWorkPlane } from '../Document';
-import { cloneBlockDefinition, cloneEntity, cloneSolidValue, type BlockDefinition, type Entity, type Solid } from '../entities/types';
+import { cloneBlockDefinition, cloneEntity, cloneSolidValue, cloneSurfaceValue, type BlockDefinition, type Entity, type Solid, type Surface } from '../entities/types';
 import type { DocumentEdit } from './CommandHistory';
 import { ACI_WHITE, aciToRgb } from '../../io/DxfAci';
 import { cloneWorkPlane, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
@@ -21,6 +21,14 @@ function replaceSolid(doc: Document, value: Solid): void {
   const copy = cloneSolid(value);
   if (index >= 0) doc.solids[index] = copy;
   else doc.solids.push(copy);
+  doc.notify();
+}
+
+function replaceSurface(doc: Document, value: Surface): void {
+  const index = doc.surfaces.findIndex((surface) => surface.id === value.id);
+  const copy = cloneSurfaceValue(value);
+  if (index >= 0) doc.surfaces[index] = copy;
+  else doc.surfaces.push(copy);
   doc.notify();
 }
 
@@ -227,18 +235,31 @@ export class ReplaceObjectsEdit implements DocumentEdit {
     private readonly beforeSolids: Solid[],
     private readonly afterEntities: Entity[],
     private readonly afterSolids: Solid[],
+    private readonly beforeSurfaces: Surface[] = [],
+    private readonly afterSurfaces: Surface[] = [],
   ) {}
 
-  apply(doc: Document): void { this.replace(doc, this.beforeEntities, this.beforeSolids, this.afterEntities, this.afterSolids); }
-  revert(doc: Document): void { this.replace(doc, this.afterEntities, this.afterSolids, this.beforeEntities, this.beforeSolids); }
+  apply(doc: Document): void {
+    this.replace(doc, this.beforeEntities, this.beforeSolids, this.beforeSurfaces, this.afterEntities, this.afterSolids, this.afterSurfaces);
+  }
+  revert(doc: Document): void {
+    this.replace(doc, this.afterEntities, this.afterSolids, this.afterSurfaces, this.beforeEntities, this.beforeSolids, this.beforeSurfaces);
+  }
 
-  private replace(doc: Document, removeEntities: Entity[], removeSolids: Solid[], addEntities: Entity[], addSolids: Solid[]): void {
+  private replace(
+    doc: Document,
+    removeEntities: Entity[], removeSolids: Solid[], removeSurfaces: Surface[],
+    addEntities: Entity[], addSolids: Solid[], addSurfaces: Surface[],
+  ): void {
     const entityIds = new Set(removeEntities.map((entity) => entity.id));
     const solidIds = new Set(removeSolids.map((solid) => solid.id));
+    const surfaceIds = new Set(removeSurfaces.map((surface) => surface.id));
     doc.entities = doc.entities.filter((entity) => !entityIds.has(entity.id));
     doc.solids = doc.solids.filter((solid) => !solidIds.has(solid.id));
+    doc.surfaces = doc.surfaces.filter((surface) => !surfaceIds.has(surface.id));
     for (const entity of addEntities) replaceEntity(doc, entity);
     for (const solid of addSolids) replaceSolid(doc, solid);
+    for (const surface of addSurfaces) replaceSurface(doc, surface);
     doc.pruneSelection();
     doc.notify();
   }
