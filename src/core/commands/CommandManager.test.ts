@@ -3651,17 +3651,51 @@ describe('LOFT', () => {
     expect(kit.doc.entities).toHaveLength(2);
   });
 
-  it('refuses to loft with only one profile', async () => {
+  it('refuses to loft with only one profile and no path', async () => {
     const kit = setup();
     const only = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
     kit.doc.addEntity(only);
 
     kit.manager.startCommand('LOFT');
     await kit.manager.handleClick({ x: 0, y: 0 }, only);
-    await kit.manager.submitInput('');
+    await kit.manager.submitInput(''); // finish gathering profiles (just the one)
+    await kit.manager.submitInput(''); // skip the path too — now it must fail
 
     expect(kit.doc.solids).toHaveLength(0);
-    expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles.');
+    expect(kit.log).toHaveBeenCalledWith('LOFT requires at least two profiles, or one profile with a path to bend it along.');
+  });
+
+  it('lofts a single closed profile bent along a path — AutoCAD\'s single-cross-section LOFT with a guide', async () => {
+    const kit = setup();
+    // One spline half, mirrored and joined into one closed outline — exactly
+    // how a hand-drawn silhouette (e.g. a spoon) becomes a single profile.
+    const upper = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+    const lower = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+    kit.doc.addEntity(upper);
+    kit.doc.addEntity(lower);
+    kit.doc.selectEntity(upper.id, true);
+    kit.doc.selectEntity(lower.id, true);
+    kit.manager.startCommand('JOIN');
+    await kit.manager.submitInput('');
+    const profile = kit.doc.entities.find((entity) => entity.type === 'bezier')!;
+
+    // A guide arc crossing through the profile's plane — bends the flat
+    // outline out of its own plane as it rides along.
+    const path = kit.doc.createArc({ x: 20, y: -20 }, 20, Math.PI * 0.3, Math.PI * 0.4);
+    path.workPlane = { origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 } };
+    kit.doc.addEntity(path);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 25, y: 15 }, profile);
+    await kit.manager.submitInput(''); // finish gathering profiles (just the one)
+    await kit.manager.handleClick({ x: 30, y: -5 }, path);
+
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
+    // The whole point: the flat (z = 0) profile actually bent out of its own
+    // plane, following the path — not a degenerate, still-flat result.
+    const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zValues) - Math.min(...zValues)).toBeGreaterThan(1);
   });
 
   it('lofts two circles into a solid — a circle is a valid loft section, not only a polygon', async () => {

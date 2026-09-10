@@ -271,6 +271,38 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(kernel.inspect(guided).bounds.max.x).toBeGreaterThan(kernel.inspect(straight).bounds.max.x + 1);
   });
 
+  it('lofts a single closed profile bent along a path — AutoCAD\'s single-cross-section LOFT with a guide', () => {
+    // A flat, closed Bezier-wire profile (the same shape a hand-drawn,
+    // mirrored-and-joined silhouette produces) — no second section at all.
+    const flatOutline = {
+      kind: 'wire' as const,
+      edges: [
+        { kind: 'bezier' as const, poles: [
+          { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+        ] },
+        { kind: 'bezier' as const, poles: [
+          { x: 51.5, y: 11.5, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 4.5, y: 12, z: 0 },
+        ] },
+      ],
+    };
+    const path = [{
+      kind: 'arc' as const,
+      center: { x: 20, y: 0, z: -20 },
+      normal: { x: 0, y: -1, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      radius: 20,
+      startAngle: Math.PI * 0.3,
+      sweepAngle: Math.PI * 0.4,
+    }];
+    const bent = keep(kernel.loftAlongPath([flatOutline], path));
+    const inspected = kernel.inspect(bent);
+    expect(inspected.valid).toBe(true);
+    expect(inspected.solidCount).toBe(1);
+    // The point of bending a flat (z = 0) profile along the path: it must
+    // actually leave its own plane, not come out still flat.
+    expect(inspected.bounds.max.z - inspected.bounds.min.z).toBeGreaterThan(1);
+  });
+
   it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
     const wire = keep(kernel.extrudeWire([
       { kind: 'line', start: { x: -2, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },

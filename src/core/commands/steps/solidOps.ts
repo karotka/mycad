@@ -470,11 +470,17 @@ export async function loftStep(run: CommandRun): Promise<StepOutcome> {
       return 'stay';
     }
     const profiles = data.entities as Entity[];
-    if (profiles.length < 2) {
-      ctx.log('LOFT requires at least two profiles.');
+    if (profiles.length < 1) {
+      ctx.log('LOFT requires at least one profile.');
       run.cancel();
       return 'advance';
     }
+    // A single profile only becomes a loft with a path to bend it along —
+    // AutoCAD's own single-cross-section LOFT-with-guide, the same way a
+    // closed 2D outline (one spline mirrored into a second half and joined)
+    // gets swept into a curved solid instead of staying flat. The path step
+    // ahead still lets a lone profile through; the check below, once the
+    // path answer is in, is what actually enforces this.
     return 'advance';
   }
 
@@ -485,6 +491,10 @@ export async function loftStep(run: CommandRun): Promise<StepOutcome> {
   if (path && !isSweepPath(path)) {
     ctx.log('Loft path must be a line, polyline, arc, circle or Bezier.');
     return 'stay';
+  }
+  if (!path && profiles.length < 2) {
+    ctx.log('LOFT requires at least two profiles, or one profile with a path to bend it along.');
+    return 'advance';
   }
   ctx.log('Lofting…');
   const feature: LoftFeature = path ? { kind: 'loft', profiles, path } : { kind: 'loft', profiles };

@@ -529,7 +529,11 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
    * pipe is a special case of.
    */
   loftAlongPath(sections: readonly SweepProfile3[], path: readonly SweepPathSegment3[]): OpenCascadeSolid {
-    if (sections.length < 2) throw new Error('Loft along a path requires at least two sections.');
+    // A single section is a real case, not a degenerate one: a single closed
+    // profile bent along a path (confirmed directly — MakePipeShell handles
+    // one profile natively; the two-or-more requirement only ever applied to
+    // straight-interpolating loftProfiles/ThruSections).
+    if (sections.length < 1) throw new Error('Loft along a path requires at least one section.');
     if (path.length === 0) throw new Error('Loft path requires at least one segment.');
 
     const owned: Array<{ delete(): void }> = [];

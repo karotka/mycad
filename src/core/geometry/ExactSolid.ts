@@ -156,7 +156,11 @@ function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): Open
  * in (that is the whole point of lofting between different sketches).
  */
 function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
-  if (feature.profiles.length < 2) return null;
+  // Straight-interpolating between sections needs at least two; a single
+  // closed profile is only valid bent along a path (AutoCAD's own
+  // single-cross-section LOFT-with-guide).
+  if (feature.profiles.length < 1) return null;
+  if (feature.profiles.length < 2 && !feature.path) return null;
   const sections: SweepProfile3[] = [];
   for (const profile of feature.profiles) {
     // The same profile-to-wire conversion SWEEP uses — a circle or a closed
