@@ -1,4 +1,4 @@
-import type { Vec2 } from '../math/geometry';
+import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity, Solid, SolidFaceSelection } from '../core/entities/types';
@@ -150,12 +150,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // AutoCAD's own convention: a cross where a picked point established a
     // temporary, UCS-parallel drawing plane, so a later point landing
     // somewhere unexpected in the same command has an obvious reason why —
-    // see PointResolver's own "drawing" branch for where this gets set.
-    // 2D view has no camera to project the plane's true 3D origin through,
+    // see PointResolver's own "drawing" branch for where this gets set. Shown
+    // at the actual point that established the plane (drawingPlaneAnchor),
+    // NOT drawingPlane.origin — that only shares the anchor's elevation
+    // along the UCS normal, its own x/y stay at the UCS origin's, so it can
+    // land nowhere near the click that set it.
+    // 2D view has no camera to project the anchor's true 3D position through,
     // so it only ever shows in 3D, where this actually arises.
     const drawingPlane = commands.active?.data.drawingPlane as WorkPlane | undefined;
-    if (drawingPlane && cadDocument.viewMode === '3d') {
-      previewController.showDrawingPlaneOrigin(drawingPlane.origin, sx, sy);
+    const drawingPlaneAnchor = commands.active?.data.drawingPlaneAnchor as Vec3 | undefined;
+    if (drawingPlane && drawingPlaneAnchor && cadDocument.viewMode === '3d') {
+      previewController.showDrawingPlaneOrigin(drawingPlaneAnchor, sx, sy);
     } else {
       previewController.hideDrawingPlaneOrigin();
     }

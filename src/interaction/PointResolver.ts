@@ -169,7 +169,15 @@ export function createPointResolver(ctx: PointResolverContext) {
             plane.origin.x += plane.zAxis.x * local.z;
             plane.origin.y += plane.zAxis.y * local.z;
             plane.origin.z += plane.zAxis.z * local.z;
-            if (commit) active.data.drawingPlane = plane;
+            if (commit) {
+              active.data.drawingPlane = plane;
+              // plane.origin only shares the snapped point's elevation along
+              // the UCS normal — its own x/y stay at the UCS origin's, since
+              // only orientation matters for the math above. The marker
+              // needs the actual point that established the plane, not that
+              // arbitrary point on it, or it renders nowhere near the click.
+              active.data.drawingPlaneAnchor = targetedSnap.world;
+            }
           }
         }
         const local = worldToLocal(plane ?? doc.activeWorkPlane, targetedSnap.world);

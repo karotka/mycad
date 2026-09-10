@@ -123,8 +123,11 @@ describe('interactionPoint (drawing branch): drawingPlane only latches on a real
     doc.drafting.objectSnapEnabled = true;
     doc.drafting.objectSnapModes = ['end'];
     const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    // Off the world UCS both in elevation AND in x/y, so a marker drawn at
+    // plane.origin (the UCS origin merely shifted in z) lands somewhere
+    // else entirely from a marker drawn at the real snapped point.
     line.workPlane = {
-      origin: { x: 0, y: 0, z: 5 },
+      origin: { x: 30, y: 20, z: 5 },
       xAxis: { x: 1, y: 0, z: 0 },
       yAxis: { x: 0, y: 1, z: 0 },
       zAxis: { x: 0, y: 0, z: 1 },
@@ -152,5 +155,43 @@ describe('interactionPoint (drawing branch): drawingPlane only latches on a real
     const committed = resolver.interactionPoint({ clientX: 50, clientY: 50 }, true);
     expect(committed).not.toBeNull();
     expect(active.data.drawingPlane).toBeDefined();
+  });
+
+  it('stores the real snapped point as drawingPlaneAnchor, not the plane\'s own (UCS-origin-derived) origin', () => {
+    // plane.origin only ever shares the snapped point's elevation along the
+    // UCS normal — its own x/y stay at the UCS origin's, since only
+    // orientation matters for the plane-fitting math. A marker drawn there
+    // instead of at the real point lands nowhere near where the user clicked.
+    const doc = new Document();
+    doc.viewMode = '3d';
+    doc.drafting.objectSnapEnabled = true;
+    doc.drafting.objectSnapModes = ['end'];
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line.workPlane = {
+      origin: { x: 30, y: 20, z: 5 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      yAxis: { x: 0, y: 1, z: 0 },
+      zAxis: { x: 0, y: 0, z: 1 },
+    };
+    doc.addEntity(line);
+    const active = {
+      name: 'LINE',
+      stepIndex: 0,
+      steps: [{ kind: 'point', label: 'Start point:' }],
+      data: {} as Record<string, unknown>,
+    };
+    const ctx = makeCtx({ doc });
+    ctx.commands = { active } as unknown as typeof ctx.commands;
+    ctx.renderer3d = {
+      ...ctx.renderer3d,
+      projectCadPoint: vi.fn(() => ({ x: 50, y: 50 })),
+    } as unknown as typeof ctx.renderer3d;
+    const resolver = createPointResolver(ctx);
+
+    resolver.interactionPoint({ clientX: 50, clientY: 50 }, true);
+
+    expect(active.data.drawingPlaneAnchor).toEqual({ x: 30, y: 20, z: 5 });
+    const plane = active.data.drawingPlane as { origin: { x: number; y: number; z: number } };
+    expect(plane.origin).toEqual({ x: 0, y: 0, z: 5 });
   });
 });
