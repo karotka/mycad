@@ -1186,6 +1186,19 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     return this.wrap(result);
   }
 
+  /**
+   * A shape with every face orientation flipped — same shape, opposite sense.
+   * A real solid always has an unambiguous inside; a bare open shell (a lone
+   * guided-loft surface, say, before SHELL/MakeThickSolidBySimple gives it a
+   * wall) does not, so which way "inward" resolves to can come out either
+   * way depending on how the surface happened to be built. This is the tool
+   * a caller in that position retries with when the first attempt comes back
+   * invalid — see exactGuidedLoftShape's own use of it.
+   */
+  reversed(solid: OpenCascadeSolid): OpenCascadeSolid {
+    return this.wrap(solid.shape(this).Reversed());
+  }
+
   heal(solid: OpenCascadeSolid): OpenCascadeSolid {
     const unifier = new this.oc.ShapeUpgrade_UnifySameDomain_2(
       solid.shape(this),

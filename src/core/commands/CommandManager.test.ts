@@ -3840,6 +3840,36 @@ describe('LOFT', () => {
     expect(kit.doc.entities).toHaveLength(3);
   });
 
+  it('routes two open rails with NO guides through the rails pipeline, not the classic closed-profile one', async () => {
+    // Two open rails is its own mode regardless of whether any guide curve
+    // is actually picked — skipping straight to a thickness must not fall
+    // through to the classic closed-profile path (which rejects open
+    // profiles outright with a misleading "must be closed" message). Proven
+    // here by the FAILURE message alone: whether the rails-mode build itself
+    // then succeeds for any given pair of rails is a separate, real, and
+    // still-open question — the plain (no-guide) 2-boundary-curve Coons fill
+    // this falls back to is not yet reliably thickenable for every rail
+    // shape (confirmed directly against several rail/curve combinations,
+    // straight-edged ones included — not merely a "the input was too
+    // extreme" case). Guides — GeomFill_BSplineCurves' 3/4-curve fills — are
+    // the reliably working path; this only guards the routing decision.
+    const kit = setup();
+    const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
+    const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
+    kit.doc.addEntity(rail1);
+    kit.doc.addEntity(rail2);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
+    await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
+    await kit.manager.submitInput(''); // finish gathering profiles (the two open rails)
+    await kit.manager.submitInput(''); // skip guides entirely
+    await kit.manager.submitInput('2'); // wall thickness
+
+    expect(kit.log).not.toHaveBeenCalledWith(expect.stringContaining('every profile is closed'));
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('share both their own endpoints'));
+  });
+
   it('refuses a guided loft with no wall thickness', async () => {
     const kit = setup();
     const rail1 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
@@ -3985,7 +4015,7 @@ describe('LOFT', () => {
     await kit.manager.handleClick({ x: 22, y: 22 }, notAPath);
 
     expect(kit.doc.solids).toHaveLength(0);
-    expect(kit.log).toHaveBeenCalledWith('Loft path/guide must be a line, polyline, arc, circle or Bezier.');
+    expect(kit.log).toHaveBeenCalledWith('Loft path must be a line, polyline, arc, circle or Bezier.');
   });
 });
 

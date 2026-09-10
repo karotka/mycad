@@ -156,7 +156,10 @@ function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): Open
  * in (that is the whole point of lofting between different sketches).
  */
 function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
-  if (feature.guides && feature.guides.length > 0) return exactGuidedLoftShape(feature, kernel);
+  // guideThickness (unlike `guides`, which can legitimately be empty — two
+  // open rails with a flat wall between them, no bend) is the one field only
+  // ever set for a rails-mode loft, never a classic one — see loftStep.
+  if (feature.guideThickness !== undefined) return exactGuidedLoftShape(feature, kernel);
   // Straight-interpolating between sections needs at least two; a single
   // closed profile is only valid bent along a path (AutoCAD's own
   // single-cross-section LOFT-with-guide).
@@ -179,6 +182,33 @@ function exactLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): OpenCa
   // the path's own tangent — see loftAlongPath's own comment for why.
   const firstPlane = feature.profiles[0].workPlane ?? WORLD_WORK_PLANE;
   return kernel.loftAlongPath(sections, path, { origin: firstPlane.origin, normal: firstPlane.zAxis, xAxis: firstPlane.xAxis });
+}
+
+/**
+ * `BRepCheck_Analyzer` (kernel.inspect's own `valid`) calls a shape valid
+ * even when one of its faces has no triangulation OCCT can actually produce
+ * — confirmed directly against a real thickened guided-loft surface: a
+ * degenerate side face where the offset direction runs nearly tangent to a
+ * curved boundary. Only an actual meshing attempt catches that.
+ */
+function survivesTessellation(kernel: OpenCascadeKernel, shape: OpenCascadeSolid): boolean {
+  if (!kernel.inspect(shape).valid) return false;
+  // Tessellating attaches triangulation data to the shape it's called on —
+  // confirmed directly to change what a LATER inspect()/tessellate() call on
+  // that same shape object reports, so this must never touch `shape` itself
+  // (the caller reuses it for its own real result). Check a throwaway
+  // deserialized copy instead — the same independent-copy round trip
+  // buildExactFeature's own exactResult() does before its real tessellate.
+  let copy: OpenCascadeSolid | null = null;
+  try {
+    copy = kernel.deserialize(kernel.serialize(shape));
+    kernel.tessellate(copy);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    copy?.dispose();
+  }
 }
 
 /**
@@ -209,7 +239,29 @@ function exactGuidedLoftShape(feature: LoftFeature, kernel: OpenCascadeKernel): 
   let surface: OpenCascadeSolid | null = null;
   try {
     surface = kernel.loftGuidedSurface(rail1, rail2, guides);
-    return kernel.shell(surface, null, feature.guideThickness);
+    // A real solid has an unambiguous inside, which is what
+    // MakeThickSolidBySimple's own offset direction relies on; a bare open
+    // shell (what this always is — see loftGuidedSurface's own doc comment)
+    // does not, and which way it resolves "inward" for one can depend on
+    // how that surface's own faces happened to come out oriented, not on
+    // anything about the geometry the caller actually cares about.
+    // Confirmed directly: the identical shape, sewn from curves that only
+    // differ in which way they were wound, thickened cleanly one way and
+    // came back self-intersecting the other. Retrying with every face
+    // flipped is the same fix a person would reach for by hand.
+    const attempt = kernel.shell(surface, null, feature.guideThickness);
+    if (survivesTessellation(kernel, attempt)) return attempt;
+    attempt.dispose();
+    const flipped = kernel.reversed(surface);
+    const retry = kernel.shell(flipped, null, feature.guideThickness);
+    flipped.dispose();
+    // buildExactFeature's own finalization (exactResult) throws on an
+    // invalid shape rather than returning null — this contract's own caller
+    // (loftStep) only expects a clean null on failure, so that check happens
+    // here instead of letting it surface as an uncaught rejection.
+    if (survivesTessellation(kernel, retry)) return retry;
+    retry.dispose();
+    return null;
   } catch {
     return null;
   } finally {

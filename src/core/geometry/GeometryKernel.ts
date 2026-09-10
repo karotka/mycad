@@ -138,6 +138,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** null faceId hollows the solid completely closed; a given face opens as
    *  the shell's mouth. thickness always hollows inward. */
   shell(solid: Solid, faceId: number | null, thickness: number): Solid;
+  /** Same shape, every face orientation flipped — see OpenCascadeKernel's
+   *  own doc comment for why a caller would want this. */
+  reversed(solid: Solid): Solid;
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];
