@@ -174,6 +174,11 @@ type DragState = {
 export class GripController {
   mode: GripMode | null = null;
   hoveredGrip = -1;
+  /** Which embedded loft entity (embeddedLoftEntities' own flat ordering)
+   *  the cursor is currently nearest to — see visibleGrips()'s own comment
+   *  on why this exists. Set every pointermove via setNearestGripForDisplay
+   *  below; meaningless (and ignored) outside a Surface selection. */
+  hoveredEmbeddedIndex: number | null = null;
   private drag: DragState | null = null;
   private changed = false;
   /** Guards a surface's async kernel rebuild against a slower/stale one
@@ -569,7 +574,23 @@ export class GripController {
 
   visibleGrips(): Grip[] {
     const selected = this.doc.getSelectedEntities();
-    if (selected.length <= 1) return this.activeGrips();
+    if (selected.length <= 1) {
+      const grips = this.activeGrips();
+      // A Surface's embedded rails/guides can bake out to dozens of grip
+      // points shown at once (a spoon bowl's two 5-segment Bezier rails plus
+      // two arc guides is ~38) — reported directly as "points that don't
+      // belong to anything" once the camera moved and revealed the rest of
+      // an already-full, static set. Narrow the DISPLAY to only the curve
+      // nearest the cursor (hoveredEmbeddedIndex, kept current every
+      // pointermove — see its own comment). Picking still calls
+      // activeGrips() directly, unfiltered, so anything shown here remains
+      // exactly what's reachable — this only reduces what's drawn.
+      if (!selected[0] && !this.doc.getSelectedSolids()[0] && this.hoveredEmbeddedIndex !== null) {
+        const nearest = grips.filter((grip) => Math.floor(grip.index / 100) === this.hoveredEmbeddedIndex);
+        if (nearest.length > 0) return nearest;
+      }
+      return grips;
+    }
     const grips: Grip[] = [];
     selected.forEach((entity, objectIndex) => {
       const base = objectIndex * 100;
@@ -628,6 +649,19 @@ export class GripController {
       if (distance <= best) { best = distance; result = grip.index; }
     }
     return result;
+  }
+
+  /**
+   * Keeps hoveredEmbeddedIndex current — called every pointermove (see
+   * ViewportPointerHandler's own comment at its call site) with the
+   * NEAREST grip regardless of distance, not just one within pick range
+   * (e.g. `renderer3d.pickGripIndex(..., Infinity)`), so which curve is
+   * displayed narrows in smoothly as the cursor approaches it rather than
+   * only snapping in the last few pixels before a pick would actually land.
+   * A no-op outside a Surface selection — harmless to call unconditionally.
+   */
+  setNearestGripForDisplay(nearestGripIndex: number): void {
+    this.hoveredEmbeddedIndex = nearestGripIndex >= 0 ? Math.floor(nearestGripIndex / 100) : null;
   }
 
   begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, origin: Vec2, surface?: Surface): boolean {

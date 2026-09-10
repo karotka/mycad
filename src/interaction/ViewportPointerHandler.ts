@@ -350,12 +350,19 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     }
     else {
       if (cadDocument.viewMode === '2d') gripController.hoveredGrip = gripController.nearest2d(rawWorldPoint(event), 10 / renderer2d.zoom);
-      else gripController.hoveredGrip = renderer3d.pickGripIndex(
-        renderer3d.renderer.domElement,
-        activeGripsInWorld(),
-        event.clientX,
-        event.clientY
-      );
+      else {
+        const grips = activeGripsInWorld();
+        gripController.hoveredGrip = renderer3d.pickGripIndex(renderer3d.renderer.domElement, grips, event.clientX, event.clientY);
+        // Separate from the line above's tight pick tolerance: which curve
+        // to DISPLAY (a Surface's embedded rails/guides only show the one
+        // nearest the cursor — see GripController.visibleGrips' own
+        // comment) tracks the nearest grip regardless of distance, so it
+        // narrows in smoothly on approach rather than snapping only within
+        // the last few pixels a pick would actually land in.
+        gripController.setNearestGripForDisplay(
+          renderer3d.pickGripIndex(renderer3d.renderer.domElement, grips, event.clientX, event.clientY, Infinity),
+        );
+      }
     }
     coords.textContent = `X: ${p.x.toFixed(3)} mm Y: ${p.y.toFixed(3)} mm`;
     updateTrackingGuide();

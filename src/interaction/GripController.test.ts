@@ -708,6 +708,45 @@ describe('a Surface\'s embedded loft rails/guides', () => {
     expect(active.find((grip) => grip.index === 200)?.point).toEqual({ x: 3, y: 0 });
   });
 
+  it('displays only the grips of the embedded curve nearest the cursor, not every curve at once', () => {
+    // Real regression, reported directly against the user's own spoon bowl
+    // (2 five-segment Bezier rails + 2 arc guides — ~38 grip points total):
+    // activeGrips() must still return the FULL set (picking needs it,
+    // unfiltered), but visibleGrips() — what actually gets drawn — should
+    // only show whichever curve setNearestGripForDisplay last pointed at,
+    // or everything must still be a picker option was never called yet.
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const feature: LoftFeature = {
+      kind: 'loft',
+      profiles: [line({ x: 0, y: 0 }, { x: 10, y: 0 }), line({ x: 0, y: 5 }, { x: 10, y: 5 })],
+      guides: [line({ x: 3, y: 0 }, { x: 3, y: 5 })],
+    };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    // Before any pointer movement has set a nearest curve: show everything
+    // (a surface must never render with zero visible grips right after it
+    // was selected).
+    expect(grips.visibleGrips()).toHaveLength(6);
+    expect(grips.activeGrips()).toHaveLength(6);
+
+    // The cursor is now nearest guide 0 (flat index 200/201).
+    grips.setNearestGripForDisplay(200);
+    expect(grips.visibleGrips().map((grip) => grip.index).sort((a, b) => a - b)).toEqual([200, 201]);
+    // activeGrips() — what picking actually sees — is untouched.
+    expect(grips.activeGrips()).toHaveLength(6);
+
+    // The cursor moves to profile 1 instead.
+    grips.setNearestGripForDisplay(101);
+    expect(grips.visibleGrips().map((grip) => grip.index).sort((a, b) => a - b)).toEqual([100, 101]);
+
+    // Cursor moved off any grip entirely (index -1): back to showing everything.
+    grips.setNearestGripForDisplay(-1);
+    expect(grips.visibleGrips()).toHaveLength(6);
+  });
+
   it('gives no grips for a Surface whose feature was baked to a plain mesh', () => {
     const doc = new Document();
     const grips = new GripController(doc, new CommandHistory(doc));
