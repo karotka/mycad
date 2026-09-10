@@ -7,7 +7,7 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh } from '../../entities/types';
+import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh, type Surface } from '../../entities/types';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, draftExactSolid, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, draftExactSolid, extrudeExactSurface, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -26,6 +26,30 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
   const { active, data, value, step, ctx } = run;
   if (step.kind === 'entity' && active.stepIndex === 0) {
     if (!value) return 'advance';
+    if (typeof value === 'string') {
+      // A Surface pick — the step's own `accepts: ['entity', 'surface']`
+      // (registry.ts) is what lets a Surface reach here at all, arriving as
+      // its id rather than an Entity, the same convention THICKEN's own
+      // dedicated surface step uses. Only one at a time, and never mixed
+      // with 2D profiles: a Surface is already a full 3D shape, so gathering
+      // several (or combining one with flat profiles) has no single
+      // sensible meaning the way multiple closed profiles extruding
+      // together does.
+      if ((data.entities as Entity[] | undefined)?.length) {
+        ctx.log('EXTRUDE takes either 2D profiles or a single surface, not both.');
+        return 'stay';
+      }
+      const surface = ctx.doc.getSurface(value);
+      if (!surface) { ctx.log('Surface not found.'); return 'stay'; }
+      data.surface = surface;
+      ctx.doc.selectSurface(surface.id);
+      ctx.log('Surface selected. Specify height or [Direction/Path/Taper angle].');
+      return 'advance';
+    }
+    if (data.surface) {
+      ctx.log('EXTRUDE takes either 2D profiles or a single surface, not both.');
+      return 'stay';
+    }
     const profile = value as Entity;
     if (!isSweepProfileEntity(profile)) {
       ctx.log('Extrude profile must be a closed circle, rectangle, octagon or polyline.');
@@ -35,14 +59,21 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
     return 'stay';
   }
 
+  const surface = data.surface as Surface | undefined;
   const entities = (data.entities as Entity[]).filter(isSweepProfileEntity);
-  if (entities.length === 0) {
+  if (!surface && entities.length === 0) {
     ctx.log('No profile selected.');
     return 'advance';
   }
 
   if (step.kind === 'number-or-option') {
-    if (typeof value === 'number') return completeLinearExtrude(run, entities, value);
+    if (typeof value === 'number') {
+      return surface ? completeSurfaceExtrude(run, surface, value) : completeLinearExtrude(run, entities, value);
+    }
+    if (surface) {
+      ctx.log('Extruding a Surface only supports a plain height for now — for Direction/Path/Taper, use a closed 2D profile.');
+      return 'stay';
+    }
     const option = String(value).trim().toUpperCase().replace(/[\s_-]+/g, '');
     if (option === 'P' || option === 'PATH') {
       data.extrudeMode = 'path';
@@ -146,6 +177,41 @@ async function completeLinearExtrude(
   ctx.history.execute(new ReplaceObjectsEdit('Extrude', completed.map(({ profile }) => profile), [], [], solids));
   ctx.doc.viewMode = '3d';
   ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}${taperAngle ? `, taper=${taperAngle}°` : ''}`);
+  return 'advance';
+}
+
+/**
+ * EXTRUDE on a Surface: only ever a plain height (Direction/Path/Taper are
+ * rejected before this is ever called — see extrudeProfileStep). The
+ * direction is the surface's own first profile work-plane Z axis, times the
+ * entered height — the same "height just means local Z" convention an
+ * ordinary 2D profile extrudes along, since a genuinely flat loft's rails
+ * necessarily share (at least) a parallel plane, or extrudeExactSurface's
+ * own flatness check below would have rejected it already.
+ */
+async function completeSurfaceExtrude(run: CommandRun, surface: Surface, entered: number): Promise<StepOutcome> {
+  const { ctx } = run;
+  if (Math.abs(entered) < 1e-9) {
+    ctx.log('Extrusion height cannot be zero.');
+    return 'stay';
+  }
+  ctx.log('Extruding…');
+  const plane = surface.feature.kind === 'loft' ? (surface.feature.profiles[0]?.workPlane ?? WORLD_WORK_PLANE) : WORLD_WORK_PLANE;
+  const direction = { x: plane.zAxis.x * entered, y: plane.zAxis.y * entered, z: plane.zAxis.z * entered };
+  const exact = await extrudeExactSurface(surface, direction, surface.revision);
+  if (exact === 'not-planar') {
+    ctx.log('EXTRUDE only works on a flat surface — use THICKEN to give a curved one a wall thickness instead.');
+    return 'advance';
+  }
+  if (!exact) {
+    ctx.log('Extrusion failed.');
+    return 'advance';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Extrusion', entered, [surface.id], undefined, { kind: 'mesh' });
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Extrude', [], [], [], [solid], [surface], []));
+  ctx.doc.viewMode = '3d';
+  ctx.log(`Extrusion complete: height=${entered}`);
   return 'advance';
 }
 

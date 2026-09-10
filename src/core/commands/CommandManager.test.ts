@@ -4163,6 +4163,107 @@ describe('LOFT', () => {
     });
   });
 
+  describe('EXTRUDE on a Surface', () => {
+    /** A genuinely flat Surface — THICKEN's own fixture above (two arcs of
+     *  one circle, meeting at both ends, both drawn flat so the Coons fill
+     *  between them is a flat disk — see that test's own comment), split
+     *  into several small sub-patches by loftGuidedSurface's own crease-fix
+     *  subdivision, which is exactly why isPlanarShape has to check the
+     *  WHOLE shape rather than "is it a single face". */
+    const flatLoftedSurface = async (kit: ReturnType<typeof setup>) => {
+      const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
+      const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
+      kit.doc.addEntity(rail1);
+      kit.doc.addEntity(rail2);
+      kit.manager.startCommand('LOFT');
+      await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
+      await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
+      await kit.manager.submitInput('');
+      await kit.manager.submitInput('');
+      return kit.doc.surfaces[0];
+    };
+    /** A Surface genuinely curved in 3D — the Bezier-rails-plus-tilted-guide
+     *  fixture from the "lofts two open Beziers…" test above, confirmed
+     *  there to bulge well out of its own flat plane (max-min Z > 3). */
+    const curvedLoftedSurface = async (kit: ReturnType<typeof setup>) => {
+      const rail1 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+      const rail2 = kit.doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+      kit.doc.addEntity(rail1);
+      kit.doc.addEntity(rail2);
+      const guide = kit.doc.createBezier({ x: 0, y: 0 }, { x: 0, y: 6 }, { x: 7, y: 6 }, { x: 7, y: 0 });
+      guide.workPlane = {
+        origin: { x: 28, y: 15, z: 0 },
+        xAxis: { x: 0, y: -1, z: 0 },
+        yAxis: { x: 0, y: 0, z: 1 },
+        zAxis: { x: -1, y: 0, z: 0 },
+      };
+      kit.doc.addEntity(guide);
+      kit.manager.startCommand('LOFT');
+      await kit.manager.handleClick({ x: 25, y: 15 }, rail1);
+      await kit.manager.handleClick({ x: 25, y: 8 }, rail2);
+      await kit.manager.submitInput('');
+      await kit.manager.handleClick({ x: 28, y: 11.5 }, guide);
+      await kit.manager.submitInput('');
+      return kit.doc.surfaces[0];
+    };
+
+    it('extrudes a flat surface into a solid, straight along its own plane normal', async () => {
+      const kit = setup();
+      const surface = await flatLoftedSurface(kit);
+
+      kit.manager.startCommand('EXTRUDE');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('3');
+
+      expect(kit.log, 'extrude failed').not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      expect(kit.doc.surfaces).toHaveLength(0);
+      expect(kit.doc.solids).toHaveLength(1);
+      const zValues = Array.from(kit.doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+      expect(Math.max(...zValues) - Math.min(...zValues)).toBeCloseTo(3, 6);
+    });
+
+    it('undoes an extruded surface back to the surface', async () => {
+      const kit = setup();
+      const surface = await flatLoftedSurface(kit);
+
+      kit.manager.startCommand('EXTRUDE');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('3');
+      expect(kit.doc.solids).toHaveLength(1);
+
+      kit.history.undo();
+      expect(kit.doc.solids).toHaveLength(0);
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.surfaces[0].id).toBe(surface.id);
+    });
+
+    it('refuses to extrude a curved surface, pointing at THICKEN instead of doing nothing silently', async () => {
+      const kit = setup();
+      const surface = await curvedLoftedSurface(kit);
+
+      kit.manager.startCommand('EXTRUDE');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('3');
+
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('THICKEN'));
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.solids).toHaveLength(0);
+    });
+
+    it('refuses a zero height rather than building nothing silently', async () => {
+      const kit = setup();
+      const surface = await flatLoftedSurface(kit);
+
+      kit.manager.startCommand('EXTRUDE');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('0');
+
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('cannot be zero'));
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.solids).toHaveLength(0);
+    });
+  });
+
   it('drops an invalid profile caught by a window selection instead of failing the whole loft', async () => {
     // syncWindowSelection sets data.entities directly, bypassing the
     // per-click validation above entirely — a stray non-curve entity caught

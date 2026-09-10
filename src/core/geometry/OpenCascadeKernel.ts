@@ -1157,6 +1157,70 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
   }
 
   /**
+   * Whether `solid`'s whole shape — however many faces it happens to be
+   * split into (a Surface's own faces are often several small sub-patches;
+   * see `loftGuidedSurface`'s own doc comment) — fits within a single
+   * plane. `BRepLib_FindSurface`'s own `OnlyPlane` fit runs across the WHOLE
+   * shape at once rather than face by face, so it correctly recognises a
+   * flat Surface split into many small coplanar patches, not just one made
+   * of a single face. Used to tell EXTRUDE whether a Surface can be
+   * extruded straight (a flat one) or needs THICKEN instead (a curved one)
+   * — matches real AutoCAD, which also refuses to extrude a non-planar
+   * surface.
+   */
+  isPlanarShape(solid: OpenCascadeSolid): boolean {
+    const finder = new this.oc.BRepLib_FindSurface_2(solid.shape(this), 1e-6, true, false);
+    try {
+      return finder.Found();
+    } finally {
+      finder.delete();
+    }
+  }
+
+  /**
+   * Prisms an already-built shape (a flat Surface's own face(s)) straight
+   * along `vector` — the same `BRepPrimAPI_MakePrism` call `extrudePolygon`
+   * and its siblings use, just skipping the "build a face from 2D points
+   * first" step, since the face already exists here.
+   */
+  prismShape(solid: OpenCascadeSolid, vector: Point3): OpenCascadeSolid {
+    this.validateVector(vector, 'Extrusion');
+    const prismVector = new this.oc.gp_Vec_4(vector.x, vector.y, vector.z);
+    const prism = new this.oc.BRepPrimAPI_MakePrism_1(solid.shape(this), prismVector, true, true);
+    try {
+      const shape = prism.Shape();
+      if (shape.IsNull() || !this.hasSolid(shape)) {
+        shape.delete();
+        throw new Error('OpenCascade failed to extrude the surface.');
+      }
+      // A Surface's own faces are not always sewn into one connected shell —
+      // loftGuidedSurface's own crease-fix subdivision splits even a flat
+      // strip into several small adjacent patches (see its doc comment) —
+      // so prisming the whole shape can come back as several touching-but-
+      // separate solids rather than one. Fusing them the same way `union`
+      // fuses any other adjacent set turns this back into the single
+      // coherent solid EXTRUDE is meant to produce. Confirmed directly: a
+      // flat 7-patch loft surface prismed without this came back with
+      // solidCount 7, not 1.
+      const pieces = this.subShapes(shape, this.oc.TopAbs_ShapeEnum.TopAbs_SOLID);
+      if (pieces.length <= 1) {
+        pieces.forEach((piece) => piece.delete());
+        return this.wrap(shape);
+      }
+      const wrapped = pieces.map((piece) => this.wrap(piece));
+      try {
+        return this.union(wrapped);
+      } finally {
+        wrapped.forEach((piece) => piece.dispose());
+        shape.delete();
+      }
+    } finally {
+      prism.delete();
+      prismVector.delete();
+    }
+  }
+
+  /**
    * Tapers each face in `faceIds` by `angleRadians` about `neutralPlane` —
    * the plane pivots the face and stays undeformed itself, the rest of the
    * face tilts away from it. Pull direction is always the neutral plane's

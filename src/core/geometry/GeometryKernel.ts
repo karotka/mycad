@@ -144,6 +144,12 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** SURFSCULPT: sews N open shells forming a watertight network into one
    *  closed solid — see OpenCascadeKernel's own doc comment. */
   sculptSolid(surfaces: readonly Solid[]): Solid;
+  /** EXTRUDE on a Surface: whether its whole shape fits in a single plane —
+   *  see OpenCascadeKernel's own doc comment. */
+  isPlanarShape(solid: Solid): boolean;
+  /** EXTRUDE on a flat Surface: a straight prism of its own already-built
+   *  face(s), rather than building a new face from 2D points first. */
+  prismShape(solid: Solid, vector: Point3): Solid;
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];

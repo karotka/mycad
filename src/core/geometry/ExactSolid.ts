@@ -305,6 +305,35 @@ export async function thickenExactSurface(surface: ExactBody, thickness: number,
 }
 
 /**
+ * EXTRUDE on a Surface: only defined for a flat one — a straight prism of a
+ * curved shell is not a single well-defined solid (real AutoCAD refuses the
+ * same way, for the same reason — use THICKEN for a curved one instead).
+ * `direction` is a plain world vector the caller already worked out (the
+ * flat surface's own profile work-plane Z axis, times the entered height,
+ * for the ordinary "just a height" case) — this only checks flatness and
+ * prisms, it does not know or care where the direction came from.
+ */
+export async function extrudeExactSurface(surface: ExactBody, direction: Point3, revision: number): Promise<ExactSolidResult | 'not-planar' | null> {
+  if (!await promoteSolidToExact(surface, true)) return null;
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(surface, kernel);
+  if (!source) return null;
+  try {
+    if (!kernel.isPlanarShape(source)) return 'not-planar';
+    const prism = kernel.prismShape(source, direction);
+    try {
+      return exactResult(kernel, prism, revision);
+    } finally {
+      prism.dispose();
+    }
+  } catch {
+    return null;
+  } finally {
+    source.dispose();
+  }
+}
+
+/**
  * SURFSCULPT: sews N surfaces that together form a watertight boundary into
  * one closed shell, then builds a real solid from it. `NbFreeEdges() > 0`
  * (a gap somewhere in the network) is the one expected failure mode, given

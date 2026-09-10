@@ -379,6 +379,50 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(bentBounds.min.x).toBeCloseTo(flatBounds.min.x, 0);
   });
 
+  it('recognises a flat multi-patch loft surface as planar, and a bent one as not — EXTRUDE\'s own flatness gate', () => {
+    // The same flat-vs-bent pair as the test above, but checking
+    // isPlanarShape directly: a flat Surface is still split into several
+    // small sub-patches by the crease-fix subdivision (SUBDIVISIONS virtual
+    // guides per gap — see loftGuidedSurface's own doc comment), so this has
+    // to recognise the WHOLE shape as one plane, not just check whether it
+    // is a single face.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const guide = [{ kind: 'bezier' as const, poles: [
+      { x: 28, y: 15, z: 0 }, { x: 28, y: 15, z: 8 }, { x: 28, y: 8, z: 8 }, { x: 28, y: 8, z: 0 },
+    ] }];
+    const flat = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    const bent = keep(kernel.loftGuidedSurface(rail1, rail2, [guide]));
+
+    expect(kernel.isPlanarShape(flat)).toBe(true);
+    expect(kernel.isPlanarShape(bent)).toBe(false);
+  });
+
+  it('prisms an already-built flat surface straight into a real solid — EXTRUDE on a Surface', () => {
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const flat = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    const flatBounds = kernel.inspect(flat).bounds;
+
+    const extruded = keep(kernel.prismShape(flat, { x: 0, y: 0, z: 7 }));
+    const inspection = kernel.inspect(extruded);
+    expect(inspection.valid).toBe(true);
+    expect(inspection.solidCount).toBe(1);
+    const bounds = inspection.bounds;
+    expect(bounds.max.z - bounds.min.z).toBeCloseTo(7, 6);
+    // The footprint in x/y is unchanged — a straight prism, not a taper.
+    expect(bounds.max.x).toBeCloseTo(flatBounds.max.x, 6);
+    expect(bounds.min.x).toBeCloseTo(flatBounds.min.x, 6);
+  });
+
   it('lofts two open rails through TWO guide curves, bending each interior strip on its own', () => {
     // Same rails as above, but with a second guide further along — exercises
     // the interior (guide-to-guide) patch, the one case with no rail corner
