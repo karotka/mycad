@@ -12,7 +12,7 @@
  * history to keep, and a sweep is a profile and a path rather than numbers. The
  * caller bakes those, honestly, rather than this inventing something.
  */
-import type { SerializedSolidMesh, SolidEdgeSelection, SolidFaceRegion, SolidFeature } from '../entities/types';
+import { cloneEntity, transformEntityPoints, type Entity, type SerializedSolidMesh, type SolidEdgeSelection, type SolidFaceRegion, type SolidFeature } from '../entities/types';
 import { mirrorPoint2, type Vec2, type Vec3 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../../math/workplane';
 
@@ -122,10 +122,25 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
       };
     }
     case 'sweep':
-    // A loft has no single work plane of its own — each profile is a live
-    // document entity with its own — so there is nothing here to scale about
-    // `base` without reaching outside the feature tree. Honestly baked.
-    case 'loft':
+      return null;
+    // A loft has no single work plane of its own — each profile/guide is its
+    // own embedded Entity value (LoftFeature.profiles/guides), each with its
+    // own work plane — but that's no different in kind from a boolean's
+    // several operands above: scale every one of them the same way, about
+    // the same world `base`. See scaleEmbeddedLoftEntity's own comment for
+    // the derivation of why moving the plane's origin (movedOrigin, exactly
+    // as primitive/extrusion do above) plus scaling the entity's own local
+    // points about its OWN local origin (not `base` re-expressed locally)
+    // is the correct split, not an approximation of one.
+    case 'loft': {
+      const scaleEmbedded = (entity: Entity): Entity => scaleEmbeddedLoftEntity(entity, base, factor);
+      return {
+        ...feature,
+        profiles: feature.profiles.map(scaleEmbedded),
+        guides: feature.guides?.map(scaleEmbedded),
+        path: feature.path ? scaleEmbedded(feature.path) : undefined,
+      };
+    }
     case 'mesh':
       return null;
   }
@@ -197,8 +212,18 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
         },
       };
     }
-    // A loft has no single work plane of its own to carry along — see scaledFeature.
-    case 'loft':
+    // A loft's own boundary is several embedded entities, each with its own
+    // work plane — move every one of them by the same world delta, the same
+    // trick as extrusion/primitive/sweep just above applied per-entity.
+    case 'loft': {
+      const moveEmbedded = (entity: Entity): Entity => translatedEmbeddedLoftEntity(entity, delta);
+      return {
+        ...feature,
+        profiles: feature.profiles.map(moveEmbedded),
+        guides: feature.guides?.map(moveEmbedded),
+        path: feature.path ? moveEmbedded(feature.path) : undefined,
+      };
+    }
     case 'mesh':
       return null;
   }
@@ -275,7 +300,19 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
         },
       };
     }
-    case 'loft':
+    // Same trick as primitive/extrusion/sweep above, per embedded entity: a
+    // rotation is only ever the plane turned (origin swung about the axis,
+    // its three axes turned in place) — local points never move, because
+    // they stay expressed in that same, now-turned, frame.
+    case 'loft': {
+      const turnEmbedded = (entity: Entity): Entity => rotatedEmbeddedLoftEntity(entity, origin, unit, angle);
+      return {
+        ...feature,
+        profiles: feature.profiles.map(turnEmbedded),
+        guides: feature.guides?.map(turnEmbedded),
+        path: feature.path ? turnEmbedded(feature.path) : undefined,
+      };
+    }
     case 'mesh':
       return null;
   }
@@ -358,7 +395,21 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
     // work plane is not enough to guarantee those frames keep their handedness,
     // so the caller keeps the correct mirrored mesh and honestly bakes it.
     case 'sweep':
-    case 'loft':
+      return null;
+    // Same trick as primitive/extrusion above, per embedded entity: reflecting
+    // a plane's origin AND all three of its axes reflects every point
+    // expressed in that frame, without touching the entity's own local data
+    // — unlike a sweep, a loft's rails/guides carry no separate derived
+    // moving frames that could lose their handedness this way.
+    case 'loft': {
+      const reflectEmbedded = (entity: Entity): Entity => mirroredEmbeddedLoftEntity(entity, reflectPoint, reflectDirection);
+      return {
+        ...feature,
+        profiles: feature.profiles.map(reflectEmbedded),
+        guides: feature.guides?.map(reflectEmbedded),
+        path: feature.path ? reflectEmbedded(feature.path) : undefined,
+      };
+    }
     case 'mesh':
       return null;
   }
@@ -437,6 +488,84 @@ function movedOrigin(plane: WorkPlane, base: Vec3, factor: number): WorkPlane {
       z: base.z + (plane.origin.z - base.z) * factor,
     },
   };
+}
+
+/** Moves a loft's own embedded profile/guide/path entity by a world delta —
+ *  only its plane's origin, same as translatedFeature's extrusion/primitive/
+ *  sweep case: the entity's own local points stay expressed in that plane,
+ *  unmoved, exactly like theirs. */
+function translatedEmbeddedLoftEntity(entity: Entity, delta: Vec3): Entity {
+  const moved = cloneEntity(entity);
+  const plane = planeOf(moved.workPlane);
+  moved.workPlane = {
+    ...plane,
+    origin: { x: plane.origin.x + delta.x, y: plane.origin.y + delta.y, z: plane.origin.z + delta.z },
+  };
+  return moved;
+}
+
+/** Turns a loft's own embedded entity about a world axis — only its plane
+ *  (origin swung about the axis, all three axes turned in place), same as
+ *  rotatedFeature's extrusion/primitive/sweep case and for the same reason:
+ *  a rotation distributes linearly over the plane's origin and basis
+ *  vectors, so the entity's own local points need not move at all. */
+function rotatedEmbeddedLoftEntity(entity: Entity, origin: Vec3, axis: Vec3, angle: number): Entity {
+  const turned = cloneEntity(entity);
+  const plane = planeOf(turned.workPlane);
+  turned.workPlane = {
+    origin: turnPoint(plane.origin, origin, axis, angle),
+    xAxis: turnDirection(plane.xAxis, axis, angle),
+    yAxis: turnDirection(plane.yAxis, axis, angle),
+    zAxis: turnDirection(plane.zAxis, axis, angle),
+  };
+  return turned;
+}
+
+/** Reflects a loft's own embedded entity — only its plane (origin and all
+ *  three axes), same as mirroredFeature's extrusion/primitive case: a
+ *  reflection is linear too, so reflecting the whole frame reflects every
+ *  point described in it without touching the entity's own local data. */
+function mirroredEmbeddedLoftEntity(
+  entity: Entity,
+  reflectPoint: (point: Vec3) => Vec3,
+  reflectDirection: (direction: Vec3) => Vec3,
+): Entity {
+  const reflected = cloneEntity(entity);
+  const plane = planeOf(reflected.workPlane);
+  reflected.workPlane = {
+    origin: reflectPoint(plane.origin),
+    xAxis: reflectDirection(plane.xAxis),
+    yAxis: reflectDirection(plane.yAxis),
+    zAxis: reflectDirection(plane.zAxis),
+  };
+  return reflected;
+}
+
+/**
+ * Scales a loft's own embedded entity about a world `base`. Unlike the other
+ * three transforms above, this one genuinely has to touch the entity's own
+ * local points, not just its plane — a plane's basis vectors are always
+ * unit length, so moving only the origin would move the entity without
+ * resizing it at all. Splitting `world' = base + factor·(world − base)` for
+ * a point `world = origin + xAxis·P.x + yAxis·P.y` and matching terms shows
+ * the origin moves exactly the way movedOrigin already does above (the same
+ * primitive/extrusion trick), and the local point scales by `factor` about
+ * its own LOCAL origin (0,0) — not `base` re-expressed locally, which would
+ * double-count the origin's own motion.
+ */
+function scaleEmbeddedLoftEntity(entity: Entity, base: Vec3, factor: number): Entity {
+  const plane = movedOrigin(planeOf(entity.workPlane), base, factor);
+  // Mirrors transform.ts's scaleEntity (which this file cannot import,
+  // itself importing from here) minus its `selected = true` side effect —
+  // an embedded entity has no independent selection state of its own.
+  const scaled = transformEntityPoints(entity, (point) => ({ x: point.x * factor, y: point.y * factor }));
+  if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
+  if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
+  if (scaled.type === 'text') scaled.height *= factor;
+  if (scaled.type === 'insert') scaled.scaleZ *= factor;
+  scaled.selected = entity.selected;
+  scaled.workPlane = plane;
+  return scaled;
 }
 
 const turnPoint = (point: Vec3, origin: Vec3, axis: Vec3, angle: number): Vec3 => {

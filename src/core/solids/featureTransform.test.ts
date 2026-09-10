@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EdgeModificationFeature, PressPullFeature, PrimitiveFeature, SolidFeature } from '../entities/types';
+import type { EdgeModificationFeature, LineEntity, LoftFeature, PressPullFeature, PrimitiveFeature, SolidFeature } from '../entities/types';
 import { primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from './featureTransform';
@@ -351,5 +351,82 @@ describe('mirroredFeature', () => {
     )!;
     expect(mirrored.kind).toBe('presspull-region');
     expect((await regenerateSolidFeature(mirrored))?.indices.length).toBeGreaterThan(0);
+  });
+});
+
+// A loft's own "work plane" is really one per embedded profile/guide/path
+// entity (LoftFeature.profiles/guides/path) — this used to bake straight to
+// null on every one of the four transforms, which meant a Surface lost its
+// live grip-editable feature tree the moment it was moved even once.
+describe('loft: transforms move/turn/scale every embedded entity, not just null it out', () => {
+  const rail = (workPlane?: ReturnType<typeof plane>): LineEntity => ({
+    id: 'rail', type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false,
+    start: { x: 0, y: 0 }, end: { x: 10, y: 0 }, workPlane,
+  });
+  const loft = (): LoftFeature => ({
+    kind: 'loft',
+    profiles: [rail(plane({ x: 1, y: 2, z: 3 })), rail(plane({ x: 4, y: 5, z: 6 }))],
+    guides: [rail(plane({ x: 7, y: 8, z: 9 }))],
+  });
+
+  it('moves every embedded entity by its plane, leaving local points alone', () => {
+    const delta = { x: 3, y: -4, z: 5 };
+    const moved = translatedFeature(loft(), delta) as LoftFeature;
+    expect(moved.kind).toBe('loft');
+    expect(moved.profiles[0].workPlane!.origin).toEqual({ x: 4, y: -2, z: 8 });
+    expect(moved.profiles[1].workPlane!.origin).toEqual({ x: 7, y: 1, z: 11 });
+    expect(moved.guides![0].workPlane!.origin).toEqual({ x: 10, y: 4, z: 14 });
+    expect((moved.profiles[0] as LineEntity).start).toEqual({ x: 0, y: 0 });
+    expect((moved.profiles[0] as LineEntity).end).toEqual({ x: 10, y: 0 });
+  });
+
+  it('also moves an optional path entity, the same way', () => {
+    const withPath: LoftFeature = { ...loft(), path: rail(plane({ x: 0, y: 0, z: 0 })) };
+    const moved = translatedFeature(withPath, { x: 1, y: 1, z: 1 }) as LoftFeature;
+    expect(moved.path!.workPlane!.origin).toEqual({ x: 1, y: 1, z: 1 });
+  });
+
+  it('turns every embedded entity\'s plane about a world axis, not only its origin', () => {
+    const up = { x: 0, y: 0, z: 1 };
+    const turned = rotatedFeature(loft(), { x: 0, y: 0, z: 0 }, up, Math.PI / 2) as LoftFeature;
+    expect(turned.kind).toBe('loft');
+    // (1,2,3) turned a quarter turn about Z through the origin -> (-2,1,3).
+    const origin0 = turned.profiles[0].workPlane!.origin;
+    expect(origin0.x).toBeCloseTo(-2, 6);
+    expect(origin0.y).toBeCloseTo(1, 6);
+    expect(origin0.z).toBeCloseTo(3, 6);
+    // The axes turned too — leaving them alone would rotate the loft's
+    // position without rotating its shape.
+    const xAxis0 = turned.profiles[0].workPlane!.xAxis;
+    expect(xAxis0.x).toBeCloseTo(0, 6);
+    expect(xAxis0.y).toBeCloseTo(1, 6);
+  });
+
+  it('reflects every embedded entity\'s plane', () => {
+    const mirrored = mirroredFeature(loft(), plane({ x: 0, y: 0, z: 0 }), { x: 0, y: -1 }, { x: 0, y: 1 }) as LoftFeature;
+    expect(mirrored.kind).toBe('loft');
+    const origin0 = mirrored.profiles[0].workPlane!.origin;
+    expect(origin0.x).toBeCloseTo(-1, 6);
+    expect(origin0.y).toBeCloseTo(2, 6);
+  });
+
+  it('scales every embedded entity about a world base — the plane moves AND its own local points resize', () => {
+    const scaled = scaledFeature(loft(), { x: 1, y: 2, z: 3 }, 2) as LoftFeature;
+    expect(scaled.kind).toBe('loft');
+    // profiles[0]'s own plane origin IS the scale base, so it stays put...
+    expect(scaled.profiles[0].workPlane!.origin).toEqual({ x: 1, y: 2, z: 3 });
+    // ...but profiles[1]'s plane origin (4,5,6) moves about that base.
+    expect(scaled.profiles[1].workPlane!.origin).toEqual({ x: 7, y: 8, z: 9 });
+    // And the entity's own local geometry doubled about its own local origin
+    // — moving the plane alone (unlike translate/rotate/mirror) would leave
+    // the loft in a different place but the same size.
+    expect((scaled.profiles[0] as LineEntity).start).toEqual({ x: 0, y: 0 });
+    expect((scaled.profiles[0] as LineEntity).end).toEqual({ x: 20, y: 0 });
+  });
+
+  it('leaves a loft with no guides with no guides, not an empty array or a crash', () => {
+    const noGuides: LoftFeature = { kind: 'loft', profiles: [rail(plane({ x: 0, y: 0, z: 0 })), rail(plane({ x: 1, y: 1, z: 1 }))] };
+    const moved = translatedFeature(noGuides, { x: 1, y: 0, z: 0 }) as LoftFeature;
+    expect(moved.guides).toBeUndefined();
   });
 });
