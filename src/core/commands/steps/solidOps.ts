@@ -469,7 +469,17 @@ export async function loftStep(run: CommandRun): Promise<StepOutcome> {
       run.gather(profile);
       return 'stay';
     }
-    const profiles = data.entities as Entity[];
+    // A window/drag selection lands here through syncWindowSelection, which
+    // sets data.entities directly — skipping the per-click validation just
+    // above entirely. Anything not a valid profile (the guide arc caught in
+    // the same box as the real profiles, say) would otherwise ride along
+    // silently and fail the whole loft with no indication why.
+    const gathered = data.entities as Entity[];
+    const profiles = gathered.filter(isSweepProfileEntity);
+    if (profiles.length < gathered.length) {
+      ctx.log(`Ignored ${gathered.length - profiles.length} selected object(s) that are not closed circle, rectangle, octagon, polyline or Bezier profiles.`);
+      data.entities = profiles;
+    }
     if (profiles.length < 1) {
       ctx.log('LOFT requires at least one profile.');
       run.cancel();

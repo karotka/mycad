@@ -3803,6 +3803,36 @@ describe('LOFT', () => {
     expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('closed circle, rectangle, octagon, polyline or Bezier'));
   });
 
+  it('drops an invalid profile caught by a window selection instead of failing the whole loft', async () => {
+    // syncWindowSelection sets data.entities directly, bypassing the
+    // per-click validation above entirely — a guide arc caught in the same
+    // drag box as the real profiles (an easy mistake, and the reported
+    // trigger for this) used to ride along silently and fail the build with
+    // no indication why.
+    const kit = setup();
+    const bottom = kit.doc.createRectangle({ x: -5, y: -5 }, { x: 5, y: 5 });
+    const top = kit.doc.createRectangle({ x: -3, y: -3 }, { x: 3, y: 3 });
+    top.workPlane = { ...WORLD_WORK_PLANE, origin: { x: 0, y: 0, z: 10 } };
+    const strayGuide = kit.doc.createArc({ x: 0, y: 0 }, 4, 0, Math.PI);
+    kit.doc.addEntity(bottom);
+    kit.doc.addEntity(top);
+    kit.doc.addEntity(strayGuide);
+
+    kit.manager.startCommand('LOFT');
+    kit.doc.selectEntity(bottom.id, true);
+    kit.doc.selectEntity(top.id, true);
+    kit.doc.selectEntity(strayGuide.id, true);
+    expect(kit.manager.syncWindowSelection()).toBe(true);
+    await kit.manager.submitInput(''); // finish gathering profiles
+    await kit.manager.submitInput(''); // skip the optional path
+
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('Ignored 1 selected object(s)'));
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.solids[0].feature).toMatchObject({ kind: 'loft' });
+    // The stray arc took no part in it — only the two rectangles were consumed.
+    expect(kit.doc.entities).toEqual([strayGuide]);
+  });
+
   it('lofts two closed Beziers, closed via BEZIER\'s own C, into a solid', async () => {
     const kit = setup();
     kit.manager.startCommand('BEZIER');
