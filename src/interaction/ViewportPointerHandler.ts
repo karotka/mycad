@@ -561,7 +561,31 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           const radius = Math.hypot(p.x - center.x, p.y - center.y);
           showPreviewLabel(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
         }
+      } else if (active.name === 'ARC' && active.data.center) {
+        // Placing the start point (step 1, centre already set): only the
+        // radius is known yet — the same partial readout CIRCLE gives at
+        // its own single "radius so far" step.
+        const center = active.data.center as Vec2;
+        const radius = Math.hypot(p.x - center.x, p.y - center.y);
+        showPreviewLabel(`R ${radius.toFixed(2)} mm`, sx, sy);
       }
+    }
+    // Placing the end point (step 2, centre AND start both set): the arc's
+    // shape is now fully determined by the cursor — the live radius and
+    // sweep angle ARC never showed at all (reported directly: no preview,
+    // no readable degree count while dragging), mirroring CIRCLE's own
+    // R/Ø toast and ARC_SER's dynamic angle input, just for ARC's own
+    // centre-start-end parameterization. Same formula drawArc itself
+    // commits with (src/core/commands/steps/draw.ts), so the number shown
+    // while dragging is exactly what Enter would create.
+    if (active?.name === 'ARC' && active.stepIndex === 2 && active.data.center && active.data.start) {
+      const center = active.data.center as Vec2;
+      const start = active.data.start as Vec2;
+      const radius = Math.hypot(start.x - center.x, start.y - center.y);
+      const startAngle = Math.atan2(start.y - center.y, start.x - center.x);
+      let sweep = Math.atan2(p.y - center.y, p.x - center.x) - startAngle;
+      if (sweep <= 0) sweep += Math.PI * 2;
+      showPreviewLabel(`R ${radius.toFixed(2)} mm · ${(sweep * 180 / Math.PI).toFixed(1)}°`, sx, sy);
     }
     if (active?.name === 'POLYGON' && active.stepIndex === 2 && active.data.center) {
       const center = active.data.center as Vec2;
