@@ -382,6 +382,32 @@ describe('CommandManager history integration', () => {
     }
   });
 
+  it('joins two flat, world-plane Beziers into a world-plane spline, even with a rotated UCS active', async () => {
+    const { doc, manager } = setup();
+    // The active UCS is rotated (e.g. from an earlier UCS X 90) but has
+    // nothing to do with these two entities — both are flat in world XY.
+    const upper = doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 12.9 }, { x: 20, y: 19 }, { x: 51.5, y: 11.5 });
+    const lower = doc.createBezier({ x: 4.5, y: 12 }, { x: 5.3, y: 11.1 }, { x: 20, y: 5 }, { x: 51.5, y: 11.5 });
+    doc.entities.push(upper, lower);
+    // Only now rotate the active UCS — after the entities exist, so both
+    // stay flat in world XY (their own workPlane, from createBezier above,
+    // is still the plain world plane) while the *active* UCS is unrelated.
+    doc.activeWorkPlane = { origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 } };
+    doc.selectEntity(upper.id, true); doc.selectEntity(lower.id, true);
+    manager.startCommand('JOIN');
+    expect(doc.entities).toHaveLength(1);
+    const joined = doc.entities[0];
+    // Must land on the true world plane, not the active (rotated) UCS the
+    // spline creation helper would otherwise have stamped on by default.
+    expect(joined.workPlane).toEqual(WORLD_WORK_PLANE);
+    // The world-space round trip must reproduce the original flat points —
+    // not something reinterpreted through the rotated UCS.
+    if (joined.type === 'bezier') {
+      expect(localToWorld(joined.workPlane!, joined.start)).toEqual({ x: 4.5, y: 12, z: 0 });
+      expect(localToWorld(joined.workPlane!, joined.segments[0].end)).toEqual({ x: 51.5, y: 11.5, z: 0 });
+    }
+  });
+
   it('splits a wide arc sweep into multiple Bezier spans, each closely matching the true circle', async () => {
     const { doc, manager } = setup();
     const center = { x: 0, y: 0 }, radius = 10;

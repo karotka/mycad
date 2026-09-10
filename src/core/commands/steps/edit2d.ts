@@ -8,7 +8,7 @@
 import { AddEntityEdit, ReplaceObjectsEdit, UpdateEntityEdit } from '../../history/edits';
 import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
 import { closePolyline, dist2, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
-import { localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
 
 export function lineIntersectionParameters(a: Vec2, b: Vec2, c: Vec2, d: Vec2): { point: Vec2; t: number; u: number } | null {
@@ -1370,7 +1370,16 @@ export function joinObjects(run: CommandRun): StepOutcome {
     joined = ctx.doc.createPolyline(vertices.map(toLocal2d), closed);
     noun = closed ? 'closed polyline' : 'polyline';
   }
-  if (fittedPlane) joined.workPlane = fittedPlane;
+  // createSpline/createPolyline stamp the *active* UCS onto a new entity by
+  // default — right for something drawn fresh, wrong here: toLocal2d's flat
+  // branch above already assumed world coordinates (it hands back raw
+  // world x/y, not coordinates local to whatever UCS happens to be active).
+  // Leaving that default in place would silently reinterpret those world
+  // numbers through a rotated UCS the moment it differs from world — the
+  // chain stays numerically the same but ends up reoriented in space, with
+  // no error logged. A flat chain always gets the true world plane; only a
+  // genuinely out-of-plane one gets the fitted one.
+  joined.workPlane = fittedPlane ?? cloneWorkPlane(WORLD_WORK_PLANE);
   ctx.history.execute(new ReplaceObjectsEdit('Join', lines, [], [joined], []));
   ctx.doc.selectEntity(joined.id);
   ctx.log(`Joined ${lines.length} objects into one ${noun}.`);
