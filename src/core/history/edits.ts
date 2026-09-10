@@ -228,6 +228,12 @@ export class UpdateSolidEdit implements DocumentEdit {
   revert(doc: Document): void { replaceSolid(doc, this.before); }
 }
 
+export class UpdateSurfaceEdit implements DocumentEdit {
+  constructor(readonly label: string, private readonly before: Surface, private readonly after: Surface) {}
+  apply(doc: Document): void { replaceSurface(doc, this.after); }
+  revert(doc: Document): void { replaceSurface(doc, this.before); }
+}
+
 export class ReplaceObjectsEdit implements DocumentEdit {
   constructor(
     readonly label: string,

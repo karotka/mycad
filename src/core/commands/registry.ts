@@ -55,10 +55,12 @@ function preselectObjects(
   return (active, ctx) => {
     const entities = ctx.doc.getSelectedEntities();
     const solids = ctx.doc.getSelectedSolids();
-    const count = entities.length + solids.length;
+    const surfaces = ctx.doc.getSelectedSurfaces();
+    const count = entities.length + solids.length + surfaces.length;
     if (count === 0) return;
     active.data.entities = [...entities];
     active.data.solids = [...solids];
+    active.data.surfaces = [...surfaces];
     if (options.skipStep !== false) active.stepIndex = 1;
     ctx.log(message(count));
   };
@@ -245,32 +247,32 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },
-  { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
-    data: () => ({ entities: [], solids: [] }),
+  { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
   { name: 'COPY', aliases: ['CO', 'CP', 'COPY'], execute: copyObjects, help: 'copy objects repeatedly', suggest: true, pointInput: true, transformsObjects: true,
-    steps: [{ kind: 'entity', label: 'Select object(s) to copy, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point (Escape to finish):' }, { kind: 'done' }],
-    data: () => ({ entities: [], solids: [] }),
+    steps: [{ kind: 'entity', label: 'Select object(s) to copy, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point (Escape to finish):' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
   { name: 'SCALE', aliases: ['SC', 'SCALE'], execute: scaleObjects, help: 'scale objects by a reference length, or a typed factor', suggest: true, pointInput: true, transformsObjects: true,
     steps: [
-      { kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid'] },
+      { kind: 'entity', label: 'Select object(s) to scale, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] },
       { kind: 'point', label: 'Specify scale base point:' },
       { kind: 'point', label: 'Specify reference length from the base point:' },
       { kind: 'point', label: 'New length: drag to shrink or grow, or type the length:' },
       { kind: 'done' },
     ],
-    data: () => ({ entities: [], solids: [] }),
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify scale base point.`) },
   // Takes solids, like SCALE beside it. It used to say "2D object(s)" and mean
   // it: a solid could be scaled but not turned, which is not a rule anyone
   // decided, only one command's step that never grew the other's.
   { name: 'ROTATE', aliases: ['RO', 'ROTATE'], execute: rotateObjects, suggest: true, pointInput: true, transformsObjects: true,
-    steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
-    data: () => ({ entities: [], solids: [] }),
+    steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify rotation base point.`) },
-  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
-    data: () => ({ entities: [], solids: [] }),
+  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
   { name: 'JOIN', aliases: ['J', 'JOIN'], execute: joinObjects, help: 'join connected 2D lines into one polyline', suggest: true,
     steps: [{ kind: 'entity', label: 'Select connected lines or curves, then press Enter:', multi: true }, { kind: 'done' }],
@@ -482,8 +484,8 @@ export const COMMANDS = [
   { name: 'PRINTAREA', aliases: ['PRINTAREA', 'PLOT'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
     steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
-  { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
-    data: () => ({ entities: [], solids: [] }),
+  { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
   { name: 'OPTIMIZEPATHS', aliases: ['OP', 'OPTIMIZEPATHS'], help: 'refit and join curves using a geometric tolerance', suggest: true, execute: optimizeDrawingPathsCommand,
     steps: [{ kind: 'number', label: 'Enter fitting and endpoint-joining tolerance in mm (try 0.2, 0.5, or 1):', remember: true }, { kind: 'done' }] },

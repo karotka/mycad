@@ -14,7 +14,7 @@ import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature } from '../entities/types';
+import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
@@ -101,7 +101,13 @@ export class CommandManager {
       [this.active.data.baseId, this.active.data.solidId].filter((id): id is string => typeof id === 'string'),
     );
     this.active.data.solids = this.ctx.doc.getSelectedSolids().filter((solid) => !excludedSolidIds.has(solid.id));
-    const count = (this.active.data.entities as Entity[]).length + (this.active.data.solids as Solid[]).length;
+    const excludedSurfaceIds = new Set(
+      [this.active.data.baseId, this.active.data.surfaceId].filter((id): id is string => typeof id === 'string'),
+    );
+    this.active.data.surfaces = this.ctx.doc.getSelectedSurfaces().filter((surface) => !excludedSurfaceIds.has(surface.id));
+    const count = (this.active.data.entities as Entity[]).length
+      + (this.active.data.solids as Solid[]).length
+      + (this.active.data.surfaces as Surface[]).length;
     this.ctx.log(`${count} object(s) selected. Select more or press Enter.`);
     this.showCurrentPrompt();
     return true;
@@ -160,7 +166,8 @@ export class CommandManager {
     if (this.active.steps[this.active.stepIndex + 1]?.kind !== 'done') return false;
     const entities = (this.active.data.entities as Entity[] | undefined)?.length ?? 0;
     const solids = (this.active.data.solids as Solid[] | undefined)?.length ?? 0;
-    return entities + solids > 0;
+    const surfaces = (this.active.data.surfaces as Surface[] | undefined)?.length ?? 0;
+    return entities + solids + surfaces > 0;
   }
 
   printHelp(): void {
@@ -281,7 +288,10 @@ export class CommandManager {
       const gatheredSolids = this.stepAccepts('solid')
         ? (this.active.data.solids as Solid[] | undefined)?.length ?? 0
         : 0;
-      if (this.isMultiObjectStep && (gathered > 0 || gatheredSolids > 0)) {
+      const gatheredSurfaces = this.stepAccepts('surface')
+        ? (this.active.data.surfaces as Surface[] | undefined)?.length ?? 0
+        : 0;
+      if (this.isMultiObjectStep && (gathered > 0 || gatheredSolids > 0 || gatheredSurfaces > 0)) {
         await this.advanceStep(null);
         return;
       }
@@ -294,15 +304,15 @@ export class CommandManager {
     await this.processStepInput(trimmed, step);
   }
 
-  async handleClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection): Promise<void> {
+  async handleClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection, pickSurfaceId?: string): Promise<void> {
     try {
-      await this.readClick(world, pickEntity, pickSolidId, pickFace, pickEdge);
+      await this.readClick(world, pickEntity, pickSolidId, pickFace, pickEdge, pickSurfaceId);
     } catch (error) {
       this.reportFailure(error);
     }
   }
 
-  private async readClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection): Promise<void> {
+  private async readClick(world: Vec2 | Vec3, pickEntity?: Entity, pickSolidId?: string, pickFace?: SolidFaceSelection, pickEdge?: SolidEdgeSelection, pickSurfaceId?: string): Promise<void> {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
 
@@ -325,6 +335,10 @@ export class CommandManager {
     } else if (step.kind === 'entity' && pickSolidId && this.stepAccepts('solid')) {
       this.ctx.doc.selectSolid(pickSolidId, this.isAdditiveStep);
       await this.advanceStep(pickSolidId);
+    } else if (step.kind === 'entity' && pickSurfaceId && this.stepAccepts('surface')) {
+      this.active.data.lastObjectPickPoint = { ...world };
+      this.ctx.doc.selectSurface(pickSurfaceId, this.isAdditiveStep);
+      await this.advanceStep(pickSurfaceId);
     } else if (step.kind === 'solid' && (pickSolidId || pickFace)) {
       const faceCommand = this.active.name === 'PRESSPULL' || this.active.name === 'DELETEFACE' || this.active.name === 'SHELL' || this.active.name === 'DRAFT';
       if (faceCommand && !pickFace) {
@@ -357,8 +371,16 @@ export class CommandManager {
     const data = this.active.data;
     if (typeof value === 'string') {
       const solid = this.ctx.doc.getSolid(value);
-      const solids = (data.solids ??= []) as Solid[];
-      if (solid && !solids.some((item) => item.id === solid.id)) solids.push(solid);
+      if (solid) {
+        const solids = (data.solids ??= []) as Solid[];
+        if (!solids.some((item) => item.id === solid.id)) solids.push(solid);
+      } else {
+        const surface = this.ctx.doc.getSurface(value);
+        if (surface) {
+          const surfaces = (data.surfaces ??= []) as Surface[];
+          if (!surfaces.some((item) => item.id === surface.id)) surfaces.push(surface);
+        }
+      }
     } else {
       const entity = value as Entity;
       const entities = (data.entities ??= []) as Entity[];

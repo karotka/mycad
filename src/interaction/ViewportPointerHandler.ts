@@ -759,7 +759,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         return;
       }
       if (action.kind === 'commandClick') {
-        await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id);
+        await drawingInteraction.handleClick(point, entity ?? undefined, solid?.id, undefined, undefined, surface?.id);
       } else if (action.kind === 'selectEntity' && entity) {
         // Deferred rather than selected outright: a press that turns into a
         // drag becomes a selection window instead, which is the only way to
@@ -917,7 +917,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
           event.clientY,
           solidSelectionExclusions()
         );
-        await commands.handleClick({ x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined);
+        const surfaceId = renderer3d.pickSurface(
+          renderer3d.renderer.domElement,
+          event.clientX,
+          event.clientY,
+          surfaceSelectionExclusions()
+        );
+        await commands.handleClick({ x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, undefined, undefined, surfaceId ?? undefined);
         input.focus();
         return;
       }
@@ -1042,7 +1048,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       if (action.kind === 'commandClick') {
         if ((activeStep?.kind === 'point' || activeStep?.kind === 'plane') && !point && !face) return;
         const dynamicAnswer = beforeDynamicUcsAnswer();
-        await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined);
+        await drawingInteraction.handleClick(point ?? { x: 0, y: 0 }, entity ?? undefined, solidId ?? undefined, face ?? undefined, undefined, surfaceId ?? undefined);
         afterDynamicUcsAnswer(dynamicAnswer);
       } else if (action.kind === 'selectEntity' || action.kind === 'selectSolid' || action.kind === 'selectSurface') {
         // Same deferral as the 2D view: let a drag from here become a

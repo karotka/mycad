@@ -8,7 +8,7 @@
  * branch that `run.gather` already does.
  */
 import { ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, closedVertices, genId, transformEntityPoints, type Entity, type Solid } from '../../entities/types';
+import { cloneEntity, cloneSurfaceValue, closedVertices, genId, transformEntityPoints, type Entity, type Solid, type Surface } from '../../entities/types';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { mirrorAffine, preserveExactTransform, rotationAffine, scaleAffine, translationAffine } from '../../geometry/ExactTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
@@ -42,6 +42,22 @@ export function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
   // WASM to do it. The feature is carried along so that the shape and the story
   // of it stay the same shape — this used to end at `{ kind: 'mesh' }`, so
   // resizing a sphere cost you the radius that made it.
+  scaled.feature = scaledFeature(scaled.feature, base, factor) ?? { kind: 'mesh' };
+  preserveExactTransform(scaled, scaleAffine(base, { x: factor, y: factor, z: factor }));
+  scaled.revision++;
+  scaled.selected = true;
+  return scaled;
+}
+
+/** Mirrors scaleSolid — a Surface has no `height` field to carry along, but
+ *  is otherwise the same mesh-plus-feature-tree shape. */
+export function scaleSurface(surface: Surface, base: Vec3, factor: number): Surface {
+  const scaled = cloneSurfaceValue(surface);
+  for (let index = 0; index < scaled.mesh.positions.length; index += 3) {
+    scaled.mesh.positions[index] = base.x + (scaled.mesh.positions[index] - base.x) * factor;
+    scaled.mesh.positions[index + 1] = base.y + (scaled.mesh.positions[index + 1] - base.y) * factor;
+    scaled.mesh.positions[index + 2] = base.z + (scaled.mesh.positions[index + 2] - base.z) * factor;
+  }
   scaled.feature = scaledFeature(scaled.feature, base, factor) ?? { kind: 'mesh' };
   preserveExactTransform(scaled, scaleAffine(base, { x: factor, y: factor, z: factor }));
   scaled.revision++;
@@ -114,6 +130,33 @@ export function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: n
   return rotated;
 }
 
+/** Mirrors rotateSolidAroundPlane for a Surface. */
+export function rotateSurfaceAroundPlane(surface: Surface, centerLocal: Vec3, angle: number, plane: typeof WORLD_WORK_PLANE): Surface {
+  const rotated = cloneSurfaceValue(surface);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  for (let index = 0; index < rotated.mesh.positions.length; index += 3) {
+    const local = worldToLocal(plane, {
+      x: rotated.mesh.positions[index],
+      y: rotated.mesh.positions[index + 1],
+      z: rotated.mesh.positions[index + 2],
+    });
+    const dx = local.x - centerLocal.x;
+    const dy = local.y - centerLocal.y;
+    const x = centerLocal.x + dx * cos - dy * sin;
+    const y = centerLocal.y + dx * sin + dy * cos;
+    const world = localToWorld(plane, { x, y }, local.z);
+    rotated.mesh.positions[index] = world.x;
+    rotated.mesh.positions[index + 1] = world.y;
+    rotated.mesh.positions[index + 2] = world.z;
+  }
+  const rotationOrigin = localToWorld(plane, centerLocal, centerLocal.z);
+  rotated.feature = rotatedFeature(rotated.feature, rotationOrigin, plane.zAxis, angle) ?? { kind: 'mesh' };
+  preserveExactTransform(rotated, rotationAffine(rotationOrigin, plane.zAxis, angle));
+  rotated.revision++;
+  return rotated;
+}
+
 export function copyEntity(entity: Entity, localDelta: Vec2, worldDelta?: Vec3): Entity {
   let copy: Entity;
   if (worldDelta) {
@@ -149,6 +192,23 @@ export function copySolid(solid: Solid, delta: Vec3): Solid {
   return copy;
 }
 
+/** Mirrors copySolid for a Surface. */
+export function copySurface(surface: Surface, delta: Vec3): Surface {
+  const copy = cloneSurfaceValue(surface);
+  copy.id = genId('surface');
+  copy.name = `${surface.name}_copy`;
+  copy.selected = false;
+  for (let index = 0; index < copy.mesh.positions.length; index += 3) {
+    copy.mesh.positions[index] += delta.x;
+    copy.mesh.positions[index + 1] += delta.y;
+    copy.mesh.positions[index + 2] += delta.z;
+  }
+  copy.feature = translatedFeature(copy.feature, delta) ?? { kind: 'mesh' };
+  preserveExactTransform(copy, translationAffine(delta));
+  copy.revision++;
+  return copy;
+}
+
 /**
  * The end every one of these shares: one undoable edit, and the results left
  * selected so the next command can act on what this one just made.
@@ -156,16 +216,21 @@ export function copySolid(solid: Solid, delta: Vec3): Solid {
 function applyTo(
   run: CommandRun,
   label: string,
-  before: { entities: Entity[]; solids: Solid[] },
-  after: { entities: Entity[]; solids: Solid[] },
+  before: { entities: Entity[]; solids: Solid[]; surfaces?: Surface[] },
+  after: { entities: Entity[]; solids: Solid[]; surfaces?: Surface[] },
   message: (count: number) => string,
 ): StepOutcome {
   const { ctx } = run;
-  ctx.history.execute(new ReplaceObjectsEdit(label, before.entities, before.solids, after.entities, after.solids));
+  const beforeSurfaces = before.surfaces ?? [];
+  const afterSurfaces = after.surfaces ?? [];
+  ctx.history.execute(new ReplaceObjectsEdit(
+    label, before.entities, before.solids, after.entities, after.solids, beforeSurfaces, afterSurfaces,
+  ));
   ctx.doc.clearSelection();
   after.entities.forEach((entity, index) => ctx.doc.selectEntity(entity.id, index > 0));
   after.solids.forEach((solid) => ctx.doc.selectSolid(solid.id, true));
-  ctx.log(message(after.entities.length + after.solids.length));
+  afterSurfaces.forEach((surface) => ctx.doc.selectSurface(surface.id, true));
+  ctx.log(message(after.entities.length + after.solids.length + afterSurfaces.length));
   return 'advance';
 }
 
@@ -181,6 +246,7 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
   const axisEnd = value as Vec2;
   const entities = data.entities as Entity[];
   const solids = (data.solids as Solid[] | undefined) ?? [];
+  const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
   // A mirror keeps the originals, so the copies need ids of their own.
   const mirrored = entities.map((entity) => {
     const copy = transformEntityPoints(entity, (point) => mirrorPoint2(point, axisStart, axisEnd));
@@ -188,36 +254,45 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
     return copy;
   });
   const plane = ctx.doc.activeWorkPlane;
+  const mirrorMesh = <T extends Solid | Surface>(clone: T): T => {
+    for (let index = 0; index < clone.mesh.positions.length; index += 3) {
+      const local = worldToLocal(plane, {
+        x: clone.mesh.positions[index],
+        y: clone.mesh.positions[index + 1],
+        z: clone.mesh.positions[index + 2],
+      });
+      const reflected = mirrorPoint2(local, axisStart, axisEnd);
+      const world = localToWorld(plane, reflected, local.z);
+      clone.mesh.positions[index] = world.x;
+      clone.mesh.positions[index + 1] = world.y;
+      clone.mesh.positions[index + 2] = world.z;
+    }
+    // A reflection reverses handedness, so restore outward triangle winding.
+    for (let index = 0; index + 2 < clone.mesh.indices.length; index += 3) {
+      const second = clone.mesh.indices[index + 1];
+      clone.mesh.indices[index + 1] = clone.mesh.indices[index + 2];
+      clone.mesh.indices[index + 2] = second;
+    }
+    clone.feature = mirroredFeature(clone.feature, plane, axisStart, axisEnd) ?? { kind: 'mesh' };
+    preserveExactTransform(clone, mirrorAffine(plane, axisStart, axisEnd));
+    clone.revision++;
+    clone.selected = false;
+    return clone;
+  };
   const mirroredSolids = solids.map((solid) => {
     const copy = cloneSolid(solid);
     copy.id = genId('solid');
     copy.name = `${solid.name}_mirror`;
-    for (let index = 0; index < copy.mesh.positions.length; index += 3) {
-      const local = worldToLocal(plane, {
-        x: copy.mesh.positions[index],
-        y: copy.mesh.positions[index + 1],
-        z: copy.mesh.positions[index + 2],
-      });
-      const reflected = mirrorPoint2(local, axisStart, axisEnd);
-      const world = localToWorld(plane, reflected, local.z);
-      copy.mesh.positions[index] = world.x;
-      copy.mesh.positions[index + 1] = world.y;
-      copy.mesh.positions[index + 2] = world.z;
-    }
-    // A reflection reverses handedness, so restore outward triangle winding.
-    for (let index = 0; index + 2 < copy.mesh.indices.length; index += 3) {
-      const second = copy.mesh.indices[index + 1];
-      copy.mesh.indices[index + 1] = copy.mesh.indices[index + 2];
-      copy.mesh.indices[index + 2] = second;
-    }
-    copy.feature = mirroredFeature(copy.feature, plane, axisStart, axisEnd) ?? { kind: 'mesh' };
-    preserveExactTransform(copy, mirrorAffine(plane, axisStart, axisEnd));
-    copy.revision++;
-    copy.selected = false;
-    return copy;
+    return mirrorMesh(copy);
   });
-  ctx.history.execute(new ReplaceObjectsEdit('Mirror', [], [], mirrored, mirroredSolids));
-  ctx.log(`Mirrored ${mirrored.length + mirroredSolids.length} object(s).`);
+  const mirroredSurfaces = surfaces.map((surface) => {
+    const copy = cloneSurfaceValue(surface);
+    copy.id = genId('surface');
+    copy.name = `${surface.name}_mirror`;
+    return mirrorMesh(copy);
+  });
+  ctx.history.execute(new ReplaceObjectsEdit('Mirror', [], [], mirrored, mirroredSolids, [], mirroredSurfaces));
+  ctx.log(`Mirrored ${mirrored.length + mirroredSolids.length + mirroredSurfaces.length} object(s).`);
   return 'advance';
 }
 
@@ -228,13 +303,14 @@ export function eraseObjects(run: CommandRun): StepOutcome {
   // Enter: everything gathered goes in one undoable edit.
   const entities = (data.entities as Entity[]).map(cloneEntity);
   const solids = (data.solids as Solid[]).map(cloneSolid);
-  if (entities.length + solids.length === 0) {
+  const surfaces = ((data.surfaces as Surface[] | undefined) ?? []).map(cloneSurfaceValue);
+  if (entities.length + solids.length + surfaces.length === 0) {
     ctx.log('Nothing to delete.');
     run.cancel();
     return 'advance';
   }
-  ctx.history.execute(new ReplaceObjectsEdit('Delete objects', entities, solids, [], []));
-  ctx.log(`Deleted ${entities.length + solids.length} object(s).`);
+  ctx.history.execute(new ReplaceObjectsEdit('Delete objects', entities, solids, [], [], surfaces, []));
+  ctx.log(`Deleted ${entities.length + solids.length + surfaces.length} object(s).`);
   return 'advance';
 }
 
@@ -248,14 +324,16 @@ export function rotateObjects(run: CommandRun): StepOutcome {
   const angle = Math.atan2(target.y - base.y, target.x - base.x);
   const entities = data.entities as Entity[];
   const solids = (data.solids as Solid[] | undefined) ?? [];
+  const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
   // Solids turn about the same axis the drawing does: the work plane's normal,
   // through the base point.
   const plane = ctx.doc.activeWorkPlane;
   return applyTo(run, 'Rotate',
-    { entities, solids },
+    { entities, solids, surfaces },
     {
       entities: entities.map((entity) => rotateEntity(entity, base, angle, ctx.doc)),
       solids: solids.map((solid) => rotateSolidAroundPlane(cloneSolid(solid), { x: base.x, y: base.y, z: 0 }, angle, plane)),
+      surfaces: surfaces.map((surface) => rotateSurfaceAroundPlane(cloneSurfaceValue(surface), { x: base.x, y: base.y, z: 0 }, angle, plane)),
     },
     (count) => `Rotated ${count} object(s) by ${(angle * 180 / Math.PI).toFixed(3)}°.`);
 }
@@ -305,12 +383,14 @@ function applyScale(run: CommandRun, factor: number): StepOutcome {
   const base = data.basePoint as Vec2;
   const entities = data.entities as Entity[];
   const solids = data.solids as Solid[];
+  const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
   const baseWorld = (data.baseWorldPoint as Vec3 | undefined) ?? localToWorld(ctx.doc.activeWorkPlane, base);
   return applyTo(run, 'Scale',
-    { entities, solids },
+    { entities, solids, surfaces },
     {
       entities: entities.map((entity) => scaleEntity(entity, base, factor)),
       solids: solids.map((solid) => scaleSolid(solid, baseWorld, factor)),
+      surfaces: surfaces.map((surface) => scaleSurface(surface, baseWorld, factor)),
     },
     (count) => `Scaled ${count} object(s) by factor ${factor.toFixed(4)}.`);
 }
@@ -347,6 +427,7 @@ export function moveObjects(run: CommandRun): StepOutcome {
   const objects: Array<Entity | string> = [
     ...(data.entities as Entity[]),
     ...(data.solids as Solid[]).map((solid) => solid.id),
+    ...((data.surfaces as Surface[] | undefined) ?? []).map((surface) => surface.id),
   ];
   if (objects.length === 0) {
     ctx.log('Nothing to move.');
@@ -379,8 +460,9 @@ export function copyObjects(run: CommandRun): StepOutcome {
   };
   const copies = (data.entities as Entity[]).map((entity) => copyEntity(entity, localDelta, viewWorldDelta));
   const solidCopies = (data.solids as Solid[]).map((solid) => copySolid(solid, solidDelta));
+  const surfaceCopies = ((data.surfaces as Surface[] | undefined) ?? []).map((surface) => copySurface(surface, solidDelta));
   delete data.pendingMoveWorldPoint;
-  applyTo(run, 'Copy', { entities: [], solids: [] }, { entities: copies, solids: solidCopies },
+  applyTo(run, 'Copy', { entities: [], solids: [] }, { entities: copies, solids: solidCopies, surfaces: surfaceCopies },
     (count) => `Copied ${count} object(s) by ${formatPoint(localDelta)}.`);
   // Back to asking for a target, so one selection can be copied again and again.
   // The step model has no way to say "repeat", so this walks the index back and

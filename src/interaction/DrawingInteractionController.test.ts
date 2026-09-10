@@ -32,7 +32,7 @@ describe('DrawingInteractionController', () => {
     expect(controller.isPointStep).toBe(true);
     await controller.handleClick({ x: 1, y: 2 });
 
-    expect(commands.handleClick).toHaveBeenCalledWith({ x: 1, y: 2 }, undefined, undefined, undefined, undefined);
+    expect(commands.handleClick).toHaveBeenCalledWith({ x: 1, y: 2 }, undefined, undefined, undefined, undefined, undefined);
     expect(controller.targetSnapMode).toBeNull();
   });
 
@@ -48,7 +48,7 @@ describe('DrawingInteractionController', () => {
     expect(commands.handleClick).not.toHaveBeenCalled();
     await controller.handleClick({ x: 10, y: 6 });
 
-    expect(commands.handleClick).toHaveBeenCalledWith({ x: 5, y: 4 }, undefined, undefined, undefined, undefined);
+    expect(commands.handleClick).toHaveBeenCalledWith({ x: 5, y: 4 }, undefined, undefined, undefined, undefined, undefined);
     expect(controller.targetSnapMode).toBeNull();
   });
 });

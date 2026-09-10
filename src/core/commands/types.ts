@@ -77,7 +77,7 @@ export interface ActiveCommand {
 }
 
 /** What a pick step is willing to take from the viewport. */
-export type PickTarget = 'entity' | 'solid' | 'edge';
+export type PickTarget = 'entity' | 'solid' | 'edge' | 'surface';
 
 /**
  * `multi` marks a step that collects a set of objects and ends on Enter; it is

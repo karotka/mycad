@@ -32,6 +32,7 @@ export class DrawingInteractionController {
     solidId?: string,
     face?: SolidFaceSelection,
     edge?: SolidEdgeSelection,
+    surfaceId?: string,
   ): Promise<void> {
     if (this.snapMode === 'mid2p') {
       if (!this.midpointFirst) {
@@ -42,7 +43,7 @@ export class DrawingInteractionController {
       this.midpointFirst = null;
     }
     const consumeSnap = this.isPointStep && this.snapMode !== null;
-    await this.commands.handleClick(point, entity, solidId, face, edge);
+    await this.commands.handleClick(point, entity, solidId, face, edge, surfaceId);
     if (consumeSnap) this.snapMode = null;
   }
 }

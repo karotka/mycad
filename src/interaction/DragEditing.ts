@@ -4,8 +4,8 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from '..
 import type { Document } from '../core/Document';
 import type { CommandManager, CommandName } from '../core/commands/CommandManager';
 import type { CommandHistory, DocumentEdit } from '../core/history/CommandHistory';
-import { CompositeEdit, UpdateEntityEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
-import { cloneEntity, entityBounds, transformEntityPoints, type Entity, type SolidFaceSelection, type SolidMesh } from '../core/entities/types';
+import { CompositeEdit, UpdateEntityEdit, UpdateSolidEdit, UpdateSurfaceEdit, cloneSolid } from '../core/history/edits';
+import { cloneEntity, cloneSurfaceValue, entityBounds, transformEntityPoints, type Entity, type SolidFaceSelection, type SolidMesh } from '../core/entities/types';
 import { translatedFeature } from '../core/solids/featureTransform';
 import { preserveExactTransform, translationAffine } from '../core/geometry/ExactTransform';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from '../core/commands/steps/solids';
@@ -84,9 +84,23 @@ export function createMoveEditing(ctx: MoveEditingContext) {
       return new UpdateEntityEdit('Move object', before, after);
     }
     const solid = doc.getSolid(object);
-    if (!solid) return null;
-    const before = cloneSolid(solid);
-    const after = cloneSolid(solid);
+    if (solid) {
+      const before = cloneSolid(solid);
+      const after = cloneSolid(solid);
+      for (let i = 0; i < after.mesh.positions.length; i += 3) {
+        after.mesh.positions[i] += delta.x;
+        after.mesh.positions[i + 1] += delta.y;
+        after.mesh.positions[i + 2] += delta.z;
+      }
+      after.feature = translatedFeature(after.feature, delta) ?? { kind: 'mesh' };
+      preserveExactTransform(after, translationAffine(delta));
+      after.revision++;
+      return new UpdateSolidEdit('Move solid', before, after);
+    }
+    const surface = doc.getSurface(object);
+    if (!surface) return null;
+    const before = cloneSurfaceValue(surface);
+    const after = cloneSurfaceValue(surface);
     for (let i = 0; i < after.mesh.positions.length; i += 3) {
       after.mesh.positions[i] += delta.x;
       after.mesh.positions[i + 1] += delta.y;
@@ -95,7 +109,7 @@ export function createMoveEditing(ctx: MoveEditingContext) {
     after.feature = translatedFeature(after.feature, delta) ?? { kind: 'mesh' };
     preserveExactTransform(after, translationAffine(delta));
     after.revision++;
-    return new UpdateSolidEdit('Move solid', before, after);
+    return new UpdateSurfaceEdit('Move surface', before, after);
   }
 
   /**

@@ -3370,6 +3370,106 @@ describe('SCALE and ROTATE keep the history that built the solid', () => {
   });
 });
 
+describe('MOVE/ROTATE/SCALE/MIRROR/COPY/ERASE reach a Surface too, not only Solid', () => {
+  // A flat, one-triangle Surface with a live 'loft' feature (no rails/guides
+  // needed for these tests — only its shape matters), matching how LOFT's
+  // rails-mode result looks: `feature.kind === 'loft'`.
+  const surface = (kit: ReturnType<typeof setup>) => {
+    const feature = { kind: 'loft' as const, profiles: [], guides: [] };
+    const mesh = { positions: new Float32Array([0, 0, 0, 10, 0, 0, 10, 10, 0]), indices: new Uint32Array([0, 1, 2]) };
+    const created = kit.doc.createSurface(mesh, 'Surface', [], undefined, feature);
+    kit.doc.addSurface(created);
+    kit.doc.selectSurface(created.id);
+    return created;
+  };
+
+  it('picks a surface in the viewport, not only a preselected one', async () => {
+    for (const command of ['ROTATE', 'SCALE', 'MIRROR', 'ERASE'] as const) {
+      const kit = setup();
+      const created = surface(kit);
+      kit.doc.clearSelection();
+
+      kit.manager.startCommand(command);
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, created.id);
+      await kit.manager.submitInput(''); // Enter: finished selecting
+      if (command === 'ROTATE') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.submitInput('90'); }
+      else if (command === 'SCALE') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.handleClick({ x: 1, y: 0 }); await kit.manager.handleClick({ x: 2, y: 0 }); }
+      else if (command === 'MIRROR') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.handleClick({ x: 0, y: 1 }); }
+      // ERASE needs nothing more — Enter above already committed it.
+
+      expect(kit.log, `${command} failed`).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('1 object(s)'));
+    }
+  });
+
+  it('scales a surface and keeps its loft feature tree live, not baked to a mesh', async () => {
+    const kit = setup();
+    surface(kit);
+    kit.manager.startCommand('SCALE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 1, y: 0 });
+    await kit.manager.handleClick({ x: 2, y: 0 });
+
+    const scaled = kit.doc.surfaces[0];
+    expect(scaled.feature.kind).toBe('loft');
+    let maxX = -Infinity;
+    for (let i = 0; i < scaled.mesh.positions.length; i += 3) maxX = Math.max(maxX, scaled.mesh.positions[i]);
+    expect(maxX).toBeCloseTo(20, 3);
+  });
+
+  it('turns a surface about the same axis a rotated solid would', async () => {
+    const kit = setup();
+    surface(kit);
+    kit.manager.startCommand('ROTATE');
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.submitInput('180');
+
+    // Half a turn about x = 10 sends a point at x = 0 to x = 20.
+    let maxX = -Infinity;
+    for (let i = 0; i < kit.doc.surfaces[0].mesh.positions.length; i += 3) maxX = Math.max(maxX, kit.doc.surfaces[0].mesh.positions[i]);
+    expect(maxX).toBeCloseTo(20, 3);
+  });
+
+  it('mirrors a surface, keeping the original and adding a reflected copy', async () => {
+    const kit = setup();
+    const original = surface(kit);
+    kit.manager.startCommand('MIRROR');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+
+    expect(kit.doc.surfaces).toHaveLength(2);
+    expect(kit.doc.surfaces.some((s) => s.id === original.id)).toBe(true);
+    const mirrored = kit.doc.surfaces.find((s) => s.id !== original.id)!;
+    let minX = Infinity;
+    for (let i = 0; i < mirrored.mesh.positions.length; i += 3) minX = Math.min(minX, mirrored.mesh.positions[i]);
+    // Mirrored across the Y axis (x=0): the +X triangle lands at -X.
+    expect(minX).toBeLessThan(0);
+  });
+
+  it('deletes a surface and undo brings it back', async () => {
+    const kit = setup();
+    const created = surface(kit);
+    kit.manager.startCommand('ERASE');
+    await kit.manager.submitInput('');
+    expect(kit.doc.surfaces).toHaveLength(0);
+
+    kit.history.undo();
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.surfaces[0].id).toBe(created.id);
+  });
+
+  it('hands a surface id to moveObjects alongside entities and solids', async () => {
+    const kit = setup();
+    const created = surface(kit);
+    kit.manager.startCommand('MOVE');
+    // Preselected, so MOVE starts straight at the base-point step.
+    expect(kit.manager.active).toMatchObject({ stepIndex: 1 });
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 3, y: 4 });
+    expect(kit.moveObjects).toHaveBeenCalledWith([created.id], { x: 3, y: 4 }, undefined);
+  });
+});
+
 describe('EXTRUDE', () => {
   const extrude = async (height: string, plane?: Document['activeWorkPlane']) => {
     const kit = setup();

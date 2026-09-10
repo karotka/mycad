@@ -1,7 +1,8 @@
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { localToWorld, type WorkPlane } from '../../math/workplane';
-import type { ExactSolidGeometry, Solid } from '../entities/types';
+import type { ExactSolidGeometry } from '../entities/types';
 import type { AffineTransform3 } from './GeometryKernel';
+import type { ExactBody } from './ExactSolid';
 
 export const IDENTITY_AFFINE: AffineTransform3 = [
   1, 0, 0, 0,
@@ -121,9 +122,10 @@ function affineDeterminant(transform: AffineTransform3): number {
     + transform[2] * (transform[4] * transform[9] - transform[5] * transform[8]);
 }
 
-/** Carries a current exact snapshot through the same transform already applied to its mesh. */
+/** Carries a current exact snapshot through the same transform already applied to its mesh.
+ *  Works on a Solid or a Surface alike — both satisfy ExactBody. */
 export function preserveExactTransform(
-  solid: Solid,
+  solid: ExactBody,
   transform: AffineTransform3,
   nextRevision = solid.revision + 1,
 ): void {
