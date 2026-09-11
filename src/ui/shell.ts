@@ -60,10 +60,10 @@ export function shellHtml(tools: ShellTools): string {
       <canvas id="canvas2d"></canvas>
       <div id="viewport3d"></div>
       <div class="crosshair" id="crosshair"></div>
-      <svg class="ucs-cursor" id="ucs-cursor" width="36" height="36">
-        <line id="ucs-cursor-x" class="ucs-cursor-x" x1="18" y1="18" x2="18" y2="18"/>
-        <line id="ucs-cursor-y" class="ucs-cursor-y" x1="18" y1="18" x2="18" y2="18"/>
-        <line id="ucs-cursor-z" class="ucs-cursor-z" x1="18" y1="18" x2="18" y2="18"/>
+      <svg class="ucs-cursor" id="ucs-cursor" width="72" height="72">
+        <line id="ucs-cursor-x" class="ucs-cursor-x" x1="36" y1="36" x2="36" y2="36"/>
+        <line id="ucs-cursor-y" class="ucs-cursor-y" x1="36" y1="36" x2="36" y2="36"/>
+        <line id="ucs-cursor-z" class="ucs-cursor-z" x1="36" y1="36" x2="36" y2="36"/>
       </svg>
       <div class="selection-window" id="selection-window" hidden></div>
       <div class="measure-marker measure-origin" id="measure-origin" hidden></div>
@@ -71,8 +71,8 @@ export function shellHtml(tools: ShellTools): string {
       <div class="snap-marker" id="snap-marker" hidden></div>
       <div class="drawing-plane-marker" id="drawing-plane-marker" hidden></div>
       <div class="tracking-line" id="tracking-line" hidden></div>
-      <div class="tracking-line center-guide-line" id="center-guide-a" hidden></div>
-      <div class="tracking-line center-guide-line" id="center-guide-b" hidden></div>
+      <div class="tracking-line" id="center-guide-a" hidden></div>
+      <div class="tracking-line" id="center-guide-b" hidden></div>
       <div class="dimension-toast" id="dimension-toast" hidden></div>
       <input class="dyn-dim-input" id="dyn-dim-width" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle width" hidden />
       <input class="dyn-dim-input" id="dyn-dim-height" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle height" hidden />

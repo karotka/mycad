@@ -381,22 +381,19 @@ html, body, #app {
 .snap-marker[data-snap='intersection']::after,
 .snap-marker[data-snap='apparent-intersection']::after { transform: rotate(-45deg); }
 
+/* mycad's one shared guide-line style: any dashed construction/alignment
+ * line drawn on the viewport overlay (Ortho/Polar tracking, a rectangle's
+ * derived-centre guides, and anything added later) uses this exact look —
+ * unified after live testing flagged the derived-centre guides as an
+ * unrelated second colour instead of the same visual language. */
 .tracking-line {
   position: absolute;
   z-index: 33;
   height: 1px;
   transform-origin: 0 50%;
-  border-top: 1px dashed rgba(103, 201, 255, 0.92);
+  border-top: 1px dashed rgba(140, 230, 160, 0.92);
   pointer-events: none;
-  filter: drop-shadow(0 0 2px rgba(40, 150, 220, 0.6));
-}
-/* A rectangle's own derived-centre guides — same mechanism as the Ortho/Polar
- * tracking line above, but distinguished (amber, not blue) since these mark a
- * geometric relationship on an existing object rather than an alignment path
- * for the point being placed. */
-.center-guide-line {
-  border-top-color: rgba(255, 176, 59, 0.92);
-  filter: drop-shadow(0 0 2px rgba(220, 140, 30, 0.6));
+  filter: drop-shadow(0 0 2px rgba(60, 180, 90, 0.6));
 }
 
 #viewport3d {

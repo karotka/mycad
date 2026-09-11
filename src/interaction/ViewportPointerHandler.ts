@@ -87,14 +87,13 @@ export interface ViewportPointerContext {
 }
 
 /** Local origin the `.ucs-cursor` SVG's three legs are all drawn from —
- *  the centre of its 36×36 viewBox (see `src/ui/shell.ts`). */
-const UCS_CURSOR_CENTER = 18;
+ *  the centre of its 72×72 canvas (see `src/ui/shell.ts`). */
+const UCS_CURSOR_CENTER = 36;
 /** Fixed screen-space leg length (px) for the plane-oriented cursor cross —
- *  smaller than the plain crosshair's own 22px half-length, so it reads as
- *  a secondary indicator layered on the primary one, not a replacement for
- *  it, regardless of zoom (unlike a world-space length, which would grow
- *  or shrink with the camera). */
-const UCS_CURSOR_LEG_LENGTH = 15;
+ *  doubled from its original 15px after live testing read it as too small
+ *  to register next to the plain crosshair — regardless of zoom (unlike a
+ *  world-space length, which would grow or shrink with the camera). */
+const UCS_CURSOR_LEG_LENGTH = 30;
 
 /**
  * Screen-space endpoints for the plane-oriented cursor cross's three axis
@@ -133,6 +132,23 @@ export function ucsCursorLegEndpoints(
     anyVisible = true;
   }
   return { ...legs, anyVisible };
+}
+
+/**
+ * Whether `plane` is the plain default WCS — live testing found the
+ * plane-oriented cursor cross showing constantly while drawing an ordinary
+ * flat object read as noise, not information; it earns its keep only once
+ * the drawing plane has actually changed from the default (a named or
+ * dynamic UCS). Value comparison, not reference — `doc.activeWorkPlane` is
+ * routinely a fresh clone carrying the same identity values.
+ */
+export function isWorldPlane(plane: WorkPlane): boolean {
+  const eps = 1e-9;
+  const close = (a: number, b: number) => Math.abs(a - b) < eps;
+  return close(plane.origin.x, 0) && close(plane.origin.y, 0) && close(plane.origin.z, 0)
+    && close(plane.xAxis.x, 1) && close(plane.xAxis.y, 0) && close(plane.xAxis.z, 0)
+    && close(plane.yAxis.x, 0) && close(plane.yAxis.y, 1) && close(plane.yAxis.z, 0)
+    && close(plane.zAxis.x, 0) && close(plane.zAxis.y, 0) && close(plane.zAxis.z, 1);
 }
 
 /**
@@ -188,8 +204,9 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   function hideUcsCursor(): void { ucsCursor.style.display = 'none'; }
   function updateUcsCursor(event: PointerEvent, sx: number, sy: number): void {
     if (cadDocument.viewMode !== '3d') { hideUcsCursor(); return; }
-    const canvas = renderer3d.renderer.domElement;
     const plane = cadDocument.activeWorkPlane;
+    if (isWorldPlane(plane)) { hideUcsCursor(); return; }
+    const canvas = renderer3d.renderer.domElement;
     const local = renderer3d.workPlanePoint(canvas, event.clientX, event.clientY, plane);
     if (!local) { hideUcsCursor(); return; }
     const world = localToWorld(plane, local);
@@ -565,10 +582,15 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       } else if (active.name === 'ARC' && active.data.center) {
         // Placing the start point (step 1, centre already set): only the
         // radius is known yet — the same partial readout CIRCLE gives at
-        // its own single "radius so far" step.
+        // its own single "radius so far" step. Unlike CIRCLE/RECTANGLE, ARC
+        // has no 2D dynamic-input box of its own yet, so this uses
+        // showDimension directly (not the showPreviewLabel wrapper, which
+        // is a no-op in 2D view) — confirmed directly as the reason the
+        // readout was invisible while drawing in the ordinary 2D view: it
+        // silently only ever fired in 3D.
         const center = active.data.center as Vec2;
         const radius = Math.hypot(p.x - center.x, p.y - center.y);
-        showPreviewLabel(`R ${radius.toFixed(2)} mm`, sx, sy);
+        showDimension(`R ${radius.toFixed(2)} mm`, sx, sy);
       }
     }
     // Placing the end point (step 2, centre AND start both set): the arc's
@@ -578,7 +600,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     // R/Ø toast and ARC_SER's dynamic angle input, just for ARC's own
     // centre-start-end parameterization. Same formula drawArc itself
     // commits with (src/core/commands/steps/draw.ts), so the number shown
-    // while dragging is exactly what Enter would create.
+    // while dragging is exactly what Enter would create. showDimension
+    // directly, same reason as step 1 above — no 2D dynamic input to defer to.
     if (active?.name === 'ARC' && active.stepIndex === 2 && active.data.center && active.data.start) {
       const center = active.data.center as Vec2;
       const start = active.data.start as Vec2;
@@ -586,7 +609,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       const startAngle = Math.atan2(start.y - center.y, start.x - center.x);
       let sweep = Math.atan2(p.y - center.y, p.x - center.x) - startAngle;
       if (sweep <= 0) sweep += Math.PI * 2;
-      showPreviewLabel(`R ${radius.toFixed(2)} mm · ${(sweep * 180 / Math.PI).toFixed(1)}°`, sx, sy);
+      showDimension(`R ${radius.toFixed(2)} mm · ${(sweep * 180 / Math.PI).toFixed(1)}°`, sx, sy);
     }
     if (active?.name === 'POLYGON' && active.stepIndex === 2 && active.data.center) {
       const center = active.data.center as Vec2;
