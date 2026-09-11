@@ -146,18 +146,12 @@ export function createToolActions(ctx: ToolActionsContext) {
   function showEntitySection(): void {
     const section = gripMenu.querySelector<HTMLElement>('.entity-actions');
     const name = gripMenu.querySelector<HTMLElement>('.entity-name');
-    const submenu = gripMenu.querySelector<HTMLElement>('.entity-submenu');
-    const toggle = gripMenu.querySelector<HTMLButtonElement>('[data-entity-submenu]');
     if (!section) return;
     const entities = doc.getSelectedEntities();
     const solids = doc.getSelectedSolids();
     const surfaces = doc.getSelectedSurfaces();
     const total = entities.length + solids.length + surfaces.length;
     section.hidden = total === 0;
-    // Collapsed again on every open: the submenu is a disclosure, and leaving
-    // it hanging open from last time would push the snap lists down the screen.
-    if (submenu) submenu.hidden = true;
-    if (toggle) toggle.setAttribute('aria-expanded', 'false');
     if (!name || total === 0) return;
     if (total > 1) name.textContent = `${total} objects`;
     else if (entities[0]) name.textContent = entityTypeLabel(entities[0]);

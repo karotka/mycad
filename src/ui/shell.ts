@@ -272,8 +272,8 @@ export function shellHtml(tools: ShellTools): string {
       <button data-context-action="exit">Exit</button>
     </section>
     <section class="entity-actions" hidden>
-      <button class="entity-submenu-toggle" data-entity-submenu aria-expanded="false"><span class="entity-name">Object</span><span class="submenu-caret">▸</span></button>
-      <div class="entity-submenu" hidden>
+      <button class="entity-submenu-toggle" data-entity-submenu aria-haspopup="true"><span class="entity-name">Object</span><span class="submenu-caret">▸</span></button>
+      <div class="entity-submenu">
         <button data-entity-command="MOVE">Move</button>
         <button data-entity-command="COPY">Copy</button>
         <button data-entity-command="ROTATE">Rotate</button>

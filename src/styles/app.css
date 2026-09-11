@@ -1316,6 +1316,7 @@ html, body, #app {
   padding-top: 3px;
   border-top: 1px solid #3b4653;
 }
+.entity-actions { position: relative; }
 .context-menu .entity-submenu-toggle {
   display: flex;
   align-items: center;
@@ -1327,8 +1328,27 @@ html, body, #app {
   color: #8b98a8;
   font-size: 10px;
 }
-.entity-submenu-toggle[aria-expanded='true'] .submenu-caret { transform: rotate(90deg); }
-.context-menu .entity-submenu button { padding-left: 20px; }
+/* Flies out sideways on hover, the way a real context submenu does, rather
+   than expanding in place and pushing the snap lists down the screen.
+   Positioned `fixed`, with its coordinates set on hover (see main.ts): the
+   menu itself scrolls (`overflow-y: auto`), and an overflow on one axis makes
+   the other clip too, so an absolutely-positioned flyout came out sliced off
+   at the menu's own edge. Fixed positioning escapes that clip entirely, and
+   the same measurement picks the side with room for it. */
+.context-menu .entity-submenu {
+  position: fixed;
+  z-index: 1001;
+  display: none;
+  min-width: 150px;
+  padding: 5px;
+  border: 1px solid #4a5568;
+  border-radius: 4px;
+  background: #20252d;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.entity-actions:hover .entity-submenu,
+.entity-actions:focus-within .entity-submenu { display: block; }
+.entity-actions:hover .entity-submenu-toggle { background: #2c3442; }
 
 .context-menu button[data-persistent-snap]::before {
   content: '';

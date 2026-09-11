@@ -1566,15 +1566,36 @@ gripMenu.querySelector<HTMLButtonElement>('[data-context-action="exit"]')?.addEv
   escapeAll();
 });
 
-// The selected object's own submenu opens in place rather than on hover, so
-// reaching it never depends on keeping the pointer inside a corridor.
+// The object's submenu flies out on hover (see app.css), so the name itself is
+// not a button that does anything — clicking it must at least not close the
+// menu out from under the pointer on its way to the submenu.
 gripMenu.querySelector<HTMLButtonElement>('[data-entity-submenu]')?.addEventListener('click', (event) => {
   event.stopPropagation();
-  const submenu = gripMenu.querySelector<HTMLElement>('.entity-submenu');
-  const toggle = event.currentTarget as HTMLButtonElement;
-  if (!submenu) return;
-  submenu.hidden = !submenu.hidden;
-  toggle.setAttribute('aria-expanded', String(!submenu.hidden));
+  event.preventDefault();
+});
+
+// Where that flyout lands. It is positioned `fixed` to escape the menu's own
+// scroll clipping, which means CSS cannot place it beside its row on its own:
+// beside the name when there is room to the right, flipped to the left edge
+// when there is not, and never past the bottom of the window.
+const entitySection = gripMenu.querySelector<HTMLElement>('.entity-actions');
+const entitySubmenu = gripMenu.querySelector<HTMLElement>('.entity-submenu');
+entitySection?.addEventListener('pointerenter', () => {
+  if (!entitySubmenu) return;
+  const anchor = entitySection.getBoundingClientRect();
+  // Measured while laid out but invisible: it is display:none until hovered,
+  // and a hidden element has no size to place.
+  entitySubmenu.style.visibility = 'hidden';
+  entitySubmenu.style.display = 'block';
+  const size = entitySubmenu.getBoundingClientRect();
+  entitySubmenu.style.display = '';
+  entitySubmenu.style.visibility = '';
+  const margin = 4;
+  const fitsRight = anchor.right + size.width + margin <= window.innerWidth;
+  // Overlapping its own row by a couple of pixels: a gap there would drop the
+  // hover as the pointer crosses it, closing the submenu on the way to it.
+  entitySubmenu.style.left = `${fitsRight ? anchor.right - 2 : Math.max(margin, anchor.left - size.width + 2)}px`;
+  entitySubmenu.style.top = `${Math.min(Math.max(margin, anchor.top - 5), Math.max(margin, window.innerHeight - size.height - margin))}px`;
 });
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-entity-command]').forEach((button) => {
