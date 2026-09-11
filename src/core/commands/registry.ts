@@ -15,7 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
+import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
@@ -417,6 +417,15 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },
+  { name: 'SURFOFFSET', aliases: ['SO', 'SURFOFFSET'], execute: surfaceOffsetStep, help: 'copy a surface parallel to itself, a given distance along its own normals', suggest: true,
+    steps: [
+      { kind: 'surface', label: 'Select surface to offset:' },
+      // A negative distance is the whole of AutoCAD's own "Flip direction":
+      // which way a surface's normals face is a property of the surface, not
+      // something the command can guess.
+      { kind: 'number', label: 'Enter offset distance (negative offsets the other way):', remember: true },
+      { kind: 'done' },
+    ] },
   { name: 'THICKEN', aliases: ['TH', 'THICKEN'], execute: thickenSurfaceStep, help: 'give a surface a wall thickness, turning it into a solid', suggest: true,
     steps: [
       { kind: 'surface', label: 'Select surface to thicken:' },

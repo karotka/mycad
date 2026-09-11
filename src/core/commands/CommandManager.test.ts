@@ -5,6 +5,7 @@ import { CommandManager, hitTestEntity } from './CommandManager';
 import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation, type Entity } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
+import { editedSurface } from '../../ui/modelTree';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
@@ -4326,23 +4327,87 @@ describe('LOFT', () => {
     expect(kit.doc.surfaces[0].feature).toMatchObject({ kind: 'loft', guides: [] });
   });
 
-  describe('THICKEN', () => {
-    /** A real LOFTed Surface (genuine OpenCascade B-rep, not a synthetic
-     *  mesh) — THICKEN's own real precedent, SHELL, is exercised the same
-     *  way elsewhere in this file against a real exact solid. */
-    const loftedSurface = async (kit: ReturnType<typeof setup>) => {
-      const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
-      const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
-      kit.doc.addEntity(rail1);
-      kit.doc.addEntity(rail2);
-      kit.manager.startCommand('LOFT');
-      await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
-      await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
-      await kit.manager.submitInput('');
-      await kit.manager.submitInput('');
-      return kit.doc.surfaces[0];
-    };
+  /** A real LOFTed Surface (genuine OpenCascade B-rep, not a synthetic
+   *  mesh) — THICKEN's own real precedent, SHELL, is exercised the same
+   *  way elsewhere in this file against a real exact solid. */
+  const loftedSurface = async (kit: ReturnType<typeof setup>) => {
+    const rail1 = kit.doc.createArc({ x: 10, y: 0 }, 10, 0, Math.PI);
+    const rail2 = kit.doc.createArc({ x: 10, y: 0 }, 10, Math.PI, Math.PI);
+    kit.doc.addEntity(rail1);
+    kit.doc.addEntity(rail2);
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 10, y: 10 }, rail1);
+    await kit.manager.handleClick({ x: 10, y: -10 }, rail2);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('');
+    return kit.doc.surfaces[0];
+  };
 
+  describe('SURFOFFSET', () => {
+    it('offsets a surface into a parallel one, keeping the original', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+
+      kit.manager.startCommand('SURFOFFSET');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('2');
+
+      expect(kit.log, 'offset failed').not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      // A copy, not a conversion: SURFOFFSET leaves what it offset behind,
+      // and produces another Surface rather than a solid.
+      expect(kit.doc.surfaces).toHaveLength(2);
+      expect(kit.doc.solids).toHaveLength(0);
+      const offset = kit.doc.surfaces[1];
+      expect(offset.mesh.indices.length).toBeGreaterThan(0);
+      // The whole point of the associative version: the distance stays in the
+      // feature, with the source surface's own recipe underneath it.
+      expect(offset.feature).toMatchObject({ kind: 'surface-offset', distance: 2 });
+      if (offset.feature.kind === 'surface-offset') expect(offset.feature.source.kind).toBe('loft');
+    }, 60_000);
+
+    it('rebuilds the offset surface when its distance is edited, instead of leaving it at the old shape', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+      kit.manager.startCommand('SURFOFFSET');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('2');
+      const offset = kit.doc.surfaces[1];
+
+      const edited = await editedSurface(offset, [], 'distance', 5);
+
+      expect(edited, 'the offset did not rebuild').not.toBeNull();
+      expect(edited!.feature).toMatchObject({ kind: 'surface-offset', distance: 5 });
+      // A new revision is what makes the 3D view pick the new geometry up.
+      expect(edited!.revision).toBe(offset.revision + 1);
+      expect(edited!.mesh.positions).not.toEqual(offset.mesh.positions);
+    }, 60_000);
+
+    it('refuses an offset of zero rather than making a copy on top of the original', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+      kit.manager.startCommand('SURFOFFSET');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('0');
+
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('greater than zero'));
+    }, 60_000);
+
+    it('undoes the offset back to the single surface it started from', async () => {
+      const kit = setup();
+      const surface = await loftedSurface(kit);
+      kit.manager.startCommand('SURFOFFSET');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+      await kit.manager.submitInput('2');
+      expect(kit.doc.surfaces).toHaveLength(2);
+
+      kit.history.undo();
+      expect(kit.doc.surfaces).toHaveLength(1);
+      expect(kit.doc.surfaces[0].id).toBe(surface.id);
+    }, 60_000);
+  });
+
+  describe('THICKEN', () => {
     it('turns a surface into a solid with the given wall thickness', async () => {
       const kit = setup();
       const surface = await loftedSurface(kit);

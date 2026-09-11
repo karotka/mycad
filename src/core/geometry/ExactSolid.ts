@@ -1,4 +1,4 @@
-import { closedVertices, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -92,6 +92,7 @@ function exactShapeFromFeature(feature: SolidFeature, kernel: OpenCascadeKernel)
   if (feature.kind === 'shell') return exactShellShape(feature, kernel);
   if (feature.kind === 'loft') return exactLoftShape(feature, kernel);
   if (feature.kind === 'draft') return exactDraftShape(feature, kernel);
+  if (feature.kind === 'surface-offset') return exactOffsetSurfaceShape(feature, kernel);
   if (feature.kind !== 'boolean' || feature.operands.length === 0) return null;
 
   const operands: OpenCascadeSolid[] = [];
@@ -155,6 +156,19 @@ function exactShellShape(feature: ShellFeature, kernel: OpenCascadeKernel): Open
   if (!source) return null;
   try {
     return kernel.shell(source, feature.faceId, feature.thickness);
+  } finally {
+    source.dispose();
+  }
+}
+
+/** The rebuild for a SURFOFFSET: the source surface, offset again. Same shape
+ *  as exactShellShape above — what makes it produce a surface rather than a
+ *  body is the kernel call, plus its caller passing `allowOpenShell`. */
+function exactOffsetSurfaceShape(feature: OffsetSurfaceFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  const source = exactFeatureSource(feature.source, feature.sourceMesh, kernel);
+  if (!source) return null;
+  try {
+    return kernel.offsetSurface(source, feature.distance);
   } finally {
     source.dispose();
   }
@@ -300,6 +314,36 @@ export async function thickenExactSurface(surface: ExactBody, thickness: number,
     attempt?.dispose();
     flipped?.dispose();
     retry?.dispose();
+    source.dispose();
+  }
+}
+
+/**
+ * SURFOFFSET: a parallel copy of a surface, `distance` along its own normals.
+ *
+ * Unlike thickenExactSurface above this keeps the result open, so
+ * `exactResult` is told to allow a shell — an offset surface has no volume by
+ * definition, and the solid-count check would otherwise throw on a perfectly
+ * good result. No flip-and-retry either: the sign of `distance` IS the
+ * direction the caller asked for, and quietly offsetting the other way when
+ * the first attempt looks wrong would be the opposite of what "Flip
+ * direction" means.
+ */
+export async function offsetExactSurface(surface: ExactBody, distance: number, revision: number): Promise<ExactSolidResult | null> {
+  if (!Number.isFinite(distance) || Math.abs(distance) < 1e-9) return null;
+  if (!await promoteSolidToExact(surface, true)) return null;
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(surface, kernel);
+  if (!source) return null;
+  let offset: OpenCascadeSolid | null = null;
+  try {
+    offset = kernel.offsetSurface(source, distance);
+    if (!survivesTessellation(kernel, offset)) return null;
+    return exactResult(kernel, offset, revision, true);
+  } catch {
+    return null;
+  } finally {
+    offset?.dispose();
     source.dispose();
   }
 }

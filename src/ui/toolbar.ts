@@ -47,6 +47,7 @@ export const solidModifyTools: Array<[string, string, CommandName]> = [
   ['Shell', 'Hollow a solid to a constant wall thickness', 'SHELL'],
   ['Loft', 'Loft a solid through a sequence of profiles', 'LOFT'],
   ['Thicken', 'Give a surface a wall thickness, turning it into a solid', 'THICKEN'],
+  ['Surface offset', 'Copy a surface parallel to itself, along its own normals', 'SURFOFFSET'],
   ['Draft', 'Taper solid faces by an angle from a neutral plane', 'DRAFT'],
 ];
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];

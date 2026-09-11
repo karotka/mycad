@@ -346,6 +346,53 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(pinnedZSpan).toBeLessThan(unpinnedZSpan / 2);
   });
 
+  it('offsets a lofted surface into a parallel one, still open and moved by the distance asked for', () => {
+    // The riskiest question about SURFOFFSET: loftGuidedSurface splits every
+    // strip into sub-patches to soften its creases, so the thing being offset
+    // is a multi-patch shell, not one clean face. PerformByJoin has to knit
+    // the offset patches back together rather than leaving them torn apart.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const guide = [{ kind: 'bezier' as const, poles: [
+      { x: 28, y: 15, z: 0 }, { x: 28, y: 15, z: 8 }, { x: 28, y: 8, z: 8 }, { x: 28, y: 8, z: 0 },
+    ] }];
+    const surface = keep(kernel.loftGuidedSurface(rail1, rail2, [guide]));
+    const before = kernel.inspect(surface);
+
+    const positive = kernel.inspect(keep(kernel.offsetSurface(surface, 3)));
+    const negative = kernel.inspect(keep(kernel.offsetSurface(surface, -3)));
+
+    // Still surfaces, not bodies: an offset has no volume to enclose.
+    expect(positive.solidCount).toBe(0);
+    expect(negative.solidCount).toBe(0);
+    expect(positive.valid && negative.valid).toBe(true);
+
+    // Which way a sign points depends on the shell's OWN normals, not on
+    // world up — here they face down, so +3 lowers the surface and -3 raises
+    // it. That is exactly why AutoCAD draws arrows and offers Flip direction
+    // rather than asking for a signed number and hoping.
+    expect(positive.bounds.max.z).toBeLessThan(before.bounds.max.z);
+    expect(negative.bounds.max.z).toBeGreaterThan(before.bounds.max.z);
+    // And each really travels the distance asked for, rather than nudging:
+    // the two copies end up roughly 2 × 3 apart.
+    expect(negative.bounds.max.z - positive.bounds.max.z).toBeGreaterThan(4);
+  }, 60_000);
+
+  it('refuses an offset of zero rather than handing back the original surface', () => {
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 12.9, z: 0 }, { x: 20, y: 19, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 4.5, y: 12, z: 0 }, { x: 5.3, y: 11.1, z: 0 }, { x: 20, y: 5, z: 0 }, { x: 51.5, y: 11.5, z: 0 },
+    ] }];
+    const surface = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    expect(() => kernel.offsetSurface(surface, 0)).toThrow(/greater than zero/);
+  });
+
   it('lofts two open rails through a guide curve, bending the surface to follow it — AutoCAD LOFT\'s "Guides" option', () => {
     // The same flat, z=0 silhouette as the tests above, but as two SEPARATE
     // open rails (never joined into one wire) — exactly the real workflow:

@@ -1157,6 +1157,45 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
   }
 
   /**
+   * A parallel copy of `surface`, `distance` along its own normals — the
+   * geometry behind SURFOFFSET. The result is another open shell, not a
+   * solid: `shell()` above thickens a surface into a body with two walls,
+   * this moves the single wall it already has.
+   *
+   * `PerformBySimple`, not `PerformByJoin`, and that is a measured choice
+   * rather than the obvious one. Join mode is the richer offset — it extends
+   * and intersects neighbouring patches back together — and it does work on a
+   * FLAT lofted shell. But every guided loft here is a curved shell of many
+   * sub-patches (loftGuidedSurface splits each strip to soften its creases),
+   * and on one of those the join mode throws out of OCCT at any distance,
+   * before and after healing. The simple offset handles both, and its results
+   * come back valid and correctly placed. See this file's own test.
+   *
+   * The sign is kept exactly as given: which side the copy lands on is the
+   * caller's decision, and is all SURFOFFSET's "Flip direction" changes.
+   */
+  offsetSurface(surface: OpenCascadeSolid, distance: number): OpenCascadeSolid {
+    if (!Number.isFinite(distance) || Math.abs(distance) < 1e-9) {
+      throw new Error('Offset distance must be greater than zero.');
+    }
+    const maker = new this.oc.BRepOffsetAPI_MakeOffsetShape();
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      maker.PerformBySimple(surface.shape(this), distance);
+      maker.Build(progress);
+      const shape = maker.Shape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade failed to offset the surface.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress.delete();
+      maker.delete();
+    }
+  }
+
+  /**
    * Whether `solid`'s whole shape — however many faces it happens to be
    * split into (a Surface's own faces are often several small sub-patches;
    * see `loftGuidedSurface`'s own doc comment) — fits within a single

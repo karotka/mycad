@@ -138,6 +138,10 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** null faceId hollows the solid completely closed; a given face opens as
    *  the shell's mouth. thickness always hollows inward. */
   shell(solid: Solid, faceId: number | null, thickness: number): Solid;
+  /** A parallel copy of an open shell, `distance` along its own normals —
+   *  another open shell, not a body. A negative distance offsets the other
+   *  way (SURFOFFSET's "Flip direction"). */
+  offsetSurface(surface: Solid, distance: number): Solid;
   /** Same shape, every face orientation flipped — see OpenCascadeKernel's
    *  own doc comment for why a caller would want this. */
   reversed(solid: Solid): Solid;

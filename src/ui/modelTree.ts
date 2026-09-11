@@ -7,7 +7,7 @@
  * reach them was to edit the file. This is the part that turns the tree into
  * rows; the panel draws them.
  */
-import type { Solid, SolidFeature } from '../core/entities/types';
+import { cloneSurfaceValue, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
 import { cloneSolid } from '../core/history/edits';
 import { setFeatureParam } from '../core/solids/featureParams';
 import { buildExactFeature, promoteSolidToExact } from '../core/geometry/ExactSolid';
@@ -81,6 +81,10 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       };
     case 'draft':
       return { label: 'Draft', detail: `${Number(feature.angle.toFixed(2))}°` };
+    case 'surface-offset':
+      // The sign is the direction, so it stays visible rather than being
+      // absolute-valued the way shell's thickness is.
+      return { label: 'Surface offset', detail: `${Number(feature.distance.toFixed(2))} mm` };
     case 'mesh':
       return { label: 'Mesh', detail: 'no history' };
   }
@@ -88,7 +92,7 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
 
 function featureChildren(feature: SolidFeature): SolidFeature[] {
   if (feature.kind === 'boolean') return feature.operands;
-  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell' || feature.kind === 'draft') return [feature.source];
+  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'shell' || feature.kind === 'draft' || feature.kind === 'surface-offset') return [feature.source];
   return [];
 }
 
@@ -152,6 +156,34 @@ export async function editedSolid(
   after.revision = nextRevision;
   if (after.feature.kind === 'extrusion' || after.feature.kind === 'primitive') after.height = after.feature.height;
   else if (after.feature.kind === 'presspull-region') after.height = meshZSpan(exact.mesh);
+  return after;
+}
+
+/**
+ * The same edit for a Surface — SURFOFFSET's distance being the one number a
+ * surface currently has to type at.
+ *
+ * Separate from `editedSolid` above for one reason that matters: the rebuild
+ * has to allow an open shell. A surface encloses no volume, so the solid-count
+ * check every solid rebuild relies on would reject a perfectly good result.
+ */
+export async function editedSurface(
+  surface: Surface,
+  path: readonly number[],
+  key: string,
+  value: number,
+): Promise<Surface | null> {
+  const after = cloneSurfaceValue(surface);
+  const target = featureAt(after.feature, path);
+  if (!target || !setFeatureParam(target, key, value)) return null;
+  const nextRevision = surface.revision + 1;
+  const exact = await buildExactFeature(after.feature, nextRevision, true);
+  if (!exact) return null;
+  after.mesh = exact.mesh;
+  after.exact = exact.exact;
+  // Same rule as a solid's: the 3D view rebuilds geometry when the revision
+  // moves, and not otherwise.
+  after.revision = nextRevision;
   return after;
 }
 

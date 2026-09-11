@@ -7,7 +7,7 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidMesh, type Surface } from '../../entities/types';
+import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidFeature, type SolidMesh, type Surface } from '../../entities/types';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, draftExactSolid, extrudeExactSurface, modifyExactSolidEdge, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, draftExactSolid, extrudeExactSurface, modifyExactSolidEdge, offsetExactSurface, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -663,6 +663,60 @@ export async function thickenSurfaceStep(run: CommandRun): Promise<StepOutcome> 
   solid.exact = exact.exact;
   ctx.history.execute(new ReplaceObjectsEdit('Thicken', [], [], [], [solid], [surface], []));
   ctx.log(`Thicken complete: wall thickness ${thickness}.`);
+  return 'advance';
+}
+
+/**
+ * SURFOFFSET: a parallel copy of a surface, a given distance along its own
+ * normals. The original stays — this copies rather than consumes, the way
+ * AutoCAD's own does.
+ *
+ * Unlike THICKEN above, the result keeps a real feature (`surface-offset`)
+ * rather than being baked to a mesh, so its distance stays editable in the
+ * model tree and the whole thing rebuilds from its source.
+ */
+export async function surfaceOffsetStep(run: CommandRun): Promise<StepOutcome> {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    const surfaceId = value as string | undefined;
+    if (!surfaceId) {
+      ctx.log('SURFOFFSET requires a surface.');
+      return 'stay';
+    }
+    data.surfaceId = surfaceId;
+    return 'advance';
+  }
+
+  const surface = ctx.doc.getSurface(data.surfaceId as string);
+  if (!surface) {
+    ctx.log('Surface not found.');
+    return 'advance';
+  }
+  const distance = value as number;
+  if (!Number.isFinite(distance) || Math.abs(distance) <= 1e-6) {
+    ctx.log('Offset distance must be greater than zero. A negative distance offsets the other way.');
+    return 'stay';
+  }
+  ctx.log('Offsetting…');
+  const exact = await offsetExactSurface(surface, distance, 0);
+  if (!exact) {
+    ctx.log('Surface offset failed — a distance this large can fold the surface through itself; try a smaller one.');
+    return 'advance';
+  }
+  const feature: SolidFeature = {
+    kind: 'surface-offset',
+    source: surface.feature,
+    distance,
+    // The source's own geometry, kept only when that source is a baked mesh
+    // with no recipe of its own to rebuild from — same rule as shell/draft.
+    ...(surface.feature.kind === 'mesh'
+      ? { sourceMesh: { positions: Array.from(surface.mesh.positions), indices: Array.from(surface.mesh.indices) } }
+      : {}),
+  };
+  const offset = ctx.doc.createSurface(exact.mesh, 'Offset', [surface.id], undefined, feature);
+  offset.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Surface offset', [], [], [], [], [], [offset]));
+  ctx.log(`Surface offset complete: ${distance} mm.`);
   return 'advance';
 }
 

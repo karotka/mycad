@@ -8,9 +8,9 @@
 import type { Document } from '../core/Document';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../core/history/edits';
-import type { Solid, Surface } from '../core/entities/types';
+import { cloneSurfaceValue, type Solid, type Surface } from '../core/entities/types';
 import { featureParams, type FeatureParam } from '../core/solids/featureParams';
-import { editedSolid, featureRows, pathKey, removedFeatureSolid, type TreeRow } from './modelTree';
+import { editedSolid, editedSurface, featureRows, pathKey, removedFeatureSolid, type TreeRow } from './modelTree';
 
 export class ModelTreeController {
   private collapsed = new Set<string>();
@@ -60,9 +60,11 @@ export class ModelTreeController {
     );
   }
 
-  /** A Surface has no editable/removable feature params yet (LOFT's own
-   *  'loft' feature exposes none) — a plain, read-only tree, unlike a
-   *  Solid's own interactive `featureRow`. */
+  /** A Surface's own tree. LOFT's feature exposes no numbers, so this used to
+   *  be read-only throughout; SURFOFFSET's distance is the first one a surface
+   *  can be edited by, so the rows are interactive whenever `featureParams`
+   *  finds something to type at. Removing a feature stays solid-only — there
+   *  is no surface counterpart of `removedFeatureSolid` yet. */
   private surfaceRows(surface: Surface): HTMLElement[] {
     const head = document.createElement('div');
     head.className = `tree-row tree-solid${surface.selected ? ' active' : ''}`;
@@ -79,14 +81,58 @@ export class ModelTreeController {
     });
     if (this.collapsed.has(surface.id)) return [head];
 
-    const rows = featureRows(surface.feature, this.collapsed).map((row) => {
-      const element = document.createElement('div');
-      element.className = 'tree-row';
-      element.style.paddingLeft = `${8 + row.depth * 13}px`;
-      element.innerHTML = `<span class="tree-twist">·</span><span class="tree-label">${escapeHtml(row.label)}</span><span class="tree-detail">${escapeHtml(row.detail)}</span>`;
-      return element;
+    return [head, ...featureRows(surface.feature, this.collapsed).flatMap((row) => this.surfaceFeatureRow(surface, row))];
+  }
+
+  private surfaceFeatureRow(surface: Surface, row: TreeRow): HTMLElement[] {
+    const key = `${surface.id}:${pathKey(row.path)}`;
+    const element = document.createElement('div');
+    element.className = `tree-row${this.opened === key ? ' active' : ''}`;
+    element.style.paddingLeft = `${8 + row.depth * 13}px`;
+    element.innerHTML = `<span class="tree-twist">·</span><span class="tree-label">${escapeHtml(row.label)}</span><span class="tree-detail">${escapeHtml(row.detail)}</span>`;
+    const params = row.blockedByEdge ? [] : featureParams(row.feature);
+    if (params.length === 0) return [element];
+
+    element.addEventListener('click', () => {
+      this.opened = this.opened === key ? null : key;
+      this.render();
     });
-    return [head, ...rows];
+    if (this.opened !== key) return [element];
+
+    const form = document.createElement('div');
+    form.className = 'tree-params';
+    form.style.paddingLeft = `${8 + (row.depth + 1) * 13}px`;
+    for (const param of params) {
+      const field = document.createElement('label');
+      field.className = 'property-row';
+      field.innerHTML = `<span>${param.label}</span><input type="number" step="0.1" value="${param.value}">`;
+      const input = field.querySelector('input')!;
+      input.addEventListener('click', (event) => event.stopPropagation());
+      input.addEventListener('change', () => { void this.applyToSurface(surface, row.path, param.key, Number(input.value), input, param.value); });
+      form.append(field);
+    }
+    return [element, form];
+  }
+
+  /** The surface counterpart of `apply` below — `editedSurface` rebuilds with
+   *  an open shell allowed, and the undo entry carries surfaces rather than
+   *  solids. */
+  private async applyToSurface(surface: Surface, path: number[], key: string, value: number, input: HTMLInputElement, previous: number): Promise<void> {
+    const before = cloneSurfaceValue(surface);
+    const after = await editedSurface(surface, path, key, value);
+    if (!after) {
+      input.value = String(previous);
+      this.log(`${key} = ${value} would leave nothing to build.`);
+      return;
+    }
+    this.applying = true;
+    try {
+      this.history.execute(new ReplaceObjectsEdit(`Edit ${key}`, [], [], [], [], [before], [after]));
+    } finally {
+      this.applying = false;
+    }
+    this.render();
+    this.redraw();
   }
 
   private solidRows(solid: Solid): HTMLElement[] {

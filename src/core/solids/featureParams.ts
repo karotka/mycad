@@ -38,6 +38,10 @@ export function featureParams(feature: SolidFeature): FeatureParam[] {
   }];
   if (feature.kind === 'shell') return [{ key: 'thickness', label: 'Thickness', value: feature.thickness, min: 1e-6 }];
   if (feature.kind === 'draft') return [{ key: 'angle', label: 'Angle', value: feature.angle, min: -89.9 }];
+  // Signed, unlike shell's thickness: the sign is which side of the surface
+  // the copy sits on, so typing a negative number here is SURFOFFSET's own
+  // "Flip direction" after the fact.
+  if (feature.kind === 'surface-offset') return [{ key: 'distance', label: 'Distance', value: feature.distance, min: -Infinity }];
   // A loft's profiles (and guides) are shapes, not numbers — same reasoning
   // as sweep above. A loft between two open rails has no thickness of its
   // own to expose here any more — it builds a Surface now, and THICKEN's own
@@ -67,6 +71,10 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   }
   if (feature.kind === 'draft' && key === 'angle' && Math.abs(value) < 89.9) {
     feature.angle = value;
+    return true;
+  }
+  if (feature.kind === 'surface-offset' && key === 'distance' && Number.isFinite(value) && Math.abs(value) >= 1e-6) {
+    feature.distance = value;
     return true;
   }
   return false;

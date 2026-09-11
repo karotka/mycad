@@ -711,7 +711,25 @@ export interface PrimitiveFeature {
   workPlane?: WorkPlane;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature;
+/**
+ * A reversible parallel copy of a surface, a fixed distance along its own
+ * normals — AutoCAD's SURFOFFSET.
+ *
+ * Unlike every other feature here it produces a Surface rather than a Solid,
+ * so whatever rebuilds it has to allow an open shell (see exactResult's
+ * `allowOpenShell`). A negative distance offsets the other way, which is all
+ * SURFOFFSET's own "Flip direction" option amounts to.
+ */
+export interface OffsetSurfaceFeature {
+  kind: 'surface-offset';
+  source: SolidFeature;
+  distance: number;
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
+}
+
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature | OffsetSurfaceFeature;
 
 export interface Solid {
   id: string;

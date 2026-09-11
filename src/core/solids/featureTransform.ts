@@ -105,6 +105,16 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
         sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
         thickness: feature.thickness * Math.abs(factor),
       };
+    // Same shape as shell above, except the distance keeps its sign: which
+    // side of the surface the offset sits on is part of the feature, and a
+    // scale must not flip it.
+    case 'surface-offset':
+      return {
+        ...feature,
+        source: scaledFeature(feature.source, base, factor) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
+        distance: feature.distance * Math.abs(factor),
+      };
     // A draft angle is a pure angle — uniform scaling never changes it, so
     // unlike shell's thickness there is no scalar here to carry along. The
     // neutral plane's origin/normal do move, the same way presspull-region's
@@ -179,7 +189,8 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
       if (operands.some((operand) => operand === null)) return null;
       return { ...feature, operands: operands as SolidFeature[] };
     }
-    case 'shell': {
+    case 'shell':
+    case 'surface-offset': {
       const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
       return {
         ...feature,
@@ -266,7 +277,8 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
       if (operands.some((operand) => operand === null)) return null;
       return { ...feature, operands: operands as SolidFeature[] };
     }
-    case 'shell': {
+    case 'shell':
+    case 'surface-offset': {
       const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
       return {
         ...feature,
@@ -361,6 +373,7 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
         edge: transformedEdge(feature.edge, reflectPoint, reflectDirection),
       };
     case 'shell':
+    case 'surface-offset':
       return {
         ...feature,
         source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
