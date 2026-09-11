@@ -135,23 +135,6 @@ export function ucsCursorLegEndpoints(
 }
 
 /**
- * Whether `plane` is the plain default WCS — live testing found the
- * plane-oriented cursor cross showing constantly while drawing an ordinary
- * flat object read as noise, not information; it earns its keep only once
- * the drawing plane has actually changed from the default (a named or
- * dynamic UCS). Value comparison, not reference — `doc.activeWorkPlane` is
- * routinely a fresh clone carrying the same identity values.
- */
-export function isWorldPlane(plane: WorkPlane): boolean {
-  const eps = 1e-9;
-  const close = (a: number, b: number) => Math.abs(a - b) < eps;
-  return close(plane.origin.x, 0) && close(plane.origin.y, 0) && close(plane.origin.z, 0)
-    && close(plane.xAxis.x, 1) && close(plane.xAxis.y, 0) && close(plane.xAxis.z, 0)
-    && close(plane.yAxis.x, 0) && close(plane.yAxis.y, 1) && close(plane.yAxis.z, 0)
-    && close(plane.zAxis.x, 0) && close(plane.zAxis.y, 0) && close(plane.zAxis.z, 1);
-}
-
-/**
  * Registers the three viewport pointer listeners. This is the app's central
  * event orchestration — hover feedback, drag commits, grip editing, dynamic
  * UCS, selection and the context menu — so it reaches almost every controller.
@@ -188,10 +171,16 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     y: ucsCursor.querySelector<SVGLineElement>('.ucs-cursor-y')!,
     z: ucsCursor.querySelector<SVGLineElement>('.ucs-cursor-z')!,
   };
-  /** The 3D-view-only cross at the cursor showing the CURRENT work plane's
-   *  own axes (WCS by default, or a dynamic/named UCS's own tilt) — see
-   *  the CSS comment on `.ucs-cursor` for why this exists alongside the
-   *  plain screen-aligned crosshair.
+  /** The 3D-view-only cross at the cursor showing a VIRTUAL work plane's own
+   *  axes — see the CSS comment on `.ucs-cursor` for why this exists
+   *  alongside the plain screen-aligned crosshair. Deliberately not shown
+   *  for the active UCS in general (named, dynamic, or plain WCS) — the
+   *  user's own correction after live testing: it should appear only at the
+   *  moment a point snapped somewhere off the currently active UCS and so
+   *  established a temporary parallel drawing plane mid-command (the same
+   *  `active.data.drawingPlane`/`drawingPlaneAnchor` PointResolver sets —
+   *  see the drawing-plane-origin marker right below this function's own
+   *  call site), not constantly for whatever UCS already happens to be set.
    *
    *  Visibility is toggled through `style.display`, not the `hidden`
    *  property/attribute every other overlay in this file uses (`crosshair`,
@@ -204,8 +193,8 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   function hideUcsCursor(): void { ucsCursor.style.display = 'none'; }
   function updateUcsCursor(event: PointerEvent, sx: number, sy: number): void {
     if (cadDocument.viewMode !== '3d') { hideUcsCursor(); return; }
-    const plane = cadDocument.activeWorkPlane;
-    if (isWorldPlane(plane)) { hideUcsCursor(); return; }
+    const plane = commands.active?.data.drawingPlane as WorkPlane | undefined;
+    if (!plane) { hideUcsCursor(); return; }
     const canvas = renderer3d.renderer.domElement;
     const local = renderer3d.workPlanePoint(canvas, event.clientX, event.clientY, plane);
     if (!local) { hideUcsCursor(); return; }

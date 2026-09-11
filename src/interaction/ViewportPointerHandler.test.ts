@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isWorldPlane, ucsCursorLegEndpoints } from './ViewportPointerHandler';
+import { ucsCursorLegEndpoints } from './ViewportPointerHandler';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Vec2, Vec3 } from '../math/geometry';
 
@@ -87,31 +87,5 @@ describe('ucsCursorLegEndpoints', () => {
     const near = ucsCursorLegEndpoints(WORLD_WORK_PLANE, { x: 0, y: 0, z: 0 }, lookingDownZ, 0.001);
     expect(far!.x).toEqual({ x: CENTER + LEG, y: CENTER });
     expect(near!.x).toEqual({ x: CENTER + LEG, y: CENTER });
-  });
-});
-
-describe('isWorldPlane', () => {
-  it('recognises the plain WCS, including a fresh clone carrying the same values', () => {
-    expect(isWorldPlane(WORLD_WORK_PLANE)).toBe(true);
-    expect(isWorldPlane({
-      origin: { x: 0, y: 0, z: 0 },
-      xAxis: { x: 1, y: 0, z: 0 },
-      yAxis: { x: 0, y: 1, z: 0 },
-      zAxis: { x: 0, y: 0, z: 1 },
-    })).toBe(true);
-  });
-
-  it('rejects a plane with a shifted origin', () => {
-    expect(isWorldPlane({ ...WORLD_WORK_PLANE, origin: { x: 5, y: 0, z: 0 } })).toBe(false);
-  });
-
-  it('rejects a plane turned onto a different axis (a named or dynamic UCS)', () => {
-    const tilted: WorkPlane = {
-      origin: { x: 0, y: 0, z: 0 },
-      xAxis: { x: 0, y: 0, z: 1 },
-      yAxis: { x: 0, y: 1, z: 0 },
-      zAxis: { x: -1, y: 0, z: 0 },
-    };
-    expect(isWorldPlane(tilted)).toBe(false);
   });
 });
