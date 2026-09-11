@@ -1277,7 +1277,17 @@ export function getEntityPoints(e: Entity): Vec2[] {
   }
 }
 
-export function transformEntityPoints(e: Entity, fn: (p: Vec2) => Vec2): Entity {
+export function transformEntityPoints(e: Entity, transform: (p: Vec2) => Vec2): Entity {
+  // Any elevation a point carries rides along unless the transform produced
+  // one of its own: these are all in-plane moves, so how far off the plane a
+  // point sits is theirs to keep. Without this a 3D curve came out flat the
+  // moment it was moved, copied or mirrored.
+  const fn = (point: Vec2): Vec2 => {
+    const result = transform(point);
+    const z = (point as Vec2 & { z?: number }).z;
+    if (z === undefined || (result as Vec2 & { z?: number }).z !== undefined) return result;
+    return { ...result, z } as Vec2;
+  };
   const copy = cloneEntity(e);
   switch (copy.type) {
     case 'insert': {

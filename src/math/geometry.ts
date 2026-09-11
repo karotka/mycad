@@ -42,11 +42,20 @@ export function midpoint2(a: Vec2, b: Vec2): Vec2 {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-/** A point turned about another, anticlockwise, by `angle` radians. */
+/**
+ * A point turned about another, anticlockwise, by `angle` radians.
+ *
+ * Any elevation the point carries (the `Vec2 & { z?: number }` convention a
+ * genuinely 3D curve's points use) rides along untouched: this turns a point
+ * WITHIN its plane, so how far off that plane it sits cannot change. Dropping
+ * it flattened such a curve the moment it was rotated.
+ */
 export function rotatePoint(point: Vec2, base: Vec2, angle: number): Vec2 {
   const dx = point.x - base.x, dy = point.y - base.y;
   const cosine = Math.cos(angle), sine = Math.sin(angle);
-  return { x: base.x + dx * cosine - dy * sine, y: base.y + dx * sine + dy * cosine };
+  const z = (point as Vec2 & { z?: number }).z;
+  const turned = { x: base.x + dx * cosine - dy * sine, y: base.y + dx * sine + dy * cosine };
+  return z === undefined ? turned : { ...turned, z } as Vec2;
 }
 
 export function mirrorPoint2(p: Vec2, axisStart: Vec2, axisEnd: Vec2): Vec2 {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
-import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation } from '../entities/types';
+import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation, type Entity } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE } from '../../math/workplane';
@@ -2483,6 +2483,80 @@ describe('Enter finishes a multi-object step', () => {
     await manager.submitInput('');
     expect(manager.active).toBeNull();
     expect(log).toHaveBeenCalledWith('Command canceled.');
+  });
+});
+
+describe('transforming a curve that is genuinely bent through 3D', () => {
+  /** A spline with a real per-point elevation, the shape drawBezier's own 3D
+   *  path builds (and grip-axis dragging produces after the fact). */
+  const bentSpline = (doc: ReturnType<typeof setup>['doc']) => {
+    const withZ = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+    const spline = doc.createSpline(withZ(0, 0, 0), [
+      { control1: withZ(10, 0, 6), control2: withZ(20, 0, 6), end: withZ(30, 0, 0) },
+    ]);
+    doc.addEntity(spline);
+    doc.selectEntity(spline.id);
+    return spline;
+  };
+  const elevations = (entity: Entity | undefined): Array<number | undefined> => {
+    if (entity?.type !== 'bezier') return [];
+    const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+    return points.map((point) => (point as Vec2 & { z?: number }).z);
+  };
+
+  it('keeps the mirrored copy bent instead of flattening it', async () => {
+    // Reported directly: "nakreslim, natvaruju, udelam mirror a vysledek je
+    // placaty" — the mirror ran every point through a 2D reflection that
+    // returned {x, y} only, so the copy lost every elevation it had.
+    const { doc, manager } = setup();
+    bentSpline(doc);
+    // A pre-selected object skips the gather step, so the first click is
+    // already the mirror axis's own first point.
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 0, y: -10 });
+    await manager.handleClick({ x: 30, y: -10 });
+
+    expect(doc.entities).toHaveLength(2);
+    const copy = doc.entities[1];
+    expect(elevations(copy)).toEqual([0, 6, 6, 0]);
+    // Mirrored across a line below it: the curve lands on the far side in y,
+    // with its height above the plane untouched.
+    if (copy.type === 'bezier') expect(copy.segments[0].control1).toMatchObject({ x: 10, y: -20, z: 6 });
+  });
+
+  it('keeps a moved copy bent too', async () => {
+    const { doc, manager } = setup();
+    bentSpline(doc);
+    // A pre-selected object skips the gather step, so the first click is
+    // already the command's own base/axis point.
+    manager.startCommand('COPY');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 40 });
+
+    expect(elevations(doc.entities[1])).toEqual([0, 6, 6, 0]);
+  });
+
+  it('turns a bent curve about the plane normal without losing its height', async () => {
+    const { doc, manager } = setup();
+    bentSpline(doc);
+    // A pre-selected object skips the gather step, so the first click is
+    // already the command's own base/axis point.
+    manager.startCommand('ROTATE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.submitInput('90');
+
+    expect(elevations(doc.entities[0])).toEqual([0, 6, 6, 0]);
+  });
+
+  it('grows a bent curve away from the plane when scaled, rather than flattening it towards the plane', async () => {
+    const { doc, manager } = setup();
+    bentSpline(doc);
+    manager.startCommand('SCALE');
+    await manager.handleClick({ x: 0, y: 0 }); // base point
+    await manager.submitInput('1'); // reference length
+    await manager.submitInput('2'); // new length — factor 2
+
+    expect(elevations(doc.entities[0])).toEqual([0, 12, 12, 0]);
   });
 });
 

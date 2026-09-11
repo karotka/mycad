@@ -17,10 +17,18 @@ import type { Document } from '../../Document';
 import type { CommandRun, StepOutcome } from '../types';
 
 export function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {
-  const scaled = transformEntityPoints(entity, (point) => ({
-    x: base.x + (point.x - base.x) * factor,
-    y: base.y + (point.y - base.y) * factor,
-  }));
+  const scaled = transformEntityPoints(entity, (point) => {
+    const elevation = (point as Vec2 & { z?: number }).z;
+    // Unlike move/mirror/rotate, a scale is not an in-plane move: a 3D curve
+    // scaled about a base point has to grow away from the plane too, or it
+    // flattens towards it as the factor rises. The base sits on the plane, so
+    // the elevation scales straight from there.
+    return {
+      x: base.x + (point.x - base.x) * factor,
+      y: base.y + (point.y - base.y) * factor,
+      ...(elevation === undefined ? {} : { z: elevation * factor }),
+    } as Vec2;
+  });
   if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
   if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
   if (scaled.type === 'text') scaled.height *= factor;
