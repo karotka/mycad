@@ -2801,6 +2801,68 @@ describe('SPLINE command', () => {
     expect(doc.entities).toHaveLength(0);
     expect(log).toHaveBeenCalledWith('A spline needs at least two points.');
   });
+
+  /** Same ad-hoc `.world` extension PointResolver attaches for BEZIER/SPLINE
+   *  per-point Dynamic UCS re-acquisition — see BEZIER's own `withWorld`. */
+  const withWorld = (x: number, y: number, world: { x: number; y: number; z: number }): Vec2 => ({ x, y, world } as unknown as Vec2);
+
+  it('keeps two points at different elevations in 3D instead of flattening to z=0 — real regression: two clicks on different box vertices, then Enter', async () => {
+    // Unlike BEZIER (which cannot finish before 4 points), SPLINE can finish
+    // with exactly two — and any two points are trivially "coplanar" with
+    // each other, so worldPointsAreCoplanar alone would wrongly call this
+    // flat. Reported directly: snapped onto two different-elevation
+    // vertices, x/y landed correctly but z always came out 0.
+    const { doc, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 0 }));
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 10 }));
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const spline = doc.entities[0];
+    expect(spline).toMatchObject({ type: 'bezier' });
+    if (spline.type === 'bezier') {
+      expect(spline.start).toEqual({ x: 0, y: 0, z: 0 });
+      expect(spline.segments.at(-1)!.end).toEqual({ x: 0, y: 0, z: 10 });
+      expect(spline.workPlane).toMatchObject({ origin: { x: 0, y: 0, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } });
+    }
+  });
+
+  it('builds a genuinely 3D fit curve through points from different Dynamic UCS planes', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 0 }));
+    await manager.handleClick(withWorld(10, 0, { x: 10, y: 0, z: 8 })); // a different face's plane
+    await manager.handleClick(withWorld(20, 0, { x: 20, y: 0, z: 0 }));
+    await manager.submitInput('');
+
+    const spline = doc.entities[0];
+    expect(spline).toMatchObject({ type: 'bezier' });
+    if (spline.type === 'bezier') {
+      expect(spline.start).toEqual({ x: 0, y: 0, z: 0 });
+      // The fit passes exactly through every clicked point, including the
+      // off-plane middle one's real elevation.
+      expect(spline.segments[0].end).toEqual({ x: 10, y: 0, z: 8 });
+      expect(spline.segments.at(-1)!.end).toEqual({ x: 20, y: 0, z: 0 });
+    }
+  });
+
+  it('still fits the ordinary flat way when every point shares one elevation, even carrying .world', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('SPLINE');
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 0 }));
+    await manager.handleClick(withWorld(10, 8, { x: 10, y: 8, z: 0 }));
+    await manager.handleClick(withWorld(20, 0, { x: 20, y: 0, z: 0 }));
+    await manager.submitInput('');
+
+    const spline = doc.entities[0];
+    if (spline.type === 'bezier') {
+      // No spurious z carried along for the ordinary, still-flat case.
+      expect(spline.start).toEqual({ x: 0, y: 0 });
+      expect(spline.segments.at(-1)!.end).toMatchObject({ x: 20, y: 0 });
+      expect((spline.segments.at(-1)!.end as { z?: number }).z).toBeUndefined();
+    }
+  });
 });
 
 describe('BEZIER command (Spline CV)', () => {

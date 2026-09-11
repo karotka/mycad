@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitCubicBeziers, interpolatingBeziers } from './bezierFit';
+import { fitCubicBeziers, interpolatingBeziers, interpolatingBeziers3 } from './bezierFit';
 
 describe('fitCubicBeziers', () => {
   it('reduces sampled smooth geometry to fewer cubic Beziers', () => {
@@ -58,5 +58,27 @@ describe('interpolatingBeziers', () => {
     const line = interpolatingBeziers([{ x: 0, y: 0 }, { x: 4, y: 0 }]);
     expect(line).toHaveLength(1);
     expect(line[0]).toMatchObject({ start: { x: 0, y: 0 }, end: { x: 4, y: 0 } });
+  });
+});
+
+describe('interpolatingBeziers3', () => {
+  it('passes exactly through every point, z included, with one segment per interval', () => {
+    const points = [{ x: 0, y: 0, z: 0 }, { x: 3, y: 1, z: 2 }, { x: 6, y: 0, z: 0 }, { x: 9, y: -1, z: -2 }];
+    const result = interpolatingBeziers3(points);
+    expect(result).toHaveLength(points.length - 1);
+    expect(result[0].start).toEqual(points[0]);
+    for (let index = 0; index < result.length; index++) expect(result[index].end).toEqual(points[index + 1]);
+  });
+
+  it('keeps a straight run flat in z when every point shares one elevation', () => {
+    const points = [{ x: 0, y: 0, z: 5 }, { x: 4, y: 0, z: 5 }];
+    const result = interpolatingBeziers3(points);
+    expect(result).toHaveLength(1);
+    expect(result[0].control1.z).toBe(5);
+    expect(result[0].control2.z).toBe(5);
+  });
+
+  it('degenerates to nothing for fewer than two points', () => {
+    expect(interpolatingBeziers3([{ x: 0, y: 0, z: 0 }])).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
-import type { Vec2 } from './geometry';
+import type { Vec2, Vec3 } from './geometry';
 
 export interface CubicBezierFit { start: Vec2; control1: Vec2; control2: Vec2; end: Vec2 }
+export interface CubicBezierFit3 { start: Vec3; control1: Vec3; control2: Vec3; end: Vec3 }
 
 /** Fits one or more cubic Beziers to sampled points within the requested error. */
 export function fitCubicBeziers(input: readonly Vec2[], tolerance: number): CubicBezierFit[] {
@@ -81,6 +82,36 @@ export function interpolatingBeziers(input: readonly Vec2[]): CubicBezierFit[] {
   }
   return segments;
 }
+
+/**
+ * Same Catmull-Rom construction as `interpolatingBeziers`, generalized to
+ * full 3D points for SPLINE (fit) drawn across more than one Dynamic UCS
+ * face — all arithmetic here is already component-wise, so z behaves
+ * exactly like x and y once threaded through.
+ */
+export function interpolatingBeziers3(input: readonly Vec3[]): CubicBezierFit3[] {
+  const points = input.filter((point, index) => index === 0 || distance3(point, input[index - 1]) > 1e-12);
+  if (points.length < 2) return [];
+  const tangentAt = (index: number): Vec3 => {
+    const previous = points[Math.max(0, index - 1)];
+    const next = points[Math.min(points.length - 1, index + 1)];
+    return { x: (next.x - previous.x) / 2, y: (next.y - previous.y) / 2, z: (next.z - previous.z) / 2 };
+  };
+  const segments: CubicBezierFit3[] = [];
+  for (let index = 0; index < points.length - 1; index++) {
+    const start = points[index], end = points[index + 1];
+    const startTangent = tangentAt(index), endTangent = tangentAt(index + 1);
+    segments.push({
+      start: { ...start },
+      control1: { x: start.x + startTangent.x / 3, y: start.y + startTangent.y / 3, z: start.z + startTangent.z / 3 },
+      control2: { x: end.x - endTangent.x / 3, y: end.y - endTangent.y / 3, z: end.z - endTangent.z / 3 },
+      end: { ...end },
+    });
+  }
+  return segments;
+}
+
+function distance3(a: Vec3, b: Vec3): number { return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
 
 function straightBezier(start: Vec2, end: Vec2): CubicBezierFit {
   return { start: { ...start }, control1: { x: start.x + (end.x - start.x) / 3, y: start.y + (end.y - start.y) / 3 }, control2: { x: start.x + 2 * (end.x - start.x) / 3, y: start.y + 2 * (end.y - start.y) / 3 }, end: { ...end } };
