@@ -1069,30 +1069,44 @@ export class Viewport3D {
    * direction that grip can be pulled along. Built lazily — most sessions
    * never grip-edit anything in 3D.
    *
-   * Deliberately plain lines rather than the UCS triad's solid shafts and cone
-   * heads: this belongs to one point of one object, and drawn as solid arrows
-   * it read as loudly as the drawing itself. Direction comes from colour (the
-   * same red/green/blue the UCS triad and the cursor cross use), and each line
-   * carries an invisible box at its tip so it can still be clicked without
-   * hitting a hairline exactly.
+   * A 1px line for the shaft, but a real cone for the head: the UCS triad's
+   * solid shafts read as loudly as the drawing itself at a single point, while
+   * a bare hairline lost its arrows altogether and with them which way the
+   * axis points. Colour is the same red/green/blue the UCS triad and the
+   * cursor cross use, and each axis carries an invisible box at its tip so it
+   * can be clicked without hitting the hairline exactly.
    */
   private createGripAxisTriad(): THREE.Group {
     const group = new THREE.Group();
     group.name = 'grip-axis-triad';
-    const length = 3.4;
+    const length = 3.4, headLength = 0.8, headRadius = 0.22;
+    const up = new THREE.Vector3(0, 1, 0);
     const axes: Array<{ name: GripAxisName; direction: THREE.Vector3 }> = [
       { name: 'x', direction: new THREE.Vector3(1, 0, 0) },
       { name: 'y', direction: new THREE.Vector3(0, 1, 0) },
       { name: 'z', direction: new THREE.Vector3(0, 0, 1) },
     ];
     for (const axis of axes) {
+      const color = GRIP_AXIS_COLORS[axis.name];
       const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), axis.direction.clone().multiplyScalar(length)]),
-        new THREE.LineBasicMaterial({ color: GRIP_AXIS_COLORS[axis.name], depthTest: false, transparent: true, opacity: 0.85, toneMapped: false }),
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(),
+          axis.direction.clone().multiplyScalar(length - headLength),
+        ]),
+        new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9, toneMapped: false }),
       );
       line.userData.gripAxis = axis.name;
       line.renderOrder = 21;
       group.add(line);
+      const head = new THREE.Mesh(
+        new THREE.ConeGeometry(headRadius, headLength, 12),
+        new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9, toneMapped: false }),
+      );
+      head.userData.gripAxis = axis.name;
+      head.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(up, axis.direction));
+      head.position.copy(axis.direction.clone().multiplyScalar(length - headLength / 2));
+      head.renderOrder = 21;
+      group.add(head);
       const handle = new THREE.Mesh(
         new THREE.BoxGeometry(0.9, 0.9, 0.9),
         new THREE.MeshBasicMaterial({ visible: false }),
@@ -1124,13 +1138,14 @@ export class Viewport3D {
       triad.position.copy(toThree(origin));
       triad.quaternion.setFromRotationMatrix(basis);
       triad.updateMatrixWorld(true);
-      // Highlighting brightens the line instead of scaling it: scaling a line
-      // would stretch the axis rather than pick it out.
+      // Highlighting brightens shaft and head together instead of scaling
+      // them: scaling would stretch the axis rather than pick it out.
       for (const child of triad.children) {
         const axis = child.userData.gripAxis as GripAxisName | undefined;
-        if (!axis || !(child instanceof THREE.Line)) continue;
-        const material = child.material as THREE.LineBasicMaterial;
-        material.opacity = axis === highlighted ? 1 : 0.85;
+        if (!axis || !(child instanceof THREE.Line || child instanceof THREE.Mesh)) continue;
+        const material = child.material as THREE.Material & { opacity: number; color: THREE.Color };
+        if (!material.visible) continue; // the pick box at the tip is meant to stay unseen
+        material.opacity = axis === highlighted ? 1 : 0.9;
         material.color.set(axis === highlighted ? 0xffffff : GRIP_AXIS_COLORS[axis]);
       }
     }
