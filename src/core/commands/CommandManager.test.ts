@@ -4300,6 +4300,37 @@ describe('LOFT', () => {
     expect(kit.doc.entities).toHaveLength(3);
   });
 
+  it('lofts rails that carry their own elevation as the 3D curves they are, instead of flattening them onto their plane', async () => {
+    // Reported on a real drawing (examples/3d/spoon.mycad): the splines
+    // looked right and the loft collapsed. The rails were genuinely 3D —
+    // drawn across Dynamic UCS faces, so their points carry an elevation off
+    // their plane — but the loft read them with localToWorld's default z of
+    // zero, handing the kernel flat copies. The surface then sat flat
+    // wherever it was free to, and dived violently wherever a guide (which
+    // does carry elevation) pulled it, creasing and folding on itself.
+    const kit = setup();
+    const lift = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+    // Two rails sharing both endpoints, dipping to z = -3 in the middle.
+    const rail1 = kit.doc.createBezier({ x: 0, y: 0 }, lift(10, 5, -3), lift(20, 5, -3), { x: 30, y: 0 });
+    const rail2 = kit.doc.createBezier({ x: 0, y: 0 }, lift(10, -5, -3), lift(20, -5, -3), { x: 30, y: 0 });
+    kit.doc.addEntity(rail1);
+    kit.doc.addEntity(rail2);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 15, y: 4 }, rail1);
+    await kit.manager.handleClick({ x: 15, y: -4 }, rail2);
+    await kit.manager.submitInput(''); // done gathering rails
+    await kit.manager.submitInput(''); // no guides — build
+
+    expect(kit.doc.surfaces).toHaveLength(1);
+    const zValues = Array.from(kit.doc.surfaces[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    const lowest = Math.min(...zValues);
+    // A cubic with both inner poles at -3 reaches -2.25 at its middle. Read
+    // flat, every one of these would be 0.
+    expect(lowest).toBeLessThan(-2);
+    expect(Math.max(...zValues)).toBeCloseTo(0, 1);
+  }, 60_000);
+
   it('routes two open rails with NO guides through the rails pipeline, not the classic closed-profile one', async () => {
     // Two open rails is its own mode regardless of whether any guide curve
     // is actually picked — skipping straight past guides must not fall

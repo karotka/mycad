@@ -514,10 +514,25 @@ function bezierWireEdges(entity: BezierEntity, toPoint: (point: Vec2) => Point3)
   });
 }
 
+/**
+ * A rail/guide point in world space, keeping whatever elevation it carries off
+ * its own plane (the `Vec2 & { z?: number }` convention a genuinely 3D curve's
+ * points use — see drawBezier).
+ *
+ * `localToWorld` takes that elevation as a third argument defaulting to zero,
+ * so calling it with the point alone quietly flattens the curve onto its
+ * plane. Reported directly on a real drawing: the splines looked right, and
+ * the moment they were lofted the surface collapsed — the rails handed to the
+ * kernel were flat copies fighting the guides that were not.
+ */
+function pathPointInWorld(plane: WorkPlane, point: Vec2): Point3 {
+  return localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0);
+}
+
 function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | null {
   switch (path.type) {
     case 'line':
-      return [{ kind: 'line', start: localToWorld(plane, path.start), end: localToWorld(plane, path.end) }];
+      return [{ kind: 'line', start: pathPointInWorld(plane, path.start), end: pathPointInWorld(plane, path.end) }];
     case 'polyline': {
       if (path.vertices.length < 2) return null;
       const segments: SweepPathSegment3[] = [];
@@ -526,7 +541,7 @@ function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | n
         const start = path.vertices[index];
         const end = path.vertices[(index + 1) % path.vertices.length];
         if (Math.hypot(end.x - start.x, end.y - start.y) <= 1e-9) continue;
-        segments.push({ kind: 'line', start: localToWorld(plane, start), end: localToWorld(plane, end) });
+        segments.push({ kind: 'line', start: pathPointInWorld(plane, start), end: pathPointInWorld(plane, end) });
       }
       return segments.length > 0 ? segments : null;
     }
@@ -555,7 +570,7 @@ function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | n
       return path.segments.map((segment) => {
         const poles: SweepPathSegment3 = {
           kind: 'bezier',
-          poles: [segmentStart, segment.control1, segment.control2, segment.end].map((point) => localToWorld(plane, point)),
+          poles: [segmentStart, segment.control1, segment.control2, segment.end].map((point) => pathPointInWorld(plane, point)),
         };
         segmentStart = segment.end;
         return poles;
