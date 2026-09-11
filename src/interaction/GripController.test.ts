@@ -792,6 +792,37 @@ describe('a Surface\'s embedded loft rails/guides', () => {
     expect(active.find((grip) => grip.index === 200)?.point).toEqual({ x: 3, y: 0 });
   });
 
+  it('pulls an embedded rail\'s point to the elevation an axis-locked drag asks for, and leaves the others theirs', () => {
+    // Shaping a Surface is grip-dragging the rails inside its loft feature,
+    // so the axis cross applies there exactly as it does to a standalone
+    // spline — and the elevation it produces has to survive the trip into
+    // the feature, not be flattened on the way.
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const withZ = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+    const rail = doc.createSpline(withZ(0, 0, 0), [
+      { control1: withZ(3, 4, -1), control2: withZ(7, 4, -1), end: withZ(10, 0, 0) },
+    ]);
+    const feature: LoftFeature = { kind: 'loft', profiles: [rail, line({ x: 0, y: -5 }, { x: 10, y: -5 })] };
+    const surface = doc.createSurface({ positions: new Float32Array(), indices: new Uint32Array() }, 'Surface', [], undefined, feature);
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    // Grip 1 of embedded entity 0 = the first control point.
+    grips.begin(undefined, undefined, 1, { x: 3, y: 4 }, surface);
+    expect(grips.draggingEmbedded()).toMatchObject({ index: 0 });
+    grips.update({ x: 3, y: 4, z: -6 } as unknown as Vec2);
+
+    const dragged = (doc.getSurface(surface.id)!.feature as LoftFeature).profiles[0];
+    expect(dragged.type).toBe('bezier');
+    if (dragged.type === 'bezier') {
+      expect(dragged.segments[0].control1).toEqual({ x: 3, y: 4, z: -6 });
+      // Untouched points keep their own elevation exactly.
+      expect(dragged.segments[0].control2).toEqual({ x: 7, y: 4, z: -1 });
+      expect(dragged.start).toEqual({ x: 0, y: 0, z: 0 });
+    }
+  });
+
   it('displays only the grips of the embedded curve nearest the cursor, not every curve at once', () => {
     // Real regression, reported directly against the user's own spoon bowl
     // (2 five-segment Bezier rails + 2 arc guides — ~38 grip points total):

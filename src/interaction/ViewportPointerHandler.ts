@@ -255,19 +255,27 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
    * offering it at all.
    */
   function hotGripAxisTarget(): { origin: Vec3; plane: WorkPlane } | null {
-    const entity = selectedEntity();
+    // Either a standalone curve, or one of a Surface's own embedded loft
+    // rails/guides — shaping those is the same gesture on the same kind of
+    // point, so it gets the same cross.
+    const embedded = gripController.draggingEmbedded();
+    const entity = embedded?.entity ?? selectedEntity();
     if (!gripAxisCrossApplies({
       viewMode: cadDocument.viewMode,
       dragging: gripController.isDragging,
       latched: gripInteraction.isLatched,
-      entityType: entity?.type,
+      curveType: entity?.type,
     })) return null;
     if (!entity) return null;
-    const gripIndex = gripController.draggingGripIndex;
-    if (gripIndex === null) return null;
+    const localIndex = gripController.draggingGripIndex;
+    if (localIndex === null) return null;
+    // A surface's grips are tagged objectIndex * 100 + localIndex, while the
+    // drag itself keeps only the local half — see GripController.begin.
+    const gripIndex = embedded ? embedded.index * 100 + localIndex : localIndex;
     const grip = activeGripsInWorld().find((candidate) => candidate.index === gripIndex);
     if (!grip) return null;
-    return { origin: { x: grip.point.x, y: grip.point.y, z: grip.point.z ?? 0 }, plane: entity.workPlane ?? WORLD_WORK_PLANE };
+    const plane = (embedded ? gripController.draggingEmbeddedPlane() : entity.workPlane) ?? WORLD_WORK_PLANE;
+    return { origin: { x: grip.point.x, y: grip.point.y, z: grip.point.z ?? 0 }, plane };
   }
 
   /** Keeps the hot grip's triad posed and highlighted, and reports which axis

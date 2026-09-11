@@ -140,14 +140,23 @@ function applyEmbeddedEntityGripDrag(original: Entity, gripIndex: number, cursor
     return entity;
   }
   if (entity.type === 'bezier' && original.type === 'bezier') {
-    if (gripIndex === 0) entity.start = { ...cursor };
+    // Same elevation rule as updateEntity's own bezier branch: an axis-locked
+    // drag's cursor carries the elevation it asked for and wins, otherwise the
+    // point keeps the one it already had rather than being flattened.
+    const originalPoints = [original.start, ...original.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+    const elevation = (cursor as Vec2 & { z?: number }).z
+      ?? (originalPoints[gripIndex] as (Vec2 & { z?: number }) | undefined)?.z;
+    const point: Vec2 & { z?: number } = elevation === undefined
+      ? { x: cursor.x, y: cursor.y }
+      : { x: cursor.x, y: cursor.y, z: elevation };
+    if (gripIndex === 0) entity.start = point;
     else {
       const segmentIndex = Math.floor((gripIndex - 1) / 3);
       const field = (gripIndex - 1) % 3;
       const segment = entity.segments[segmentIndex];
-      if (field === 0) segment.control1 = { ...cursor };
-      else if (field === 1) segment.control2 = { ...cursor };
-      else segment.end = { ...cursor };
+      if (field === 0) segment.control1 = point;
+      else if (field === 1) segment.control2 = point;
+      else segment.end = point;
     }
     return entity;
   }
@@ -734,6 +743,18 @@ export class GripController {
    *  carry its own plane (that's how a hand-drawn guide is normally built,
    *  mirroring one rail into another), so grip-editing one has to read and
    *  write cursor positions in THAT plane, not a single shared one. */
+  /** The loft-embedded rail/guide currently being grip-dragged, and where it
+   *  sits in embeddedLoftEntities' own flat ordering — null outside a surface
+   *  drag. The index is what turns this drag's own local grip index back into
+   *  the `objectIndex * 100 + localIndex` one `activeGrips` tags them with. */
+  draggingEmbedded(): { entity: Entity; index: number } | null {
+    if (!this.drag || this.drag.objectType !== 'surface') return null;
+    const { originalEmbeddedEntity, embeddedIndex } = this.drag;
+    return originalEmbeddedEntity && embeddedIndex !== undefined
+      ? { entity: originalEmbeddedEntity, index: embeddedIndex }
+      : null;
+  }
+
   draggingEmbeddedPlane(): WorkPlane | null {
     if (!this.drag || this.drag.objectType !== 'surface' || !this.drag.originalEmbeddedEntity) return null;
     return this.drag.originalEmbeddedEntity.workPlane ?? WORLD_WORK_PLANE;

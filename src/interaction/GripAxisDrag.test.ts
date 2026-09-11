@@ -3,18 +3,27 @@ import { beginGripAxisLock, gripAxisCrossApplies, gripAxisPointUnderRay, workPla
 import { WORLD_WORK_PLANE, workPlaneFromXYAxes } from '../math/workplane';
 
 describe('gripAxisCrossApplies', () => {
-  const hot = { viewMode: '3d' as const, dragging: true, latched: true, entityType: 'bezier' };
+  const hot = { viewMode: '3d' as const, dragging: true, latched: true, curveType: 'bezier' };
 
   it('gives a curve\'s hot grip its cross in the 3D view', () => {
     expect(gripAxisCrossApplies(hot)).toBe(true);
+  });
+
+  it('does not care whether that curve stands alone or is a loft rail inside a Surface', () => {
+    // The caller passes whichever curve the hot grip belongs to — shaping a
+    // Surface's own embedded rail writes into the same kind of point, so it
+    // gets the same cross.
+    expect(gripAxisCrossApplies({ ...hot, curveType: 'bezier' })).toBe(true);
+    // A rail that is not a curve with per-point elevation still gets none.
+    expect(gripAxisCrossApplies({ ...hot, curveType: 'arc' })).toBe(false);
   });
 
   it('leaves every other drag alone, so those keep following the cursor freely instead of waiting for an axis', () => {
     // The freeze is the cross's own consequence: anything with no cross must
     // stay the plain drag it has always been.
     expect(gripAxisCrossApplies({ ...hot, viewMode: '2d' })).toBe(false);
-    expect(gripAxisCrossApplies({ ...hot, entityType: 'line' })).toBe(false);
-    expect(gripAxisCrossApplies({ ...hot, entityType: undefined })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, curveType: 'line' })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, curveType: undefined })).toBe(false);
     expect(gripAxisCrossApplies({ ...hot, latched: false })).toBe(false);
     expect(gripAxisCrossApplies({ ...hot, dragging: false })).toBe(false);
   });
