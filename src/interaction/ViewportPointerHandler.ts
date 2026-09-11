@@ -153,7 +153,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   const {
     interactionPoint, worldPoint, worldPoint3d, rawWorldPoint, rawWorldPoint3d,
     nearestMeasurementPoint, nearestGripTargetSnap, nearestPersistentSnap,
-    endpointAnchorFromSnap, updateTrackingGuide,
+    endpointAnchorFromSnap, updateTrackingGuide, updateCenterGuideLines,
   } = ctx.resolver;
   const { pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor, updateExtrudePreview, updatePrimitiveFinalPreview } = ctx.dragPreview;
   const { canAcquireDynamicUcs, snapKeepsDynamicUcs, acquireDynamicUcs, releaseDynamicUcs, beforeDynamicUcsAnswer, afterDynamicUcsAnswer, ownsActiveCommand } = ctx.ducs;
@@ -238,6 +238,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     crosshair.style.left = `${sx}px`;
     crosshair.style.top = `${sy}px`;
     updateUcsCursor(event, sx, sy);
+    updateCenterGuideLines(event);
     // AutoCAD's own convention: a cross where a picked point established a
     // temporary, UCS-parallel drawing plane, so a later point landing
     // somewhere unexpected in the same command has an obvious reason why —

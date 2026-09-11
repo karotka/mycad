@@ -390,6 +390,14 @@ html, body, #app {
   pointer-events: none;
   filter: drop-shadow(0 0 2px rgba(40, 150, 220, 0.6));
 }
+/* A rectangle's own derived-centre guides — same mechanism as the Ortho/Polar
+ * tracking line above, but distinguished (amber, not blue) since these mark a
+ * geometric relationship on an existing object rather than an alignment path
+ * for the point being placed. */
+.center-guide-line {
+  border-top-color: rgba(255, 176, 59, 0.92);
+  filter: drop-shadow(0 0 2px rgba(220, 140, 30, 0.6));
+}
 
 #viewport3d {
   position: absolute;

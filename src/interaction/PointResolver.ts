@@ -16,6 +16,7 @@ import {
   nearestEdgeWorldPoint,
   objectSnapCandidates,
   rectangleMidpointOwner,
+  rectangleSymmetryGuides,
   tangentDragCandidates,
   type ObjectSnapMode,
   type SnapTarget,
@@ -49,6 +50,8 @@ export interface PointResolverContext {
   renderer3d: Viewport3D;
   viewport: HTMLElement;
   trackingLine: HTMLElement;
+  centerGuideA: HTMLElement;
+  centerGuideB: HTMLElement;
   size(): { width: number; height: number };
   state: PointResolverState;
 }
@@ -60,7 +63,7 @@ export interface PointResolverContext {
  * `ctx` and the two transient markers live on `ctx.state`.
  */
 export function createPointResolver(ctx: PointResolverContext) {
-  const { doc, commands, gripController, gripInteraction, drawingInteraction, renderer2d, renderer3d, viewport, trackingLine, state } = ctx;
+  const { doc, commands, gripController, gripInteraction, drawingInteraction, renderer2d, renderer3d, viewport, trackingLine, centerGuideA, centerGuideB, state } = ctx;
 
   // Rectangles a Middle-snap hover has, this session, caught on two of their
   // own different edges — once that happens, the rectangle's true centre
@@ -353,6 +356,39 @@ export function createPointResolver(ctx: PointResolverContext) {
     trackingLine.hidden = false;
   }
 
+  /** One of the two derived-centre symmetry guide lines — same projection
+   *  convention `updateTrackingGuide` above uses (2D: onto the active plane
+   *  then screen; 3D: `projectCadPoint`), just from a world-space start/end
+   *  rather than ones already local to a guide plane the caller tracked. */
+  function positionCenterGuide(element: HTMLElement, guide: { start: Vec3; end: Vec3 } | null): void {
+    if (!guide) { element.hidden = true; return; }
+    let start: Vec2 | null;
+    let end: Vec2 | null;
+    if (doc.viewMode === '2d') {
+      const { width, height } = ctx.size();
+      start = worldToScreen(worldToLocal(doc.activeWorkPlane, guide.start), width, height, renderer2d.pan, renderer2d.zoom);
+      end = worldToScreen(worldToLocal(doc.activeWorkPlane, guide.end), width, height, renderer2d.pan, renderer2d.zoom);
+    } else {
+      start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, guide.start);
+      end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, guide.end);
+    }
+    if (!start || !end) { element.hidden = true; return; }
+    const dx = end.x - start.x, dy = end.y - start.y;
+    element.style.left = `${start.x}px`;
+    element.style.top = `${start.y}px`;
+    element.style.width = `${Math.hypot(dx, dy)}px`;
+    element.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+    element.hidden = false;
+  }
+
+  /** Updates both derived-centre guide lines from the current cursor — see
+   *  `primedRectangleGuides`'s own doc comment for what triggers them. */
+  function updateCenterGuideLines(event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
+    const guides = primedRectangleGuides(event);
+    positionCenterGuide(centerGuideA, guides?.a ?? null);
+    positionCenterGuide(centerGuideB, guides?.b ?? null);
+  }
+
   /**
    * The default aperture (10px, AutoCAD's own default) — small enough that
    * the marker only lights up close enough to the point that clicking really
@@ -390,6 +426,39 @@ export function createPointResolver(ctx: PointResolverContext) {
       return localToWorld(doc.activeWorkPlane, referenceValue as Vec2);
     }
     return gripController.dragReferencePoint();
+  }
+
+  /**
+   * The two symmetry guide lines for whichever primed rectangle the cursor
+   * is currently near — so aiming for the centre has a visual crosshair to
+   * follow instead of hunting blind for the exact snap pixel (the user's
+   * own follow-up request, after the plain snap point shipped: "no need to
+   * circle the cursor around looking for it"). "Near" is that rectangle's
+   * own bounding box, expanded by a margin, in its own local frame — one
+   * primed earlier in the session stays quiet everywhere else in the
+   * drawing until the cursor is actually back near it again.
+   */
+  function primedRectangleGuides(event: Pick<PointerEvent, 'clientX' | 'clientY'>): { a: { start: Vec3; end: Vec3 }; b: { start: Vec3; end: Vec3 } } | null {
+    if (primedRectangleCenters.size === 0) return null;
+    const cursor = cursorWorldPoint(event);
+    if (!cursor) return null;
+    for (const id of primedRectangleCenters) {
+      const entity = doc.getEntity(id);
+      if (!entity || entity.type !== 'rectangle') continue;
+      const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+      const local = worldToLocal(plane, cursor);
+      const minX = Math.min(entity.first.x, entity.opposite.x), maxX = Math.max(entity.first.x, entity.opposite.x);
+      const minY = Math.min(entity.first.y, entity.opposite.y), maxY = Math.max(entity.first.y, entity.opposite.y);
+      const marginX = (maxX - minX) * 0.2, marginY = (maxY - minY) * 0.2;
+      if (local.x < minX - marginX || local.x > maxX + marginX || local.y < minY - marginY || local.y > maxY + marginY) continue;
+      const [guideA, guideB] = rectangleSymmetryGuides(entity);
+      const toWorld = (point: Vec2): Vec3 => localToWorld(plane, point);
+      return {
+        a: { start: toWorld(guideA.start), end: toWorld(guideA.end) },
+        b: { start: toWorld(guideB.start), end: toWorld(guideB.end) },
+      };
+    }
+    return null;
   }
 
   /** The cursor's own world point, standing in for a reference when a snap
@@ -537,5 +606,7 @@ export function createPointResolver(ctx: PointResolverContext) {
     nearestMeasurementPoint,
     nearestGripTargetSnap,
     nearestPersistentSnap,
+    primedRectangleGuides,
+    updateCenterGuideLines,
   };
 }

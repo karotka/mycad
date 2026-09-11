@@ -594,6 +594,22 @@ export function derivedRectangleCenterCandidates(doc: Document, primedRectangleI
   return candidates;
 }
 
+/**
+ * The two lines through a rectangle's own pairs of opposite-edge midpoints —
+ * each runs perpendicular to the edge its own midpoint sits on, so it
+ * passes through that midpoint, the OPPOSITE edge's midpoint, AND the
+ * rectangle's true centre, all at once. Both local to the rectangle's own
+ * 2D frame; the caller worldToLocal's them same as any other entity point.
+ * Drawing both as guide lines is the visual version of what
+ * `derivedRectangleCenterCandidates` offers as a snap point: the centre is
+ * wherever they cross, without needing a diagonal construction line.
+ */
+export function rectangleSymmetryGuides(entity: { first: Vec2; opposite: Vec2 }): [{ start: Vec2; end: Vec2 }, { start: Vec2; end: Vec2 }] {
+  const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
+  const mids = corners.map((point, index) => midpoint(point, corners[(index + 1) % 4]));
+  return [{ start: mids[0], end: mids[2] }, { start: mids[1], end: mids[3] }];
+}
+
 export function nearestCandidate2d(candidates: readonly SnapCandidate[], cursor: Vec2, plane: WorkPlane, tolerance: number): SnapTarget | null {
   let best = tolerance;
   let result: SnapTarget | null = null;

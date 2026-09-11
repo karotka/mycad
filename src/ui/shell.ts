@@ -71,6 +71,8 @@ export function shellHtml(tools: ShellTools): string {
       <div class="snap-marker" id="snap-marker" hidden></div>
       <div class="drawing-plane-marker" id="drawing-plane-marker" hidden></div>
       <div class="tracking-line" id="tracking-line" hidden></div>
+      <div class="tracking-line center-guide-line" id="center-guide-a" hidden></div>
+      <div class="tracking-line center-guide-line" id="center-guide-b" hidden></div>
       <div class="dimension-toast" id="dimension-toast" hidden></div>
       <input class="dyn-dim-input" id="dyn-dim-width" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle width" hidden />
       <input class="dyn-dim-input" id="dyn-dim-height" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle height" hidden />

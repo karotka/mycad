@@ -118,6 +118,8 @@ const measureTarget = get<HTMLElement>('measure-target');
 const snapMarker = get<HTMLElement>('snap-marker');
 const drawingPlaneMarker = get<HTMLElement>('drawing-plane-marker');
 const trackingLine = get<HTMLElement>('tracking-line');
+const centerGuideA = get<HTMLElement>('center-guide-a');
+const centerGuideB = get<HTMLElement>('center-guide-b');
 const gripMenu = get<HTMLElement>('grip-menu');
 const dimensionToast = get<HTMLElement>('dimension-toast');
 const textOptions = get<HTMLElement>('text-options');
@@ -750,6 +752,8 @@ const pointResolver = createPointResolver({
   renderer3d,
   viewport,
   trackingLine,
+  centerGuideA,
+  centerGuideB,
   size: () => ({ width, height }),
   state: pointerState,
 });

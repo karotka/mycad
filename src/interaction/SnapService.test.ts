@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { derivedRectangleCenterCandidates, measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, rectangleMidpointOwner, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
+import { derivedRectangleCenterCandidates, measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, rectangleMidpointOwner, rectangleSymmetryGuides, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -87,6 +87,20 @@ describe('SnapService', () => {
 
     const candidates = derivedRectangleCenterCandidates(doc, new Set([primed.id]));
     expect(candidates).toEqual([{ world: { x: 5, y: 3, z: 0 }, mode: 'center' }]);
+  });
+
+  it('gives the two symmetry lines through a rectangle\'s opposite-edge midpoints, crossing exactly at its centre', () => {
+    const rect = { first: { x: 0, y: 0 }, opposite: { x: 10, y: 6 } };
+    const [guideA, guideB] = rectangleSymmetryGuides(rect);
+    // Bottom (5,0) <-> top (5,6): the vertical symmetry line.
+    expect(guideA).toEqual({ start: { x: 5, y: 0 }, end: { x: 5, y: 6 } });
+    // Right (10,3) <-> left (0,3): the horizontal symmetry line.
+    expect(guideB).toEqual({ start: { x: 10, y: 3 }, end: { x: 0, y: 3 } });
+    // Both pass through the true centre, same point derivedRectangleCenterCandidates offers.
+    const onLine = (p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.abs((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)) < 1e-9;
+    expect(onLine({ x: 5, y: 3 }, guideA.start, guideA.end)).toBe(true);
+    expect(onLine({ x: 5, y: 3 }, guideB.start, guideB.end)).toBe(true);
   });
 
   it('does not expose hidden-layer points and picks the nearest candidate in the active plane', () => {

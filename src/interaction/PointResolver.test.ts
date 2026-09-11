@@ -24,6 +24,7 @@ function makeCtx(overrides: {
     renderer2d: {
       screenToWorld: overrides.screenToWorld ?? (() => ({ x: 0, y: 0 })),
       zoom: 1,
+      pan: { x: 0, y: 0 },
     } as unknown as PointResolverContext['renderer2d'],
     renderer3d: {
       workPlanePoint: overrides.workPlanePoint ?? vi.fn(() => null),
@@ -32,6 +33,8 @@ function makeCtx(overrides: {
     } as unknown as PointResolverContext['renderer3d'],
     viewport: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) } as unknown as HTMLElement,
     trackingLine: {} as unknown as HTMLElement,
+    centerGuideA: { style: {} } as unknown as HTMLElement,
+    centerGuideB: { style: {} } as unknown as HTMLElement,
     size: () => ({ width: 800, height: 600 }),
     state: { activeTracking: null, activeEndpointAnchor: null },
   };
@@ -127,6 +130,35 @@ describe('nearestPersistentSnap: a rectangle\'s derived centre, earned by grazin
     const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
     expect(atCenter?.mode).toBe('center');
     expect(atCenter?.world).toEqual({ x: 50, y: 30, z: 0 });
+  });
+
+  it('shows the two symmetry guide lines once primed and the cursor is near the rectangle, and hides them when it wanders off', () => {
+    const doc = setupRectangle();
+    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({
+      10: { x: 50, y: 0 }, 20: { x: 0, y: 30 }, 30: { x: 50, y: 30 }, 40: { x: 1000, y: 1000 },
+    }) });
+    const resolver = createPointResolver(ctx);
+
+    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 }); // prime edge 0
+    resolver.nearestPersistentSnap({ clientX: 20, clientY: 0 }); // prime edge 3 — two different edges now
+
+    resolver.updateCenterGuideLines({ clientX: 30, clientY: 0 }); // cursor near the centre
+    expect((ctx.centerGuideA as unknown as { hidden: boolean }).hidden).toBe(false);
+    expect((ctx.centerGuideB as unknown as { hidden: boolean }).hidden).toBe(false);
+    // Vertical symmetry line: bottom-edge midpoint (50,0) <-> top-edge (50,60),
+    // canvas 800x600, no pan/zoom — screen (450,300) <-> (450,240).
+    expect(ctx.centerGuideA.style.left).toBe('450px');
+    expect(ctx.centerGuideA.style.top).toBe('300px');
+    expect(ctx.centerGuideA.style.width).toBe('60px');
+    // Horizontal symmetry line: right-edge midpoint (100,30) <-> left-edge (0,30)
+    // — screen (500,270) <-> (400,270).
+    expect(ctx.centerGuideB.style.left).toBe('500px');
+    expect(ctx.centerGuideB.style.top).toBe('270px');
+    expect(ctx.centerGuideB.style.width).toBe('100px');
+
+    resolver.updateCenterGuideLines({ clientX: 40, clientY: 0 }); // cursor far away now
+    expect((ctx.centerGuideA as unknown as { hidden: boolean }).hidden).toBe(true);
+    expect((ctx.centerGuideB as unknown as { hidden: boolean }).hidden).toBe(true);
   });
 
   it('offers nothing at the centre after only one edge midpoint has been hovered', () => {
