@@ -287,3 +287,54 @@ describe('interactionPoint (drawing branch): drawingPlane only latches on a real
     expect(plane.origin).toEqual({ x: 0, y: 0, z: 5 });
   });
 });
+
+describe('interactionPoint (drawing branch): BEZIER/SPLINE ignore a frozen drawingPlane, every other command honors it', () => {
+  // Real regression, reported directly: drawing a spline by hovering a
+  // different box face for each point stayed flat — the FIRST point that
+  // ever triggered the (unrelated) off-plane-snap heuristic froze
+  // active.data.drawingPlane, and every later point silently got flattened
+  // back onto that one plane instead of whatever Dynamic UCS had since
+  // moved doc.activeWorkPlane to.
+  const frozenPlane = {
+    origin: { x: 100, y: 0, z: 0 },
+    xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+  };
+
+  it('BEZIER reads the CURRENT doc.activeWorkPlane for each point, not a drawingPlane an earlier point froze', () => {
+    const workPlanePoint = vi.fn((_canvas: unknown, _x: number, _y: number, plane?: unknown) => (plane ? { x: 99, y: 99 } : { x: 7, y: 8 }));
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const active = {
+      name: 'BEZIER', stepIndex: 1, steps: [{ kind: 'point', label: '' }, { kind: 'point', label: '' }],
+      data: { drawingPlane: frozenPlane } as Record<string, unknown>,
+    };
+    const ctx = makeCtx({ doc, workPlanePoint });
+    ctx.commands = { active } as unknown as typeof ctx.commands;
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.interactionPoint({ clientX: 50, clientY: 50 });
+
+    // Called WITHOUT the frozen plane (3-arg form) — proves BEZIER used the
+    // live active work plane instead of the stale frozen one.
+    expect(workPlanePoint).toHaveBeenCalledWith(ctx.renderer3d.renderer.domElement, 50, 50);
+    expect(result).toEqual({ x: 7, y: 8 });
+  });
+
+  it('an ordinary command (LINE) still honors a frozen drawingPlane for every point after the first', () => {
+    const workPlanePoint = vi.fn((_canvas: unknown, _x: number, _y: number, plane?: unknown) => (plane ? { x: 99, y: 99 } : { x: 7, y: 8 }));
+    const doc = new Document();
+    doc.viewMode = '3d';
+    const active = {
+      name: 'LINE', stepIndex: 1, steps: [{ kind: 'point', label: '' }, { kind: 'point', label: '' }],
+      data: { drawingPlane: frozenPlane } as Record<string, unknown>,
+    };
+    const ctx = makeCtx({ doc, workPlanePoint });
+    ctx.commands = { active } as unknown as typeof ctx.commands;
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.interactionPoint({ clientX: 50, clientY: 50 });
+
+    expect(workPlanePoint).toHaveBeenCalledWith(ctx.renderer3d.renderer.domElement, 50, 50, frozenPlane);
+    expect(result).toEqual({ x: 99, y: 99 });
+  });
+});

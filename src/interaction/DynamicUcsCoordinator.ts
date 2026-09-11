@@ -30,7 +30,7 @@ const DYNAMIC_UCS_COMMANDS = new Set<CommandName>([
  * correctly so, since a rectangle's four corners cannot sensibly land on
  * four different planes — so this is deliberately its own, smaller set.
  */
-const DYNAMIC_UCS_PER_POINT_COMMANDS = new Set<CommandName>(['BEZIER', 'SPLINE']);
+export const DYNAMIC_UCS_PER_POINT_COMMANDS = new Set<CommandName>(['BEZIER', 'SPLINE']);
 
 interface DynamicUcsAnswer {
   command: ActiveCommand;

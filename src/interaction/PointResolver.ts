@@ -7,6 +7,7 @@ import type { Entity } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
 import { takesPointInput, transformsObjects } from '../core/commands/registry';
 import { resolveDraftingPoint } from './DraftingService';
+import { DYNAMIC_UCS_PER_POINT_COMMANDS } from './DynamicUcsCoordinator';
 import {
   derivedRectangleCenterCandidates,
   measurementCandidates,
@@ -171,6 +172,16 @@ export function createPointResolver(ctx: PointResolverContext) {
     const drawing = active && takesPointInput(active.name) && !transformsObjects(active.name)
       && (active.steps[active.stepIndex]?.kind === 'point' || active.steps[active.stepIndex]?.kind === 'plane');
     if (drawing) {
+      // BEZIER/SPLINE deliberately want each point free to land on whatever
+      // plane Dynamic UCS currently holds (DYNAMIC_UCS_PER_POINT_COMMANDS,
+      // DynamicUcsCoordinator's own doc comment) — the drawingPlane freeze
+      // below exists for the opposite case (a LINE/RECTANGLE/etc.'s whole
+      // shape staying in the ONE plane its first off-plane point picked),
+      // and would otherwise silently override every later point back onto
+      // whichever plane happened to freeze first, defeating per-point DUCS
+      // re-acquisition entirely. Confirmed directly: a spline drawn by
+      // hovering a different box face for each point stayed flat.
+      const perPointPlane = DYNAMIC_UCS_PER_POINT_COMMANDS.has(active.name);
       const targetedSnap = drawingInteraction.targetSnapMode
         ? nearestGripTargetSnap(event, drawingInteraction.targetSnapMode)
         : nearestPersistentSnap(event);
@@ -185,7 +196,7 @@ export function createPointResolver(ctx: PointResolverContext) {
         // it, so a line drawn in 3D lands on the point it snapped to even when that
         // point belongs to another UCS. The line keeps the active plane; only the
         // endpoint's z rides along.
-        let plane = active.data.drawingPlane as WorkPlane | undefined;
+        let plane = perPointPlane ? undefined : active.data.drawingPlane as WorkPlane | undefined;
         if (!plane) {
           const local = worldToLocal(doc.activeWorkPlane, targetedSnap.world);
           if (Math.abs(local.z) > 1e-8) {
@@ -193,7 +204,7 @@ export function createPointResolver(ctx: PointResolverContext) {
             plane.origin.x += plane.zAxis.x * local.z;
             plane.origin.y += plane.zAxis.y * local.z;
             plane.origin.z += plane.zAxis.z * local.z;
-            if (commit) {
+            if (commit && !perPointPlane) {
               active.data.drawingPlane = plane;
               // plane.origin only shares the snapped point's elevation along
               // the UCS normal — its own x/y stay at the UCS origin's, since
@@ -215,7 +226,7 @@ export function createPointResolver(ctx: PointResolverContext) {
       }
       // Once an off-plane first point established a parallel drawing plane,
       // every free point and every Ortho constraint must stay in that plane.
-      const plane = active.data.drawingPlane as WorkPlane | undefined;
+      const plane = perPointPlane ? undefined : active.data.drawingPlane as WorkPlane | undefined;
       if (plane && doc.viewMode === '3d') {
         const point = renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY, plane);
         return point ? constrainedPoint(point) : null;
