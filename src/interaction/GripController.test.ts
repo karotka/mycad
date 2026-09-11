@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
-import { GripController } from './GripController';
+import { GripController, gripsInWorld, type Grip } from './GripController';
 import type { EdgeModificationFeature, LineEntity, LoftFeature, PrimitiveFeature } from '../core/entities/types';
 import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
+import type { WorkPlane } from '../math/workplane';
 
 describe('GripController', () => {
   it('moves a chamfer feature with a solid centre grip instead of leaving its history behind', () => {
@@ -902,5 +903,52 @@ describe('a Surface\'s embedded loft rails/guides', () => {
     expect(Array.from(after.mesh.positions)).toEqual([1, 2, 3]);
   });
   });
+
+describe('gripsInWorld', () => {
+  const planeAt = (originX: number): WorkPlane => ({
+    origin: { x: originX, y: 0, z: 0 },
+    xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+  });
+  const line = (id: string, plane: WorkPlane): LineEntity =>
+    ({ id, type: 'line', layer: '0', aci: 256, color: 0xffffff, selected: false, workPlane: plane, start: { x: 0, y: 0 }, end: { x: 1, y: 0 } });
+
+  it('converts each grip through its OWN owning entity\'s plane when several entities are selected together, not one shared plane for all of them', () => {
+    // Real regression, reported directly: a loft's mirrored rails/guides,
+    // each on their own plane, had every grip converted through whichever
+    // ONE entity's plane happened to be picked for the whole set —
+    // collapsing most of them into a cluster nowhere near their own curve.
+    const a = line('a', planeAt(100));
+    const b = line('b', planeAt(200));
+    const grips: Grip[] = [
+      { point: { x: 0, y: 0 }, index: 0, shape: 'square' }, // a's own grip (objectIndex 0)
+      { point: { x: 5, y: 0 }, index: 100, shape: 'square' }, // b's own grip (objectIndex 1)
+    ];
+    const result = gripsInWorld(grips, [a, b], null);
+    expect(result[0].point).toEqual({ x: 100, y: 0, z: 0 });
+    expect(result[1].point).toEqual({ x: 205, y: 0, z: 0 });
+  });
+
+  it('converts through the single selected entity\'s plane when only one is selected', () => {
+    const a = line('a', planeAt(50));
+    const grips: Grip[] = [{ point: { x: 2, y: 0 }, index: 0, shape: 'square' }];
+    expect(gripsInWorld(grips, [a], null)[0].point).toEqual({ x: 52, y: 0, z: 0 });
+  });
+
+  it('converts through each embedded entity\'s own plane when nothing is selected but an embedded list is given (a Surface\'s own rails/guides)', () => {
+    const embedded = [line('rail1', planeAt(10)), line('rail2', planeAt(20))];
+    const grips: Grip[] = [
+      { point: { x: 1, y: 0 }, index: 0, shape: 'square' },
+      { point: { x: 1, y: 0 }, index: 100, shape: 'square' },
+    ];
+    const result = gripsInWorld(grips, [], embedded);
+    expect(result[0].point).toEqual({ x: 11, y: 0, z: 0 });
+    expect(result[1].point).toEqual({ x: 21, y: 0, z: 0 });
+  });
+
+  it('passes grips through unchanged when nothing is selected and there is no embedded list (a Solid\'s own already-world grips)', () => {
+    const grips: Grip[] = [{ point: { x: 7, y: 3, z: 4 }, index: 0, shape: 'square' }];
+    expect(gripsInWorld(grips, [], null)).toEqual(grips);
+  });
+});
 
 

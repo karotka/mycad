@@ -10,7 +10,7 @@ import { Viewport3D } from './render/Viewport3D';
 import { viewCubeTransform } from './render/ViewportCoordinates';
 import { selectionExclusions, surfaceSelectionExclusions as surfaceSelectionExclusionsOf } from './interaction/PickingService';
 import { InputController } from './interaction/InputController';
-import { GripController, embeddedLoftEntities, type GripMode } from './interaction/GripController';
+import { GripController, embeddedLoftEntities, gripsInWorld, type GripMode } from './interaction/GripController';
 import type { ProjectViewState } from './io/ProjectIO';
 import { LayerController } from './ui/LayerController';
 import { BlockController } from './ui/BlockController';
@@ -522,32 +522,21 @@ function drawChrome(): void {
 }
 
 function visibleGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge'; angle?: number }> {
-  const entity = cadDocument.getSelectedEntities()[0];
-  return gripController.visibleGrips().map((grip) => ({
-    ...grip,
-    point: entity
-      ? localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, grip.point, grip.point.z ?? 0)
-      : grip.point,
-  }));
+  const selected = cadDocument.getSelectedEntities();
+  const surface = selected.length === 0 ? cadDocument.getSelectedSurfaces()[0] : undefined;
+  const embedded = surface?.feature.kind === 'loft' ? embeddedLoftEntities(surface.feature) : null;
+  return gripsInWorld(gripController.visibleGrips(), selected, embedded);
 }
 
 function activeGripsInWorld(): Array<{ point: Vec2 & { z?: number }; index: number; shape?: 'square' | 'edge' }> {
-  const entity = cadDocument.getSelectedEntities()[0];
-  // A Surface's embedded profiles/guides can each carry their own work
-  // plane (typically how a hand-drawn guide is built — mirroring one rail
-  // into another), so unlike every other grip set here, a single shared
-  // plane cannot convert them all correctly — each grip needs its OWN
-  // embedded entity's plane.
-  const surface = !entity ? cadDocument.getSelectedSurfaces()[0] : undefined;
+  // activeGrips() only ever returns grips for a single selected entity (see
+  // its own doc comment), never several combined, so `selected` here is
+  // always 0 or 1 long — gripsInWorld's multi-entity branch is simply never
+  // reached, same effect as this function's own single-entity case before.
+  const selected = cadDocument.getSelectedEntities();
+  const surface = selected.length === 0 ? cadDocument.getSelectedSurfaces()[0] : undefined;
   const embedded = surface?.feature.kind === 'loft' ? embeddedLoftEntities(surface.feature) : null;
-  return gripController.activeGrips().map((grip) => {
-    if (entity) return { ...grip, point: localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, grip.point, grip.point.z ?? 0) };
-    if (embedded) {
-      const plane = embedded[Math.floor(grip.index / 100)]?.workPlane ?? WORLD_WORK_PLANE;
-      return { ...grip, point: localToWorld(plane, grip.point, grip.point.z ?? 0) };
-    }
-    return grip; // a Solid's own grips are already world-space (from solidBounds).
-  });
+  return gripsInWorld(gripController.activeGrips(), selected, embedded);
 }
 
 function gripEditingPoint(

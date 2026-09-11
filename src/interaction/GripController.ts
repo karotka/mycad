@@ -20,6 +20,33 @@ export function embeddedLoftEntities(feature: SolidFeature): Entity[] {
   return [...feature.profiles, ...(feature.guides ?? []), ...(feature.path ? [feature.path] : [])];
 }
 
+/**
+ * Converts a grip list's local points into world space, picking each grip's
+ * OWN owning object's plane rather than one shared plane for all of them.
+ * Needed whenever more than one thing with a plane of its own can be
+ * selected or embedded at once: several plain entities selected together
+ * (`selected.length > 1`), or a Surface's own embedded loft rails/guides
+ * (`embedded`), each of which can carry a different plane — typically
+ * exactly how a guide is built, mirroring one rail into another.
+ * `index = objectIndex * 100 + localIndex` throughout, the same scheme
+ * `visibleGrips()`'s own multi-select branch and `activeGrips()`'s own
+ * Surface branch both already tag their grips with. Found directly from a
+ * live report: a loft's mirrored rails/guides, each on its own plane, had
+ * every grip converted through whichever ONE entity's plane happened to be
+ * picked for the whole set — collapsing most of them into a cluster nowhere
+ * near their own true curve.
+ */
+export function gripsInWorld(grips: readonly Grip[], selected: readonly Entity[], embedded: readonly Entity[] | null): Grip[] {
+  return grips.map((grip) => {
+    let plane: WorkPlane | undefined;
+    if (selected.length > 1) plane = selected[Math.floor(grip.index / 100)]?.workPlane;
+    else if (selected[0]) plane = selected[0].workPlane;
+    else if (embedded) plane = embedded[Math.floor(grip.index / 100)]?.workPlane;
+    else return grip; // already world-space (a Solid's own grips, or nothing selected).
+    return { ...grip, point: localToWorld(plane ?? WORLD_WORK_PLANE, grip.point, grip.point.z ?? 0) };
+  });
+}
+
 /** The inverse of embeddedLoftEntities' flattening: a copy of `feature` with
  *  the entity at flat position `index` replaced by `entity`. */
 function setEmbeddedLoftEntity(feature: LoftFeature, index: number, entity: Entity): LoftFeature {
