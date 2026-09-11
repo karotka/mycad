@@ -13,6 +13,8 @@ import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFa
 import { buildExactFeature, openExactShape } from '../geometry/ExactSolid';
 import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 import { bezierLineIntersections, cubicBezierLineParameters, evaluateCubicBezier, splitCubicBezier } from './steps/edit2d';
+import { worldPointsAreCoplanar } from './steps/draw';
+import type { Vec2 } from '../../math/geometry';
 
 function setup() {
   const doc = new Document();
@@ -2890,6 +2892,91 @@ describe('BEZIER command (Spline CV)', () => {
     }
   });
 
+  /** A local (x, y) point resolved off some Dynamic UCS face, carrying its
+   *  true world position — exactly PointResolver's own per-point-plane
+   *  contract for BEZIER/SPLINE (`world` is not part of Vec2's declared
+   *  shape, same ad-hoc-extension convention used all over this codebase
+   *  for an off-plane point, hence the cast). */
+  const withWorld = (x: number, y: number, world: { x: number; y: number; z: number }): Vec2 => ({ x, y, world } as unknown as Vec2);
+
+  it('builds a genuinely 3D curve in world space when its points come from different Dynamic UCS planes, instead of flattening them', async () => {
+    // Real regression, reported directly: drawn on a box by hovering a
+    // different face for each point (Dynamic UCS re-acquiring per point —
+    // see DynamicUcsCoordinator), the spline still came out flat, z=0.
+    // PointResolver now carries each point's true world position along
+    // (`.world`) — this is what drawBezier does with it once every point is
+    // in hand: build the whole curve in world space with each point's own
+    // elevation, rather than one shared local (x, y) frame.
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 0 }));
+    await manager.handleClick(withWorld(0, 10, { x: 0, y: 10, z: 0 }));
+    await manager.handleClick(withWorld(10, 10, { x: 10, y: 10, z: 8 })); // a different face's plane
+    await manager.handleClick(withWorld(10, 0, { x: 10, y: 0, z: 3 })); // and yet another — not coplanar with the rest
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(1);
+    const bezier = doc.entities[0];
+    expect(bezier).toMatchObject({ type: 'bezier' });
+    if (bezier.type === 'bezier') {
+      expect(bezier.start).toEqual({ x: 0, y: 0, z: 0 });
+      expect(bezier.segments[0]).toEqual({
+        control1: { x: 0, y: 10, z: 0 },
+        control2: { x: 10, y: 10, z: 8 },
+        end: { x: 10, y: 0, z: 3 },
+      });
+      expect(bezier.workPlane).toMatchObject({ origin: { x: 0, y: 0, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } });
+    }
+  });
+
+  it('still builds a flat curve the ordinary way when every point lies in one plane, even carrying .world', async () => {
+    const { doc, manager } = setup();
+    manager.startCommand('BEZIER');
+    await manager.handleClick(withWorld(0, 0, { x: 0, y: 0, z: 0 }));
+    await manager.handleClick(withWorld(0, 10, { x: 0, y: 10, z: 0 }));
+    await manager.handleClick(withWorld(10, 10, { x: 10, y: 10, z: 0 }));
+    await manager.handleClick(withWorld(10, 0, { x: 10, y: 0, z: 0 }));
+    await manager.submitInput('');
+
+    const bezier = doc.entities[0];
+    if (bezier.type === 'bezier') {
+      // No spurious z carried along for the ordinary, still-flat case.
+      expect(bezier.segments[0]).toEqual({ control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0 } });
+    }
+  });
+});
+
+describe('worldPointsAreCoplanar', () => {
+  it('accepts fewer than 3 points — nothing to prove otherwise', () => {
+    expect(worldPointsAreCoplanar([])).toBe(true);
+    expect(worldPointsAreCoplanar([{ x: 0, y: 0, z: 0 }])).toBe(true);
+    expect(worldPointsAreCoplanar([{ x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 5 }])).toBe(true);
+  });
+
+  it('accepts every point lying flat on z=0', () => {
+    expect(worldPointsAreCoplanar([
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 0, y: 10, z: 0 },
+    ])).toBe(true);
+  });
+
+  it('accepts every point lying flat on a tilted plane, not only the world XY plane', () => {
+    // z = x + y, a genuine tilted plane through the origin.
+    expect(worldPointsAreCoplanar([
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 10 }, { x: 10, y: 10, z: 20 }, { x: 0, y: 10, z: 10 },
+    ])).toBe(true);
+  });
+
+  it('rejects one point that leaves the plane the others share', () => {
+    expect(worldPointsAreCoplanar([
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 0, y: 10, z: 8 },
+    ])).toBe(false);
+  });
+
+  it('accepts every point collinear — no plane is well-defined, so there is nothing to violate', () => {
+    expect(worldPointsAreCoplanar([
+      { x: 0, y: 0, z: 0 }, { x: 1, y: 1, z: 1 }, { x: 2, y: 2, z: 2 }, { x: 3, y: 3, z: 3 },
+    ])).toBe(true);
+  });
 });
 
 describe('commands built from the registry', () => {

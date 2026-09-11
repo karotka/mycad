@@ -224,12 +224,27 @@ export function createPointResolver(ctx: PointResolverContext) {
         // drawArcStartEndRadius. Every other command is free to ignore this.
         return { x: local.x, y: local.y, world: targetedSnap.world } as Vec2;
       }
-      // Once an off-plane first point established a parallel drawing plane,
-      // every free point and every Ortho constraint must stay in that plane.
-      const plane = perPointPlane ? undefined : active.data.drawingPlane as WorkPlane | undefined;
-      if (plane && doc.viewMode === '3d') {
-        const point = renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY, plane);
-        return point ? constrainedPoint(point) : null;
+      // A per-point command reads the LIVE active work plane (whatever
+      // Dynamic UCS currently holds) for every point, carrying its world
+      // position along — drawBezier needs the real 3D point, not just its
+      // shadow on that plane, to place a point from a different face than
+      // the last one anywhere but flattened onto this one. Every other
+      // command instead keeps the frozen drawingPlane, once an off-plane
+      // first point established one, for every free point and Ortho
+      // constraint after it.
+      if (perPointPlane) {
+        if (doc.viewMode === '3d') {
+          const local = renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY, doc.activeWorkPlane);
+          if (!local) return null;
+          const constrained = constrainedPoint(local);
+          return { ...constrained, world: localToWorld(doc.activeWorkPlane, constrained) } as Vec2;
+        }
+      } else {
+        const plane = active.data.drawingPlane as WorkPlane | undefined;
+        if (plane && doc.viewMode === '3d') {
+          const point = renderer3d.workPlanePoint(renderer3d.renderer.domElement, event.clientX, event.clientY, plane);
+          return point ? constrainedPoint(point) : null;
+        }
       }
     }
     // Defining a cutting plane by points must not depend on whether End happens

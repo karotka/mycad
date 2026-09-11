@@ -16,7 +16,7 @@ import { dist2, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry
 import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { BezierSegment, Entity } from '../../entities/types';
 import type { MlineStyle } from '../../settings';
-import { workPlaneFromXYAxes, worldToLocal, type WorkPlane } from '../../../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import { interpolatingBeziers } from '../../../math/bezierFit';
 import { arcFromSagitta } from '../../../math/arcFit';
 
@@ -24,6 +24,54 @@ function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<strin
   const plane = data.drawingPlane as WorkPlane | undefined;
   if (plane) entity.workPlane = plane;
   return entity;
+}
+
+/**
+ * Whether every point in `points` lies within `tolerance` of the plane fit
+ * through the first three that are not collinear — fewer than 3 points, or
+ * no non-collinear triple found among them, counts as coplanar (there is no
+ * plane for them to violate). Used to tell a genuinely flat curve (built
+ * the ordinary way, in one plane's own local frame, unchanged from before)
+ * from one whose points came from different Dynamic UCS faces in turn — a
+ * free-form 3D spline — which needs building in world space instead.
+ */
+export function worldPointsAreCoplanar(points: readonly Vec3[], tolerance = 1e-6): boolean {
+  if (points.length < 3) return true;
+  const origin = points[0];
+  let normal: Vec3 | null = null;
+  for (let index = 1; index < points.length - 1 && !normal; index++) {
+    const a = { x: points[index].x - origin.x, y: points[index].y - origin.y, z: points[index].z - origin.z };
+    const b = { x: points[index + 1].x - origin.x, y: points[index + 1].y - origin.y, z: points[index + 1].z - origin.z };
+    const cross = { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+    const length = Math.hypot(cross.x, cross.y, cross.z);
+    if (length > 1e-9) normal = { x: cross.x / length, y: cross.y / length, z: cross.z / length };
+  }
+  if (!normal) return true; // every point collinear — no plane to violate
+  return points.every((point) => {
+    const offset = (point.x - origin.x) * normal!.x + (point.y - origin.y) * normal!.y + (point.z - origin.z) * normal!.z;
+    return Math.abs(offset) <= tolerance;
+  });
+}
+
+/** `world`, expressed in `plane`'s own local frame, keeping its elevation
+ *  off that plane as `z` — the per-point counterpart to a whole entity's
+ *  flat `Vec2` points, for a curve that is not flat in any one plane. */
+function localWithElevation(plane: WorkPlane, world: Vec3): Vec2 & { z: number } {
+  const local = worldToLocal(plane, world);
+  return { x: local.x, y: local.y, z: local.z };
+}
+
+/** The straight-line interpolation a Bezier's own control points use to
+ *  retrace a plain line exactly (1/3 and 2/3 of the way from `from` to
+ *  `to`) — used identically for both the local-2D closing segment below and
+ *  its world-space counterpart, so the two never drift apart. */
+function thirdsBetween<T extends { x: number; y: number; z?: number }>(from: T, to: T): [T, T] {
+  const lerp = (t: number): T => ({
+    x: from.x + (to.x - from.x) * t,
+    y: from.y + (to.y - from.y) * t,
+    ...(from.z !== undefined && to.z !== undefined ? { z: from.z + (to.z - from.z) * t } : {}),
+  } as T);
+  return [lerp(1 / 3), lerp(2 / 3)];
 }
 
 export function drawLine({ ctx, active, data, value }: CommandRun): StepOutcome {
@@ -201,10 +249,18 @@ export function drawArcStartEndRadius({ ctx, active, data, value }: CommandRun):
 export function drawBezier(run: CommandRun): StepOutcome {
   const { data, value, ctx } = run;
   const points = (data.points as Vec2[] | undefined) ?? (data.points = []);
-  const point = value as Vec2 | null;
+  // In lockstep with `points`, but true world 3D — carried so a point placed
+  // by hovering a different Dynamic UCS face than the last one (BEZIER's own
+  // per-point re-acquisition, see DynamicUcsCoordinator) keeps its real
+  // elevation instead of being silently flattened through `points`' own
+  // single shared local frame. Reported directly: drawn on a box by hovering
+  // a different face for each point, the spline still came out flat.
+  const worldPoints = (data.worldPoints as Vec3[] | undefined) ?? (data.worldPoints = []);
+  const point = value as (Vec2 & { world?: Vec3 }) | null;
 
   if (point) {
     points.push({ x: point.x, y: point.y });
+    worldPoints.push(point.world ?? localToWorld(ctx.doc.activeWorkPlane, point));
     // Same reason drawPolyline and drawSpline keep this current: it is what
     // ortho, polar and the rubber-band preview track from.
     data.start = { x: point.x, y: point.y };
@@ -222,8 +278,10 @@ export function drawBezier(run: CommandRun): StepOutcome {
   const leftover = (points.length - 1) % 3;
   if (leftover > 0) ctx.log(`Ignored ${leftover} trailing point(s) — not enough left to complete another segment.`);
   const segments: BezierSegment[] = [];
+  const worldSegments: Array<{ control1: Vec3; control2: Vec3; end: Vec3 }> = [];
   for (let index = 1; index + 2 <= points.length - 1 - leftover; index += 3) {
     segments.push({ control1: points[index], control2: points[index + 1], end: points[index + 2] });
+    worldSegments.push({ control1: worldPoints[index], control2: worldPoints[index + 1], end: worldPoints[index + 2] });
   }
   if (closing) {
     // A Bezier has no separate "closed" flag the way a polyline does — LOFT,
@@ -234,16 +292,33 @@ export function drawBezier(run: CommandRun): StepOutcome {
     const start = points[0];
     const last = segments.at(-1)?.end ?? start;
     if (dist2(last, start) > 1e-9) {
-      segments.push({
-        control1: { x: last.x + (start.x - last.x) / 3, y: last.y + (start.y - last.y) / 3 },
-        control2: { x: last.x + (start.x - last.x) * 2 / 3, y: last.y + (start.y - last.y) * 2 / 3 },
-        end: { x: start.x, y: start.y },
-      });
+      const [control1, control2] = thirdsBetween(last, start);
+      segments.push({ control1, control2, end: { x: start.x, y: start.y } });
+      const worldStart = worldPoints[0];
+      const worldLast = worldSegments.at(-1)?.end ?? worldStart;
+      const [worldControl1, worldControl2] = thirdsBetween(worldLast, worldStart);
+      worldSegments.push({ control1: worldControl1, control2: worldControl2, end: worldStart });
     }
   }
-  const bezier = keepCommandDrawingPlane(ctx.doc.createSpline(points[0], segments), data);
+  // A flat curve (still the ordinary case — DUCS never moved, or was never
+  // used at all) builds exactly as before, in its own drawing plane's local
+  // frame. Only a genuinely 3D one — points from more than one Dynamic UCS
+  // face — needs building in world space instead, each point keeping its
+  // own elevation.
+  const flat = worldPointsAreCoplanar([...worldPoints, ...worldSegments.flatMap((s) => [s.control1, s.control2, s.end])]);
+  const bezier = flat
+    ? keepCommandDrawingPlane(ctx.doc.createSpline(points[0], segments), data)
+    : ctx.doc.createSpline(
+      localWithElevation(WORLD_WORK_PLANE, worldPoints[0]),
+      worldSegments.map((segment) => ({
+        control1: localWithElevation(WORLD_WORK_PLANE, segment.control1),
+        control2: localWithElevation(WORLD_WORK_PLANE, segment.control2),
+        end: localWithElevation(WORLD_WORK_PLANE, segment.end),
+      })),
+    );
+  if (!flat) bezier.workPlane = cloneWorkPlane(WORLD_WORK_PLANE);
   ctx.history.execute(new AddEntityEdit('Bezier', bezier));
-  ctx.log(`Bezier created: ${segments.length} segment(s)${closing ? ', closed' : ''}.`);
+  ctx.log(`Bezier created: ${segments.length} segment(s)${closing ? ', closed' : ''}${flat ? '' : ', bent through 3D'}.`);
   return 'advance';
 }
 

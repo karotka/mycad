@@ -301,7 +301,11 @@ describe('interactionPoint (drawing branch): BEZIER/SPLINE ignore a frozen drawi
   };
 
   it('BEZIER reads the CURRENT doc.activeWorkPlane for each point, not a drawingPlane an earlier point froze', () => {
-    const workPlanePoint = vi.fn((_canvas: unknown, _x: number, _y: number, plane?: unknown) => (plane ? { x: 99, y: 99 } : { x: 7, y: 8 }));
+    // Distinguishes by WHICH plane object arrives, not merely whether one
+    // did — both branches now pass an explicit plane, but a per-point
+    // command must pass doc.activeWorkPlane (the live one), never the
+    // stale frozen one.
+    const workPlanePoint = vi.fn((_canvas: unknown, _x: number, _y: number, plane?: unknown) => (plane === frozenPlane ? { x: 99, y: 99 } : { x: 7, y: 8 }));
     const doc = new Document();
     doc.viewMode = '3d';
     const active = {
@@ -314,10 +318,10 @@ describe('interactionPoint (drawing branch): BEZIER/SPLINE ignore a frozen drawi
 
     const result = resolver.interactionPoint({ clientX: 50, clientY: 50 });
 
-    // Called WITHOUT the frozen plane (3-arg form) — proves BEZIER used the
-    // live active work plane instead of the stale frozen one.
-    expect(workPlanePoint).toHaveBeenCalledWith(ctx.renderer3d.renderer.domElement, 50, 50);
-    expect(result).toEqual({ x: 7, y: 8 });
+    expect(workPlanePoint).toHaveBeenCalledWith(ctx.renderer3d.renderer.domElement, 50, 50, doc.activeWorkPlane);
+    // Also carries the point's true world position along, so drawBezier can
+    // place it in real 3D rather than flattening it through x/y alone.
+    expect(result).toMatchObject({ x: 7, y: 8, world: expect.anything() });
   });
 
   it('an ordinary command (LINE) still honors a frozen drawingPlane for every point after the first', () => {
