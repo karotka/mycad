@@ -161,6 +161,7 @@ const previewController = new PreviewController(
     : null,
   (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
   drawingPlaneMarker,
+  () => cadDocument.viewMode === '3d' ? cadDocument.activeWorkPlane : null,
 );
 const navigation = new ViewportNavigationController(
   cadDocument,

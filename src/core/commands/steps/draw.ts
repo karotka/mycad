@@ -16,7 +16,7 @@ import { dist2, formatPoint, type Vec2, type Vec3 } from '../../../math/geometry
 import { textStepValue, type CommandRun, type StepOutcome } from '../types';
 import type { BezierSegment, Entity } from '../../entities/types';
 import type { MlineStyle } from '../../settings';
-import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
+import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldPointsShareElevation, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import { interpolatingBeziers, interpolatingBeziers3 } from '../../../math/bezierFit';
 import { arcFromSagitta } from '../../../math/arcFit';
 
@@ -459,20 +459,6 @@ export function drawMline(run: CommandRun): StepOutcome {
  *  `interpolatingBeziers` instead, which passes through every point exactly
  *  regardless of tolerance. */
 export const SPLINE_FIT_TOLERANCE = 0.01;
-
-/** Whether every world point sits at the same elevation on `plane` — the
- *  exact condition SPLINE's flat fit path needs, since a fit-point curve has
- *  no elevation field of its own beyond the one shared plane it is built in.
- *  Unlike `worldPointsAreCoplanar` (fits *some* plane through the points,
- *  which even two points always trivially satisfy), this checks the plane
- *  the flat path actually uses — so two points landing on different Dynamic
- *  UCS faces are correctly "not flat" even though any two points are always
- *  coplanar with each other. */
-function worldPointsShareElevation(plane: WorkPlane, points: readonly Vec3[]): boolean {
-  if (points.length === 0) return true;
-  const z0 = worldToLocal(plane, points[0]).z;
-  return points.every((point) => Math.abs(worldToLocal(plane, point).z - z0) < 1e-6);
-}
 
 export function drawSpline(run: CommandRun): StepOutcome {
   const { active, data, value, ctx } = run;

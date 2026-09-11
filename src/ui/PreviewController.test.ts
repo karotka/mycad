@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PreviewController } from './PreviewController';
+import { WORLD_WORK_PLANE } from '../math/workplane';
 
 function element() {
   return { textContent: '', style: { left: '', top: '' }, hidden: true, dataset: {} } as unknown as HTMLElement;
@@ -258,6 +259,82 @@ describe('PreviewController', () => {
         textPosition: { x: 8, y: 7 },
         workPlane,
       },
+    });
+  });
+
+  describe('curve previews follow their points out of the plane', () => {
+    const plane = WORLD_WORK_PLANE;
+    // A resolved point carrying its true world position, the same ad-hoc
+    // `.world` extension PointResolver attaches for BEZIER/SPLINE.
+    const at = (x: number, y: number, world: { x: number; y: number; z: number }) =>
+      ({ x, y, world }) as unknown as { x: number; y: number };
+    const previewIn3d = (command: ReturnType<typeof active>, cursor: { x: number; y: number }) => {
+      const controller = new PreviewController(element(), element(), element(), element(), undefined, undefined, undefined, () => plane);
+      controller.update(command, cursor, null);
+      return controller.preview;
+    };
+
+    it('fits a SPLINE preview in world space once its points stop sharing one elevation', () => {
+      const preview = previewIn3d(
+        active('SPLINE', 1, {
+          points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+          worldPoints: [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 8 }],
+        }),
+        at(20, 0, { x: 20, y: 0, z: 0 }),
+      );
+
+      expect(preview?.type).toBe('spline');
+      const data = preview?.data as { start: { z?: number }; segments: Array<{ end: { z?: number } }>; workPlane: unknown };
+      expect(data.workPlane).toBe(plane);
+      expect(data.start).toEqual({ x: 0, y: 0, z: 0 });
+      // Passes exactly through the off-plane middle point, and on to the cursor.
+      expect(data.segments[0].end).toEqual({ x: 10, y: 0, z: 8 });
+      expect(data.segments.at(-1)!.end).toEqual({ x: 20, y: 0, z: 0 });
+    });
+
+    it('keeps a BEZIER preview chain in world space too, cursor included', () => {
+      const preview = previewIn3d(
+        active('BEZIER', 1, {
+          points: [{ x: 0, y: 0 }, { x: 0, y: 10 }, { x: 10, y: 10 }],
+          worldPoints: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 10, z: 0 }, { x: 10, y: 10, z: 6 }],
+        }),
+        at(10, 0, { x: 10, y: 0, z: 6 }),
+      );
+
+      const data = preview?.data as { start: unknown; segments: Array<{ control2: unknown; end: unknown }>; workPlane: unknown };
+      expect(data.workPlane).toBe(plane);
+      expect(data.start).toEqual({ x: 0, y: 0, z: 0 });
+      expect(data.segments[0].control2).toEqual({ x: 10, y: 10, z: 6 });
+      expect(data.segments[0].end).toEqual({ x: 10, y: 0, z: 6 });
+    });
+
+    it('stays on the ordinary flat preview while every point still shares one elevation', () => {
+      const preview = previewIn3d(
+        active('SPLINE', 1, {
+          points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+          worldPoints: [{ x: 0, y: 0, z: 4 }, { x: 10, y: 0, z: 4 }],
+        }),
+        at(20, 0, { x: 20, y: 0, z: 4 }),
+      );
+
+      const data = preview?.data as { start: { z?: number }; workPlane: unknown };
+      expect(data.workPlane).toBeUndefined(); // the command's own drawingPlane, unset here
+      expect(data.start).toEqual({ x: 0, y: 0 }); // no spurious elevation carried
+    });
+
+    it('stays flat in the 2D view, where there is no plane to leave', () => {
+      const controller = new PreviewController(element(), element(), element(), element(), undefined, undefined, undefined, () => null);
+      controller.update(
+        active('SPLINE', 1, {
+          points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+          worldPoints: [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 8 }],
+        }),
+        at(20, 0, { x: 20, y: 0, z: 0 }),
+        null,
+      );
+
+      const data = controller.preview?.data as { start: { z?: number } };
+      expect(data.start).toEqual({ x: 0, y: 0 });
     });
   });
 

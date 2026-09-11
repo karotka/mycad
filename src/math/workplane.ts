@@ -45,6 +45,22 @@ export function worldToLocal(plane: WorkPlane, point: Vec3): Vec3 {
   };
 }
 
+/**
+ * Whether every world point sits at the same elevation on `plane` — i.e.
+ * whether one flat curve in that plane can hold them all.
+ *
+ * Deliberately not "are these points coplanar with each other" (which even
+ * two points always trivially are, and which a tilted plane can satisfy
+ * without the *given* plane doing so): geometry built flat in one plane,
+ * like a fit-point spline, has no elevation of its own beyond that plane,
+ * so this is the question that decides whether it can stay flat.
+ */
+export function worldPointsShareElevation(plane: WorkPlane, points: readonly Vec3[], tolerance = 1e-6): boolean {
+  if (points.length === 0) return true;
+  const first = worldToLocal(plane, points[0]).z;
+  return points.every((point) => Math.abs(worldToLocal(plane, point).z - first) < tolerance);
+}
+
 function normalize(value: Vec3): Vec3 {
   const length = Math.hypot(value.x, value.y, value.z);
   if (length < 1e-9) throw new Error('UCS axis points must be different.');

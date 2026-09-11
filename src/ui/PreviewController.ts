@@ -15,6 +15,11 @@ export class PreviewController {
     private readonly projectPoint?: (point: { x: number; y: number; z: number }) => { x: number; y: number } | null,
     private readonly copyWorldDelta?: (delta: Vec2) => { x: number; y: number; z: number } | undefined,
     private readonly drawingPlaneMarker: HTMLElement = snapMarker,
+    /** The plane a curve preview would otherwise be pinned flat to, or null
+     *  where a flat preview is the only meaningful one (the 2D view). Only
+     *  BEZIER/SPLINE use it, to notice that their points no longer all sit
+     *  on it — see `curvePreviewChain`. */
+    private readonly curvePreviewPlane?: () => WorkPlane | null,
   ) {}
 
   get preview(): PreviewFrame | undefined { return this.frame; }
@@ -22,6 +27,29 @@ export class PreviewController {
   setPreview(preview: PreviewFrame | undefined): void { this.frame = preview; }
 
   clearPreview(): void { this.frame = undefined; }
+
+  /**
+   * The whole world-space point chain a BEZIER/SPLINE preview should follow —
+   * every point already clicked plus where the cursor sits now — but only
+   * once they no longer all share one elevation on the active plane. A flat
+   * curve (the ordinary case, and every curve in the 2D view) gets null back
+   * and keeps the plain local-frame preview, unchanged.
+   *
+   * Reported live, right after the curves themselves started bending through
+   * 3D correctly: "funguje, ale nahled se generuje blbe, pouze ve 2d" — the
+   * preview reads the same `points` the command collects, which are local
+   * (x, y) only, so it stayed pinned flat to one plane while drawing.
+   */
+  private curvePreviewChain(active: ActiveCommand, cursor: Vec2): Vec3[] | null {
+    const plane = this.curvePreviewPlane?.() ?? null;
+    if (!plane) return null;
+    const points = (active.data.points as Vec2[] | undefined) ?? [];
+    const worldPoints = active.data.worldPoints as Vec3[] | undefined;
+    const cursorWorld = (cursor as Vec2 & { world?: Vec3 }).world;
+    if (!worldPoints || !cursorWorld || worldPoints.length !== points.length) return null;
+    const chain = [...worldPoints, cursorWorld];
+    return worldPointsShareElevation(plane, chain) ? null : chain;
+  }
 
   private isTextEntryStep(active: ActiveCommand): boolean {
     return ((active.name === 'TEXT' || active.name === 'MTEXT') && active.stepIndex === 3)
@@ -71,9 +99,12 @@ export class PreviewController {
       // now, so the preview is the actual curve a click here would produce —
       // not a straight stand-in for it, and not a fit that can reshape an
       // already-placed span once another point goes down further along.
-      const fits = interpolatingBeziers([...points, cursor]);
+      // A curve bent out of the plane fits in world space instead, exactly as
+      // drawSpline itself does once the command finishes.
+      const bent = this.curvePreviewChain(active, cursor);
+      const fits = bent ? interpolatingBeziers3(bent) : interpolatingBeziers([...points, cursor]);
       this.setPreview(fits.length > 0
-        ? { type: 'spline', data: { start: fits[0].start, segments: fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end })), workPlane: drawingPlane } }
+        ? { type: 'spline', data: { start: fits[0].start, segments: fits.map((fit) => ({ control1: fit.control1, control2: fit.control2, end: fit.end })), workPlane: bent ? WORLD_WORK_PLANE : drawingPlane } }
         : { type: 'polyline', data: { vertices: points, cursor, workPlane: drawingPlane } });
       return;
     }
@@ -116,15 +147,20 @@ export class PreviewController {
       // whatever control points already exist for it — currently ends.
       const points = (active.data.points as Vec2[]) ?? [];
       if (points.length === 0) return;
-      const fullSegments = Math.floor((points.length - 1) / 3);
-      const pending = points.slice(1 + fullSegments * 3);
+      // Same chain, in world space, once the control points stop sharing one
+      // elevation — see curvePreviewChain.
+      const bent = this.curvePreviewChain(active, cursor);
+      const chain: Vec2[] = bent ? bent.slice(0, -1) : points;
+      const tip: Vec2 = bent ? bent[bent.length - 1] : cursor;
+      const fullSegments = Math.floor((chain.length - 1) / 3);
+      const pending = chain.slice(1 + fullSegments * 3);
       const segments = Array.from({ length: fullSegments }, (_unused, index) => ({
-        control1: points[1 + index * 3],
-        control2: points[2 + index * 3],
-        end: points[3 + index * 3],
+        control1: chain[1 + index * 3],
+        control2: chain[2 + index * 3],
+        end: chain[3 + index * 3],
       }));
-      segments.push({ control1: pending[0] ?? cursor, control2: pending[1] ?? cursor, end: cursor });
-      this.setPreview({ type: 'spline', data: { start: points[0], segments, workPlane: drawingPlane } });
+      segments.push({ control1: pending[0] ?? tip, control2: pending[1] ?? tip, end: tip });
+      this.setPreview({ type: 'spline', data: { start: chain[0], segments, workPlane: bent ? WORLD_WORK_PLANE : drawingPlane } });
       return;
     }
     if (active.name === 'INSERT' && active.stepIndex === 1) {
@@ -400,8 +436,8 @@ function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
 import type { ActiveCommand } from '../core/commands/CommandManager';
 import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
-import type { Vec2 } from '../math/geometry';
-import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
-import { interpolatingBeziers } from '../math/bezierFit';
+import type { Vec2, Vec3 } from '../math/geometry';
+import { cloneWorkPlane, localToWorld, worldPointsShareElevation, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
+import { interpolatingBeziers, interpolatingBeziers3 } from '../math/bezierFit';
 import { arcFromSagitta } from '../math/arcFit';
 import type { MlineStyle } from '../core/settings';
