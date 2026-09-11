@@ -32,8 +32,8 @@ export const arcTools: Array<[string, string, CommandName]> = [
 // it, the way AutoCAD's own SPLINE offers Fit and CV input: Fit passes the
 // curve through every clicked point, CV shapes it with control points instead.
 export const curveTools: Array<[string, string, CommandName]> = [
-  ['Spline (Fit)', 'Spline — the curve passes through every clicked point', 'SPLINE'],
-  ['Spline (CV)', 'Spline — control points shape the curve without it passing through them', 'BEZIER'],
+  ['Fit', 'Spline — the curve passes through every clicked point', 'SPLINE'],
+  ['CV', 'Spline — control points shape the curve without it passing through them', 'BEZIER'],
 ];
 export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
 export const solidTools: Array<[string, CommandName]> = [
