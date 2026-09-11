@@ -12,13 +12,25 @@ import { type DynamicUcsController, preferredDynamicFacePlane } from './DynamicU
  */
 const DYNAMIC_UCS_COMMANDS = new Set<CommandName>([
   'LINE', 'POLYLINE', 'RECTANGLE', 'CIRCLE', 'CIRCLE_DIAMETER', 'OCTAGON',
-  'ELLIPSE', 'POLYGON', 'ARC', 'BEZIER', 'TEXT',
+  'ELLIPSE', 'POLYGON', 'ARC', 'BEZIER', 'SPLINE', 'TEXT',
   'BOX', 'WEDGE', 'SPHERE', 'CONE', 'CYLINDER', 'PYRAMID', 'TORUS',
   // A linear dimension belongs to a plane. DUCS lets the first picked face
   // supply that plane, then the ordinary first-point lock keeps every
   // remaining dimension step in it. DIMALIGNED builds its own spatial plane.
   'MEASURE', 'DIMANGULAR',
 ]);
+
+/**
+ * Multi-point curve commands where EVERY point — not only the first — may
+ * want its own face: a free-form 3D spline is built up exactly by hovering
+ * a different face for each control/fit point in turn, matching real
+ * AutoCAD's own workflow for bending a spline through space (toggle Dynamic
+ * UCS, F6/Shift+Z, as you go). Every other command in DYNAMIC_UCS_COMMANDS
+ * locks to whichever plane the FIRST point picked once that point lands —
+ * correctly so, since a rectangle's four corners cannot sensibly land on
+ * four different planes — so this is deliberately its own, smaller set.
+ */
+const DYNAMIC_UCS_PER_POINT_COMMANDS = new Set<CommandName>(['BEZIER', 'SPLINE']);
 
 interface DynamicUcsAnswer {
   command: ActiveCommand;
@@ -123,7 +135,8 @@ export function createDynamicUcsCoordinator(ctx: DynamicUcsCoordinatorContext) {
     };
   }
 
-  /** Locks after the first point, or restores after the object/command finishes. */
+  /** Locks after the first point, or restores after the object/command finishes.
+   *  Skipped for DYNAMIC_UCS_PER_POINT_COMMANDS — see its own doc comment. */
   function afterDynamicUcsAnswer(before: DynamicUcsAnswer | null): void {
     if (!before || !controller.isTemporary) return;
     const active = commands.active;
@@ -131,7 +144,9 @@ export function createDynamicUcsCoordinator(ctx: DynamicUcsCoordinatorContext) {
       releaseDynamicUcs();
       return;
     }
-    if (before.stepKind === 'point' && active.stepIndex !== before.stepIndex) controller.lock();
+    if (before.stepKind === 'point' && active.stepIndex !== before.stepIndex && !DYNAMIC_UCS_PER_POINT_COMMANDS.has(active.name)) {
+      controller.lock();
+    }
   }
 
   function toggleDynamicUcs(): void {

@@ -193,7 +193,15 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   function hideUcsCursor(): void { ucsCursor.style.display = 'none'; }
   function updateUcsCursor(event: PointerEvent, sx: number, sy: number): void {
     if (cadDocument.viewMode !== '3d') { hideUcsCursor(); return; }
-    const plane = commands.active?.data.drawingPlane as WorkPlane | undefined;
+    // Two distinct ways a plane can be "virtual" right now: an off-plane
+    // snap parked a temporary parallel plane on the active command
+    // (drawingPlane), or Dynamic UCS (F6/Shift+Z, or hovering a face while
+    // it is armed) has adopted a face's plane directly onto
+    // doc.activeWorkPlane — see DynamicUcsController's own isTemporary.
+    // Either one means "not the UCS you last explicitly set," which is
+    // exactly when this cross earns its keep.
+    const plane = (commands.active?.data.drawingPlane as WorkPlane | undefined)
+      ?? (dynamicUcsController.isTemporary ? cadDocument.activeWorkPlane : undefined);
     if (!plane) { hideUcsCursor(); return; }
     const canvas = renderer3d.renderer.domElement;
     const local = renderer3d.workPlanePoint(canvas, event.clientX, event.clientY, plane);

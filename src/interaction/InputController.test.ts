@@ -230,4 +230,18 @@ describe('drafting toggles sit on the keys AutoCAD uses', () => {
     expect(callbacks.toggleCutArea).toHaveBeenCalledOnce();
     expect(callbacks.toggleGridDisplay).not.toHaveBeenCalled();
   });
+
+  it('uses plain Shift+Z as AutoCAD\'s own Dynamic UCS override key, alongside F6', () => {
+    const { target, callbacks } = setup();
+    target.dispatchEvent(keyboard('z', { shiftKey: true }));
+    expect(callbacks.toggleDynamicUcs).toHaveBeenCalledOnce();
+    expect(callbacks.redo).not.toHaveBeenCalled();
+  });
+
+  it('still treats Ctrl/Cmd+Shift+Z as redo, not the Dynamic UCS override', () => {
+    const { target, callbacks } = setup();
+    target.dispatchEvent(keyboard('z', { shiftKey: true, ctrlKey: true }));
+    expect(callbacks.redo).toHaveBeenCalledOnce();
+    expect(callbacks.toggleDynamicUcs).not.toHaveBeenCalled();
+  });
 });

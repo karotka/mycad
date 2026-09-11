@@ -76,6 +76,13 @@ export class InputController {
       if (event.shiftKey) this.callbacks.redo(); else this.callbacks.undo();
       return;
     }
+    // AutoCAD's own Dynamic UCS override key, alongside F6 — plain Shift+Z,
+    // no Ctrl/Cmd (that combination is redo, handled above).
+    if (!primaryModifier && event.shiftKey && key === 'z') {
+      event.preventDefault();
+      this.callbacks.toggleDynamicUcs();
+      return;
+    }
     if (primaryModifier && key === 's') { event.preventDefault(); if (event.shiftKey) this.callbacks.saveAs(); else this.callbacks.save(); return; }
     // The side panels, on Ctrl/Cmd+1..4 — Properties on 1 matches AutoCAD; Tree,
     // Layers and Blocks follow the same run of keys. They close on a canvas click,
