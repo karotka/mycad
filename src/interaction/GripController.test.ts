@@ -5,6 +5,7 @@ import { GripController, gripsInWorld, type Grip } from './GripController';
 import type { EdgeModificationFeature, LineEntity, LoftFeature, PrimitiveFeature } from '../core/entities/types';
 import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 import type { WorkPlane } from '../math/workplane';
+import type { Vec2 } from '../math/geometry';
 
 describe('GripController', () => {
   it('moves a chamfer feature with a solid centre grip instead of leaving its history behind', () => {
@@ -563,6 +564,40 @@ describe('GripController', () => {
     grips.update({ x: 12, y: 8 }); grips.commit();
     expect(dimension.textPosition).toEqual({ x: 12, y: 8 });
     expect(dimension.arcPoint).toEqual({ x: 7, y: 7 });
+  });
+
+  it('preserves each point\'s own elevation while dragging a different grip on a genuinely 3D bezier, instead of flattening the whole curve', () => {
+    // Real regression, reported directly with screenshots: dragging one
+    // grip on a bezier built with real per-point Z (drawBezier's 3D path,
+    // e.g. drawn by clicking corners of a box on different Dynamic UCS
+    // faces) zeroed that grip's own z — a plain local drag cursor has none
+    // — while every OTHER point kept its original z, warping the curve
+    // into a self-crossing mess instead of moving cleanly in x/y.
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const withZ = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+    const bezier = doc.createSpline(withZ(0, 0, 0), [
+      { control1: withZ(0, 10, 0), control2: withZ(10, 10, 8), end: withZ(10, 0, 8) },
+    ]);
+    doc.addEntity(bezier);
+    doc.selectEntity(bezier.id);
+
+    // Grip index 2 = control2 (field 1 of segment 0) — its own z (8) must
+    // survive a drag that only moves it sideways in local (x, y).
+    grips.begin(bezier, undefined, 2, { x: 10, y: 10 });
+    grips.update({ x: 12, y: 11 });
+    grips.commit();
+
+    const updated = doc.getEntity(bezier.id);
+    expect(updated).toMatchObject({ type: 'bezier' });
+    if (updated?.type === 'bezier') {
+      expect(updated.segments[0].control2).toMatchObject({ x: 12, y: 11, z: 8 });
+      // Untouched points keep their own original elevation exactly.
+      expect(updated.start).toEqual({ x: 0, y: 0, z: 0 });
+      expect(updated.segments[0].control1).toEqual({ x: 0, y: 10, z: 0 });
+      expect(updated.segments[0].end).toEqual({ x: 10, y: 0, z: 8 });
+    }
   });
 });
 

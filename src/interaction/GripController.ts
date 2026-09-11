@@ -912,14 +912,24 @@ export class GripController {
       // Index 0 is the shared start; grip i>0 is field (i-1)%3 of segment
       // floor((i-1)/3) — the same layout activeGrips() lays the points out in.
       const gripIndex = this.drag.gripIndex;
-      if (gripIndex === 0) entity.start = { ...cursor };
+      const originalPoints = [original.start, ...original.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+      const draggedOriginal = originalPoints[gripIndex] as (Vec2 & { z?: number }) | undefined;
+      // A genuinely 3D curve (drawBezier building one from points on
+      // different Dynamic UCS planes, each keeping its own elevation) must
+      // not have that elevation silently dropped just because this grip's
+      // own drag cursor is a plain local (x, y) — reported directly, with
+      // screenshots showing the rest of the curve twisting into a
+      // self-crossing mess once one point's z vanished while its
+      // neighbours' did not.
+      const point: Vec2 & { z?: number } = draggedOriginal?.z === undefined ? { ...cursor } : { ...cursor, z: draggedOriginal.z };
+      if (gripIndex === 0) entity.start = point;
       else {
         const segmentIndex = Math.floor((gripIndex - 1) / 3);
         const field = (gripIndex - 1) % 3;
         const segment = entity.segments[segmentIndex];
-        if (field === 0) segment.control1 = { ...cursor };
-        else if (field === 1) segment.control2 = { ...cursor };
-        else segment.end = { ...cursor };
+        if (field === 0) segment.control1 = point;
+        else if (field === 1) segment.control2 = point;
+        else segment.end = point;
       }
     } else if(entity.type==='arc'&&original.type==='arc'){
       if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};
