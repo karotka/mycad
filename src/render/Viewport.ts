@@ -25,6 +25,10 @@ import { offsetOpenPolyline } from '../core/commands/steps/edit2d';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
 
+/** The same red/green/blue the UCS triad and the cursor cross already use for
+ *  X/Y/Z, so a grip's own axis cross reads as the same vocabulary. */
+const GRIP_AXIS_COLORS: Record<GripAxisName, number> = { x: 0xff4d4d, y: 0x35d94c, z: 0x4d9bff };
+
 /** Height shared by points generated from a planar entity's defining anchor. */
 const entityPlaneOffset = (entity: Entity): number => {
   if (entity.type === 'insert') return localPointZ(entity.position) ?? 0;
@@ -1061,39 +1065,34 @@ export class Viewport3D {
   }
 
   /**
-   * The grip's own axis triad: three short arrows at a hot grip, each one a
+   * The grip's own axis cross: three short 1px lines at a hot grip, each one a
    * direction that grip can be pulled along. Built lazily — most sessions
-   * never grip-edit anything in 3D — and much smaller than the UCS triad, so
-   * it reads as belonging to the point rather than to the drawing.
+   * never grip-edit anything in 3D.
+   *
+   * Deliberately plain lines rather than the UCS triad's solid shafts and cone
+   * heads: this belongs to one point of one object, and drawn as solid arrows
+   * it read as loudly as the drawing itself. Direction comes from colour (the
+   * same red/green/blue the UCS triad and the cursor cross use), and each line
+   * carries an invisible box at its tip so it can still be clicked without
+   * hitting a hairline exactly.
    */
   private createGripAxisTriad(): THREE.Group {
     const group = new THREE.Group();
     group.name = 'grip-axis-triad';
-    const length = 3.4, headLength = 0.9, headRadius = 0.28, shaftRadius = 0.08;
-    const up = new THREE.Vector3(0, 1, 0);
-    const axes: Array<{ name: GripAxisName; direction: THREE.Vector3; color: number }> = [
-      { name: 'x', direction: new THREE.Vector3(1, 0, 0), color: 0xff4d4d },
-      { name: 'y', direction: new THREE.Vector3(0, 1, 0), color: 0x35d94c },
-      { name: 'z', direction: new THREE.Vector3(0, 0, 1), color: 0x4d9bff },
+    const length = 3.4;
+    const axes: Array<{ name: GripAxisName; direction: THREE.Vector3 }> = [
+      { name: 'x', direction: new THREE.Vector3(1, 0, 0) },
+      { name: 'y', direction: new THREE.Vector3(0, 1, 0) },
+      { name: 'z', direction: new THREE.Vector3(0, 0, 1) },
     ];
     for (const axis of axes) {
-      const material = new THREE.MeshBasicMaterial({ color: axis.color, depthTest: false, toneMapped: false });
-      const quaternion = new THREE.Quaternion().setFromUnitVectors(up, axis.direction);
-      const shaftLength = length - headLength;
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 10), material);
-      shaft.userData.gripAxis = axis.name;
-      shaft.quaternion.copy(quaternion);
-      shaft.position.copy(axis.direction.clone().multiplyScalar(shaftLength / 2));
-      shaft.renderOrder = 21;
-      group.add(shaft);
-      const head = new THREE.Mesh(new THREE.ConeGeometry(headRadius, headLength, 14), material);
-      head.userData.gripAxis = axis.name;
-      head.quaternion.copy(quaternion);
-      head.position.copy(axis.direction.clone().multiplyScalar(length - headLength / 2));
-      head.renderOrder = 21;
-      group.add(head);
-      // An invisible box around the head, so the arrow can be clicked without
-      // hitting its few pixels of cone exactly — same trick the UCS handles use.
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), axis.direction.clone().multiplyScalar(length)]),
+        new THREE.LineBasicMaterial({ color: GRIP_AXIS_COLORS[axis.name], depthTest: false, transparent: true, opacity: 0.85, toneMapped: false }),
+      );
+      line.userData.gripAxis = axis.name;
+      line.renderOrder = 21;
+      group.add(line);
       const handle = new THREE.Mesh(
         new THREE.BoxGeometry(0.9, 0.9, 0.9),
         new THREE.MeshBasicMaterial({ visible: false }),
@@ -1125,10 +1124,14 @@ export class Viewport3D {
       triad.position.copy(toThree(origin));
       triad.quaternion.setFromRotationMatrix(basis);
       triad.updateMatrixWorld(true);
+      // Highlighting brightens the line instead of scaling it: scaling a line
+      // would stretch the axis rather than pick it out.
       for (const child of triad.children) {
         const axis = child.userData.gripAxis as GripAxisName | undefined;
-        if (!axis) continue;
-        child.scale.setScalar(axis === highlighted ? 1.35 : 1);
+        if (!axis || !(child instanceof THREE.Line)) continue;
+        const material = child.material as THREE.LineBasicMaterial;
+        material.opacity = axis === highlighted ? 1 : 0.85;
+        material.color.set(axis === highlighted ? 0xffffff : GRIP_AXIS_COLORS[axis]);
       }
     }
     this.render();
