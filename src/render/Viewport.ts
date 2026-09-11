@@ -12,6 +12,7 @@ import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { sampleCubicChain } from '../math/bezierFit';
+import type { GripAxisName } from '../interaction/GripAxisDrag';
 import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
@@ -830,6 +831,10 @@ export class Viewport3D {
   private axisTriad: THREE.Group;
   private readonly ucsHandleMeshes = new Map<UcsHandleName, THREE.Mesh>();
   private ucsHandlesVisible = false;
+  /** The smaller triad that appears at a hot grip, for pulling that one point
+   *  along one axis — separate from the UCS triad above, which re-aims the
+   *  construction plane instead and is pinned to its origin. */
+  private gripAxisTriad: THREE.Group | null = null;
   private isDragging = false;
   private lastX = 0;
   private lastY = 0;
@@ -1053,6 +1058,88 @@ export class Viewport3D {
       group.add(handle);
     }
     return group;
+  }
+
+  /**
+   * The grip's own axis triad: three short arrows at a hot grip, each one a
+   * direction that grip can be pulled along. Built lazily — most sessions
+   * never grip-edit anything in 3D — and much smaller than the UCS triad, so
+   * it reads as belonging to the point rather than to the drawing.
+   */
+  private createGripAxisTriad(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'grip-axis-triad';
+    const length = 3.4, headLength = 0.9, headRadius = 0.28, shaftRadius = 0.08;
+    const up = new THREE.Vector3(0, 1, 0);
+    const axes: Array<{ name: GripAxisName; direction: THREE.Vector3; color: number }> = [
+      { name: 'x', direction: new THREE.Vector3(1, 0, 0), color: 0xff4d4d },
+      { name: 'y', direction: new THREE.Vector3(0, 1, 0), color: 0x35d94c },
+      { name: 'z', direction: new THREE.Vector3(0, 0, 1), color: 0x4d9bff },
+    ];
+    for (const axis of axes) {
+      const material = new THREE.MeshBasicMaterial({ color: axis.color, depthTest: false, toneMapped: false });
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(up, axis.direction);
+      const shaftLength = length - headLength;
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 10), material);
+      shaft.userData.gripAxis = axis.name;
+      shaft.quaternion.copy(quaternion);
+      shaft.position.copy(axis.direction.clone().multiplyScalar(shaftLength / 2));
+      shaft.renderOrder = 21;
+      group.add(shaft);
+      const head = new THREE.Mesh(new THREE.ConeGeometry(headRadius, headLength, 14), material);
+      head.userData.gripAxis = axis.name;
+      head.quaternion.copy(quaternion);
+      head.position.copy(axis.direction.clone().multiplyScalar(length - headLength / 2));
+      head.renderOrder = 21;
+      group.add(head);
+      // An invisible box around the head, so the arrow can be clicked without
+      // hitting its few pixels of cone exactly — same trick the UCS handles use.
+      const handle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.9, 0.9, 0.9),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      handle.userData.gripAxis = axis.name;
+      handle.position.copy(axis.direction.clone().multiplyScalar(length));
+      group.add(handle);
+    }
+    return group;
+  }
+
+  /** Puts the grip triad at `origin` (world), aligned with `plane`'s axes, or
+   *  hides it when `origin` is null. `highlighted` thickens whichever axis the
+   *  cursor is over, or the one a drag is already locked to. */
+  showGripAxes(origin: Vec3 | null, plane: WorkPlane, highlighted: GripAxisName | null = null): void {
+    if (!this.gripAxisTriad) {
+      this.gripAxisTriad = this.createGripAxisTriad();
+      this.scene.add(this.gripAxisTriad);
+    }
+    const triad = this.gripAxisTriad;
+    triad.visible = origin !== null;
+    if (origin) {
+      const toThree = (axis: Vec3) => new THREE.Vector3(axis.x, axis.z, -axis.y);
+      const basis = new THREE.Matrix4().makeBasis(
+        toThree(plane.xAxis).normalize(),
+        toThree(plane.yAxis).normalize(),
+        toThree(plane.zAxis).normalize(),
+      );
+      triad.position.copy(toThree(origin));
+      triad.quaternion.setFromRotationMatrix(basis);
+      triad.updateMatrixWorld(true);
+      for (const child of triad.children) {
+        const axis = child.userData.gripAxis as GripAxisName | undefined;
+        if (!axis) continue;
+        child.scale.setScalar(axis === highlighted ? 1.35 : 1);
+      }
+    }
+    this.render();
+  }
+
+  /** Which of a hot grip's axis arrows is under the cursor, if any. */
+  pickGripAxis(canvas: HTMLCanvasElement, sx: number, sy: number): GripAxisName | null {
+    if (!this.gripAxisTriad?.visible) return null;
+    const hit = this.picking.firstIntersection(canvas, sx, sy, [this.gripAxisTriad]);
+    const value = hit?.object.userData.gripAxis;
+    return value === 'x' || value === 'y' || value === 'z' ? value : null;
   }
 
   pickUcsHandle(canvas: HTMLCanvasElement, sx: number, sy: number): UcsHandleName | null {

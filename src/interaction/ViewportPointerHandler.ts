@@ -9,6 +9,7 @@ import type { ViewportNavigationController } from './ViewportNavigationControlle
 import type { WindowDragController } from './WindowDragController';
 import type { GripController } from './GripController';
 import type { GripInteractionController } from './GripInteractionController';
+import { beginGripAxisLock, type GripAxisName } from './GripAxisDrag';
 import type { DrawingInteractionController } from './DrawingInteractionController';
 import type { SelectionController } from './SelectionController';
 import type { DynamicUcsController } from './DynamicUcsController';
@@ -242,6 +243,61 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     }
   }
 
+  /**
+   * The grip whose axis arrows should be on show, as a world position and the
+   * plane whose axes they are — null whenever no such grip is hot.
+   *
+   * Scoped to a curve's own points: a per-point elevation off the entity's
+   * plane is a concept `bezier` already carries (that is how a spline drawn
+   * across several Dynamic UCS faces keeps its shape), and the one this
+   * gesture writes into. Other entity types have nowhere to put it yet, so
+   * offering them an axis that silently does nothing would be worse than not
+   * offering it at all.
+   */
+  function hotGripAxisTarget(): { origin: Vec3; plane: WorkPlane } | null {
+    if (!gripController.isDragging || !gripInteraction.isLatched || cadDocument.viewMode !== '3d') return null;
+    const entity = selectedEntity();
+    if (entity?.type !== 'bezier') return null;
+    const gripIndex = gripController.draggingGripIndex;
+    if (gripIndex === null) return null;
+    const grip = activeGripsInWorld().find((candidate) => candidate.index === gripIndex);
+    if (!grip) return null;
+    return { origin: { x: grip.point.x, y: grip.point.y, z: grip.point.z ?? 0 }, plane: entity.workPlane ?? WORLD_WORK_PLANE };
+  }
+
+  /** Keeps the hot grip's triad posed and highlighted, and reports which axis
+   *  the cursor is over so a click there can lock onto it. */
+  function updateGripAxisTriad(event: Pick<PointerEvent, 'clientX' | 'clientY'>): GripAxisName | null {
+    const target = hotGripAxisTarget();
+    if (!target) {
+      renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
+      return null;
+    }
+    const locked = gripInteraction.axisLock?.axis ?? null;
+    // Once locked, the triad stays put at the position the lock was taken
+    // from: re-posing it to the point it is itself moving would drag it along
+    // and leave nothing to measure the pull against.
+    const origin = gripInteraction.axisLock?.origin ?? target.origin;
+    const hovered = locked ?? renderer3d.pickGripAxis(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    renderer3d.showGripAxes(origin, target.plane, hovered);
+    return locked ? null : hovered;
+  }
+
+  /** A click on one of the hot grip's axis arrows confines the drag to it,
+   *  instead of ending the drag the way any other click would. */
+  function lockGripAxisAt(event: Pick<PointerEvent, 'clientX' | 'clientY'>): boolean {
+    const target = hotGripAxisTarget();
+    if (!target || gripInteraction.axisLock) return false;
+    const axis = renderer3d.pickGripAxis(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    if (!axis) return false;
+    const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    const lock = beginGripAxisLock(axis, target.plane, target.origin, ray);
+    if (!lock) return false;
+    gripInteraction.lockAxis(lock);
+    log(`Grip locked to the ${axis.toUpperCase()} axis — move to pull the point along it, click to place it.`);
+    return true;
+  }
+
   viewport.addEventListener('pointermove', (event) => {
     if (gripMenu.hidden) viewport.classList.remove('context-menu-cursor-pending');
     const rect = viewport.getBoundingClientRect();
@@ -410,6 +466,10 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         ? gripController.polylineEndpointAnchor(rawWorldPoint(event), 8 / renderer2d.zoom)
         : null);
     if (endpointAnchor) pointerState.activeEndpointAnchor = endpointAnchor;
+    // The hot grip's own axis arrows, and which one the cursor is over: shown
+    // for as long as the drag is latched, so picking an axis is a plain click
+    // on it (AutoCAD's own gesture — "click the grip, click the axis, pull").
+    updateGripAxisTriad(event);
     const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
     if (!p) { trackingLine.hidden = true; return; }
     if (gripController.isDragging) {
@@ -688,10 +748,18 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       return;
     }
     if (gripController.isDragging && gripInteraction.isLatched) {
+      // Clicking one of the hot grip's axis arrows aims the drag rather than
+      // ending it — the point only lands on the click after that.
+      if (lockGripAxisAt(event)) {
+        event.preventDefault();
+        redraw();
+        return;
+      }
       const snap = nearestGripTargetSnap(event);
       const point = gripEditingPoint(event, snap);
       if (point) gripController.update(point);
       gripInteraction.finishClick(event.pointerId);
+      renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
       snapMarker.hidden = true;
       event.preventDefault();
       redraw();

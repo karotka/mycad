@@ -599,6 +599,54 @@ describe('GripController', () => {
       expect(updated.segments[0].end).toEqual({ x: 10, y: 0, z: 8 });
     }
   });
+
+  it('lifts a bezier point to the elevation an axis-locked drag asks for, instead of pinning it to its old one', () => {
+    // The other half of the same rule: a cursor WITH a z is an axis-locked
+    // drag (GripAxisDrag) deliberately pulling the point off its plane —
+    // the one gesture that can change a curve's elevation after it is drawn.
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const withZ = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+    const bezier = doc.createSpline(withZ(0, 0, 0), [
+      { control1: withZ(0, 10, 0), control2: withZ(10, 10, 8), end: withZ(10, 0, 8) },
+    ]);
+    doc.addEntity(bezier);
+    doc.selectEntity(bezier.id);
+
+    grips.begin(bezier, undefined, 2, { x: 10, y: 10 });
+    grips.update({ x: 10, y: 10, z: 25 } as unknown as Vec2);
+    grips.commit();
+
+    const updated = doc.getEntity(bezier.id);
+    if (updated?.type === 'bezier') {
+      expect(updated.segments[0].control2).toEqual({ x: 10, y: 10, z: 25 });
+      // Only the dragged point moves; the rest of the curve is untouched.
+      expect(updated.start).toEqual({ x: 0, y: 0, z: 0 });
+      expect(updated.segments[0].end).toEqual({ x: 10, y: 0, z: 8 });
+    }
+  });
+
+  it('gives a flat curve an elevation it never had when dragged along the plane normal', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const bezier = doc.createSpline({ x: 0, y: 0 }, [
+      { control1: { x: 0, y: 10 }, control2: { x: 10, y: 10 }, end: { x: 10, y: 0 } },
+    ]);
+    doc.addEntity(bezier);
+    doc.selectEntity(bezier.id);
+
+    grips.begin(bezier, undefined, 3, { x: 10, y: 0 });
+    grips.update({ x: 10, y: 0, z: 6 } as unknown as Vec2);
+    grips.commit();
+
+    const updated = doc.getEntity(bezier.id);
+    if (updated?.type === 'bezier') {
+      expect(updated.segments[0].end).toEqual({ x: 10, y: 0, z: 6 });
+      expect(updated.start).toEqual({ x: 0, y: 0 }); // still flat, no spurious z
+    }
+  });
 });
 
 describe('nearest2d', () => {

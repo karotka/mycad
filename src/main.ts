@@ -17,6 +17,7 @@ import { BlockController } from './ui/BlockController';
 import { MlineStyleController } from './ui/MlineStyleController';
 import { WindowDragController } from './interaction/WindowDragController';
 import { type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
+import { gripAxisPointUnderRay } from './interaction/GripAxisDrag';
 import { ViewportNavigationController } from './interaction/ViewportNavigationController';
 import { PreviewController } from './ui/PreviewController';
 import { ProjectController } from './ui/ProjectController';
@@ -552,6 +553,18 @@ function gripEditingPoint(
   const embeddedPlane = gripController.draggingEmbeddedPlane();
   if (cadDocument.viewMode === '3d' && (entity || embeddedPlane)) {
     const plane = embeddedPlane ?? entity!.workPlane ?? WORLD_WORK_PLANE;
+    // An axis-locked drag is the one case that can move a point OFF this
+    // plane, so it resolves against the pointer ray rather than the plane
+    // intersection every other case uses — and keeps the elevation it
+    // produces (see GripAxisDrag).
+    const axisLock = gripInteraction.axisLock;
+    if (axisLock) {
+      const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
+      const world = gripAxisPointUnderRay(axisLock, ray);
+      if (!world) return null;
+      const local = worldToLocal(plane, world);
+      return { x: local.x, y: local.y, z: local.z } as Vec2;
+    }
     if (snap) {
       const local = worldToLocal(plane, snap.world);
       return { x: local.x, y: local.y };
@@ -1371,6 +1384,9 @@ attachViewportPointerHandlers({
 new InputController(input, commandForm, {
   escape: () => {
     gripInteraction.cancel();
+    // The hot grip's axis arrows go with the drag they belong to, rather than
+    // lingering until the pointer next moves.
+    renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
     drawingInteraction.cancel();
     releaseDynamicUcs();
     hoverState.ucsHoverPoint = null;

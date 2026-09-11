@@ -739,7 +739,10 @@ export class GripController {
     return this.drag.originalEmbeddedEntity.workPlane ?? WORLD_WORK_PLANE;
   }
 
-  update(cursor: Vec2): void {
+  /** `cursor` may carry a `z` — an elevation off the entity's own work plane,
+   *  which only an axis-locked drag (GripAxisDrag) can produce, since the
+   *  ordinary 3D cursor is a plane intersection and has none. */
+  update(cursor: Vec2 & { z?: number }): void {
     if (!this.drag) return;
     const dx = cursor.x - this.drag.origin.x;
     const dy = cursor.y - this.drag.origin.y;
@@ -870,7 +873,7 @@ export class GripController {
     });
   }
 
-  private updateEntity(cursor: Vec2, dx: number, dy: number): void {
+  private updateEntity(cursor: Vec2 & { z?: number }, dx: number, dy: number): void {
     if (!this.drag?.originalEntity) return;
     const entity = this.doc.getEntity(this.drag.objectId);
     const original = this.drag.originalEntity;
@@ -921,7 +924,14 @@ export class GripController {
       // screenshots showing the rest of the curve twisting into a
       // self-crossing mess once one point's z vanished while its
       // neighbours' did not.
-      const point: Vec2 & { z?: number } = draggedOriginal?.z === undefined ? { ...cursor } : { ...cursor, z: draggedOriginal.z };
+      //
+      // A cursor that DOES carry an elevation is an axis-locked drag
+      // (GripAxisDrag) deliberately pulling the point off its plane, and wins
+      // over the old one — that is the whole gesture.
+      const elevation = cursor.z ?? draggedOriginal?.z;
+      const point: Vec2 & { z?: number } = elevation === undefined
+        ? { x: cursor.x, y: cursor.y }
+        : { x: cursor.x, y: cursor.y, z: elevation };
       if (gripIndex === 0) entity.start = point;
       else {
         const segmentIndex = Math.floor((gripIndex - 1) / 3);

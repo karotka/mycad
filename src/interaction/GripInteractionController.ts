@@ -1,18 +1,25 @@
 import type { Entity, Solid, Surface } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 import { GripController } from './GripController';
+import type { GripAxisLock } from './GripAxisDrag';
 import type { ObjectSnapMode } from './SnapService';
 
 export class GripInteractionController {
   private latched = false;
   private snapMode: ObjectSnapMode | null = null;
+  private axis: GripAxisLock | null = null;
 
   constructor(private readonly grips: GripController, private readonly viewport: HTMLElement) {}
 
   get isLatched(): boolean { return this.latched; }
   get targetSnapMode(): ObjectSnapMode | null { return this.snapMode; }
+  /** The axis a latched drag is currently confined to, once one of the grip's
+   *  own axis handles has been picked — see GripAxisDrag. */
+  get axisLock(): GripAxisLock | null { return this.axis; }
 
   setTargetSnapMode(mode: ObjectSnapMode | null): void { this.snapMode = mode; }
+
+  lockAxis(lock: GripAxisLock | null): void { this.axis = lock; }
 
   begin(entity: Entity | undefined, solid: Solid | undefined, gripIndex: number, point: Vec2, pointerId: number, surface?: Surface): void {
     this.grips.begin(entity, solid, gripIndex, point, surface);
@@ -24,6 +31,7 @@ export class GripInteractionController {
     this.grips.commit();
     this.latched = false;
     this.snapMode = null;
+    this.axis = null;
     this.grips.hoveredGrip = -1;
     this.release(pointerId);
   }
@@ -37,6 +45,7 @@ export class GripInteractionController {
     this.grips.commit();
     this.latched = false;
     this.snapMode = null;
+    this.axis = null;
     this.grips.hoveredGrip = -1;
     return true;
   }
@@ -51,6 +60,7 @@ export class GripInteractionController {
     this.grips.commit();
     this.latched = false;
     this.snapMode = null;
+    this.axis = null;
     this.grips.hoveredGrip = -1;
     return true;
   }
@@ -59,6 +69,7 @@ export class GripInteractionController {
     this.grips.cancel();
     this.latched = false;
     this.snapMode = null;
+    this.axis = null;
   }
 
   private release(pointerId: number): void {
