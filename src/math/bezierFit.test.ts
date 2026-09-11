@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitCubicBeziers, interpolatingBeziers, interpolatingBeziers3 } from './bezierFit';
+import { fitCubicBeziers, interpolatingBeziers, interpolatingBeziers3, sampleCubicChain } from './bezierFit';
 
 describe('fitCubicBeziers', () => {
   it('reduces sampled smooth geometry to fewer cubic Beziers', () => {
@@ -80,5 +80,43 @@ describe('interpolatingBeziers3', () => {
 
   it('degenerates to nothing for fewer than two points', () => {
     expect(interpolatingBeziers3([{ x: 0, y: 0, z: 0 }])).toEqual([]);
+  });
+});
+
+describe('sampleCubicChain', () => {
+  it('interpolates elevation along the curve, not just x and y', () => {
+    // The whole reason this exists: sampling x/y alone drew a curve bent
+    // through 3D as a flat rubber-band at its start point's height.
+    const samples = sampleCubicChain(
+      { x: 0, y: 0, z: 0 },
+      [{ control1: { x: 1, y: 0, z: 3 }, control2: { x: 2, y: 0, z: 3 }, end: { x: 3, y: 0, z: 0 } }],
+      0,
+      4,
+    );
+    expect(samples[0]).toEqual({ x: 0, y: 0, z: 0 });
+    expect(samples.at(-1)).toMatchObject({ x: 3, y: 0, z: 0 });
+    // Rises away from both ends rather than staying at the start's elevation.
+    const peak = Math.max(...samples.map((sample) => sample.z));
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('falls back to one shared elevation when no control point carries its own', () => {
+    const samples = sampleCubicChain({ x: 0, y: 0 }, [{ control1: { x: 1, y: 1 }, control2: { x: 2, y: 1 }, end: { x: 3, y: 0 } }], 7, 4);
+    expect(samples.every((sample) => Math.abs(sample.z - 7) < 1e-9)).toBe(true);
+  });
+
+  it('chains segment to segment, one sample set per segment plus the start', () => {
+    const samples = sampleCubicChain(
+      { x: 0, y: 0, z: 0 },
+      [
+        { control1: { x: 1, y: 0, z: 0 }, control2: { x: 2, y: 0, z: 0 }, end: { x: 3, y: 0, z: 5 } },
+        { control1: { x: 4, y: 0, z: 5 }, control2: { x: 5, y: 0, z: 5 }, end: { x: 6, y: 0, z: 5 } },
+      ],
+      0,
+      8,
+    );
+    expect(samples).toHaveLength(1 + 8 * 2);
+    expect(samples[8]).toMatchObject({ x: 3, y: 0, z: 5 }); // the shared joint
+    expect(samples.at(-1)).toMatchObject({ x: 6, y: 0, z: 5 });
   });
 });

@@ -11,6 +11,7 @@ import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedIn
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
+import { sampleCubicChain } from '../math/bezierFit';
 import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
@@ -1864,22 +1865,16 @@ export class Viewport3D {
     } else if (preview.type === 'arc') {
       const q=preview.data as unknown as {center:Vec2;start:Vec2;cursor:Vec2};previewPlaneOffset=localPointZ(q.center)??0;const r=Math.hypot(q.start.x-q.center.x,q.start.y-q.center.y);const start=Math.atan2(q.start.y-q.center.y,q.start.x-q.center.x);let sweep=Math.atan2(q.cursor.y-q.center.y,q.cursor.x-q.center.x)-start;if(sweep<=0)sweep+=Math.PI*2;for(let i=0;i<=64;i++){const a=start+sweep*i/64;points.push({x:q.center.x+Math.cos(a)*r,y:q.center.y+Math.sin(a)*r});}
     } else if (preview.type === 'bezier') {
-      const q=preview.data as unknown as {start:Vec2;control1:Vec2;control2:Vec2;end:Vec2};previewPlaneOffset=localPointZ(q.start)??0;for(let i=0;i<=64;i++){const t=i/64,u=1-t;points.push({x:u**3*q.start.x+3*u*u*t*q.control1.x+3*u*t*t*q.control2.x+t**3*q.end.x,y:u**3*q.start.y+3*u*u*t*q.control1.y+3*u*t*t*q.control2.y+t**3*q.end.y});}
+      // Sampled with each point's own elevation carried through (sampleCubicChain):
+      // interpolating x and y alone drew a curve bent through 3D as a flat
+      // rubber-band at its start point's height while it was being drawn.
+      const q = preview.data as unknown as { start: Vec2; control1: Vec2; control2: Vec2; end: Vec2 };
+      previewPlaneOffset = localPointZ(q.start) ?? 0;
+      points.push(...sampleCubicChain(q.start, [{ control1: q.control1, control2: q.control2, end: q.end }], previewPlaneOffset, 64));
     } else if (preview.type === 'spline') {
       const q = preview.data as unknown as { start: Vec2; segments: Array<{ control1: Vec2; control2: Vec2; end: Vec2 }> };
       previewPlaneOffset = localPointZ(q.start) ?? 0;
-      let segmentStart = q.start;
-      for (const segment of q.segments) {
-        for (let i = 1; i <= 32; i++) {
-          const t = i / 32, u = 1 - t;
-          points.push({
-            x: u ** 3 * segmentStart.x + 3 * u * u * t * segment.control1.x + 3 * u * t * t * segment.control2.x + t ** 3 * segment.end.x,
-            y: u ** 3 * segmentStart.y + 3 * u * u * t * segment.control1.y + 3 * u * t * t * segment.control2.y + t ** 3 * segment.end.y,
-          });
-        }
-        segmentStart = segment.end;
-      }
-      points.unshift(q.start);
+      points.push(...sampleCubicChain(q.start, q.segments, previewPlaneOffset));
     }
     if (points.length < 2) return;
     const geometry = new THREE.BufferGeometry().setFromPoints(

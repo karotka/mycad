@@ -113,6 +113,43 @@ export function interpolatingBeziers3(input: readonly Vec3[]): CubicBezierFit3[]
 
 function distance3(a: Vec3, b: Vec3): number { return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
 
+/** A point in a plane's local frame, optionally lifted off it. */
+type LiftedPoint = Vec2 & { z?: number };
+
+/**
+ * Samples a chain of cubic segments into a polyline, interpolating each
+ * sample's elevation the same way as its x and y.
+ *
+ * The elevation is the whole point: a preview sampled in x and y alone comes
+ * out flat at whatever single elevation the caller assumes for it, which is
+ * exactly how a spline bent through 3D still previewed as a flat rubber-band
+ * while being drawn. `baseZ` fills in for any control point that carries no
+ * elevation of its own, so an ordinary flat curve samples exactly as before.
+ */
+export function sampleCubicChain(
+  start: LiftedPoint,
+  segments: readonly { control1: LiftedPoint; control2: LiftedPoint; end: LiftedPoint }[],
+  baseZ = 0,
+  perSegment = 32,
+): Array<Vec2 & { z: number }> {
+  const z = (point: LiftedPoint): number => point.z ?? baseZ;
+  const samples: Array<Vec2 & { z: number }> = [{ x: start.x, y: start.y, z: z(start) }];
+  let segmentStart = start;
+  for (const segment of segments) {
+    for (let index = 1; index <= perSegment; index++) {
+      const t = index / perSegment, u = 1 - t;
+      const b0 = u ** 3, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t ** 3;
+      samples.push({
+        x: b0 * segmentStart.x + b1 * segment.control1.x + b2 * segment.control2.x + b3 * segment.end.x,
+        y: b0 * segmentStart.y + b1 * segment.control1.y + b2 * segment.control2.y + b3 * segment.end.y,
+        z: b0 * z(segmentStart) + b1 * z(segment.control1) + b2 * z(segment.control2) + b3 * z(segment.end),
+      });
+    }
+    segmentStart = segment.end;
+  }
+  return samples;
+}
+
 function straightBezier(start: Vec2, end: Vec2): CubicBezierFit {
   return { start: { ...start }, control1: { x: start.x + (end.x - start.x) / 3, y: start.y + (end.y - start.y) / 3 }, control2: { x: start.x + 2 * (end.x - start.x) / 3, y: start.y + 2 * (end.y - start.y) / 3 }, end: { ...end } };
 }
