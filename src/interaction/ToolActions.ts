@@ -14,6 +14,7 @@ import type { ObjectSnapMode } from './SnapService';
 import type { Canvas2DRenderer } from '../render/Canvas2DRenderer';
 import type { Viewport3D } from '../render/Viewport3D';
 import type { PreviewController } from '../ui/PreviewController';
+import { entityTypeLabel } from '../ui/entityLabel';
 
 export interface ToolActionsContext {
   doc: Document;
@@ -136,6 +137,34 @@ export function createToolActions(ctx: ToolActionsContext) {
     doc.notify();
   }
 
+  /**
+   * The selected object's own section of the menu: its name, and a submenu of
+   * what can be done to it — AutoCAD's own second item, under Exit. Hidden
+   * whenever nothing is selected, so an empty-space right-click still opens
+   * the plain snap menu it always did.
+   */
+  function showEntitySection(): void {
+    const section = gripMenu.querySelector<HTMLElement>('.entity-actions');
+    const name = gripMenu.querySelector<HTMLElement>('.entity-name');
+    const submenu = gripMenu.querySelector<HTMLElement>('.entity-submenu');
+    const toggle = gripMenu.querySelector<HTMLButtonElement>('[data-entity-submenu]');
+    if (!section) return;
+    const entities = doc.getSelectedEntities();
+    const solids = doc.getSelectedSolids();
+    const surfaces = doc.getSelectedSurfaces();
+    const total = entities.length + solids.length + surfaces.length;
+    section.hidden = total === 0;
+    // Collapsed again on every open: the submenu is a disclosure, and leaving
+    // it hanging open from last time would push the snap lists down the screen.
+    if (submenu) submenu.hidden = true;
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    if (!name || total === 0) return;
+    if (total > 1) name.textContent = `${total} objects`;
+    else if (entities[0]) name.textContent = entityTypeLabel(entities[0]);
+    else if (surfaces[0]) name.textContent = 'Surface';
+    else name.textContent = '3D Solid';
+  }
+
   function openContextMenu(event: PointerEvent): void {
     const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
     const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
@@ -143,6 +172,7 @@ export function createToolActions(ctx: ToolActionsContext) {
     const vertexButton = gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]');
     pendingNodeDelete = null;
     if (vertexSection) vertexSection.hidden = true;
+    showEntitySection();
     const showPersistentSnaps = (): void => {
       gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {
         const mode = button.dataset.persistentSnap as ObjectSnapMode;
@@ -258,7 +288,10 @@ export function createToolActions(ctx: ToolActionsContext) {
         }
       }
     }
-    if (allowed.size === 0 && !pendingNodeDelete) return;
+    // Nothing snap-worthy under the cursor no longer means no menu at all:
+    // Exit and the selected object's own submenu still belong there, and a
+    // spline has no grip modes in the list above yet always has those.
+    if (allowed.size === 0 && !pendingNodeDelete && oneShotSection) oneShotSection.hidden = true;
     showMenu();
   }
 

@@ -9,7 +9,7 @@ import type { ViewportNavigationController } from './ViewportNavigationControlle
 import type { WindowDragController } from './WindowDragController';
 import type { GripController } from './GripController';
 import type { GripInteractionController } from './GripInteractionController';
-import { beginGripAxisLock, type GripAxisName } from './GripAxisDrag';
+import { beginGripAxisLock, gripAxisCrossApplies, type GripAxisName } from './GripAxisDrag';
 import type { DrawingInteractionController } from './DrawingInteractionController';
 import type { SelectionController } from './SelectionController';
 import type { DynamicUcsController } from './DynamicUcsController';
@@ -255,9 +255,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
    * offering it at all.
    */
   function hotGripAxisTarget(): { origin: Vec3; plane: WorkPlane } | null {
-    if (!gripController.isDragging || !gripInteraction.isLatched || cadDocument.viewMode !== '3d') return null;
     const entity = selectedEntity();
-    if (entity?.type !== 'bezier') return null;
+    if (!gripAxisCrossApplies({
+      viewMode: cadDocument.viewMode,
+      dragging: gripController.isDragging,
+      latched: gripInteraction.isLatched,
+      entityType: entity?.type,
+    })) return null;
+    if (!entity) return null;
     const gripIndex = gripController.draggingGripIndex;
     if (gripIndex === null) return null;
     const grip = activeGripsInWorld().find((candidate) => candidate.index === gripIndex);
@@ -281,6 +286,12 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     const hovered = locked ?? renderer3d.pickGripAxis(renderer3d.renderer.domElement, event.clientX, event.clientY);
     renderer3d.showGripAxes(origin, target.plane, hovered);
     return locked ? null : hovered;
+  }
+
+  /** Whether a hot grip is waiting for an axis to be picked — its cross is up,
+   *  nothing is locked yet, so the point must not move at all. */
+  function awaitingGripAxis(): boolean {
+    return hotGripAxisTarget() !== null && !gripInteraction.axisLock;
   }
 
   /** A click on one of the hot grip's axis arrows confines the drag to it,
@@ -472,6 +483,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     updateGripAxisTriad(event);
     const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
     if (!p) { trackingLine.hidden = true; return; }
+    if (gripController.isDragging && awaitingGripAxis()) {
+      // The cross is up and no axis has been picked yet: the point holds
+      // still. Reported directly — picking the grip must only ARM the move,
+      // the way a 3D gizmo does, instead of the point immediately chasing the
+      // cursor across the plane before an axis is even chosen.
+      return;
+    }
     if (gripController.isDragging) {
       // Dragging one of a rectangle's own corner or mid-edge grips is the
       // same "fixed reference, free point" shape RECTANGLE's own draw step
@@ -755,9 +773,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
         redraw();
         return;
       }
-      const snap = nearestGripTargetSnap(event);
-      const point = gripEditingPoint(event, snap);
-      if (point) gripController.update(point);
+      // A click anywhere else while the cross is still waiting for an axis
+      // leaves the grip exactly where it was, rather than dropping it under
+      // the cursor — nothing was ever aimed, so nothing should move.
+      if (!awaitingGripAxis()) {
+        const snap = nearestGripTargetSnap(event);
+        const point = gripEditingPoint(event, snap);
+        if (point) gripController.update(point);
+      }
       gripInteraction.finishClick(event.pointerId);
       renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
       snapMarker.hidden = true;

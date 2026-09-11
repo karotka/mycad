@@ -34,6 +34,26 @@ export interface GripAxisLock {
   startOffset: number;
 }
 
+/**
+ * Whether a hot grip gets an axis cross at all — and so, whether its point
+ * holds still until an axis is picked rather than following the cursor.
+ *
+ * Scoped to a curve's own points in the 3D view: a per-point elevation off
+ * the entity's plane is a concept `bezier` already carries (that is how a
+ * spline drawn across several Dynamic UCS faces keeps its shape), and the one
+ * this gesture writes into. Everything else — every 2D drag, every other
+ * entity type — keeps the plain free drag it has always had, which is also
+ * why the rule has to be checked before freezing anything.
+ */
+export function gripAxisCrossApplies(input: {
+  viewMode: '2d' | '3d';
+  dragging: boolean;
+  latched: boolean;
+  entityType: string | undefined;
+}): boolean {
+  return input.dragging && input.latched && input.viewMode === '3d' && input.entityType === 'bezier';
+}
+
 /** The chosen axis of `plane`, in world space. The entity's own plane, not
  *  the world axes: the point written back is local to it, so travelling along
  *  its z is exactly "off the plane" — and for a curve already bent through 3D

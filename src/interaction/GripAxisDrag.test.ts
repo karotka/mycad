@@ -1,6 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { beginGripAxisLock, gripAxisPointUnderRay, workPlaneAxis } from './GripAxisDrag';
+import { beginGripAxisLock, gripAxisCrossApplies, gripAxisPointUnderRay, workPlaneAxis } from './GripAxisDrag';
 import { WORLD_WORK_PLANE, workPlaneFromXYAxes } from '../math/workplane';
+
+describe('gripAxisCrossApplies', () => {
+  const hot = { viewMode: '3d' as const, dragging: true, latched: true, entityType: 'bezier' };
+
+  it('gives a curve\'s hot grip its cross in the 3D view', () => {
+    expect(gripAxisCrossApplies(hot)).toBe(true);
+  });
+
+  it('leaves every other drag alone, so those keep following the cursor freely instead of waiting for an axis', () => {
+    // The freeze is the cross's own consequence: anything with no cross must
+    // stay the plain drag it has always been.
+    expect(gripAxisCrossApplies({ ...hot, viewMode: '2d' })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, entityType: 'line' })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, entityType: undefined })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, latched: false })).toBe(false);
+    expect(gripAxisCrossApplies({ ...hot, dragging: false })).toBe(false);
+  });
+});
 
 describe('GripAxisDrag', () => {
   const ray = (origin: { x: number; y: number; z: number }, direction: { x: number; y: number; z: number }) => ({ origin, direction });

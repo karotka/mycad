@@ -1381,39 +1381,43 @@ attachViewportPointerHandlers({
   log,
 });
 
+/** Everything Escape backs out of — also what the context menu's own Exit
+ *  item runs, that being the same gesture with a mouse. */
+function escapeAll(): void {
+  gripInteraction.cancel();
+  // The hot grip's axis arrows go with the drag they belong to, rather than
+  // lingering until the pointer next moves.
+  renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
+  drawingInteraction.cancel();
+  releaseDynamicUcs();
+  hoverState.ucsHoverPoint = null;
+  zoomWindowMode = false;
+  windowDrag.cancel();
+  navigation.cancel();
+  document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
+  commands.cancelActive();
+  previewController.reset();
+  pointerState.activeTracking = null;
+  pointerState.activeEndpointAnchor = null;
+  trackingLine.hidden = true;
+  gripController.mode = null;
+  gripController.hoveredGrip = -1;
+  gripMenu.hidden = true;
+  renderer3d.clearFaceHighlight();
+  input.value = '';
+  currentSuggestions = [];
+  suggestionIndex = 0;
+  commandSuggestionsElement.replaceChildren();
+  commandSuggestionsElement.hidden = true;
+  textOptions.hidden = true;
+  mtextEditor.hidden = true;
+  cadDocument.clearSelection();
+  prompt.textContent = 'Command:';
+  redraw();
+}
+
 new InputController(input, commandForm, {
-  escape: () => {
-    gripInteraction.cancel();
-    // The hot grip's axis arrows go with the drag they belong to, rather than
-    // lingering until the pointer next moves.
-    renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);
-    drawingInteraction.cancel();
-    releaseDynamicUcs();
-    hoverState.ucsHoverPoint = null;
-    zoomWindowMode = false;
-    windowDrag.cancel();
-    navigation.cancel();
-    document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
-    commands.cancelActive();
-    previewController.reset();
-    pointerState.activeTracking = null;
-    pointerState.activeEndpointAnchor = null;
-    trackingLine.hidden = true;
-    gripController.mode = null;
-    gripController.hoveredGrip = -1;
-    gripMenu.hidden = true;
-    renderer3d.clearFaceHighlight();
-    input.value = '';
-    currentSuggestions = [];
-    suggestionIndex = 0;
-    commandSuggestionsElement.replaceChildren();
-    commandSuggestionsElement.hidden = true;
-    textOptions.hidden = true;
-    mtextEditor.hidden = true;
-    cadDocument.clearSelection();
-    prompt.textContent = 'Command:';
-    redraw();
-  },
+  escape: escapeAll,
   undo: () => { history.undo(); redraw(); },
   redo: () => { history.redo(); redraw(); },
   save: () => { void projectController.quickSave(); },
@@ -1555,6 +1559,33 @@ gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button
 gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]')?.addEventListener('click', () => {
   deletePendingNode();
   gripMenu.hidden = true;
+});
+
+gripMenu.querySelector<HTMLButtonElement>('[data-context-action="exit"]')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  escapeAll();
+});
+
+// The selected object's own submenu opens in place rather than on hover, so
+// reaching it never depends on keeping the pointer inside a corridor.
+gripMenu.querySelector<HTMLButtonElement>('[data-entity-submenu]')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const submenu = gripMenu.querySelector<HTMLElement>('.entity-submenu');
+  const toggle = event.currentTarget as HTMLButtonElement;
+  if (!submenu) return;
+  submenu.hidden = !submenu.hidden;
+  toggle.setAttribute('aria-expanded', String(!submenu.hidden));
+});
+
+gripMenu.querySelectorAll<HTMLButtonElement>('[data-entity-command]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    gripMenu.hidden = true;
+    // The selection is already made — these commands pick it up the same way
+    // they do when started from the toolbar or the command line.
+    commands.startCommand(button.dataset.entityCommand as CommandName);
+    redraw();
+  });
 });
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {

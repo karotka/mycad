@@ -268,6 +268,20 @@ export function shellHtml(tools: ShellTools): string {
     </footer>
   </main>
   <div class="context-menu" id="grip-menu" hidden>
+    <section class="context-exit">
+      <button data-context-action="exit">Exit</button>
+    </section>
+    <section class="entity-actions" hidden>
+      <button class="entity-submenu-toggle" data-entity-submenu aria-expanded="false"><span class="entity-name">Object</span><span class="submenu-caret">▸</span></button>
+      <div class="entity-submenu" hidden>
+        <button data-entity-command="MOVE">Move</button>
+        <button data-entity-command="COPY">Copy</button>
+        <button data-entity-command="ROTATE">Rotate</button>
+        <button data-entity-command="SCALE">Scale</button>
+        <button data-entity-command="MIRROR">Mirror</button>
+        <button data-entity-command="ERASE">Erase</button>
+      </div>
+    </section>
     <section class="one-shot-snaps">
       <div class="context-menu-title">Object snap override</div>
       <button data-grip-mode="end">Endpoint</button>

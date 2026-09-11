@@ -1307,6 +1307,29 @@ html, body, #app {
   padding-top: 3px;
   border-top: 1px solid #3b4653;
 }
+/* Exit sits at the top, the selected object's own submenu right under it —
+   the order AutoCAD's own object context menu uses, so the two things reached
+   most often are where the pointer already is when the menu opens. */
+.entity-actions,
+.one-shot-snaps {
+  margin-top: 5px;
+  padding-top: 3px;
+  border-top: 1px solid #3b4653;
+}
+.context-menu .entity-submenu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+.entity-submenu-toggle .submenu-caret {
+  color: #8b98a8;
+  font-size: 10px;
+}
+.entity-submenu-toggle[aria-expanded='true'] .submenu-caret { transform: rotate(90deg); }
+.context-menu .entity-submenu button { padding-left: 20px; }
+
 .context-menu button[data-persistent-snap]::before {
   content: '';
   display: inline-block;
