@@ -117,6 +117,59 @@ describe('SnapService', () => {
       .toEqual({ x: 2, y: 3, z: 0 });
   });
 
+  it('offers a multi-segment spline\'s real end, not an interior joint', () => {
+    // Reported directly: drawing a line to the end of a spline found no snap
+    // there at all, "as if the end did not exist". The ends were read off
+    // curvePoints(entity, 2), whose resolution is for the whole curve rather
+    // than per segment — so from three segments up it returns more than three
+    // points, index 2 lands on an interior joint, and the real end is never a
+    // candidate.
+    const doc = new Document();
+    const spline = doc.createSpline({ x: 0, y: 0 }, [
+      { control1: { x: 3, y: 5 }, control2: { x: 7, y: 5 }, end: { x: 10, y: 0 } },
+      { control1: { x: 13, y: -5 }, control2: { x: 17, y: -5 }, end: { x: 20, y: 0 } },
+      { control1: { x: 23, y: 5 }, control2: { x: 27, y: 5 }, end: { x: 30, y: 0 } },
+      { control1: { x: 33, y: -5 }, control2: { x: 37, y: -5 }, end: { x: 40, y: 0 } },
+    ]);
+    doc.entities.push(spline);
+
+    const ends = points(doc, 'end');
+    expect(ends).toContainEqual({ x: 0, y: 0, z: 0 });
+    expect(ends).toContainEqual({ x: 40, y: 0, z: 0 });
+    // And nothing from the middle of the curve pretending to be an end.
+    expect(ends).not.toContainEqual({ x: 20, y: 0, z: 0 });
+  });
+
+  it('puts a spline\'s midpoint half way along it, not at the end of its first segment', () => {
+    const doc = new Document();
+    const spline = doc.createSpline({ x: 0, y: 0 }, [
+      { control1: { x: 3, y: 0 }, control2: { x: 7, y: 0 }, end: { x: 10, y: 0 } },
+      { control1: { x: 13, y: 0 }, control2: { x: 17, y: 0 }, end: { x: 20, y: 0 } },
+      { control1: { x: 23, y: 0 }, control2: { x: 27, y: 0 }, end: { x: 30, y: 0 } },
+      { control1: { x: 33, y: 0 }, control2: { x: 37, y: 0 }, end: { x: 40, y: 0 } },
+    ]);
+    doc.entities.push(spline);
+
+    // A straight four-segment run 40 long: its middle is at 20, not at 10.
+    const middles = points(doc, 'middle');
+    expect(middles[0].x).toBeCloseTo(20, 3);
+    expect(middles[0].y).toBeCloseTo(0, 6);
+  });
+
+  it('keeps a 3D spline\'s own elevation on the ends and midpoint it offers', () => {
+    const doc = new Document();
+    const lift = (x: number, y: number, z: number) => ({ x, y, z } as unknown as { x: number; y: number });
+    const spline = doc.createSpline(lift(0, 0, 2), [
+      { control1: lift(3, 0, 2), control2: lift(7, 0, 2), end: lift(10, 0, 2) },
+      { control1: lift(13, 0, 2), control2: lift(17, 0, 2), end: lift(20, 0, 2) },
+      { control1: lift(23, 0, 2), control2: lift(27, 0, 2), end: lift(30, 0, 2) },
+    ]);
+    doc.entities.push(spline);
+
+    expect(points(doc, 'end')).toContainEqual({ x: 30, y: 0, z: 2 });
+    expect(points(doc, 'middle')[0].z).toBeCloseTo(2, 6);
+  });
+
   it('keeps per-point 3D height for profile centres and line midpoints', () => {
     const doc = new Document();
     const circle = doc.createCircle({ x: 4, y: 5, z: 7 } as { x: number; y: number }, 2);

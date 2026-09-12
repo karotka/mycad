@@ -495,6 +495,52 @@ export function tangentDragCandidates(doc: Document, radius: number, cursor: Vec
   return candidates;
 }
 
+/**
+ * A spline's own two ends, straight off its definition.
+ *
+ * Not `curvePoints(entity, 2)`: that resolution is for the whole curve, not
+ * per segment, so on a spline of three or more segments it returns more than
+ * three points and index 2 is an interior joint — the real end was never
+ * offered as a snap at all. Reported directly: drawing a line to the end of a
+ * spline found nothing there, "as if the end did not exist".
+ */
+function bezierEnds(entity: Extract<Entity, { type: 'bezier' }>): Vec2[] {
+  const last = entity.segments[entity.segments.length - 1];
+  return last ? [entity.start, last.end] : [entity.start];
+}
+
+/**
+ * The point half way ALONG a curve, by length — what Midpoint means on
+ * something that is not straight. The same per-curve resolution caught the
+ * old `curvePoints(entity, 2)[1]` out the same way: on a five-segment spline
+ * that point sits one fifth of the way in, not in the middle.
+ */
+function bezierMidpoint(entity: Extract<Entity, { type: 'bezier' }>): Vec2 | null {
+  const points = curvePoints(entity, 128);
+  if (points.length < 2) return null;
+  const z = (point: Vec2): number => (point as Vec2 & { z?: number }).z ?? 0;
+  const spans: number[] = [0];
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1], point = points[index];
+    spans.push(spans[index - 1] + Math.hypot(point.x - previous.x, point.y - previous.y, z(point) - z(previous)));
+  }
+  const half = spans[spans.length - 1] / 2;
+  if (half <= 0) return points[0];
+  const index = spans.findIndex((span) => span >= half);
+  const previous = points[index - 1], point = points[index];
+  const t = (half - spans[index - 1]) / (spans[index] - spans[index - 1]);
+  const lerped: Vec2 & { z?: number } = {
+    x: previous.x + (point.x - previous.x) * t,
+    y: previous.y + (point.y - previous.y) * t,
+  };
+  // Only a genuinely 3D curve has an elevation to carry; a flat one must not
+  // gain a spurious z here.
+  if ((previous as Vec2 & { z?: number }).z !== undefined || (point as Vec2 & { z?: number }).z !== undefined) {
+    lerped.z = z(previous) + (z(point) - z(previous)) * t;
+  }
+  return lerped;
+}
+
 function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityEnds(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') [entity.start, entity.end].forEach((point) => add(entity, point));
@@ -504,10 +550,11 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
   } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
     const vertices = entity.type !== 'octagon' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
     vertices.forEach((point) => add(entity, point));
-  } else if (entity.type === 'arc' || entity.type === 'bezier') {
+  } else if (entity.type === 'arc') {
     const points = curvePoints(entity, 2);
     add(entity, points[0]); add(entity, points[2]);
-  } else if (entity.type === 'ellipse') ellipseAxisPoints(entity).forEach((point) => add(entity, point));
+  } else if (entity.type === 'bezier') bezierEnds(entity).forEach((point) => add(entity, point));
+  else if (entity.type === 'ellipse') ellipseAxisPoints(entity).forEach((point) => add(entity, point));
   else if (entity.type === 'text') add(entity, entity.position);
 }
 
@@ -515,14 +562,15 @@ function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => 
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityCenters(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon' || entity.type === 'ellipse') add(entity, entity.center);
   else if (entity.type === 'rectangle') add(entity, midpoint(entity.first, entity.opposite));
-  else if (entity.type === 'bezier') add(entity, curvePoints(entity, 2)[1]);
+  else if (entity.type === 'bezier') { const mid = bezierMidpoint(entity); if (mid) add(entity, mid); }
   else if (entity.type === 'text') add(entity, entity.position);
 }
 
 function addEntityMiddles(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityMiddles(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'line') add(entity, midpoint(entity.start, entity.end));
-  else if (entity.type === 'arc' || entity.type === 'bezier') add(entity, curvePoints(entity, 2)[1]);
+  else if (entity.type === 'arc') add(entity, curvePoints(entity, 2)[1]);
+  else if (entity.type === 'bezier') { const mid = bezierMidpoint(entity); if (mid) add(entity, mid); }
   else if (entity.type === 'rectangle') {
     const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
     corners.forEach((point, index) => add(entity, midpoint(point, corners[(index + 1) % corners.length])));
