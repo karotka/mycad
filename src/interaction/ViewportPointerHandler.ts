@@ -257,15 +257,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     if (prompt.textContent === UCS_MODE_PROMPT) prompt.textContent = 'Command:';
   }
 
-  /** A right-click on one of the cross's own axis tips opens that axis's
-   *  menu rather than the drawing's. Returns whether it did. */
+  /** A right-click anywhere on the armed cross — any tip, or its origin —
+   *  opens the UCS's own menu rather than the drawing's. Returns whether it
+   *  did. The menu is the same wherever it was opened from: a rotation turns
+   *  the whole UCS, so the tip under the cursor never decided anything. */
   function openUcsMenuIfOnAxis(event: PointerEvent): boolean {
     if (!ucsHandlesArmed || cadDocument.viewMode !== '3d' || !renderer3d.ucsHandlesShown) return false;
-    const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
-    // The origin handle moves the UCS rather than aiming an axis, so it has
-    // none of these three things to offer.
-    if (handle !== 'x' && handle !== 'y' && handle !== 'z') return false;
-    openUcsAxisMenu(event, handle);
+    if (!renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY)) return false;
+    openUcsAxisMenu(event);
     return true;
   }
 

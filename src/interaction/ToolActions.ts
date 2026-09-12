@@ -43,6 +43,10 @@ export interface ToolActionsContext {
  * wired before those listeners are registered.
  */
 export function createToolActions(ctx: ToolActionsContext) {
+  /** How far the UCS menu sits from the click, so the cross it acts on is not
+   *  hidden under it. */
+  const UCS_MENU_OFFSET = 26;
+
   const {
     doc, history, gripController, gripInteraction, drawingInteraction, previewController,
     renderer2d, renderer3d, rawWorldPoint, rawWorldPoint3d, gripMenu, viewport, trackingLine, log, redraw,
@@ -160,10 +164,11 @@ export function createToolActions(ctx: ToolActionsContext) {
   }
 
   /** Puts the menu at the click and keeps it on screen. Shared by the object
-   *  menu and the UCS axis menu, which differ only in what they put in it. */
-  function placeMenuAt(event: PointerEvent): void {
-    gripMenu.style.left = `${event.clientX}px`;
-    gripMenu.style.top = `${event.clientY}px`;
+   *  menu and the UCS menu, which differ only in what they put in it and how
+   *  far they sit from the click. */
+  function placeMenuAt(event: PointerEvent, offset = 0): void {
+    gripMenu.style.left = `${event.clientX + offset}px`;
+    gripMenu.style.top = `${event.clientY + offset}px`;
     gripMenu.hidden = false;
     // Pinning to the click point can push the menu (up to ~20 snap buttons
     // tall when both sections show) past the bottom or right edge of the
@@ -179,34 +184,27 @@ export function createToolActions(ctx: ToolActionsContext) {
   }
 
   /**
-   * The menu for one tip of the UCS cross: aim that axis, or turn the whole
-   * UCS about either of the other two — AutoCAD's own axis-grip menu, and the
-   * reason the cross is worth right-clicking at all. Exit sits on top, as it
-   * does for an object.
+   * The UCS cross's own menu: aim any axis, or turn the whole thing about any
+   * of them. One menu for the cross rather than one per tip — a rotation
+   * turns the UCS itself, so which tip was clicked never changed what it
+   * meant (noticed in use: "rotace neni zavisla na tom jakou vyberu osu, je
+   * to na cely kriz").
    *
+   * Offset from the click so the cross it acts on stays visible underneath.
    * Layout lives here with the rest of the menu; what the rows DO is wired
    * where the UCS gizmo's own state lives (ViewportPointerHandler).
    */
-  function openUcsAxisMenu(event: PointerEvent, axis: 'x' | 'y' | 'z'): void {
+  function openUcsAxisMenu(event: PointerEvent): void {
     const section = gripMenu.querySelector<HTMLElement>('.ucs-actions');
     if (!section) return;
     gripMenu.querySelector<HTMLElement>('.entity-actions')!.hidden = true;
     gripMenu.querySelector<HTMLElement>('.one-shot-snaps')!.hidden = true;
     gripMenu.querySelector<HTMLElement>('.vertex-actions')!.hidden = true;
     // The running snaps belong to placing points, not to aiming the UCS —
-    // leaving them here made the axis menu mostly noise.
+    // leaving them here made the menu mostly noise.
     gripMenu.querySelector<HTMLElement>('.persistent-snaps')!.hidden = true;
     section.hidden = false;
-    const direction = section.querySelector<HTMLButtonElement>('[data-ucs-action="direction"]')!;
-    direction.textContent = `${axis.toUpperCase()} Direction`;
-    direction.dataset.ucsAxis = axis;
-    const others = (['x', 'y', 'z'] as const).filter((name) => name !== axis);
-    section.querySelectorAll<HTMLButtonElement>('[data-ucs-action="rotate"]').forEach((button, index) => {
-      const other = others[index];
-      button.textContent = `Rotate around ${other.toUpperCase()}`;
-      button.dataset.ucsAxis = other;
-    });
-    placeMenuAt(event);
+    placeMenuAt(event, UCS_MENU_OFFSET);
   }
 
   function openContextMenu(event: PointerEvent): void {
