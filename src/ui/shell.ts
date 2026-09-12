@@ -271,6 +271,12 @@ export function shellHtml(tools: ShellTools): string {
     <section class="context-exit">
       <button data-context-action="exit">Exit</button>
     </section>
+    <section class="ucs-actions" hidden>
+      <div class="context-menu-title">UCS axis</div>
+      <button data-ucs-action="direction">Direction</button>
+      <button data-ucs-action="rotate" data-ucs-axis="">Rotate around</button>
+      <button data-ucs-action="rotate" data-ucs-axis="">Rotate around</button>
+    </section>
     <section class="entity-actions" hidden>
       <button class="entity-submenu-toggle" data-entity-submenu aria-haspopup="true"><span class="entity-name">Object</span><span class="submenu-caret">▸</span></button>
       <div class="entity-submenu">

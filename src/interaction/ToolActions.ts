@@ -159,6 +159,56 @@ export function createToolActions(ctx: ToolActionsContext) {
     else name.textContent = '3D Solid';
   }
 
+  /** Puts the menu at the click and keeps it on screen. Shared by the object
+   *  menu and the UCS axis menu, which differ only in what they put in it. */
+  function placeMenuAt(event: PointerEvent): void {
+    gripMenu.style.left = `${event.clientX}px`;
+    gripMenu.style.top = `${event.clientY}px`;
+    gripMenu.hidden = false;
+    // Pinning to the click point can push the menu (up to ~20 snap buttons
+    // tall when both sections show) past the bottom or right edge of the
+    // window with no way to reach the clipped items — clamp it back on-screen
+    // using its real rendered size now that it's visible and laid out.
+    const margin = 4;
+    const rect = gripMenu.getBoundingClientRect();
+    const maxLeft = window.innerWidth - rect.width - margin;
+    const maxTop = window.innerHeight - rect.height - margin;
+    if (rect.left > maxLeft) gripMenu.style.left = `${Math.max(margin, maxLeft)}px`;
+    if (rect.top > maxTop) gripMenu.style.top = `${Math.max(margin, maxTop)}px`;
+    viewport.classList.add('context-menu-cursor-pending');
+  }
+
+  /**
+   * The menu for one tip of the UCS cross: aim that axis, or turn the whole
+   * UCS about either of the other two — AutoCAD's own axis-grip menu, and the
+   * reason the cross is worth right-clicking at all. Exit sits on top, as it
+   * does for an object.
+   *
+   * Layout lives here with the rest of the menu; what the rows DO is wired
+   * where the UCS gizmo's own state lives (ViewportPointerHandler).
+   */
+  function openUcsAxisMenu(event: PointerEvent, axis: 'x' | 'y' | 'z'): void {
+    const section = gripMenu.querySelector<HTMLElement>('.ucs-actions');
+    if (!section) return;
+    gripMenu.querySelector<HTMLElement>('.entity-actions')!.hidden = true;
+    gripMenu.querySelector<HTMLElement>('.one-shot-snaps')!.hidden = true;
+    gripMenu.querySelector<HTMLElement>('.vertex-actions')!.hidden = true;
+    // The running snaps belong to placing points, not to aiming the UCS —
+    // leaving them here made the axis menu mostly noise.
+    gripMenu.querySelector<HTMLElement>('.persistent-snaps')!.hidden = true;
+    section.hidden = false;
+    const direction = section.querySelector<HTMLButtonElement>('[data-ucs-action="direction"]')!;
+    direction.textContent = `${axis.toUpperCase()} Direction`;
+    direction.dataset.ucsAxis = axis;
+    const others = (['x', 'y', 'z'] as const).filter((name) => name !== axis);
+    section.querySelectorAll<HTMLButtonElement>('[data-ucs-action="rotate"]').forEach((button, index) => {
+      const other = others[index];
+      button.textContent = `Rotate around ${other.toUpperCase()}`;
+      button.dataset.ucsAxis = other;
+    });
+    placeMenuAt(event);
+  }
+
   function openContextMenu(event: PointerEvent): void {
     const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
     const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
@@ -166,6 +216,8 @@ export function createToolActions(ctx: ToolActionsContext) {
     const vertexButton = gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]');
     pendingNodeDelete = null;
     if (vertexSection) vertexSection.hidden = true;
+    gripMenu.querySelector<HTMLElement>('.ucs-actions')!.hidden = true;
+    gripMenu.querySelector<HTMLElement>('.persistent-snaps')!.hidden = false;
     showEntitySection();
     const showPersistentSnaps = (): void => {
       gripMenu.querySelectorAll<HTMLButtonElement>('[data-persistent-snap]').forEach((button) => {
@@ -174,23 +226,7 @@ export function createToolActions(ctx: ToolActionsContext) {
         button.setAttribute('aria-pressed', String(doc.drafting.objectSnapModes.includes(mode)));
       });
     };
-    const showMenu = (): void => {
-      gripMenu.style.left = `${event.clientX}px`;
-      gripMenu.style.top = `${event.clientY}px`;
-      gripMenu.hidden = false;
-      // Pinning to the click point can push the menu (up to ~20 snap
-      // buttons tall when both sections show) past the bottom or right
-      // edge of the window with no way to reach the clipped items — clamp
-      // it back on-screen using its real rendered size now that it's
-      // visible and laid out.
-      const margin = 4;
-      const rect = gripMenu.getBoundingClientRect();
-      const maxLeft = window.innerWidth - rect.width - margin;
-      const maxTop = window.innerHeight - rect.height - margin;
-      if (rect.left > maxLeft) gripMenu.style.left = `${Math.max(margin, maxLeft)}px`;
-      if (rect.top > maxTop) gripMenu.style.top = `${Math.max(margin, maxTop)}px`;
-      viewport.classList.add('context-menu-cursor-pending');
-    };
+    const showMenu = (): void => placeMenuAt(event);
     showPersistentSnaps();
     if (gripController.isDragging && gripInteraction.isLatched) {
       if (oneShotSection) oneShotSection.hidden = false;
@@ -327,6 +363,7 @@ export function createToolActions(ctx: ToolActionsContext) {
     toggleGridDisplay,
     toggleCutArea,
     openContextMenu,
+    openUcsAxisMenu,
     deletePendingNode,
   };
 }

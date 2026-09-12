@@ -1325,7 +1325,7 @@ cadDocument.subscribe(() => {
 });
 new ResizeObserver(resize).observe(viewport);
 
-attachViewportPointerHandlers({
+const viewportHandlers = attachViewportPointerHandlers({
   cadDocument,
   commands,
   renderer2d,
@@ -1385,6 +1385,7 @@ attachViewportPointerHandlers({
  *  item runs, that being the same gesture with a mouse. */
 function escapeAll(): void {
   gripInteraction.cancel();
+  viewportHandlers.exitUcsHandleMode();
   // The hot grip's axis arrows go with the drag they belong to, rather than
   // lingering until the pointer next moves.
   renderer3d.showGripAxes(null, cadDocument.activeWorkPlane);

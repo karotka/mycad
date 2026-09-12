@@ -142,7 +142,14 @@ export function ucsCursorLegEndpoints(
  * Extracted from main.ts verbatim: the bodies are unchanged except that the
  * shared bindings arrive through `ctx`.
  */
-export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void {
+export interface ViewportPointerHandlers {
+  /** Leaves the UCS grip mode, for whoever else cancels everything (Escape's
+   *  own listener here handles the key; the context menu's Exit goes through
+   *  main.ts's escapeAll). */
+  exitUcsHandleMode(): void;
+}
+
+export function attachViewportPointerHandlers(ctx: ViewportPointerContext): ViewportPointerHandlers {
   const {
     cadDocument, commands, renderer2d, renderer3d, navigation, windowDrag,
     gripController, gripInteraction, drawingInteraction, selectionController,
@@ -157,7 +164,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
   } = ctx.resolver;
   const { pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor, updateExtrudePreview, updatePrimitiveFinalPreview } = ctx.dragPreview;
   const { canAcquireDynamicUcs, snapKeepsDynamicUcs, acquireDynamicUcs, releaseDynamicUcs, beforeDynamicUcsAnswer, afterDynamicUcsAnswer, ownsActiveCommand } = ctx.ducs;
-  const { openContextMenu } = ctx.toolActions;
+  const { openContextMenu, openUcsAxisMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
     updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput, updateDynamicArcInput,
@@ -227,6 +234,78 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     changed: boolean;
   } | null = null;
   let ucsHandlesArmed = false;
+
+  /** The prompt shown while the UCS cross holds the session — double-clicking
+   *  it is a mode, not a one-off, so the command line says so and keeps
+   *  saying so until Escape or the menu's own Exit. */
+  const UCS_MODE_PROMPT = 'UCS: drag an axis tip, or right-click one for Direction / Rotate. Escape to exit.';
+
+  function enterUcsHandleMode(handle: UcsHandleName): void {
+    ucsHandlesArmed = true;
+    renderer3d.showUcsHandles(true, handle);
+    prompt.textContent = UCS_MODE_PROMPT;
+    log('UCS grips active. Drag an axis tip, or right-click one for Direction / Rotate. Escape exits.');
+  }
+
+  /** Leaves that mode — the counterpart of entering it, so the prompt and the
+   *  grips never outlive each other. Reverting a half-finished axis drag stays
+   *  with Escape's own handler, which is the only way to cancel one. */
+  function exitUcsHandleMode(): void {
+    if (!ucsHandlesArmed) return;
+    ucsHandlesArmed = false;
+    renderer3d.showUcsHandles(false);
+    if (prompt.textContent === UCS_MODE_PROMPT) prompt.textContent = 'Command:';
+  }
+
+  /** A right-click on one of the cross's own axis tips opens that axis's
+   *  menu rather than the drawing's. Returns whether it did. */
+  function openUcsMenuIfOnAxis(event: PointerEvent): boolean {
+    if (!ucsHandlesArmed || cadDocument.viewMode !== '3d' || !renderer3d.ucsHandlesShown) return false;
+    const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    // The origin handle moves the UCS rather than aiming an axis, so it has
+    // none of these three things to offer.
+    if (handle !== 'x' && handle !== 'y' && handle !== 'z') return false;
+    openUcsAxisMenu(event, handle);
+    return true;
+  }
+
+  gripMenu.querySelectorAll<HTMLButtonElement>('[data-ucs-action]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      gripMenu.hidden = true;
+      viewport.classList.remove('context-menu-cursor-pending');
+      const axis = button.dataset.ucsAxis as UcsHandleName | undefined;
+      if (!axis) return;
+      if (button.dataset.ucsAction === 'direction') {
+        // The same click-move-click aim a plain left-click on the tip starts.
+        beginUcsAxisDrag(axis);
+        return;
+      }
+      // Rotating hands over to the UCS command itself, which already asks for
+      // the angle on the command line and saves the result as a named UCS —
+      // the same path typing "UCS" then "Z" takes.
+      exitUcsHandleMode();
+      commands.startCommand('UCS');
+      void commands.submitInput(axis.toUpperCase());
+      redraw();
+    });
+  });
+
+  function beginUcsAxisDrag(handle: UcsHandleName): void {
+    const plane = cadDocument.activeWorkPlane;
+    ucsAxisDrag = {
+      handle,
+      basePlane: {
+        origin: { ...plane.origin },
+        xAxis: { ...plane.xAxis },
+        yAxis: { ...plane.yAxis },
+        zAxis: { ...plane.zAxis },
+      },
+      startedWithoutNamedUcs: cadDocument.activeNamedWorkPlaneId === null,
+      changed: false,
+    };
+    renderer3d.highlightUcsHandle(handle);
+  }
 
   function finishUcsAxisDrag(): void {
     if (!ucsAxisDrag) return;
@@ -731,18 +810,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     if (event.button === 0 && ucsHandlesArmed && cadDocument.viewMode === '3d' && !commands.active) {
       const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
       if (handle) {
-        const plane = cadDocument.activeWorkPlane;
-        ucsAxisDrag = {
-          handle,
-          basePlane: {
-            origin: { ...plane.origin },
-            xAxis: { ...plane.xAxis },
-            yAxis: { ...plane.yAxis },
-            zAxis: { ...plane.zAxis },
-          },
-          startedWithoutNamedUcs: cadDocument.activeNamedWorkPlaneId === null,
-          changed: false,
-        };
+        beginUcsAxisDrag(handle);
         event.preventDefault();
         return;
       }
@@ -1326,15 +1394,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     if (cadDocument.viewMode !== '3d') return;
     const handle = renderer3d.pickUcsHandle(renderer3d.renderer.domElement, event.clientX, event.clientY);
     if (!handle) return;
-    ucsHandlesArmed = true;
-    renderer3d.showUcsHandles(true, handle);
-    log('UCS grips active. Drag a square grip; Escape hides them.');
+    enterUcsHandleMode(handle);
     event.preventDefault();
   });
 
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !ucsHandlesArmed) return;
-    ucsHandlesArmed = false;
+    exitUcsHandleMode();
     if (ucsAxisDrag?.changed) {
       const plane = ucsAxisDrag.basePlane;
       cadDocument.activeWorkPlane = plane;
@@ -1349,7 +1415,6 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
       renderer3d.setWorkPlane(plane);
     }
     ucsAxisDrag = null;
-    renderer3d.showUcsHandles(false);
     snapMarker.hidden = true;
     event.preventDefault();
     redraw();
@@ -1366,9 +1431,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): void
     const wasStillPress = menuOnStillRelease && navigation.isPanning && navigation.panDistance < 4;
     menuOnStillRelease = false;
     navigation.endPan(event.pointerId);
-    if (wasStillPress) openContextMenu(event);
+    if (wasStillPress && !openUcsMenuIfOnAxis(event)) openContextMenu(event);
     gripInteraction.commitIfNotLatched();
     if (!gripController.isDragging) pointerState.activeEndpointAnchor = null;
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
   });
+
+  return { exitUcsHandleMode };
 }

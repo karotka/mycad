@@ -1176,6 +1176,11 @@ export class Viewport3D {
     }
   }
 
+  /** Whether the UCS triad's own grips are currently live — what tells the
+   *  context menu that a right-click on an axis tip means the UCS, not the
+   *  drawing underneath it. */
+  get ucsHandlesShown(): boolean { return this.ucsHandlesVisible; }
+
   showUcsHandles(visible: boolean, highlighted: UcsHandleName | null = null): void {
     this.ucsHandlesVisible = visible;
     this.highlightUcsHandle(highlighted);
