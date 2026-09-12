@@ -15,7 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
+import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
@@ -417,6 +417,13 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },
+  { name: 'SURFSCULPT', aliases: ['SSC', 'SURFSCULPT'], execute: surfaceSculptStep, help: 'sew surfaces that close a volume into one solid', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select surfaces to sculpt into a solid, then press Enter:', multi: true, accepts: ['surface'] },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
+    onStart: preselectObjects((count) => `${count} surface(s) preselected. Press Enter to sculpt.`, { skipStep: false }) },
   { name: 'SURFOFFSET', aliases: ['SO', 'SURFOFFSET'], execute: surfaceOffsetStep, help: 'copy a surface parallel to itself, a given distance along its own normals', suggest: true,
     steps: [
       { kind: 'surface', label: 'Select surface to offset:' },

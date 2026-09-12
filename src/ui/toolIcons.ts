@@ -57,6 +57,7 @@ export function toolIcon(command: ToolbarIcon): string {
     DRAFT: '<path d="M3 20h18" opacity=".55"/><path d="M9 20V8l6-3v15"/><path d="M9 8l6-3" stroke-dasharray="1.5 1.5"/>',
     THICKEN: '<ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 7v7M20 7v7" stroke-dasharray="2 2"/><ellipse cx="12" cy="14" rx="8" ry="3" opacity=".55"/>',
     SURFOFFSET: '<path d="M3 15c4-5 14-5 18 0"/><path d="M3 9c4-5 14-5 18 0" opacity=".55" stroke-dasharray="3 2"/><path d="M7 13.2V10.6M17 13.2V10.6" opacity=".8"/>',
+    SURFSCULPT: '<path d="M3 12c4-6 14-6 18 0"/><path d="M3 12c4 6 14 6 18 0"/><path d="M3 12h1.6M19.4 12H21" opacity=".85"/><path d="M9 12h1.5M13.5 12H15" opacity=".5"/>',
     SLICE: '<path d="M4 7l8-4 8 4-8 4-8-4zm0 10l8 4 8-4-8-4-8 4z"/><path d="M2 12h20M5 10l-3 2 3 2M19 10l3 2-3 2"/>',
     ERASE: '<path d="M4 16L14 4l6 5-9 11H7l-3-4zM11 20h10"/>',
     MEASURE: '<path d="M4 19L19 4M3 15l6 6M15 3l6 6M8 14l2 2M11 11l2 2M14 8l2 2"/>',

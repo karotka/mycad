@@ -4374,6 +4374,72 @@ describe('LOFT', () => {
     return kit.doc.surfaces[0];
   };
 
+  describe('SURFSCULPT', () => {
+    /** Two real lofted sheets over the SAME pair of rails — the top half and
+     *  the bottom half of a shape, which is the way a set of surfaces ever
+     *  actually closes a volume in this app. */
+    const twoHalves = async (kit: ReturnType<typeof setup>) => {
+      const lift = (x: number, y: number, z: number): Vec2 => ({ x, y, z } as unknown as Vec2);
+      const build = async (bulge: number) => {
+        const rail1 = kit.doc.createBezier({ x: 0, y: 0 }, { x: 10, y: 8 }, { x: 20, y: 8 }, { x: 30, y: 0 });
+        const rail2 = kit.doc.createBezier({ x: 0, y: 0 }, { x: 10, y: -8 }, { x: 20, y: -8 }, { x: 30, y: 0 });
+        const guide = kit.doc.createBezier(lift(15, 5.5, 0), lift(15, 5.5, bulge), lift(15, -5.5, bulge), lift(15, -5.5, 0));
+        kit.doc.addEntity(rail1); kit.doc.addEntity(rail2); kit.doc.addEntity(guide);
+        kit.manager.startCommand('LOFT');
+        await kit.manager.handleClick({ x: 15, y: 6 }, rail1);
+        await kit.manager.handleClick({ x: 15, y: -6 }, rail2);
+        await kit.manager.submitInput('');
+        await kit.manager.handleClick({ x: 15, y: 0 }, guide);
+        await kit.manager.submitInput('');
+      };
+      await build(4);
+      await build(-4);
+      return kit.doc.surfaces;
+    };
+
+    it('sews two surfaces into one solid and consumes them', async () => {
+      const kit = setup();
+      const surfaces = await twoHalves(kit);
+      expect(surfaces).toHaveLength(2);
+
+      kit.manager.startCommand('SURFSCULPT');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surfaces[0].id);
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surfaces[1].id);
+      await kit.manager.submitInput('');
+
+      expect(kit.log, 'sculpt failed').not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+      expect(kit.doc.solids).toHaveLength(1);
+      expect(kit.doc.surfaces).toHaveLength(0);
+      expect(kit.doc.solids[0].mesh.indices.length).toBeGreaterThan(0);
+    }, 120_000);
+
+    it('undoes back to the two surfaces', async () => {
+      const kit = setup();
+      const surfaces = await twoHalves(kit);
+      kit.manager.startCommand('SURFSCULPT');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surfaces[0].id);
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surfaces[1].id);
+      await kit.manager.submitInput('');
+      expect(kit.doc.solids).toHaveLength(1);
+
+      kit.history.undo();
+      expect(kit.doc.solids).toHaveLength(0);
+      expect(kit.doc.surfaces).toHaveLength(2);
+    }, 120_000);
+
+    it('says what is wrong when one surface cannot close anything on its own', async () => {
+      const kit = setup();
+      const surfaces = await twoHalves(kit);
+      kit.manager.startCommand('SURFSCULPT');
+      await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surfaces[0].id);
+      await kit.manager.submitInput('');
+
+      expect(kit.doc.solids).toHaveLength(0);
+      expect(kit.doc.surfaces).toHaveLength(2);
+      expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('at least two surfaces'));
+    }, 120_000);
+  });
+
   describe('SURFOFFSET', () => {
     it('offsets a surface into a parallel one, keeping the original', async () => {
       const kit = setup();

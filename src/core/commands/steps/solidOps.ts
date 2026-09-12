@@ -15,7 +15,7 @@ import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type Work
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 import { apply2dCornerModification, sameWorkPlane } from './edit2d';
-import { buildExactFeature, deleteExactSolidFace, draftExactSolid, extrudeExactSurface, modifyExactSolidEdge, offsetExactSurface, pressPullExactSolid, promoteSolidToExact, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
+import { buildExactFeature, deleteExactSolidFace, draftExactSolid, extrudeExactSurface, modifyExactSolidEdge, offsetExactSurface, pressPullExactSolid, promoteSolidToExact, sculptExactSolid, shellExactSolid, thickenExactSurface } from '../../geometry/ExactSolid';
 
 /** What a sweep can follow: anything with a length, open or closed. */
 const isSweepPath = (entity: Entity): boolean =>
@@ -663,6 +663,40 @@ export async function thickenSurfaceStep(run: CommandRun): Promise<StepOutcome> 
   solid.exact = exact.exact;
   ctx.history.execute(new ReplaceObjectsEdit('Thicken', [], [], [], [solid], [surface], []));
   ctx.log(`Thicken complete: wall thickness ${thickness}.`);
+  return 'advance';
+}
+
+/**
+ * SURFSCULPT: several surfaces that together close a volume, sewn into one
+ * solid. AutoCAD's own command of the same name, and the other half of the
+ * surface workflow — LOFT makes the sheets, this turns a set of them into a
+ * body without giving any of them a wall thickness the way THICKEN does.
+ *
+ * The kernel refuses anything that is not watertight, with the free-edge
+ * count in the message: an unclosed network is the ordinary mistake here
+ * (one wall missing, or two sheets whose boundaries only nearly meet), and
+ * "it failed" alone would leave nothing to act on.
+ */
+export async function surfaceSculptStep(run: CommandRun): Promise<StepOutcome> {
+  const { value, data, ctx } = run;
+  // The gathering step is the only one: Enter both ends the selection and is
+  // the moment to sew, because there is no later step to do it in.
+  if (run.gather(value)) return 'stay';
+  const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
+  if (surfaces.length < 2) {
+    ctx.log('SURFSCULPT needs at least two surfaces that together close a volume.');
+    return 'advance';
+  }
+  ctx.log('Sculpting…');
+  const exact = await sculptExactSolid(surfaces, 0);
+  if (!exact) {
+    ctx.log('Surfsculpt failed — the selected surfaces do not close a watertight volume.');
+    return 'advance';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Surfsculpt', 0, surfaces.map((surface) => surface.id), undefined, { kind: 'mesh' });
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Surfsculpt', [], [], [], [solid], surfaces, []));
+  ctx.log(`Surfsculpt complete: ${surfaces.length} surfaces sewn into one solid.`);
   return 'advance';
 }
 

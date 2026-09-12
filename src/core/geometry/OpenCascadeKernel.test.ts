@@ -346,6 +346,49 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(pinnedZSpan).toBeLessThan(unpinnedZSpan / 2);
   });
 
+  it('sews two sheets that share their rails into one real solid — SURFSCULPT', () => {
+    // The workflow this exists for: loft the top half and the bottom half
+    // over the SAME two rails, then sculpt the pair into a body. Nothing here
+    // had a test before the command was wired up, so this is what the command
+    // stands on.
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 8, z: 0 }, { x: 20, y: 8, z: 0 }, { x: 30, y: 0, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 0, y: 0, z: 0 }, { x: 10, y: -8, z: 0 }, { x: 20, y: -8, z: 0 }, { x: 30, y: 0, z: 0 },
+    ] }];
+    const bulge = (z: number) => [{ kind: 'bezier' as const, poles: [
+      { x: 15, y: 5.5, z: 0 }, { x: 15, y: 5.5, z }, { x: 15, y: -5.5, z }, { x: 15, y: -5.5, z: 0 },
+    ] }];
+    const top = keep(kernel.loftGuidedSurface(rail1, rail2, [bulge(4)]));
+    const bottom = keep(kernel.loftGuidedSurface(rail1, rail2, [bulge(-4)]));
+    expect(kernel.inspect(top).solidCount).toBe(0);
+
+    const solid = keep(kernel.sculptSolid([top, bottom]));
+    const inspection = kernel.inspect(solid);
+
+    expect(inspection.solidCount).toBe(1);
+    expect(inspection.valid).toBe(true);
+    // A real volume, not a sheet counted as one: the two halves enclose it.
+    expect(inspection.volume).toBeGreaterThan(100);
+    expect(inspection.faceCount).toBe(kernel.inspect(top).faceCount + kernel.inspect(bottom).faceCount);
+  }, 60_000);
+
+  it('refuses a network that does not close, saying how many edges are still free', () => {
+    const rail1 = [{ kind: 'bezier' as const, poles: [
+      { x: 0, y: 0, z: 0 }, { x: 10, y: 8, z: 0 }, { x: 20, y: 8, z: 0 }, { x: 30, y: 0, z: 0 },
+    ] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [
+      { x: 0, y: 0, z: 0 }, { x: 10, y: -8, z: 0 }, { x: 20, y: -8, z: 0 }, { x: 30, y: 0, z: 0 },
+    ] }];
+    const sheet = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    // The same sheet moved well clear of itself: two surfaces, nowhere near
+    // sharing an edge, so nothing can close.
+    const apart = keep(kernel.transform(sheet, translationAffine({ x: 0, y: 0, z: 40 })));
+
+    expect(() => kernel.sculptSolid([sheet, apart])).toThrow(/watertight|free edge/i);
+  }, 60_000);
+
   it('offsets a lofted surface into a parallel one, still open and moved by the distance asked for', () => {
     // The riskiest question about SURFOFFSET: loftGuidedSurface splits every
     // strip into sub-patches to soften its creases, so the thing being offset
