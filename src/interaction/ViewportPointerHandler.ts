@@ -1,5 +1,5 @@
 import type { Vec2, Vec3 } from '../math/geometry';
-import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
+import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity, Solid, SolidFaceSelection, Surface } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
@@ -22,7 +22,7 @@ import { createPointResolver, type PointResolverState } from './PointResolver';
 import { createSolidDragPreview } from './DragEditing';
 import { createDynamicUcsCoordinator } from './DynamicUcsCoordinator';
 import { createToolActions } from './ToolActions';
-import { pointWorkPlaneAxisAt, type UcsHandleName } from '../math/ucsAxisRotation';
+import { nearestPlaneAxisDirection, pointWorkPlaneAxisAt, rotateWorkPlaneAboutAxis, type UcsHandleName } from '../math/ucsAxisRotation';
 
 /**
  * The handful of small preview/selection helpers that still live in main.ts and
@@ -280,15 +280,55 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         beginUcsAxisDrag(axis);
         return;
       }
-      // Rotating hands over to the UCS command itself, which already asks for
-      // the angle on the command line and saves the result as a named UCS —
-      // the same path typing "UCS" then "Z" takes.
-      exitUcsHandleMode();
-      commands.startCommand('UCS');
-      void commands.submitInput(axis.toUpperCase());
+      // A quarter turn, applied at once. Asked for directly: the cross is for
+      // squaring the drawing plane up against what is already there, and an
+      // arbitrary angle is how you end up lost — so the menu turns in right
+      // angles, and typing UCS then the axis is still there for any other
+      // angle, on the command line where a number belongs.
+      if (axis === 'origin') return;
+      const base = cloneWorkPlane(cadDocument.activeWorkPlane);
+      const turned = rotateWorkPlaneAboutAxis(base, axis, Math.PI / 2);
+      ucsAxisDrag = {
+        handle: axis,
+        basePlane: base,
+        startedWithoutNamedUcs: cadDocument.activeNamedWorkPlaneId === null,
+        changed: true,
+      };
+      applyUcsPlane(turned);
+      finishUcsAxisDrag();
+      log(`UCS turned 90° about its own ${axis.toUpperCase()} axis.`);
       redraw();
     });
   });
+
+  /**
+   * Where an axis drag should really aim: the nearest of the plane's own six
+   * axis directions, so dragging a tip turns the UCS in right angles rather
+   * than to wherever the pointer is. See nearestPlaneAxisDirection.
+   */
+  /** Puts a plane in as the active UCS, keeping whichever named UCS is
+   *  current in step with it — the same two writes the axis drag and the
+   *  menu's quarter turn both need. */
+  function applyUcsPlane(plane: WorkPlane): void {
+    cadDocument.activeWorkPlane = plane;
+    const named = cadDocument.namedWorkPlanes.find((item) => item.id === cadDocument.activeNamedWorkPlaneId);
+    if (named) named.workPlane = { ...plane, origin: { ...plane.origin }, xAxis: { ...plane.xAxis }, yAxis: { ...plane.yAxis }, zAxis: { ...plane.zAxis } };
+    renderer3d.setWorkPlane(plane);
+  }
+
+  function squaredAxisTarget(plane: WorkPlane, target: Vec3): Vec3 {
+    const direction = nearestPlaneAxisDirection(plane, {
+      x: target.x - plane.origin.x,
+      y: target.y - plane.origin.y,
+      z: target.z - plane.origin.z,
+    });
+    if (!direction) return target;
+    return {
+      x: plane.origin.x + direction.x,
+      y: plane.origin.y + direction.y,
+      z: plane.origin.z + direction.z,
+    };
+  }
 
   function beginUcsAxisDrag(handle: UcsHandleName): void {
     const plane = cadDocument.activeWorkPlane;
@@ -439,14 +479,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         ?? (planarTarget ? localToWorld(ucsAxisDrag.basePlane, planarTarget) : null);
       if (target) {
         const plane = ucsAxisDrag.handle === 'origin'
+          // Moving the origin is a translation and stays free: it is turning
+          // that loses people, not sliding.
           ? { ...ucsAxisDrag.basePlane, origin: { ...target } }
-          : pointWorkPlaneAxisAt(ucsAxisDrag.basePlane, ucsAxisDrag.handle, target);
+          : pointWorkPlaneAxisAt(ucsAxisDrag.basePlane, ucsAxisDrag.handle, squaredAxisTarget(ucsAxisDrag.basePlane, target));
         if (plane) {
           ucsAxisDrag.changed = true;
-          cadDocument.activeWorkPlane = plane;
-          const named = cadDocument.namedWorkPlanes.find((item) => item.id === cadDocument.activeNamedWorkPlaneId);
-          if (named) named.workPlane = { ...plane, origin: { ...plane.origin }, xAxis: { ...plane.xAxis }, yAxis: { ...plane.yAxis }, zAxis: { ...plane.zAxis } };
-          renderer3d.setWorkPlane(plane);
+          applyUcsPlane(plane);
           positionSnapMarker(target, sx, sy);
           showDimension(ucsAxisDrag.handle === 'origin' ? 'UCS origin' : `UCS ${ucsAxisDrag.handle.toUpperCase()} axis`, sx, sy);
           redraw();

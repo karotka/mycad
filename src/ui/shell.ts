@@ -276,9 +276,9 @@ export function shellHtml(tools: ShellTools): string {
       <button data-ucs-action="direction" data-ucs-axis="x">X Direction</button>
       <button data-ucs-action="direction" data-ucs-axis="y">Y Direction</button>
       <button data-ucs-action="direction" data-ucs-axis="z">Z Direction</button>
-      <button data-ucs-action="rotate" data-ucs-axis="x">Rotate around X</button>
-      <button data-ucs-action="rotate" data-ucs-axis="y">Rotate around Y</button>
-      <button data-ucs-action="rotate" data-ucs-axis="z">Rotate around Z</button>
+      <button data-ucs-action="rotate" data-ucs-axis="x">Rotate 90° around X</button>
+      <button data-ucs-action="rotate" data-ucs-axis="y">Rotate 90° around Y</button>
+      <button data-ucs-action="rotate" data-ucs-axis="z">Rotate 90° around Z</button>
     </section>
     <section class="entity-actions" hidden>
       <button class="entity-submenu-toggle" data-entity-submenu aria-haspopup="true"><span class="entity-name">Object</span><span class="submenu-caret">▸</span></button>

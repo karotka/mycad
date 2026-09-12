@@ -70,3 +70,31 @@ const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - 
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
 const cross = (a: Vec3, b: Vec3): Vec3 => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
 const normalized = (v: Vec3): Vec3 | null => { const length = Math.hypot(v.x, v.y, v.z); return length > 1e-9 ? { x: v.x / length, y: v.y / length, z: v.z / length } : null; };
+
+/**
+ * The one of `plane`'s own six axis directions (±X, ±Y, ±Z) that `direction`
+ * points most nearly along.
+ *
+ * What keeps a dragged UCS axis on 90° steps: aiming it anywhere lands it on
+ * a right angle from where it was, rather than wherever the cursor happened
+ * to be. Asked for directly — a UCS free to take any angle is easy to get
+ * lost in ("jinak se ztracim v prostoru"), and a construction plane is
+ * almost always meant to be square to the one it came from.
+ */
+export function nearestPlaneAxisDirection(plane: WorkPlane, direction: Vec3): Vec3 | null {
+  const length = Math.hypot(direction.x, direction.y, direction.z);
+  if (length < 1e-9) return null;
+  const unit = { x: direction.x / length, y: direction.y / length, z: direction.z / length };
+  let best: Vec3 | null = null;
+  let bestDot = -Infinity;
+  for (const axis of [plane.xAxis, plane.yAxis, plane.zAxis]) {
+    for (const sign of [1, -1]) {
+      // `+ 0` only to turn a negated zero back into a plain one: -0 compares
+      // unequal to 0 and would travel into saved files and comparisons.
+      const candidate = { x: axis.x * sign + 0, y: axis.y * sign + 0, z: axis.z * sign + 0 };
+      const dot = candidate.x * unit.x + candidate.y * unit.y + candidate.z * unit.z;
+      if (dot > bestDot) { bestDot = dot; best = candidate; }
+    }
+  }
+  return best;
+}
