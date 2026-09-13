@@ -7,7 +7,8 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidFeature, type SolidMesh, type Surface } from '../../entities/types';
+import { cloneEntity, curvePoints, entityBounds, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidFeature, type SolidMesh, type Surface } from '../../entities/types';
+import { minimumCurvatureRadius } from '../../../math/curvature';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import { directionalExtrusionFeature, extrusionFeature } from '../../solids/extrusion';
@@ -253,6 +254,29 @@ async function completeDirectionalExtrude(
   return 'advance';
 }
 
+/**
+ * Why a sweep along `path` most likely came out invalid, when the profile is
+ * simply too fat for the tightest bend: a pipe wider than the curve it goes
+ * round folds through itself, and OpenCascade reports that as an invalid
+ * solid without saying which part of the drawing caused it.
+ *
+ * Returns null when curvature is not the obvious culprit, so the caller keeps
+ * its own general message rather than inventing a reason.
+ */
+function tooFatForItsPath(profile: Entity, path: Entity): string | null {
+  const samples = path.type === 'polyline'
+    ? path.vertices
+    : path.type === 'arc' || path.type === 'bezier' ? curvePoints(path, 128) : null;
+  if (!samples) return null;
+  const bend = minimumCurvatureRadius(samples);
+  if (bend === null) return null;
+  const bounds = entityBounds(profile);
+  // How far the profile reaches from its own middle — its radius, for a circle.
+  const reach = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y) / 2;
+  if (reach < bend) return null;
+  return `the profile reaches ${reach.toFixed(2)} mm from its centre but the path's tightest bend has a radius of ${bend.toFixed(2)} mm, so it would fold through itself — use a smaller profile or a gentler path.`;
+}
+
 async function completePathExtrude(run: CommandRun, profiles: Entity[], path: Entity): Promise<StepOutcome> {
   const { ctx } = run;
   ctx.log('Extruding along path…');
@@ -265,12 +289,19 @@ async function completePathExtrude(run: CommandRun, profiles: Entity[], path: En
       path: cloneEntity(path),
       workPlane: cloneWorkPlane(plane),
     };
-    const exact = await buildExactFeature(feature);
+    // Caught rather than left to the command's own catch-all: the kernel
+    // throws "invalid or empty exact solid" for a pipe that folded through
+    // itself, and only here is it still known WHICH profile and path that
+    // was, which is the whole of the sentence worth showing.
+    const exact = await buildExactFeature(feature).catch(() => null);
     return exact ? { profile, feature, mesh: exact.mesh, exact } : null;
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
-    ctx.log('Extrusion failed — select a valid path that starts at the profile.');
+    const reason = profiles.map((profile) => tooFatForItsPath(profile, path)).find(Boolean);
+    ctx.log(reason
+      ? `Extrusion failed — ${reason}`
+      : 'Extrusion failed — select a valid path that starts at the profile.');
     return 'advance';
   }
   const solids = completed.map(({ profile, feature, mesh, exact }) => {
@@ -314,9 +345,12 @@ export async function sweepProfileStep(run: CommandRun): Promise<StepOutcome> {
   ctx.log('Sweeping…');
   const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
   const feature = { kind: 'sweep' as const, profile: cloneEntity(profile), path: cloneEntity(path), workPlane: cloneWorkPlane(plane) };
-  const exact = await buildExactFeature(feature);
+  const exact = await buildExactFeature(feature).catch(() => null);
   if (!exact) {
-    ctx.log('Sweep failed — select a valid path and closed profile.');
+    const reason = tooFatForItsPath(profile, path);
+    ctx.log(reason
+      ? `Sweep failed — ${reason}`
+      : 'Sweep failed — select a valid path and closed profile.');
     return 'advance';
   }
   const solid = ctx.doc.createSolid(exact.mesh, `Sweep_${profile.id}_${path.id}`, 0, [profile.id, path.id], undefined, feature);

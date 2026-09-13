@@ -1634,6 +1634,45 @@ describe('CommandManager history integration', () => {
     expect(Math.max(...xs)).toBeGreaterThan(78);
   }, 60_000);
 
+  it('says a pipe is too fat for its own bend, instead of reporting an invalid solid', async () => {
+    // The second half of the same real drawing (pipe.mycad): with the profile
+    // now placed correctly, a circle of radius 5 on a path that bends far
+    // tighter than that still cannot be built — the pipe folds through
+    // itself. That is not a fault to fix but a fact to state, and "invalid or
+    // empty exact solid" gives nothing to act on.
+    const { doc, manager, log } = setup();
+    const path = doc.createBezier({ x: 0, y: 0 }, { x: 12, y: 0 }, { x: 12, y: 3 }, { x: 0, y: 3 });
+    const profile = doc.createCircle({ x: 0, y: 0 }, 5);
+    doc.entities.push(profile, path);
+
+    manager.startCommand('EXTRUDE');
+    await manager.handleClick({ x: 0, y: 0 }, profile);
+    await manager.submitInput('');
+    await manager.submitInput('P');
+    await manager.handleClick({ x: 6, y: 1.5 }, path);
+
+    expect(doc.solids).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('fold through itself'));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/reaches 5\.00 mm .* bend has a radius of \d/));
+  }, 60_000);
+
+  it('builds the same pipe once the profile fits the bend', async () => {
+    const { doc, manager, log } = setup();
+    // A gentle curve this time — the one above doubles back on itself.
+    const path = doc.createBezier({ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 40, y: 10 }, { x: 60, y: 10 });
+    const profile = doc.createCircle({ x: 0, y: 0 }, 1);
+    doc.entities.push(profile, path);
+
+    manager.startCommand('EXTRUDE');
+    await manager.handleClick({ x: 0, y: 0 }, profile);
+    await manager.submitInput('');
+    await manager.submitInput('P');
+    await manager.handleClick({ x: 30, y: 5 }, path);
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+    expect(doc.solids).toHaveLength(1);
+  }, 60_000);
+
   it('sweeps an off-origin profile the same way', async () => {
     const { doc, manager, log } = setup();
     const profile = doc.createRectangle({ x: 50, y: 50 }, { x: 52, y: 51 });
