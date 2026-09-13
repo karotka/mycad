@@ -61,6 +61,25 @@ export function worldPointsShareElevation(plane: WorkPlane, points: readonly Vec
   return points.every((point) => Math.abs(worldToLocal(plane, point).z - first) < tolerance);
 }
 
+/**
+ * A world point expressed in `plane`'s own frame, flattened back to 2D.
+ *
+ * What the 2D view needs to hit-test with: it draws every entity through its
+ * work plane, so an entity drawn in a UCS — or copied by moving its plane,
+ * which is how a 3D-snapped COPY places one — is nowhere near its stored
+ * coordinates on screen. Testing a world point against those coordinates is
+ * testing the wrong space.
+ *
+ * Exact for the planes this matters for, which are parallel to the one being
+ * viewed and differ only in origin. A tilted plane's 2D picture is a flattened
+ * projection and has no exact inverse; this gives the perpendicular one.
+ */
+export function worldPointInPlane(plane: WorkPlane | undefined, point: Vec2): Vec2 {
+  if (!plane || isWorldWorkPlane(plane)) return point;
+  const local = worldToLocal(plane, { x: point.x, y: point.y, z: 0 });
+  return { x: local.x, y: local.y };
+}
+
 function normalize(value: Vec3): Vec3 {
   const length = Math.hypot(value.x, value.y, value.z);
   if (length < 1e-9) throw new Error('UCS axis points must be different.');

@@ -2,7 +2,7 @@ import type { Document } from '../core/Document';
 import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
-import { localToWorld, WORLD_WORK_PLANE } from '../math/workplane';
+import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
 
 export interface SolidBounds {
   minX: number; minY: number; minZ: number;
@@ -297,12 +297,17 @@ export function hitTestSurface2d(
   return fallback;
 }
 
-export function pickEntityAt(doc: Document, point: Vec2, tolerance: number): Entity | null {
+export function pickEntityAt(doc: Document, worldPoint: Vec2, tolerance: number): Entity | null {
   const visible = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer));
   const unselected = visible.filter((entity) => !doc.selectedEntityIds.has(entity.id));
-  const edge = hitTestEntity(unselected, point, tolerance) ?? hitTestEntity(visible, point, tolerance);
+  const edge = hitTestEntity(unselected, worldPoint, tolerance) ?? hitTestEntity(visible, worldPoint, tolerance);
   if (edge) return edge;
   const contains = (entity: Entity): boolean => {
+    // Filled shapes are stored in their own work plane, so the click has to be
+    // brought into it before it can be inside anything — the same conversion
+    // `hitTestEntity` does for outlines, and the same one window-select has
+    // always done through `localToWorld`.
+    const point = worldPointInPlane(entity.workPlane, worldPoint);
     if (entity.type === 'hatch') {
       return Boolean(entity.loops[0] && pointInPolygon(point, entity.loops[0]))
         && !entity.loops.slice(1).some((hole) => pointInPolygon(point, hole));

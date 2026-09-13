@@ -12,7 +12,7 @@ import type { ActiveCommand, CommandContext, CommandStep, PickTarget } from './t
 import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
-import { worldToLocal } from '../../math/workplane';
+import { worldPointInPlane, worldToLocal } from '../../math/workplane';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
@@ -751,12 +751,23 @@ function insidePolygon(point: Vec2, vertices: Vec2[]): boolean {
   return inside;
 }
 
-export function hitTestEntity(entities: Entity[], point: Vec2, tolerance = 0.5): Entity | null {
+export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 0.5): Entity | null {
   for (let i = entities.length - 1; i >= 0; i--) {
     const e = entities[i];
+    // Entities store their geometry in their own work plane and the view draws
+    // them through it, so the click has to be brought into that frame before
+    // it can be compared with anything stored. Tested in world coordinates,
+    // an entity drawn in a UCS — or copied by moving its plane, which is how
+    // a 3D-snapped COPY places one — is unpickable where it appears and
+    // pickable where it is not. Reported on a drawing of twelve identical
+    // panels placed that way: one click selected the wrong panel and every
+    // other click selected nothing.
+    const point = worldPointInPlane(e.workPlane, worldPoint);
     switch (e.type) {
       case 'insert': {
-        if (hitTestEntity(expandedInsertEntities(e), point, tolerance)) return e;
+        // An expanded child inherits the INSERT's own plane, so the recursion
+        // converts for itself and must be given the world point.
+        if (hitTestEntity(expandedInsertEntities(e), worldPoint, tolerance)) return e;
         if (expandedInsertSolids(e).length > 0) {
           const bounds = entityBounds(e);
           if (point.x >= bounds.min.x - tolerance && point.x <= bounds.max.x + tolerance

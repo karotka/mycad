@@ -3,6 +3,7 @@ import { Document } from '../core/Document';
 import { applyProjectedWindowSelection, applyWindowSelection, hitTestSurface2d, pickEntityAt } from './PickingService';
 import { snapPoint2 } from '../math/geometry';
 import { createBoxMesh } from '../core/geometry/PrimitiveMesh';
+import { cloneWorkPlane, WORLD_WORK_PLANE } from '../math/workplane';
 
 describe('window selection', () => {
   it('distinguishes contained and crossing objects and ignores hidden layers', () => {
@@ -277,5 +278,48 @@ describe('picking strokes, not just vertices', () => {
     for (const [label, point] of cases) {
       expect(pickEntityAt(doc, point, 0.2), `${label} not picked mid-span`).not.toBeNull();
     }
+  });
+});
+
+describe('picking an entity that lives in its own work plane', () => {
+  // A 3D-snapped COPY does not move an entity's points — it copies them
+  // unchanged and moves the work plane origin instead. A drawing made that
+  // way (reported on a solar panel layout: twelve identical panels, one
+  // click selected the wrong one and every other click selected nothing)
+  // has many entities with *identical* stored coordinates that appear in
+  // completely different places, so testing a click in world coordinates
+  // against those coordinates answers about the wrong panel or about none.
+  const panelAt = (doc: Document, x: number, y: number) => {
+    const panel = doc.createRectangle({ x: 0, y: 0 }, { x: 100, y: 50 });
+    panel.workPlane = { ...cloneWorkPlane(WORLD_WORK_PLANE), origin: { x, y, z: 0 } };
+    doc.entities.push(panel);
+    return panel;
+  };
+
+  it('picks each of several identical rectangles where it actually appears', () => {
+    const doc = new Document();
+    const origins = [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 0, y: 120 }, { x: 200, y: 120 }];
+    const panels = origins.map((origin) => panelAt(doc, origin.x, origin.y));
+
+    origins.forEach((origin, index) => {
+      const centre = { x: origin.x + 50, y: origin.y + 25 };
+      expect(pickEntityAt(doc, centre, 0.2), `panel ${index} not picked at its centre`)
+        .toMatchObject({ id: panels[index].id });
+    });
+  });
+
+  it('picks such a rectangle by its edge too, not only by its filled middle', () => {
+    const doc = new Document();
+    panelAt(doc, 0, 0);
+    const moved = panelAt(doc, 200, 120);
+    // Midpoint of the moved panel's bottom edge, in world coordinates.
+    expect(pickEntityAt(doc, { x: 250, y: 120 }, 0.5)).toMatchObject({ id: moved.id });
+  });
+
+  it('still picks nothing in the empty space between them', () => {
+    const doc = new Document();
+    panelAt(doc, 0, 0);
+    panelAt(doc, 200, 0);
+    expect(pickEntityAt(doc, { x: 150, y: 25 }, 0.2)).toBeNull();
   });
 });
