@@ -3,6 +3,7 @@ import { cloneWorkPlane, WORLD_WORK_PLANE, worldToLocal } from '../math/workplan
 import type { Document } from '../core/Document';
 import type { ActiveCommand, CommandManager, CommandName } from '../core/commands/CommandManager';
 import type { SolidFaceSelection } from '../core/entities/types';
+import { rebasedCommandPoints } from '../core/commands/rebasePoints';
 import type { Viewport3D } from '../render/Viewport3D';
 import { type DynamicUcsController, preferredDynamicFacePlane } from './DynamicUcsController';
 
@@ -110,15 +111,57 @@ export function createDynamicUcsCoordinator(ctx: DynamicUcsCoordinatorContext) {
     return Boolean(snap && controller.containsPoint(snap));
   }
 
+  /**
+   * Adopting a face mid-command, without moving what has already been drawn.
+   *
+   * A command's points are stored in the plane it is drawing in, so a face
+   * acquired after the first point has landed would re-read them in the new
+   * frame and throw the shape across the model. Starting a line at the corner
+   * of a face and only then pointing at the face is an ordinary way to work —
+   * measured on a real part: the first point froze a plane parallel to the
+   * WCS through the corner, the face was then correctly acquired and
+   * highlighted, and the second point landed 46 mm off the part.
+   *
+   * So the placed points are re-expressed in the face's own plane, which is
+   * possible exactly when they lie in it — the case that matters, since the
+   * corner they were snapped to is a corner OF the face. When they do not,
+   * the shape genuinely belongs to the plane it was started in and the face
+   * is refused (AutoCAD locks the plane after the first point for the same
+   * reason). Re-basing pins the result as the command's own drawing plane so
+   * that later releasing the face cannot re-read the points a second time.
+   */
+  function rebaseActiveCommandOnto(candidate: WorkPlane): ((adopted: WorkPlane) => void) | null {
+    const active = commands.active;
+    if (!active) return () => {};
+    const from = (active.data.drawingPlane as WorkPlane | undefined) ?? doc.activeWorkPlane;
+    const rebased = rebasedCommandPoints(active.data, from, candidate);
+    if (!rebased) return null;
+    const keys = Object.keys(rebased);
+    return (adopted) => {
+      if (keys.length === 0) return;
+      Object.assign(active.data, rebased);
+      active.data.drawingPlane = cloneWorkPlane(adopted);
+    };
+  }
+
   function acquireDynamicUcs(face: SolidFaceSelection, event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
     if (!face.region) return;
     const facePlane = preferredDynamicFacePlane(face.region);
     const snap = nearestMeasurementPoint(event);
     const snapOnFacePlane = snap && Math.abs(worldToLocal(facePlane, snap).z) < 1e-5 ? snap : null;
     const origin = snapOnFacePlane ?? face.hitPoint ?? face.region.plane.origin;
+    // What `controller.acquire` will hand back, needed before it is asked for:
+    // whether the shape drawn so far can follow the command onto this plane
+    // decides whether the face may be adopted at all.
+    const rebase = rebaseActiveCommandOnto({ ...facePlane, origin: { ...origin } });
+    if (!rebase) {
+      renderer3d.clearFaceHighlight();
+      return;
+    }
     const key = `${face.solidId}:${[...face.vertexIndices].sort((a, b) => a - b).join(',')}`;
     const temporary = controller.acquire(doc.activeWorkPlane, facePlane, origin, key);
     if (!temporary) return;
+    rebase(temporary);
     state.command = commands.active;
     useWorkPlaneWithoutDocumentEvent(temporary);
     renderNamedUcs();
