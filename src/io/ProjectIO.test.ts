@@ -452,6 +452,7 @@ describe('ProjectIO', () => {
     source.drafting.polarEnabled = true;
     source.drafting.polarAngles = [15, 30, 90];
     source.drafting.objectSnapModes = ['end', 'perpendicular'];
+    source.drafting.linetypeScale = 12.5;
     source.dimensionStyle = {
       textHeight: 3.5, arrowSize: 2, arrowType: 'open',
       extensionBeyond: 1.5, extensionOffset: 0.5, textOffset: 0.8,

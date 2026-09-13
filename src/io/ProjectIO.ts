@@ -422,6 +422,9 @@ function loadDraftingSettings(value: unknown): DraftingSettings {
     objectSnapEnabled: typeof raw.objectSnapEnabled === 'boolean' ? raw.objectSnapEnabled : defaults.objectSnapEnabled,
     objectSnapTrackingEnabled: typeof raw.objectSnapTrackingEnabled === 'boolean' ? raw.objectSnapTrackingEnabled : defaults.objectSnapTrackingEnabled,
     objectSnapModes: Array.from(new Set(modes)),
+    linetypeScale: typeof raw.linetypeScale === 'number' && Number.isFinite(raw.linetypeScale) && raw.linetypeScale > 0
+      ? raw.linetypeScale
+      : defaults.linetypeScale,
   };
 }
 

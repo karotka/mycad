@@ -263,3 +263,39 @@ describe('exportAsciiDxf dimensions', () => {
     if (text && text.type === 'text') expect(text.text).toContain('50');
   });
 });
+
+describe('linetype scale through DXF', () => {
+  it('carries the drawing\'s own scale in $LTSCALE, so dashes stay dashes elsewhere', () => {
+    const doc = new Document();
+    doc.drafting.linetypeScale = 25;
+
+    const dxf = exportAsciiDxf(doc).dxf;
+    expect(dxf).toContain('$LTSCALE');
+
+    const read = importAsciiDxf(new Document(), dxf);
+    expect(read.linetypeScale).toBe(25);
+  });
+
+  it('carries an object\'s own scale as group 48, and only when it has one', () => {
+    const doc = new Document();
+    const scaled = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    scaled.linetypeScale = 4;
+    doc.addEntity(scaled);
+    doc.addEntity(doc.createLine({ x: 0, y: 5 }, { x: 10, y: 5 }));
+
+    const entities = roundTrip(doc);
+
+    expect(entities).toHaveLength(2);
+    expect(entities.map((entity) => entity.linetypeScale).sort()).toEqual([4, undefined]);
+  });
+
+  it('reports no scale at all for a file that never mentioned one', () => {
+    // An older drawing must not be given a scale it never had — the importer
+    // says "nothing here" so the open drawing keeps its own.
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    const dxf = exportAsciiDxf(doc).dxf.replace(/9\nLTSCALE\n40\n[^\n]*\n/, '').replace(/9\n\$LTSCALE\n40\n[^\n]*\n/, '');
+
+    expect(importAsciiDxf(new Document(), dxf).linetypeScale).toBeUndefined();
+  });
+});

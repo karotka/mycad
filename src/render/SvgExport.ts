@@ -1,7 +1,7 @@
 import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
 import { curvePoints, dimensionGeometry, expandedInsertEntities } from '../core/entities/types';
-import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray } from '../core/lineStyles';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, linetypeScaleFor } from '../core/lineStyles';
 import { hatchPatternSegments } from '../io/DxfHatch';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import type { Vec2 } from '../math/geometry';
@@ -75,7 +75,11 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
 
   const strokeAttrs = (entity: Entity): string => {
     const weightMm = style.keepLineweights ? (doc.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM) : DEFAULT_LINE_WEIGHT_MM;
-    const dash = lineTypeDashArray(doc.layerLinetype[entity.layer] ?? DEFAULT_LINE_TYPE, scale);
+    const dash = lineTypeDashArray(
+      doc.layerLinetype[entity.layer] ?? DEFAULT_LINE_TYPE,
+      scale,
+      linetypeScaleFor(doc.drafting.linetypeScale, entity.linetypeScale),
+    );
     const dashAttr = dash.length ? ` stroke-dasharray="${dash.map(fmt).join(',')}"` : '';
     return `stroke="${printColorHex(entity.color, style.colorMode)}" stroke-width="${fmt(weightMm)}" fill="none"${dashAttr}`;
   };
@@ -147,7 +151,7 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
           const d = pathFromPoints(points, false); // mlineOffsetLines already closes a closed mline's own loop
           if (!d) return;
           const weightMm = style.keepLineweights ? (doc.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM) : DEFAULT_LINE_WEIGHT_MM;
-          const dash = lineTypeDashArray(element.linetype, scale);
+          const dash = lineTypeDashArray(element.linetype, scale, linetypeScaleFor(doc.drafting.linetypeScale, entity.linetypeScale));
           const dashAttr = dash.length ? ` stroke-dasharray="${dash.map(fmt).join(',')}"` : '';
           const color = element.aci === 256 ? entity.color : (aciToRgb(element.aci) ?? entity.color);
           parts.push(`<path d="${d}" stroke="${printColorHex(color, style.colorMode)}" stroke-width="${fmt(weightMm)}" fill="none"${dashAttr}/>`);

@@ -48,12 +48,36 @@ export const DEFAULT_LINE_TYPE = 'Continuous';
 export const LINE_TYPE_NAMES = Object.keys(LINE_TYPES);
 
 /**
+ * The patterns above are drawn at a size that suits a part a few hundred
+ * millimetres across. A drawing ten times that reads them as a dotted line and
+ * one a tenth of it as a solid one, because the dashes no longer bear any
+ * relation to what is being drawn. AutoCAD's answer is two scales that
+ * multiply: LTSCALE for the drawing, and the object's own on top of it — so a
+ * drawing is set once and a single line can still be argued with.
+ */
+export const DEFAULT_LINETYPE_SCALE = 1;
+
+/**
+ * The two scales combined. Either being absent, zero or nonsense means "not
+ * scaled" rather than "invisible": a bad value should draw the pattern it
+ * always drew, not collapse the line to nothing.
+ */
+export function linetypeScaleFor(globalScale: number | undefined, objectScale?: number): number {
+  const usable = (value: number | undefined): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_LINETYPE_SCALE;
+  return usable(globalScale) * usable(objectScale);
+}
+
+/**
  * The dash array for the canvas, in pixels, at the given zoom — the world-length
  * pattern scaled to the screen. Empty (a solid line) for Continuous or an
  * unknown name, so a bad value draws a plain line rather than nothing.
+ *
+ * `scale` is the combined linetype scale (see `linetypeScaleFor`); it
+ * multiplies the world lengths, so it behaves the same at every zoom.
  */
-export function lineTypeDashArray(name: string, zoom: number): number[] {
+export function lineTypeDashArray(name: string, zoom: number, scale = DEFAULT_LINETYPE_SCALE): number[] {
   const pattern = LINE_TYPES[name];
   if (!pattern || pattern.length === 0) return [];
-  return pattern.map((length) => Math.max(0.5, length * zoom));
+  return pattern.map((length) => Math.max(0.5, length * scale * zoom));
 }

@@ -268,3 +268,78 @@ describe('PropertiesController', () => {
     expect(doc.solids[0].exact?.revision).toBe(0);
   }, 30_000);
 });
+
+describe('PropertiesController: linetype scale', () => {
+  it('offers every entity a linetype scale, showing 1 when it has none of its own', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    const fields = (controller as unknown as { fields(object: typeof line): Array<{ key: string; value: string | number }> }).fields(line);
+
+    expect(fields.find((field) => field.key === 'linetypeScale')?.value).toBe(1);
+  });
+
+  it('edits it undoably, and stores nothing when it is set back to 1', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+    const updateOne = (controller as unknown as { updateOne(object: typeof line, key: string, value: number): void }).updateOne.bind(controller);
+
+    updateOne(line, 'linetypeScale', 5);
+    expect(doc.getEntity(line.id)).toMatchObject({ linetypeScale: 5 });
+
+    // 1 is what an absent value already means, so it is stored as absent —
+    // otherwise every file would carry a field that says nothing.
+    updateOne(doc.getEntity(line.id) as typeof line, 'linetypeScale', 1);
+    expect(doc.getEntity(line.id)!.linetypeScale).toBeUndefined();
+
+    history.undo();
+    expect(doc.getEntity(line.id)).toMatchObject({ linetypeScale: 5 });
+  });
+
+  it('refuses a scale of zero or less, which would collapse the pattern to dots', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line.linetypeScale = 4;
+    doc.addEntity(line);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateOne(object: typeof line, key: string, value: number): void }).updateOne(line, 'linetypeScale', 0);
+
+    expect(doc.getEntity(line.id)).toMatchObject({ linetypeScale: 4 });
+  });
+
+  it('sets it across a whole selection at once, which is how a drawing gets fixed', () => {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const lines = [doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }), doc.createLine({ x: 0, y: 5 }, { x: 10, y: 5 })];
+    lines.forEach((line) => doc.addEntity(line));
+    const controller = new PropertiesController(doc, history, element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateMultiple(objects: typeof lines, key: string, value: number): void })
+      .updateMultiple(lines, 'linetypeScale', 8);
+
+    expect(lines.map((line) => doc.getEntity(line.id)!.linetypeScale)).toEqual([8, 8]);
+    history.undo();
+    expect(lines.map((line) => doc.getEntity(line.id)!.linetypeScale)).toEqual([undefined, undefined]);
+  });
+
+  it('leaves a solid in the selection untouched — it has no linetype to scale', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    const solid = doc.createSolid(primitiveMesh({ kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 1, depth: 1, height: 1 }), 'Box', 1, []);
+    doc.addSolid(solid);
+    const controller = new PropertiesController(doc, new CommandHistory(doc), element(), element(), element(), element(), vi.fn());
+
+    (controller as unknown as { updateMultiple(objects: unknown[], key: string, value: number): void })
+      .updateMultiple([line, solid], 'linetypeScale', 3);
+
+    expect(doc.getEntity(line.id)!.linetypeScale).toBe(3);
+    expect(doc.getSolid(solid.id)).not.toHaveProperty('linetypeScale');
+  });
+});

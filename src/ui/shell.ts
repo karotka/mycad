@@ -206,6 +206,7 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Snap step (F9)</span><input id="drafting-snap-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Grid spacing</span><input id="drafting-grid-size" type="number" min="0.001" step="0.1"></label>
           <label class="property-row"><span>Polar angles (F10)</span><input id="drafting-polar-angles" type="text" inputmode="numeric" placeholder="30, 45, 90"></label>
+          <label class="property-row"><span>Linetype scale</span><input id="drafting-linetype-scale" type="number" min="0.01" step="0.1" title="How long the dashes of a dashed or centre line are, as a multiple of the stock pattern (AutoCAD's LTSCALE). A single object can scale its own on top of this in Properties."></label>
         </form>
         <form class="properties-content settings-tab-panel" id="dimension-style-form" hidden>
           <label class="property-row"><span>Text height</span><input id="dimension-text-height" type="number" min="0.1" step="0.1"></label>

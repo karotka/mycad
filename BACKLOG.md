@@ -89,6 +89,15 @@ window outlines can silently miss a new type.
 - Move the 3D window-selection outline sampler into the same trait system.
 - Extend object-snap tracking to follow configured polar angles, not only
   horizontal and vertical paths.
+- **Linetypes in the 3D view.** The 3D viewport draws every entity as a solid
+  line whatever its layer's linetype says; only the 2D canvas and the printed
+  SVG honour it. The linetype scale (Settings > Drafting, and per object in
+  Properties) therefore has no effect there either. Needs a dashed line
+  material with `computeLineDistances`, scaled the same way.
+- **A linetype's own scale.** DXF's LTYPE table carries a scale per pattern,
+  which is how a drawing can use both a fine and a coarse "Hidden"; ours are
+  fixed tables in `lineStyles.ts` and only the drawing-wide and per-object
+  scales exist.
 
 ### Native editing shortcuts
 

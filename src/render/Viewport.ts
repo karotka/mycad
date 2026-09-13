@@ -16,7 +16,7 @@ import type { GripAxisName } from '../interaction/GripAxisDrag';
 import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
-import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, lineWeightToPixels } from '../core/lineStyles';
+import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, DEFAULT_LINETYPE_SCALE, lineTypeDashArray, linetypeScaleFor, lineWeightToPixels } from '../core/lineStyles';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 import { hatchPatternSegments } from '../io/DxfHatch';
 import { aciToRgb } from '../io/DxfAci';
@@ -51,6 +51,9 @@ export class Canvas2DRenderer {
       read by drawEntity, since an entity draws in its layer's style. */
   private layerLineweight: Record<string, number> = {};
   private layerLinetype: Record<string, string> = {};
+  /** The drawing's own linetype scale (LTSCALE), read from the document
+   *  alongside the layer tables it belongs with. */
+  private linetypeScale = DEFAULT_LINETYPE_SCALE;
   /** hatchPatternSegments() reprojects every pattern line against every boundary
       edge; too expensive to redo for each render() call, so cache it per entity
       and invalidate by content since entities mutate in place (see entityRenderKey). */
@@ -150,6 +153,7 @@ export class Canvas2DRenderer {
     this.drawCutAreaFrame(doc.gcode, w, h);
     this.layerLineweight = doc.layerLineweight;
     this.layerLinetype = doc.layerLinetype;
+    this.linetypeScale = doc.drafting.linetypeScale;
     this.pruneHatchCache(doc.entities);
 
     for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
@@ -258,7 +262,11 @@ export class Canvas2DRenderer {
     // width so a picked chain still stands out.
     const weightMm = this.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM;
     this.ctx.lineWidth = selected && joinMode ? 2.5 : lineWeightToPixels(weightMm);
-    this.ctx.setLineDash(lineTypeDashArray(this.layerLinetype[entity.layer] ?? DEFAULT_LINE_TYPE, this.zoom));
+    this.ctx.setLineDash(lineTypeDashArray(
+      this.layerLinetype[entity.layer] ?? DEFAULT_LINE_TYPE,
+      this.zoom,
+      linetypeScaleFor(this.linetypeScale, entity.linetypeScale),
+    ));
     if (selected && joinMode) {
       this.ctx.shadowColor = '#65c7ff';
       this.ctx.shadowBlur = 4;
@@ -378,7 +386,7 @@ export class Canvas2DRenderer {
           const element = entity.elements[index];
           this.ctx.save();
           this.ctx.strokeStyle = this.colorHex(element.aci === 256 ? entity.color : aciToRgb(element.aci) ?? entity.color, selected);
-          this.ctx.setLineDash(lineTypeDashArray(element.linetype, this.zoom));
+          this.ctx.setLineDash(lineTypeDashArray(element.linetype, this.zoom, linetypeScaleFor(this.linetypeScale, entity.linetypeScale)));
           this.ctx.beginPath();
           const first = toScreen(points[0]);
           this.ctx.moveTo(first.x, first.y);

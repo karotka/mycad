@@ -29,6 +29,8 @@ export interface DxfImportResult {
   /** Geometry that survived but had to be approximated (arcs expanded, Z dropped). */
   approximated: number;
   unitScale: number;
+  /** The drawing's own linetype scale ($LTSCALE), when the file named one. */
+  linetypeScale?: number;
 }
 
 function pairsFromText(text: string): Pair[] {
@@ -53,6 +55,15 @@ function millimetreScale(pairs: Pair[]): number {
   if (marker < 0) return 1;
   const unitPair = pairs.slice(marker + 1, marker + 6).find((pair) => pair.code === 70);
   return units[Number(unitPair?.value)] ?? 1;
+}
+
+/** $LTSCALE: the drawing's own linetype scale. Absent, zero or unreadable
+ *  means the stock patterns, which is what a file without it has always got. */
+function headerLinetypeScale(pairs: Pair[]): number | undefined {
+  const marker = pairs.findIndex((pair) => pair.code === 9 && pair.value === '$LTSCALE');
+  if (marker < 0) return undefined;
+  const value = Number(pairs.slice(marker + 1, marker + 6).find((pair) => pair.code === 40)?.value);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function insertionUnitCode(pairs: Pair[]): number {
@@ -246,6 +257,10 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
     // document, so nothing else will recompute it.
     entity.aci = number(fields, 62, ACI_BYLAYER);
     entity.color = colorOf(fields, layer);
+    // 48 is the object's own linetype scale. 1 is what an absent one means, so
+    // it is not worth storing — see EntityBase.linetypeScale.
+    const linetypeScale = number(fields, 48, 1);
+    if (Number.isFinite(linetypeScale) && linetypeScale > 0 && linetypeScale !== 1) entity.linetypeScale = linetypeScale;
     return entity;
   };
 
@@ -535,5 +550,5 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   doc.layers = layersBefore;
   doc.layerAci = layerAciBefore;
   doc.layerColors = layerColorsBefore;
-  return { entities, blockDefinitions: [...definitions.values()], layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale };
+  return { entities, blockDefinitions: [...definitions.values()], layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale, linetypeScale: headerLinetypeScale(pairs) };
 }

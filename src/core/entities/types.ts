@@ -23,6 +23,13 @@ export interface EntityBase {
   color: number;
   selected: boolean;
   workPlane?: WorkPlane;
+  /**
+   * This object's own linetype scale, multiplying the drawing's (AutoCAD's
+   * object scale on top of LTSCALE). Absent means 1 — the ordinary case, and
+   * the reason it is optional rather than defaulted: a drawing full of ones
+   * says nothing, and every file written before this existed reads correctly.
+   */
+  linetypeScale?: number;
 }
 
 /** A dimensionless drawing location, corresponding to a native DXF POINT. */

@@ -35,7 +35,7 @@ export function exportAsciiDxf(doc: Document): DxfExportResult {
   const usedLinetypes = new Set<string>([DEFAULT_LINE_TYPE]);
   for (const layer of layers) usedLinetypes.add(doc.layerLinetype[layer] ?? DEFAULT_LINE_TYPE);
 
-  writeHeader(pair);
+  writeHeader(pair, doc.drafting.linetypeScale);
   writeTables(pair, doc, layers, [...usedLinetypes]);
   const definitions = blockDefinitions(doc);
   writeBlocks(pair, definitions);
@@ -93,7 +93,7 @@ function writeBlocks(pair: Pair, definitions: BlockDefinition[]): void {
 
 type Pair = (code: number, value: string | number) => void;
 
-function writeHeader(pair: Pair): void {
+function writeHeader(pair: Pair, linetypeScale: number): void {
   pair(0, 'SECTION');
   pair(2, 'HEADER');
   pair(9, '$ACADVER');
@@ -101,6 +101,10 @@ function writeHeader(pair: Pair): void {
   // 4 is millimetres; the importer keys its unit scale off this variable.
   pair(9, '$INSUNITS');
   pair(70, 4);
+  // The drawing's own linetype scale. Without it a drawing whose dashes were
+  // tuned here opens elsewhere as a solid or a dotted line.
+  pair(9, '$LTSCALE');
+  pair(40, num(linetypeScale));
   pair(0, 'ENDSEC');
 }
 
@@ -267,12 +271,18 @@ function writeHatch(pair: Pair, entity: Extract<Entity, { type: 'hatch' }>): voi
   }
 }
 
-/** Common opening for a native entity: type, layer, and an own colour if it has one. */
-function start(pair: Pair, type: string, entity: { layer: string; aci: number }): void {
+/** Common opening for a native entity: type, layer, an own colour if it has
+ *  one, and an own linetype scale if it has one. */
+function start(pair: Pair, type: string, entity: { layer: string; aci: number; linetypeScale?: number }): void {
   pair(0, type);
   pair(8, entity.layer);
   // BYLAYER (256) and BYBLOCK (0) are the defaults, so they are left unwritten.
   if (entity.aci !== ACI_BYLAYER && entity.aci !== 0) pair(62, entity.aci);
+  // 48 is the object's own linetype scale. 1 is the default, so writing it
+  // would only add a line to every entity in the file.
+  if (typeof entity.linetypeScale === 'number' && entity.linetypeScale > 0 && entity.linetypeScale !== 1) {
+    pair(48, num(entity.linetypeScale));
+  }
 }
 
 function point(pair: Pair, xCode: number, yCode: number, p: Vec2 & { z?: number }): void {

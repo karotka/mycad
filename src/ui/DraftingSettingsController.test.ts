@@ -22,6 +22,7 @@ function setup() {
     ['drafting-snap-size', field('drafting-snap-size')],
     ['drafting-grid-size', field('drafting-grid-size')],
     ['drafting-polar-angles', field('drafting-polar-angles')],
+    ['drafting-linetype-scale', field('drafting-linetype-scale')],
   ]);
   let onInput = (): void => {};
   const form = {
@@ -107,6 +108,27 @@ describe('DraftingSettingsController', () => {
     type('drafting-grid-size', '5');
     const saved = JSON.parse(store.get('mycad.defaults.drafting')!);
     expect(saved).toMatchObject({ snapSize: 0.25, gridSize: 5 });
+  });
+
+  it('shows and writes back the drawing\'s linetype scale', () => {
+    const { controller, doc, fields, type, store } = setup();
+    controller.render();
+    expect(fields.get('drafting-linetype-scale')!.value).toBe('1');
+
+    type('drafting-linetype-scale', '25');
+
+    expect(doc.drafting.linetypeScale).toBe(25);
+    expect(JSON.parse(store.get('mycad.defaults.drafting')!)).toMatchObject({ linetypeScale: 25 });
+  });
+
+  it('keeps the last good linetype scale rather than letting it reach zero', () => {
+    // Zero would collapse every dash to the half-pixel floor — a dotted line,
+    // which is the very thing the setting exists to fix.
+    const { doc, type } = setup();
+    type('drafting-linetype-scale', '25');
+    type('drafting-linetype-scale', '0');
+
+    expect(doc.drafting.linetypeScale).toBe(25);
   });
 
   it('reads the document each time it is shown', () => {

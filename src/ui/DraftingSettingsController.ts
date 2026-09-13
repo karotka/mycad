@@ -31,6 +31,7 @@ export class DraftingSettingsController {
     this.set('drafting-snap-size', this.doc.snapSize);
     this.set('drafting-grid-size', this.doc.gridSize);
     this.set('drafting-polar-angles', formatAngles(this.doc.drafting.polarAngles));
+    this.set('drafting-linetype-scale', this.doc.drafting.linetypeScale);
   }
 
   private apply(): void {
@@ -49,12 +50,14 @@ export class DraftingSettingsController {
     };
     this.doc.snapSize = positive('drafting-snap-size', this.doc.snapSize);
     this.doc.gridSize = positive('drafting-grid-size', this.doc.gridSize);
+    this.doc.drafting.linetypeScale = positive('drafting-linetype-scale', this.doc.drafting.linetypeScale);
     const angles = parseAngles(this.get('drafting-polar-angles').value);
     // An empty or unreadable list would silently turn polar tracking into
     // nothing but the four quadrants, so keep the last good one instead.
     if (angles.length > 0) this.doc.drafting.polarAngles = angles;
     storeDefault(SETTINGS_DEFAULT_KEYS.drafting, {
       snapSize: this.doc.snapSize, gridSize: this.doc.gridSize, polarAngles: this.doc.drafting.polarAngles,
+      linetypeScale: this.doc.drafting.linetypeScale,
     });
     this.doc.notify();
     this.changed();

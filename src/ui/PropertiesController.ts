@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { DEFAULT_LINETYPE_SCALE } from '../core/lineStyles';
 import { cloneEntity, type Entity, type Solid } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
@@ -48,15 +49,26 @@ export class PropertiesController {
   private renderMultiple(objects: ObjectValue[]): void {
     const sameLayer = objects.every((object) => object.layer === objects[0].layer) ? objects[0].layer : '';
     const sameColor = objects.every((object) => object.color === objects[0].color) ? objects[0].color : null;
-    this.content.innerHTML = `<div class="property-row readonly"><span>Selection</span><output>${objects.length} objects</output></div>${this.layerHtml(sameLayer)}${this.colorHtml(sameColor)}`;
+    // Fixing dash lengths is a job done to a whole set of lines at once — that
+    // is the point of selecting them — so it belongs here and not only on the
+    // single-object form. Solids have no linetype, so the row appears only
+    // when there is at least one entity to apply it to.
+    const entities = objects.filter((object): object is Entity => 'type' in object);
+    const scaleOf = (entity: Entity): number => entity.linetypeScale ?? DEFAULT_LINETYPE_SCALE;
+    const sameScale = entities.length > 0 && entities.every((entity) => scaleOf(entity) === scaleOf(entities[0]))
+      ? scaleOf(entities[0])
+      : null;
+    const scaleRow = entities.length === 0 ? '' : `<label class="property-row"><span>Linetype scale</span><input data-field="linetypeScale" type="number" min="0.01" step="any" value="${sameScale === null ? '' : format(sameScale)}" placeholder="Varies"></label>`;
+    this.content.innerHTML = `<div class="property-row readonly"><span>Selection</span><output>${objects.length} objects</output></div>${this.layerHtml(sameLayer)}${this.colorHtml(sameColor)}${scaleRow}`;
     this.content.querySelector<HTMLSelectElement>('[data-field="layer"]')?.addEventListener('change', (event) => this.updateMultiple(objects, 'layer', (event.target as HTMLSelectElement).value));
     this.content.querySelector<HTMLInputElement>('[data-field="color"]')?.addEventListener('change', (event) => this.updateMultiple(objects, 'color', Number.parseInt((event.target as HTMLInputElement).value.slice(1), 16)));
+    this.content.querySelector<HTMLInputElement>('[data-field="linetypeScale"]')?.addEventListener('change', (event) => this.updateMultiple(objects, 'linetypeScale', Number((event.target as HTMLInputElement).value)));
   }
 
   private fields(object: ObjectValue): PropertyField[] {
-    const common = [
-      { key: 'layer', label: 'Layer', value: object.layer, kind: 'layer' as const },
-      { key: 'color', label: 'Color', value: object.color, kind: 'color' as const },
+    const common: PropertyField[] = [
+      { key: 'layer', label: 'Layer', value: object.layer, kind: 'layer' },
+      { key: 'color', label: 'Color', value: object.color, kind: 'color' },
     ];
     if (!('type' in object)) {
       const b = solidBounds(object);
@@ -80,6 +92,10 @@ export class PropertiesController {
         { key: 'height', label: 'Height', value: b.maxZ - b.minZ, kind: sizeKind },
       ];
     }
+    // Every entity draws with its layer's linetype, so every entity can argue
+    // with how big that pattern is — the drawing's own scale (Settings >
+    // Drafting) suits the drawing, and one line on it may still need more.
+    common.push({ key: 'linetypeScale', label: 'Linetype scale', value: object.linetypeScale ?? DEFAULT_LINETYPE_SCALE });
     switch (object.type) {
       case 'point': return [...common, ...pointFields('position', 'Position', object.position)];
       case 'line': return [...common, ...pointFields('start', 'Start', object.start), ...pointFields('end', 'End', object.end), { key: '_length', label: 'Length', value: Math.hypot(object.end.x - object.start.x, object.end.y - object.start.y), kind: 'readonly' }];
@@ -204,12 +220,19 @@ export class PropertiesController {
     else commit();
   }
 
-  private updateMultiple(objects: ObjectValue[], key: 'layer' | 'color', value: string | number): void {
+  private updateMultiple(objects: ObjectValue[], key: 'layer' | 'color' | 'linetypeScale', value: string | number): void {
     if (key === 'layer' && !value) return;
+    if (key === 'linetypeScale' && !(Number(value) > 0)) return;
     const beforeEntities = objects.filter((o): o is Entity => 'type' in o).map(cloneEntity);
     const beforeSolids = objects.filter((o): o is Solid => !('type' in o)).map(cloneSolid);
-    const afterEntities = beforeEntities.map((object) => ({ ...object, [key]: value } as Entity));
-    const afterSolids = beforeSolids.map((object) => ({ ...object, [key]: value } as Solid));
+    const afterEntities = beforeEntities.map((object) => {
+      // A solid has no linetype of its own, so it is left exactly as it was.
+      if (key !== 'linetypeScale') return { ...object, [key]: value } as Entity;
+      const next = cloneEntity(object);
+      updateEntity(next, key, value);
+      return next;
+    });
+    const afterSolids = key === 'linetypeScale' ? beforeSolids.map(cloneSolid) : beforeSolids.map((object) => ({ ...object, [key]: value } as Solid));
     this.history.execute(new ReplaceObjectsEdit('Change properties', beforeEntities, beforeSolids, afterEntities, afterSolids));
     this.changed(); this.render();
   }
@@ -224,6 +247,16 @@ const selectHtml = (field: PropertyField, options: Array<[string, string]>): str
 
 function updateEntity(entity: Entity, key: string, value: string | number): void {
   if (typeof value === 'number' && !Number.isFinite(value)) return;
+  if (key === 'linetypeScale') {
+    const number = Number(value);
+    // Stored only when it says something: 1 is what an absent value already
+    // means, so writing it would be noise in every file.
+    if (number > 0) {
+      if (number === DEFAULT_LINETYPE_SCALE) delete entity.linetypeScale;
+      else entity.linetypeScale = number;
+    }
+    return;
+  }
   const [group, coordinate] = key.split('.');
   if (coordinate && group in entity) (entity as unknown as Record<string, Record<string, number>>)[group][coordinate] = Number(value);
   else if (key === 'radius' && (entity.type === 'circle' || entity.type === 'arc') && Number(value) > 0) entity.radius = Number(value);

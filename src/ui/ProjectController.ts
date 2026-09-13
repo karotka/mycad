@@ -113,12 +113,17 @@ export class ProjectController {
       this.doc.hiddenLayers.clear();
       const draftingDefaults = loadStoredDefault(SETTINGS_DEFAULT_KEYS.drafting, () => ({
         snapSize: 0.5, gridSize: 1, polarAngles: defaultDraftingSettings().polarAngles,
+        linetypeScale: defaultDraftingSettings().linetypeScale,
       }));
       this.doc.gridSize = draftingDefaults.gridSize;
       this.doc.gridVisible = true;
       this.doc.snapSize = draftingDefaults.snapSize;
       this.doc.snapEnabled = true;
-      this.doc.drafting = { ...defaultDraftingSettings(), polarAngles: draftingDefaults.polarAngles };
+      this.doc.drafting = {
+        ...defaultDraftingSettings(),
+        polarAngles: draftingDefaults.polarAngles,
+        linetypeScale: draftingDefaults.linetypeScale,
+      };
       this.doc.dimensionStyle = loadStoredDefault(SETTINGS_DEFAULT_KEYS.dimensionStyle, defaultDimensionStyle);
       this.doc.gcode = loadStoredDefault(SETTINGS_DEFAULT_KEYS.gcode, defaultGcodeOptions);
       this.doc.hatch = loadStoredDefault(SETTINGS_DEFAULT_KEYS.hatch, defaultHatchSettings);
@@ -162,6 +167,13 @@ export class ProjectController {
         if (result.layerLineweight[layer] !== undefined) this.doc.layerLineweight[layer] ??= result.layerLineweight[layer];
         if (result.layerLinetype[layer] !== undefined) this.doc.layerLinetype[layer] ??= result.layerLinetype[layer];
       });
+      // An import merges into the open drawing, so the file's own LTSCALE is
+      // taken only when this drawing has not been given one of its own — the
+      // same "do not overwrite what is already here" rule the layer tables
+      // above follow.
+      if (result.linetypeScale !== undefined && this.doc.drafting.linetypeScale === defaultDraftingSettings().linetypeScale) {
+        this.doc.drafting.linetypeScale = result.linetypeScale;
+      }
       const definitionsAfterImport = this.doc.blockDefinitions.map(cloneBlockDefinition);
       for (const definition of result.blockDefinitions) {
         const index = definitionsAfterImport.findIndex((item) => item.name.toUpperCase() === definition.name.toUpperCase());

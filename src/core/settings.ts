@@ -1,4 +1,5 @@
 import type { MlineElement } from './entities/types';
+import { DEFAULT_LINETYPE_SCALE } from './lineStyles';
 
 export type ObjectSnapMode = 'end' | 'center' | 'middle' | 'node' | 'mid2p' | 'intersection' | 'apparent-intersection' | 'perpendicular' | 'tangent' | 'nearest';
 
@@ -10,6 +11,13 @@ export interface DraftingSettings {
   /** Object snap tracking (F11): whether an acquired point lays an alignment path. */
   objectSnapTrackingEnabled: boolean;
   objectSnapModes: ObjectSnapMode[];
+  /**
+   * AutoCAD's LTSCALE: how long the dashes of a dashed/centre line are, as a
+   * multiple of the stock pattern. One setting for the whole drawing, because
+   * that is what it is for — a drawing is one size. An object may still scale
+   * its own on top of this (`Entity.linetypeScale`).
+   */
+  linetypeScale: number;
 }
 
 export interface DimensionStyle {
@@ -135,6 +143,7 @@ export function defaultDraftingSettings(): DraftingSettings {
     // are comparatively cheap but add up; keep only the cheapest, most-used
     // mode on by default until the intersection algorithm itself is fixed.
     objectSnapModes: ['end'],
+    linetypeScale: DEFAULT_LINETYPE_SCALE,
   };
 }
 

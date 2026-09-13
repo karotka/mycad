@@ -103,3 +103,29 @@ describe('buildPrintSvg', () => {
     expect(uniform).toContain('stroke-width="0.250"');
   });
 });
+
+describe('buildPrintSvg linetype scale', () => {
+  /** One dashed line, printed to a page where 1 mm of drawing is 1 mm of paper. */
+  const dashedPage = (configure: (doc: Document, line: ReturnType<Document['createLine']>) => void): string => {
+    const doc = new Document();
+    doc.layerLinetype['0'] = 'Dashed';
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.entities.push(line);
+    configure(doc, line);
+    return buildPrintSvg(doc, { min: { x: 0, y: 0 }, max: { x: 100, y: 100 } }, { widthMm: 100, heightMm: 100 });
+  };
+
+  it('prints the stock pattern when nothing is scaled', () => {
+    // Dashed is 12 on / 6 off in mm, and this page is 1:1.
+    expect(dashedPage(() => undefined)).toContain('stroke-dasharray="12.000,6.000"');
+  });
+
+  it('stretches it by the drawing\'s scale', () => {
+    expect(dashedPage((doc) => { doc.drafting.linetypeScale = 3; })).toContain('stroke-dasharray="36.000,18.000"');
+  });
+
+  it('stretches it by the object\'s own scale on top of the drawing\'s', () => {
+    const svg = dashedPage((doc, line) => { doc.drafting.linetypeScale = 3; line.linetypeScale = 2; });
+    expect(svg).toContain('stroke-dasharray="72.000,36.000"');
+  });
+});
