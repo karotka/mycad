@@ -1602,6 +1602,55 @@ describe('CommandManager history integration', () => {
     expect(doc.solids).toHaveLength(1);
   });
 
+  it('sweeps a profile drawn on its path, not only one drawn at the origin', async () => {
+    // Reported on a real drawing (examples/3d/pipe.mycad): a spline and a
+    // circle at its start, and EXTRUDE → Path failed outright. The profile's
+    // own local (x, y) was read as an offset from where the path begins, so a
+    // circle drawn on the path start was swept from that far off the spine —
+    // which only ever worked when the profile sat at the drawing origin.
+    const { doc, manager, log } = setup();
+    const path = doc.createBezier({ x: 20, y: 30 }, { x: 40, y: 30 }, { x: 60, y: 10 }, { x: 80, y: 10 });
+    const profile = doc.createCircle({ x: 20, y: 30 }, 2); // drawn where the path starts
+    doc.entities.push(profile, path);
+
+    manager.startCommand('EXTRUDE');
+    await manager.handleClick({ x: 20, y: 30 }, profile);
+    await manager.submitInput('');
+    await manager.submitInput('P');
+    await manager.handleClick({ x: 50, y: 20 }, path);
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+    expect(doc.solids).toHaveLength(1);
+    // And it sits ON the path, which is the part that was wrong: the path is
+    // flat in XY, so a pipe of radius 2 built along it reaches 2 above and
+    // below and no further. Read as an offset from the path start instead,
+    // the profile's own y of 30 lifted the whole pipe 30 up.
+    const zs = Array.from(doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zs.map(Math.abs))).toBeLessThan(3);
+    // It really runs the length of the spline rather than sitting in a heap.
+    const xs = Array.from(doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 0);
+    expect(Math.min(...xs)).toBeGreaterThan(16);
+    expect(Math.min(...xs)).toBeLessThan(22);
+    expect(Math.max(...xs)).toBeGreaterThan(78);
+  }, 60_000);
+
+  it('sweeps an off-origin profile the same way', async () => {
+    const { doc, manager, log } = setup();
+    const profile = doc.createRectangle({ x: 50, y: 50 }, { x: 52, y: 51 });
+    const path = doc.createLine({ x: 50, y: 50 }, { x: 58, y: 50 });
+    doc.entities.push(profile, path);
+
+    manager.startCommand('SWEEP');
+    await manager.handleClick({ x: 50, y: 50 }, profile);
+    await manager.handleClick({ x: 54, y: 50 }, path);
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
+    expect(doc.solids).toHaveLength(1);
+    // On its path, not 50 above it — the same check as the pipe above.
+    const zs = Array.from(doc.solids[0].mesh.positions).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zs.map(Math.abs))).toBeLessThan(2);
+  }, 60_000);
+
   it('creates a sweep solid from a closed profile and a path', async () => {
     const { doc, manager, history } = setup();
     const profile = doc.createRectangle({ x: 0, y: 0 }, { x: 2, y: 1 });

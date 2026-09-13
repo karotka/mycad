@@ -1,4 +1,4 @@
-import { closedVertices, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -459,6 +459,26 @@ function pressPullShape(
   }
 }
 
+/**
+ * The profile moved so its own middle sits at the origin of its plane.
+ *
+ * `exactSweepProfile` below reads a profile's local (x, y) as an offset from
+ * where the path begins — which only ever worked for a profile drawn at the
+ * drawing origin. A circle drawn where it belongs, on the start of its own
+ * path, was swept from that far off the spine instead, and OpenCascade threw
+ * rather than building a pipe. Reported on a real drawing (pipe.mycad): a
+ * spline and a circle at its start, and EXTRUDE → Path failed outright.
+ *
+ * Centring is also what AutoCAD's own SWEEP does by default (Alignment): the
+ * profile is moved onto the path, wherever it was drawn.
+ */
+function profileCentredOnOrigin(profile: Entity): Entity {
+  const bounds = entityBounds(profile);
+  const centre = { x: (bounds.min.x + bounds.max.x) / 2, y: (bounds.min.y + bounds.max.y) / 2 };
+  if (Math.hypot(centre.x, centre.y) < 1e-12) return profile;
+  return transformEntityPoints(profile, (point) => ({ x: point.x - centre.x, y: point.y - centre.y }));
+}
+
 function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
   const pathPlane = feature.path.workPlane ?? feature.workPlane ?? WORLD_WORK_PLANE;
   const startAndTangent = pathStartAndTangent(feature.path);
@@ -475,7 +495,7 @@ function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): Open
     yAxis: { ...pathPlane.zAxis },
     zAxis: tangent,
   };
-  const profile = exactSweepProfile(feature.profile, crossPlane);
+  const profile = exactSweepProfile(profileCentredOnOrigin(feature.profile), crossPlane);
   const path = exactSweepPath(feature.path, pathPlane);
   return profile && path ? kernel.sweep(profile, path) : null;
 }
