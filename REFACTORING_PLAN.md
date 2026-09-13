@@ -56,6 +56,31 @@ duplicated entity semantics. Extract public core operations only where they
 replace real duplication; `transformEntityPoints()` remains the lower-level
 point mapper.
 
+### 2026-09-13 — entity-to-kernel paths and profiles extracted
+
+Status: **completed and verified**.
+
+- Added `src/core/geometry/EntityKernelGeometry.ts`, deliberately in the
+  geometry layer so entity definitions do not depend on OpenCascade or kernel
+  vocabulary.
+- Extracted the renderer-independent conversion of lines, polylines, analytic
+  arcs/circles and Bezier chains to `SweepPathSegment3` values.
+- Extracted closed entity conversion to exact sweep/loft profiles.
+- `ExactSolid.ts` now consumes these shared conversions for SWEEP, LOFT, guided
+  loft rails/guides and curved-profile extrusion instead of owning another
+  entity-type switch.
+- Every point conversion explicitly carries the optional elevation through its
+  work plane; arcs and circle profiles now follow the same rule as Bezier and
+  polyline points.
+- Added pure tests for elevated Bezier poles, analytic arcs and closed/open
+  Bezier profiles, without loading OpenCascade.
+- Verification: TypeScript check passed; the full suite passed with 102 test
+  files and 1336 tests.
+
+Remaining in the kernel phase: evaluate the specialized extrusion conversion
+before sharing it, then connect canonical display paths only where doing so does
+not replace analytic kernel geometry with tessellation.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

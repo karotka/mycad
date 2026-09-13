@@ -1,9 +1,9 @@
-import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BezierEntity, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
-import type { Vec2 } from '../../math/geometry';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
 import type { AffineTransform3, Point3, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
+import { bezierKernelEdges as bezierWireEdges, entityKernelPath as exactSweepPath, entityKernelProfile as exactSweepProfile } from './EntityKernelGeometry';
 import { runBooleanJob, type BooleanOperand } from './booleanJob';
 
 export interface ExactSolidResult {
@@ -498,107 +498,6 @@ function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): Open
   const profile = exactSweepProfile(profileCentredOnOrigin(feature.profile), crossPlane);
   const path = exactSweepPath(feature.path, pathPlane);
   return profile && path ? kernel.sweep(profile, path) : null;
-}
-
-function exactSweepProfile(profile: Entity, plane: WorkPlane): SweepProfile3 | null {
-  if (profile.type === 'circle') {
-    return {
-      kind: 'circle',
-      center: localToWorld(plane, profile.center),
-      normal: { ...plane.zAxis },
-      xAxis: { ...plane.xAxis },
-      radius: profile.radius,
-    };
-  }
-  if (profile.type === 'bezier') {
-    return isClosedBezierEntity(profile)
-      ? { kind: 'wire', edges: bezierWireEdges(profile, (point) => localToWorld(plane, point)) }
-      : null;
-  }
-  const vertices = closedVertices(profile);
-  return vertices && vertices.length >= 3
-    ? { kind: 'polygon', points: vertices.map((point) => localToWorld(plane, point)) }
-    : null;
-}
-
-/** A closed Bezier chain as exact sweep/extrusion edges, each `point` carried
- *  through `toPoint` so the caller can place it in world space (SWEEP) or keep
- *  it local and let the feature's own placement step do that later (EXTRUDE). */
-function bezierWireEdges(entity: BezierEntity, toPoint: (point: Vec2) => Point3): SweepPathSegment3[] {
-  let previous = toPoint(entity.start);
-  return entity.segments.map((segment) => {
-    const end = toPoint(segment.end);
-    const edge: SweepPathSegment3 = { kind: 'bezier', poles: [previous, toPoint(segment.control1), toPoint(segment.control2), end] };
-    previous = end;
-    return edge;
-  });
-}
-
-/**
- * A rail/guide point in world space, keeping whatever elevation it carries off
- * its own plane (the `Vec2 & { z?: number }` convention a genuinely 3D curve's
- * points use — see drawBezier).
- *
- * `localToWorld` takes that elevation as a third argument defaulting to zero,
- * so calling it with the point alone quietly flattens the curve onto its
- * plane. Reported directly on a real drawing: the splines looked right, and
- * the moment they were lofted the surface collapsed — the rails handed to the
- * kernel were flat copies fighting the guides that were not.
- */
-function pathPointInWorld(plane: WorkPlane, point: Vec2): Point3 {
-  return localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0);
-}
-
-function exactSweepPath(path: Entity, plane: WorkPlane): SweepPathSegment3[] | null {
-  switch (path.type) {
-    case 'line':
-      return [{ kind: 'line', start: pathPointInWorld(plane, path.start), end: pathPointInWorld(plane, path.end) }];
-    case 'polyline': {
-      if (path.vertices.length < 2) return null;
-      const segments: SweepPathSegment3[] = [];
-      const count = path.closed ? path.vertices.length : path.vertices.length - 1;
-      for (let index = 0; index < count; index++) {
-        const start = path.vertices[index];
-        const end = path.vertices[(index + 1) % path.vertices.length];
-        if (Math.hypot(end.x - start.x, end.y - start.y) <= 1e-9) continue;
-        segments.push({ kind: 'line', start: pathPointInWorld(plane, start), end: pathPointInWorld(plane, end) });
-      }
-      return segments.length > 0 ? segments : null;
-    }
-    case 'arc':
-      return [{
-        kind: 'arc',
-        center: localToWorld(plane, path.center),
-        normal: { ...plane.zAxis },
-        xAxis: { ...plane.xAxis },
-        radius: path.radius,
-        startAngle: path.startAngle,
-        sweepAngle: path.sweepAngle,
-      }];
-    case 'circle':
-      return [{
-        kind: 'arc',
-        center: localToWorld(plane, path.center),
-        normal: { ...plane.zAxis },
-        xAxis: { ...plane.xAxis },
-        radius: path.radius,
-        startAngle: 0,
-        sweepAngle: Math.PI * 2,
-      }];
-    case 'bezier': {
-      let segmentStart = path.start;
-      return path.segments.map((segment) => {
-        const poles: SweepPathSegment3 = {
-          kind: 'bezier',
-          poles: [segmentStart, segment.control1, segment.control2, segment.end].map((point) => pathPointInWorld(plane, point)),
-        };
-        segmentStart = segment.end;
-        return poles;
-      });
-    }
-    default:
-      return null;
-  }
 }
 
 function pathStartAndTangent(path: Entity): { start: { x: number; y: number }; tangent: { x: number; y: number } } | null {
