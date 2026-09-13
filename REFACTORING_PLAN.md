@@ -32,6 +32,30 @@ Remaining in the transformation phase: consolidate scaling (including the
 duplicate feature-tree implementation), then assess whether translation and
 mirroring need public core operations beyond `transformEntityPoints()`.
 
+### 2026-09-13 — entity scaling consolidated
+
+Status: **completed and verified**.
+
+- Added pure `scaleEntity()` beside `rotateEntity()` in
+  `src/core/entities/EntityTransform.ts`.
+- The SCALE command and embedded loft feature transformation now consume the
+  same implementation; the duplicate switch in `featureTransform.ts` was
+  removed.
+- Command selection and embedded work-plane placement remain caller concerns,
+  so the core transform has no UI or feature-tree side effects.
+- Scaling now covers geometry-dependent values that the duplicated
+  implementations both omitted: HATCH spacing and pattern vectors, MLINE
+  offsets and dimension display scale.
+- Added regression coverage for 3D Bezier elevation and the derived HATCH,
+  MLINE and dimension values.
+- Verification: TypeScript check passed; the full suite passed with 101 test
+  files and 1329 tests.
+
+Remaining in the transformation phase: audit translation and mirroring for
+duplicated entity semantics. Extract public core operations only where they
+replace real duplication; `transformEntityPoints()` remains the lower-level
+point mapper.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

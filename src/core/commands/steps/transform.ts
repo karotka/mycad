@@ -9,33 +9,14 @@
  */
 import { ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
 import { cloneEntity, cloneSurfaceValue, genId, transformEntityPoints, type Entity, type Solid, type Surface } from '../../entities/types';
-import { rotateEntity } from '../../entities/EntityTransform';
+import { rotateEntity, scaleEntity } from '../../entities/EntityTransform';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { mirrorAffine, preserveExactTransform, rotationAffine, scaleAffine, translationAffine } from '../../geometry/ExactTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
 import { dist2, formatPoint, mirrorPoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 
-export function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {
-  const scaled = transformEntityPoints(entity, (point) => {
-    const elevation = (point as Vec2 & { z?: number }).z;
-    // Unlike move/mirror/rotate, a scale is not an in-plane move: a 3D curve
-    // scaled about a base point has to grow away from the plane too, or it
-    // flattens towards it as the factor rises. The base sits on the plane, so
-    // the elevation scales straight from there.
-    return {
-      x: base.x + (point.x - base.x) * factor,
-      y: base.y + (point.y - base.y) * factor,
-      ...(elevation === undefined ? {} : { z: elevation * factor }),
-    } as Vec2;
-  });
-  if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
-  if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
-  if (scaled.type === 'text') scaled.height *= factor;
-  if (scaled.type === 'insert') scaled.scaleZ *= factor;
-  scaled.selected = true;
-  return scaled;
-}
+export { rotateEntity, scaleEntity };
 
 export function scaleSolid(solid: Solid, base: Vec3, factor: number): Solid {
   const scaled = cloneSolid(solid);
@@ -72,8 +53,6 @@ export function scaleSurface(surface: Surface, base: Vec3, factor: number): Surf
   scaled.selected = true;
   return scaled;
 }
-
-export { rotateEntity };
 
 export function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: number, plane: typeof WORLD_WORK_PLANE): Solid {
   const rotated = cloneSolid(solid);
@@ -362,7 +341,11 @@ function applyScale(run: CommandRun, factor: number): StepOutcome {
   return applyTo(run, 'Scale',
     { entities, solids, surfaces },
     {
-      entities: entities.map((entity) => scaleEntity(entity, base, factor)),
+      entities: entities.map((entity) => {
+        const scaled = scaleEntity(entity, base, factor);
+        scaled.selected = true;
+        return scaled;
+      }),
       solids: solids.map((solid) => scaleSolid(solid, baseWorld, factor)),
       surfaces: surfaces.map((surface) => scaleSurface(surface, baseWorld, factor)),
     },

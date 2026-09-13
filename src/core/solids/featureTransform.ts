@@ -12,7 +12,8 @@
  * history to keep, and a sweep is a profile and a path rather than numbers. The
  * caller bakes those, honestly, rather than this inventing something.
  */
-import { cloneEntity, transformEntityPoints, type Entity, type SerializedSolidMesh, type SolidEdgeSelection, type SolidFaceRegion, type SolidFeature } from '../entities/types';
+import { cloneEntity, type Entity, type SerializedSolidMesh, type SolidEdgeSelection, type SolidFaceRegion, type SolidFeature } from '../entities/types';
+import { scaleEntity } from '../entities/EntityTransform';
 import { mirrorPoint2, type Vec2, type Vec3 } from '../../math/geometry';
 import { cloneWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../../math/workplane';
 
@@ -568,14 +569,7 @@ function mirroredEmbeddedLoftEntity(
  */
 function scaleEmbeddedLoftEntity(entity: Entity, base: Vec3, factor: number): Entity {
   const plane = movedOrigin(planeOf(entity.workPlane), base, factor);
-  // Mirrors transform.ts's scaleEntity (which this file cannot import,
-  // itself importing from here) minus its `selected = true` side effect —
-  // an embedded entity has no independent selection state of its own.
-  const scaled = transformEntityPoints(entity, (point) => ({ x: point.x * factor, y: point.y * factor }));
-  if (scaled.type === 'circle' || scaled.type === 'arc' || scaled.type === 'octagon') scaled.radius *= factor;
-  if (scaled.type === 'ellipse') { scaled.radiusX *= factor; scaled.radiusY *= factor; }
-  if (scaled.type === 'text') scaled.height *= factor;
-  if (scaled.type === 'insert') scaled.scaleZ *= factor;
+  const scaled = scaleEntity(entity, { x: 0, y: 0 }, factor);
   scaled.selected = entity.selected;
   scaled.workPlane = plane;
   return scaled;

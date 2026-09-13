@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { rotateEntity } from './EntityTransform';
-import type { BezierEntity, DimensionEntity, HatchEntity, RectangleEntity } from './types';
+import { rotateEntity, scaleEntity } from './EntityTransform';
+import type { BezierEntity, DimensionEntity, HatchEntity, MlineEntity, RectangleEntity } from './types';
 import type { Vec2 } from '../../math/geometry';
 
 const base = {
@@ -88,5 +88,79 @@ describe('rotateEntity', () => {
     expectPoint(rotated.vertices[1], 0, 4);
     expectPoint(rotated.vertices[2], -2, 4);
     expectPoint(rotated.vertices[3], -2, 0);
+  });
+});
+
+describe('scaleEntity', () => {
+  it('scales Bezier elevation about the entity plane together with x and y', () => {
+    const entity: BezierEntity = {
+      ...base,
+      type: 'bezier',
+      start: elevated(2, 3, 1),
+      segments: [{
+        control1: elevated(3, 4, 2),
+        control2: elevated(4, 5, 3),
+        end: elevated(5, 6, 4),
+      }],
+    };
+
+    const scaled = scaleEntity(entity, { x: 1, y: 2 }, 2);
+    expect(scaled.type).toBe('bezier');
+    if (scaled.type !== 'bezier') return;
+    expectPoint(scaled.start, 3, 4, 2);
+    expectPoint(scaled.segments[0].control1, 5, 6, 4);
+    expectPoint(scaled.segments[0].control2, 7, 8, 6);
+    expectPoint(scaled.segments[0].end, 9, 10, 8);
+  });
+
+  it('scales hatch spacing and offset vectors as well as its boundary', () => {
+    const entity: HatchEntity = {
+      ...base,
+      type: 'hatch', loops: [[{ x: 2, y: 2 }, { x: 4, y: 2 }, { x: 2, y: 4 }]],
+      pattern: 'lines', angle: 30, spacing: 2,
+      patternLines: [{ angle: Math.PI / 6, base: { x: 2, y: 2 }, offset: { x: 1, y: 2 } }],
+    };
+
+    const scaled = scaleEntity(entity, { x: 1, y: 1 }, 3);
+    expect(scaled.type).toBe('hatch');
+    if (scaled.type !== 'hatch') return;
+    expect(scaled.spacing).toBe(6);
+    expectPoint(scaled.loops[0][0], 4, 4);
+    expectPoint(scaled.patternLines[0].base, 4, 4);
+    expectPoint(scaled.patternLines[0].offset, 3, 6);
+    expect(scaled.patternLines[0].angle).toBeCloseTo(Math.PI / 6);
+  });
+
+  it('scales MLINE offsets and dimension display scale', () => {
+    const mline: MlineEntity = {
+      ...base,
+      type: 'mline', vertices: [{ x: 0, y: 0 }, { x: 5, y: 0 }], closed: false,
+      styleName: 'Standard', justification: 'zero', startCap: 'none', endCap: 'none',
+      elements: [
+        { offset: -0.5, aci: 256, linetype: 'Continuous' },
+        { offset: 0.5, aci: 256, linetype: 'Continuous' },
+      ],
+    };
+    const dimension: DimensionEntity = {
+      ...base,
+      type: 'dimension', dimensionKind: 'linear',
+      start: { x: 0, y: 0 }, end: { x: 4, y: 0 }, offset: { x: 0, y: 2 },
+      textHeight: 2.5, arrowSize: 2.5, arrowType: 'closed', extensionBeyond: 1,
+      extensionOffset: 0, textOffset: 1, precision: 2, unitSuffix: 'none', scale: 1.5,
+    };
+
+    const scaledMline = scaleEntity(mline, { x: 0, y: 0 }, 4);
+    expect(scaledMline.type).toBe('mline');
+    if (scaledMline.type === 'mline') expect(scaledMline.elements.map(({ offset }) => offset)).toEqual([-2, 2]);
+    const scaledDimension = scaleEntity(dimension, { x: 0, y: 0 }, 4);
+    expect(scaledDimension.type).toBe('dimension');
+    if (scaledDimension.type === 'dimension') expect(scaledDimension.scale).toBe(6);
+  });
+
+  it('does not impose command selection state on the pure transform', () => {
+    const entity: RectangleEntity = {
+      ...base, selected: false, type: 'rectangle', first: { x: 0, y: 0 }, opposite: { x: 2, y: 1 },
+    };
+    expect(scaleEntity(entity, { x: 0, y: 0 }, 2).selected).toBe(false);
   });
 });
