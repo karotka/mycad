@@ -111,14 +111,6 @@ Remaining F-key workflow:
 | F5 | Isoplane cycle; large and currently low value. |
 | F12 | Dynamic input near the cursor; the existing dimension toast is not editable input. |
 
-### Floating panels
-
-Properties and Layers are fixed sections of the shell. They should be windows
-the user can move, each remembering where it was put, across restarts like the
-rest of the UI state. The Blocks and MLSTYLE panels share the same class and
-should be solved together rather than one at a time — this is the concrete case
-for the shared panel contract listed under Housekeeping.
-
 Drafting values are saved per drawing. There is still no application-level
 preferences store for defaults such as "my snap step is always 0.5". Decide this
 before the first release. `snapEnabled`, snap/grid sizes and the other drafting

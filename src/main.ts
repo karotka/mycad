@@ -19,6 +19,7 @@ import { WindowDragController } from './interaction/WindowDragController';
 import { type ObjectSnapMode, type SnapTarget } from './interaction/SnapService';
 import { gripAxisPointUnderRay } from './interaction/GripAxisDrag';
 import { ViewportNavigationController } from './interaction/ViewportNavigationController';
+import { makePanelFloating } from './ui/FloatingPanel';
 import { PreviewController } from './ui/PreviewController';
 import { ProjectController } from './ui/ProjectController';
 import { SelectionController } from './interaction/SelectionController';
@@ -148,6 +149,19 @@ const blockList = get<HTMLElement>('block-list');
 const mlineStylePanel = get<HTMLElement>('mline-style-panel');
 const mlineStyleList = get<HTMLElement>('mline-style-list');
 const propertiesPanel = get<HTMLElement>('properties-panel');
+
+// Every panel is draggable by its own header and opens where it was last left.
+// Anchored to a corner by CSS is a fine default and a poor answer when one of
+// them covers the part of the drawing being worked on.
+([
+  ['properties', propertiesPanel],
+  ['layers', layerPanel],
+  ['blocks', blockPanel],
+  ['mline-styles', mlineStylePanel],
+  ['model-tree', get<HTMLElement>('model-tree-panel')],
+  ['settings', get<HTMLElement>('settings-window')],
+] as const).forEach(([name, panel]) => makePanelFloating(panel, name));
+
 const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
 renderer3d.setWorkPlane(cadDocument.activeWorkPlane);

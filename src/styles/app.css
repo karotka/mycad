@@ -653,6 +653,14 @@ html, body, #app {
   box-shadow: 0 -7px 24px rgba(0,0,0,.5);
 }
 .settings-window[hidden] { display: none; }
+
+/* A panel's header is also its handle: it moves the panel, and the panel stays
+   where it is put (see FloatingPanel.ts). The buttons living in the header —
+   close, add, purge — keep their own cursor and never start a drag. */
+.panel-drag-handle { cursor: grab; user-select: none; }
+.panel-drag-handle button { cursor: pointer; }
+.panel-dragging { user-select: none; }
+.panel-dragging .panel-drag-handle { cursor: grabbing; }
 .settings-header {
   display: flex;
   align-items: center;
