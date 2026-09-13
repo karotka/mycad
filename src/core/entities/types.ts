@@ -409,6 +409,18 @@ function formattedDimensionText(
   return `${entity.textPrefix ?? ''}${body}${entity.textSuffix ?? ''}`;
 }
 
+/**
+ * Where a dimension's text sits when it has not been dragged.
+ *
+ * A dragged text is stored as an absolute point (`textPosition`), so whatever
+ * moves the dimension has to move the text with it — and this is the point
+ * that offset is measured from. Reported directly: dragging the dimension
+ * line left the text standing where it was.
+ */
+export function dimensionDefaultTextPoint(entity: DimensionEntity): Vec2 {
+  return dimensionGeometry({ ...entity, textPosition: undefined }).textPoint;
+}
+
 export function linearDimensionRotation(start: Vec2, end: Vec2, offset: Vec2): number {
   // A leg of zero has nothing to dimension, so the other one is the only answer
   // there is: an axis-aligned line always reads its own length.

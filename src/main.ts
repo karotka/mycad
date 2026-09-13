@@ -1,7 +1,7 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
 import { CommandManager, type CommandName } from './core/commands/CommandManager';
-import { entityBounds, type Entity, type Solid, type Surface, type TextEntity } from './core/entities/types';
+import { dimensionGeometry, entityBounds, type Entity, type Solid, type Surface, type TextEntity } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { worldToScreen, type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
@@ -1115,17 +1115,34 @@ function syncMtextEditor(): void {
     return;
   }
   if (!mtextEditor.hidden) return; // already open for this step — don't steal focus back
+  // A dimension's text is edited in the same window, at the text itself: what
+  // is being typed there is its override, not a text object of its own, so it
+  // has no height or font to offer and an empty answer means "back to the
+  // measured value" rather than nothing.
+  const dimension = editing ? active.data.textEntity as Entity | undefined : undefined;
+  const editingDimension = dimension?.type === 'dimension' ? dimension : undefined;
   const worldPosition = creating
     ? active.data.position as Vec2 | undefined
-    : (active.data.textEntity as TextEntity | undefined)?.position;
+    : editingDimension
+      ? dimensionGeometry(editingDimension).textPoint
+      : (active.data.textEntity as TextEntity | undefined)?.position;
   if (!worldPosition) { mtextEditor.hidden = true; return; }
   const screen = worldToScreen(worldPosition, width, height, renderer2d.pan, renderer2d.zoom);
   mtextEditor.style.left = `${screen.x}px`;
   mtextEditor.style.top = `${screen.y}px`;
   mtextEditor.hidden = false;
-  mtextInput.value = editing ? (active.data.textEntity as TextEntity).text : '';
-  mtextEditorHeight.value = String(editing ? (active.data.textEntity as TextEntity).height : active!.data.height ?? 2.5);
-  mtextEditorFont.value = editing ? ((active.data.textEntity as TextEntity).font ?? 'Arial') : (active!.data.font as string ?? 'Arial');
+  mtextEditor.classList.toggle('editing-dimension', editingDimension !== undefined);
+  if (editingDimension) {
+    mtextInput.value = editingDimension.textOverride ?? '';
+    // The measured value, shown as the placeholder: it is what leaving this
+    // empty gets you, and what `<>` stands in for.
+    mtextInput.placeholder = dimensionGeometry({ ...editingDimension, textOverride: undefined }).text;
+  } else {
+    mtextInput.placeholder = '';
+    mtextInput.value = editing ? (active.data.textEntity as TextEntity).text : '';
+    mtextEditorHeight.value = String(editing ? (active.data.textEntity as TextEntity).height : active!.data.height ?? 2.5);
+    mtextEditorFont.value = editing ? ((active.data.textEntity as TextEntity).font ?? 'Arial') : (active!.data.font as string ?? 'Arial');
+  }
   mtextInput.focus();
   mtextInput.select();
   updateMtextPreview();
@@ -1138,7 +1155,9 @@ function updateMtextPreview(): void {
   const creating = active && (active.name === 'TEXT' || active.name === 'MTEXT') && active.stepIndex === 3;
   const editing = active && active.name === 'TEXTEDIT' && active.stepIndex === 1;
   if (!creating && !editing) return;
-  const entity = editing ? active!.data.textEntity as TextEntity : undefined;
+  const edited = editing ? active!.data.textEntity as Entity : undefined;
+  if (edited?.type === 'dimension') return; // no stand-in preview: the dimension draws its own text
+  const entity = edited as TextEntity | undefined;
   const position = creating ? active!.data.position as Vec2 | undefined : entity?.position;
   if (!position) return;
   const typedHeight = Number(mtextEditorHeight.value);

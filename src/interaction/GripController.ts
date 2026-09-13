@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, cloneSurfaceValue, dimensionGeometry, ellipseAxisPoints, getEntityPoints, transformEntityPoints, type Entity, type ExactSolidGeometry, type LoftFeature, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
+import { cloneEntity, cloneSurfaceValue, dimensionDefaultTextPoint, dimensionGeometry, ellipseAxisPoints, getEntityPoints, transformEntityPoints, type Entity, type ExactSolidGeometry, type LoftFeature, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, UpdateSurfaceEdit, cloneSolid } from '../core/history/edits';
 import { arcFromSagitta } from '../math/arcFit';
@@ -975,11 +975,25 @@ export class GripController {
       else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
     else if (entity.type === 'dimension' && original.type === 'dimension') {
-      if (this.drag.gripIndex === 0) entity.start = { ...cursor };
-      else if (this.drag.gripIndex === 1) entity.end = { ...cursor };
-      else if (this.drag.gripIndex === 2) entity.offset = { ...cursor };
-      else if (entity.dimensionKind === 'angular' && this.drag.gripIndex === 3) entity.arcPoint = { ...cursor };
+      const gripIndex = this.drag.gripIndex;
+      const movesGeometry = gripIndex <= 2 || (entity.dimensionKind === 'angular' && gripIndex === 3);
+      if (gripIndex === 0) entity.start = { ...cursor };
+      else if (gripIndex === 1) entity.end = { ...cursor };
+      else if (gripIndex === 2) entity.offset = { ...cursor };
+      else if (entity.dimensionKind === 'angular' && gripIndex === 3) entity.arcPoint = { ...cursor };
       else entity.textPosition = { ...cursor };
+      // A text that was dragged somewhere is kept there as an absolute point,
+      // so moving the dimension under it would leave it behind. It travels by
+      // however far the text's own resting place moved, which keeps it exactly
+      // where it was put relative to the dimension.
+      if (movesGeometry && original.textPosition) {
+        const before = dimensionDefaultTextPoint(original);
+        const after = dimensionDefaultTextPoint(entity);
+        entity.textPosition = {
+          x: original.textPosition.x + (after.x - before.x),
+          y: original.textPosition.y + (after.y - before.y),
+        };
+      }
     }
     else if (entity.type === 'rectangle' && original.type === 'rectangle') {
       if (this.mode === 'center') {

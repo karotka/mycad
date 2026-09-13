@@ -1359,6 +1359,11 @@ html, body, #app {
 }
 .context-menu button[data-persistent-snap].active::before { content: '✓'; }
 
+/* Editing a dimension's text override: the same window, minus the two things
+   a dimension has no say over. */
+.mtext-editor.editing-dimension .mtext-editor-height,
+.mtext-editor.editing-dimension .mtext-editor-font { display: none; }
+
 .text-options {
   position: fixed;
   top: 82px;

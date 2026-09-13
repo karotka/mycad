@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
 import { CommandHistory } from '../core/history/CommandHistory';
 import { GripController, gripsInWorld, type Grip } from './GripController';
-import type { EdgeModificationFeature, LineEntity, LoftFeature, PrimitiveFeature } from '../core/entities/types';
+import { dimensionGeometry, type EdgeModificationFeature, type LineEntity, type LoftFeature, type PrimitiveFeature } from '../core/entities/types';
 import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 import type { WorkPlane } from '../math/workplane';
 import type { Vec2 } from '../math/geometry';
@@ -564,6 +564,76 @@ describe('GripController', () => {
     grips.update({ x: 12, y: 8 }); grips.commit();
     expect(dimension.textPosition).toEqual({ x: 12, y: 8 });
     expect(dimension.arcPoint).toEqual({ x: 7, y: 7 });
+  });
+
+  it('carries a dragged dimension text along when the dimension line is moved', () => {
+    // Reported directly: the text stayed where it was while the dimension
+    // moved out from under it. A dragged text is an absolute point, so
+    // whatever moves the dimension has to move it too.
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 20, y: -10 });
+    dimension.textPosition = { x: 25, y: -14 }; // dragged clear of the line
+    doc.addEntity(dimension);
+    doc.selectEntity(dimension.id);
+
+    // Grip 2 is the dimension line: pull it 20 further from the points.
+    grips.begin(dimension, undefined, 2, { x: 20, y: -10 });
+    grips.update({ x: 20, y: -30 });
+    grips.commit();
+
+    const moved = doc.getEntity(dimension.id)!;
+    if (moved.type === 'dimension') {
+      expect(moved.offset).toEqual({ x: 20, y: -30 });
+      // The text kept its own place relative to the dimension: 20 down too.
+      expect(moved.textPosition).toEqual({ x: 25, y: -34 });
+    }
+  });
+
+  it('carries it when a measured endpoint moves, and still lets the text grip place it freely', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 20, y: -10 });
+    dimension.textPosition = { x: 20, y: -14 };
+    doc.addEntity(dimension);
+    doc.selectEntity(dimension.id);
+
+    // Stretching the measured span moves the text's resting place by half of
+    // it, and the dragged text follows by the same amount.
+    grips.begin(dimension, undefined, 1, { x: 40, y: 0 });
+    grips.update({ x: 80, y: 0 });
+    grips.commit();
+    const stretched = doc.getEntity(dimension.id)!;
+    if (stretched.type === 'dimension') expect(stretched.textPosition!.x).toBeCloseTo(40, 6);
+
+    // The text's own grip still puts it wherever it is dragged.
+    const textGrip = grips.activeGrips().at(-1)!;
+    grips.begin(doc.getEntity(dimension.id)!, undefined, textGrip.index, textGrip.point);
+    grips.update({ x: 12, y: -3 });
+    grips.commit();
+    const placed = doc.getEntity(dimension.id)!;
+    if (placed.type === 'dimension') expect(placed.textPosition).toEqual({ x: 12, y: -3 });
+  });
+
+  it('keeps an overridden dimension text exactly as typed while the dimension is stretched', () => {
+    const doc = new Document();
+    const grips = new GripController(doc, new CommandHistory(doc));
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 20, y: -10 });
+    dimension.textOverride = 'DN50';
+    doc.addEntity(dimension);
+    doc.selectEntity(dimension.id);
+
+    grips.begin(dimension, undefined, 1, { x: 40, y: 0 });
+    grips.update({ x: 90, y: 0 });
+    grips.commit();
+
+    const after = doc.getEntity(dimension.id)!;
+    if (after.type === 'dimension') {
+      expect(dimensionGeometry(after).text).toBe('DN50');
+      // While the same dimension without an override reads its new length.
+      delete after.textOverride;
+      expect(dimensionGeometry(after).text).toBe('90.00');
+    }
   });
 
   it('preserves each point\'s own elevation while dragging a different grip on a genuinely 3D bezier, instead of flattening the whole curve', () => {
