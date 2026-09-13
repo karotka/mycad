@@ -53,17 +53,25 @@ feature-tree version could retain the cutting plane and offer keep-both/keep-sid
 choices. This is useful but lower priority because the existing command is
 already usable.
 
-### Loft and freeform surfaces
-
-A loft through a sequence of profiles is the smallest useful step toward organic
-modelling. It is large and should wait until freeform modelling becomes a real
-goal; the current engine is intentionally CSG-oriented.
-
 ### Editable sweep inputs
 
 A sweep stores its profile and path but the model tree cannot replace either
 with another entity. This needs a geometry-picker control in panels, not another
 numeric field.
+
+### Surface follow-ups
+
+LOFT, THICKEN, SURFOFFSET and SURFSCULPT all exist now. Left open:
+
+- SURFOFFSET's *Both sides* (two surfaces from one offset — the undo entry
+  already carries a list, so this is small) and *Connect* (sewing adjacent
+  offsets; today's sewing needs a watertight network and returns a solid, so it
+  does not fit as it stands);
+- SURFSCULPT bakes its result to a mesh, as THICKEN does. An associative version
+  needs a feature kind holding every source surface;
+- shaping a spline by grabbing it anywhere, not only at a control point: either
+  inserting a control point at that parameter, or reshaping the curve so it
+  passes through the dragged point.
 
 SECTION remains deferred until drawing views exist. It is a non-destructive view
 cut with caps and section edges, not a modelling operation like SLICE.
@@ -102,6 +110,14 @@ Remaining F-key workflow:
 | F4 | Decide whether 3D snaps need a separate toggle; solid edge, centre and perpendicular candidates already work in 3D. |
 | F5 | Isoplane cycle; large and currently low value. |
 | F12 | Dynamic input near the cursor; the existing dimension toast is not editable input. |
+
+### Floating panels
+
+Properties and Layers are fixed sections of the shell. They should be windows
+the user can move, each remembering where it was put, across restarts like the
+rest of the UI state. The Blocks and MLSTYLE panels share the same class and
+should be solved together rather than one at a time — this is the concrete case
+for the shared panel contract listed under Housekeeping.
 
 Drafting values are saved per drawing. There is still no application-level
 preferences store for defaults such as "my snap step is always 0.5". Decide this
@@ -172,10 +188,24 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ### Dimensions
 
+- **dimension text must travel with its dimension.** Moving a dimension has to
+  carry its text along; `DimensionEntity.textPosition` is an absolute point, so
+  once anything sets it the text appears to stay behind while the dimension
+  moves;
+- **edit the text override in the drawing, not in Properties.** Double-clicking
+  a dimension's text should edit it where it sits, the way MTEXT is edited on
+  canvas. `textOverride` already exists (set through TEXTEDIT and the Properties
+  panel) — what is missing is editing it in place;
+- **an overridden text stops following the measurement.** By default the text is
+  the measured value and changes as the dimension is stretched; once it has been
+  overridden it must stay exactly as typed;
+- make dimensions associative, so a dimension follows the object it measures and
+  its text updates when that object changes size — unless the text was
+  overridden. A dimension carries only its own points today, with no reference to
+  the measured entity, so this needs that reference plus a decision about what
+  happens to the dimension when the object is deleted;
 - automatically move dimension text or arrows outside when a short dimension
   cannot fit them between its extension lines;
-- make dimensions associative, so references to entity points and solid edges
-  update after the measured geometry changes;
 - add ordinate dimension kinds;
 - import DIMSTYLE details;
 
@@ -185,7 +215,6 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 - no ESLint, Prettier or CI; tests and `tsc` are run manually;
 - `noUnusedLocals` and `noUnusedParameters` are disabled;
-- no README;
 - panel controllers still lack a shared `Panel { isOpen, render() }` contract;
 - global "click outside" listeners are not centralised;
 - the unused `data-view-action` listener remains after the zoom flyout replaced it;
