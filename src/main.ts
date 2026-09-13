@@ -4,7 +4,7 @@ import { CommandManager, type CommandName } from './core/commands/CommandManager
 import { dimensionGeometry, entityBounds, type Entity, type Solid, type Surface, type TextEntity } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { worldToScreen, type Vec2 } from './math/geometry';
-import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal } from './math/workplane';
+import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from './math/workplane';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
 import { viewCubeTransform } from './render/ViewportCoordinates';
@@ -674,15 +674,37 @@ const dynamicRectangleInput = createDynamicRectangleInput({
     input.focus({ preventScroll: true });
   },
 });
+/**
+ * Where a point in the plane the active command is drawing in lands on
+ * screen. In 2D that is the canvas mapping; in 3D it is the camera's own
+ * projection through that plane, so a dynamic-input box sits beside the
+ * segment it belongs to rather than wherever the 2D pan/zoom would have put
+ * it. Off-screen or behind the camera parks the box out of the way instead of
+ * leaving it stuck at its last position.
+ */
+function projectDrawingPoint(point: Vec2): { x: number; y: number } {
+  if (cadDocument.viewMode === '2d') return worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom);
+  const plane = (commands.active?.data.drawingPlane as WorkPlane | undefined) ?? cadDocument.activeWorkPlane;
+  const screen = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(plane, point));
+  return screen ?? { x: -9999, y: -9999 };
+}
+
 const dynamicLengthInput = createDynamicLengthInput({
   lengthInput: dynDimLengthInput,
   angleInput: dynDimAngleInput,
   separatorLabel: dynDimSeparatorLabel,
   degreeLabel: dynDimDegreeLabel,
-  project: (point) => worldToScreen(point, width, height, renderer2d.pan, renderer2d.zoom),
+  project: projectDrawingPoint,
   isActive: () => {
     const active = commands.active;
-    if (active && (active.name === 'LINE' || active.name === 'POLYLINE' || active.name === 'CIRCLE') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
+    // A line has a length and an angle in whatever plane it is drawn in, so
+    // the boxes are as useful in 3D as in 2D — reported directly while
+    // laying out holes on a face: "I have no way to type its length in the
+    // box next to the line the way I do in 2D, or its angle". CIRCLE keeps
+    // its 3D toast for now: only these two were asked for, and each command
+    // needs its own call site wired up (see the pointer handler).
+    if (active && (active.name === 'LINE' || active.name === 'POLYLINE') && active.stepIndex === 1) return true;
+    if (active?.name === 'CIRCLE' && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
     if (cadDocument.viewMode !== '2d') return false;
     return gripController.draggingLineFixedEnd() !== null || gripController.draggingCircleFixedCenter() !== null;
   },
@@ -1875,3 +1897,4 @@ resize();
 applyDefaultTwoDView();
 namedUcsController.render();
 redraw();
+

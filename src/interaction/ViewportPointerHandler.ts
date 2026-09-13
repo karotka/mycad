@@ -750,15 +750,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     if (active?.stepIndex === 1) {
       if ((active.name === 'LINE' || active.name === 'POLYLINE') && active.data.start) {
         const start = active.data.start as Vec2;
-        if (cadDocument.viewMode === '2d') {
-          // A bare Enter on the box should finish the whole polyline early
-          // (its own "blank Enter" convention), not place a point at the
-          // live cursor — LINE has no such concept, so it never sets this.
-          const point = updateDynamicLengthInput(start, p, { emptyFinishes: active.name === 'POLYLINE' });
-          updatePreview(point);
-        } else {
-          showPreviewLabel(`L ${Math.hypot(p.x - start.x, p.y - start.y).toFixed(2)} mm`, sx, sy);
-        }
+        // A bare Enter on the box should finish the whole polyline early
+        // (its own "blank Enter" convention), not place a point at the
+        // live cursor — LINE has no such concept, so it never sets this.
+        // 3D gets the same two boxes rather than a read-only length toast:
+        // the numbers mean the same thing in the plane being drawn in, and
+        // the toast could be read but not typed into.
+        const point = updateDynamicLengthInput(start, p, { emptyFinishes: active.name === 'POLYLINE' });
+        updatePreview(point);
       } else if (active.name === 'RECTANGLE' && active.data.start) {
         const start = active.data.start as Vec2;
         if (cadDocument.viewMode === '2d') {
