@@ -1567,16 +1567,10 @@ input.addEventListener('input', () => {
 // The browser's own menu never appears; ours is opened from the release above.
 viewport.addEventListener('contextmenu', (event) => event.preventDefault());
 
-// A click on the drawing dismisses the floating side panels — they overlay the
-// canvas, and reopen from their toolbar button or Ctrl+1..4. The panels sit
-// outside the viewport element, so clicking one never reaches this listener.
-viewport.addEventListener('pointerdown', () => {
-  modelTreeController.close();
-  layerController.close();
-  blockController.close();
-  mlineStyleController.close();
-  propertiesController.close();
-});
+// A panel opened stays open until it is closed. Clicking the drawing used to
+// dismiss all of them, which made a panel useless for anything done WHILE
+// drawing — the layer list being the obvious one. They are movable now, so a
+// panel in the way is dragged aside rather than dismissed for you.
 
 gripMenu.querySelectorAll<HTMLButtonElement>('[data-grip-mode]').forEach((button) => {
   button.addEventListener('click', () => {

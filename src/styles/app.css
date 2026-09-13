@@ -774,7 +774,10 @@ html, body, #app {
 .panel-header-actions { display: flex; gap: 4px; }
 #block-purge { width: auto; padding: 0 6px; font-size: 10px; }
 .layer-list { max-height: calc(min(620px, 100vh - 150px) - 38px); overflow-y: auto; border-top: 1px solid #343d46; }
-.layer-row { display: grid; grid-template-columns: 18px 24px 24px 25px 54px 50px 24px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
+/* Column order follows the row markup: drag, eye, move-selection, set-current,
+   colour, weight, linetype, name, count, delete. The set-current circle sits
+   next to the paw because the two are the pair anyone reaches for. */
+.layer-row { display: grid; grid-template-columns: 18px 24px 24px 30px 25px 54px 50px 1fr 28px 28px; align-items: center; min-height: 29px; border-bottom: 1px solid #2d353d; }
 .layer-row .layer-lineweight, .layer-row .layer-linetype { display: flex; align-items: center; justify-content: center; height: 21px; min-width: 0; margin: 0 2px; padding: 0; border: 1px solid #3a444d; border-radius: 2px; background: #12171c; color: #cbd5df; font: 10px 'SF Mono', monospace; cursor: pointer; }
 .layer-row .layer-lineweight:hover, .layer-row .layer-linetype:hover { border-color: #67c9ff; color: #fff; }
 .layer-row .layer-lineweight svg, .layer-row .layer-linetype svg { display: block; }
@@ -797,7 +800,7 @@ html, body, #app {
 .layer-color { width: 17px; height: 17px; padding: 0; border: 1px solid #697681; border-radius: 2px; background: none; cursor: pointer; }
 .layer-color::-webkit-color-swatch-wrapper { padding: 1px; }
 .layer-color::-webkit-color-swatch { border: 0; }
-.layer-current-mark { color: #71808d !important; font-size: 15px; line-height: 1; }
+.layer-current-mark { color: #71808d !important; font-size: 20px; line-height: 1; }
 .layer-current-mark.active { color: #67c9ff !important; }
 .layer-row .layer-name { min-width: 0; height: 23px; padding: 2px 5px; border: 1px solid transparent; background: transparent; color: #cbd5df; text-align: left; font: 11px 'SF Mono', monospace; outline: none; }
 .layer-row .layer-name:focus { border-color: #67c9ff; background: #12171c; color: #fff; }
