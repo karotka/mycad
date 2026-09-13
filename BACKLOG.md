@@ -188,22 +188,13 @@ Settings, layer ordering and single-stroke text paths are available. Remaining:
 
 ### Dimensions
 
-- **dimension text must travel with its dimension.** Moving a dimension has to
-  carry its text along; `DimensionEntity.textPosition` is an absolute point, so
-  once anything sets it the text appears to stay behind while the dimension
-  moves;
-- **edit the text override in the drawing, not in Properties.** Double-clicking
-  a dimension's text should edit it where it sits, the way MTEXT is edited on
-  canvas. `textOverride` already exists (set through TEXTEDIT and the Properties
-  panel) — what is missing is editing it in place;
-- **an overridden text stops following the measurement.** By default the text is
-  the measured value and changes as the dimension is stretched; once it has been
-  overridden it must stay exactly as typed;
 - make dimensions associative, so a dimension follows the object it measures and
   its text updates when that object changes size — unless the text was
   overridden. A dimension carries only its own points today, with no reference to
   the measured entity, so this needs that reference plus a decision about what
-  happens to the dimension when the object is deleted;
+  happens to the dimension when the object is deleted. The override half of this
+  already behaves: an overridden text stays exactly as typed while the dimension
+  is stretched;
 - automatically move dimension text or arrows outside when a short dimension
   cannot fit them between its extension lines;
 - add ordinate dimension kinds;
