@@ -114,7 +114,7 @@ export function arrayPolar(run: CommandRun): StepOutcome {
   // one lands on it rather than one step short.
   for (let index = 1; index < count; index++) {
     const angle = (totalAngle * Math.PI / 180) * (index / (count - 1));
-    entities.push(...originals.map((entity) => rotateEntity(copyEntity(entity, { x: 0, y: 0 }), centre, angle, ctx.doc)));
+    entities.push(...originals.map((entity) => rotateEntity(copyEntity(entity, { x: 0, y: 0 }), centre, angle)));
     solids.push(...originalSolids.map((solid) => rotateSolidAroundPlane(copySolid(solid, { x: 0, y: 0, z: 0 }), centreLocal, angle, plane)));
   }
   placeCopies(run, 'Polar array', entities, solids, `Created polar array: ${count} items over ${totalAngle.toFixed(3)}°.`);

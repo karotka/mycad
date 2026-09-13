@@ -207,7 +207,12 @@ export class PreviewController {
     if (active.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
       const base = active.data.basePoint as Vec2;
       const angle = Math.atan2(cursor.y - base.y, cursor.x - base.x);
-      const entities = (active.data.entities as Entity[]).map((entity) => rotateEntity(entity, base, angle));
+      const entities = (active.data.entities as Entity[]).map((entity) => {
+        const ghost = rotateEntity(entity, base, angle);
+        ghost.color = 0xe6f4ff;
+        ghost.selected = false;
+        return ghost;
+      });
       this.setPreview({ type: 'rotate', data: { start: base, end: cursor, entities } });
       return;
     }
@@ -402,38 +407,8 @@ export class PreviewController {
   }
 }
 
-function rotateEntity(entity: Entity, base: Vec2, angle: number): Entity {
-  const rotate = (point: Vec2): Vec2 => {
-    const dx = point.x - base.x, dy = point.y - base.y;
-    return { x: base.x + dx * Math.cos(angle) - dy * Math.sin(angle), y: base.y + dx * Math.sin(angle) + dy * Math.cos(angle) };
-  };
-  if (entity.type === 'rectangle') {
-    const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
-    return { id: entity.id, type: 'polyline', layer: entity.layer, aci: entity.aci, color: 0xe6f4ff, selected: false, workPlane: entity.workPlane, vertices: corners.map(rotate), closed: true };
-  }
-  const result = cloneEntity(entity);
-  result.color = 0xe6f4ff;
-  result.selected = false;
-  switch (result.type) {
-    case 'point': result.position = rotate(result.position); break;
-    case 'line': result.start = rotate(result.start); result.end = rotate(result.end); break;
-    case 'circle':
-    case 'ellipse': result.center = rotate(result.center); break;
-    case 'octagon': result.center = rotate(result.center); result.vertices = result.vertices.map(rotate); break;
-    case 'polyline':
-    case 'mline': result.vertices = result.vertices.map(rotate); break;
-    case 'arc': result.center = rotate(result.center); result.startAngle += angle; break;
-    case 'bezier':
-      result.start = rotate(result.start);
-      result.segments = result.segments.map((segment) => ({ control1: rotate(segment.control1), control2: rotate(segment.control2), end: rotate(segment.end) }));
-      break;
-    case 'text': result.position = rotate(result.position); result.rotation = (result.rotation ?? 0) + angle; break;
-    case 'dimension': result.start = rotate(result.start); result.end = rotate(result.end); result.offset = rotate(result.offset); if (result.textPosition) result.textPosition = rotate(result.textPosition); break;
-    case 'insert': result.position = rotate(result.position); result.rotation += angle; break;
-  }
-  return result;
-}
 import type { ActiveCommand } from '../core/commands/CommandManager';
+import { rotateEntity } from '../core/entities/EntityTransform';
 import { linearDimensionRotation } from '../core/entities/types';
 import { cloneEntity, transformEntityPoints, type Entity } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';

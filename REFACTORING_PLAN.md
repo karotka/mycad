@@ -7,6 +7,31 @@ consistency without changing observable CAD behaviour or blocking feature work.
 Refactoring should be delivered in small changes. Existing behaviour must be
 covered by characterization tests before implementations are consolidated.
 
+## Progress
+
+### 2026-09-13 — entity rotation consolidated
+
+Status: **completed and verified**.
+
+- Added `src/core/entities/EntityTransform.ts` as the shared implementation of
+  drawing-entity rotation.
+- Removed the duplicate per-entity rotation switches from the ROTATE command
+  and `PreviewController`; command execution, polar arrays and live previews now
+  use the same function.
+- The shared implementation covers MLINE and HATCH, all dimension placement
+  points, and orientation metadata for ellipses, arcs, hatches, text,
+  dimensions and inserts.
+- Rectangle rotation still intentionally produces a closed polyline, but no
+  longer needs a `Document` factory.
+- Added regression coverage for 3D Bezier elevation, dimensions, hatch pattern
+  vectors and rectangle conversion.
+- Verification: TypeScript check passed; the full suite passed with 100 test
+  files and 1320 tests.
+
+Remaining in the transformation phase: consolidate scaling (including the
+duplicate feature-tree implementation), then assess whether translation and
+mirroring need public core operations beyond `transformEntityPoints()`.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

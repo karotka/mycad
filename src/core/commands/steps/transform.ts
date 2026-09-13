@@ -8,12 +8,12 @@
  * branch that `run.gather` already does.
  */
 import { ReplaceObjectsEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, cloneSurfaceValue, closedVertices, genId, transformEntityPoints, type Entity, type Solid, type Surface } from '../../entities/types';
+import { cloneEntity, cloneSurfaceValue, genId, transformEntityPoints, type Entity, type Solid, type Surface } from '../../entities/types';
+import { rotateEntity } from '../../entities/EntityTransform';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { mirrorAffine, preserveExactTransform, rotationAffine, scaleAffine, translationAffine } from '../../geometry/ExactTransform';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
-import { dist2, formatPoint, mirrorPoint2, rotatePoint, type Vec2, type Vec3 } from '../../../math/geometry';
-import type { Document } from '../../Document';
+import { dist2, formatPoint, mirrorPoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 
 export function scaleEntity(entity: Entity, base: Vec2, factor: number): Entity {
@@ -73,41 +73,7 @@ export function scaleSurface(surface: Surface, base: Vec3, factor: number): Surf
   return scaled;
 }
 
-export function rotateEntity(entity: Entity, base: Vec2, angle: number, doc: Document): Entity {
-  if (entity.type === 'rectangle') {
-    const corners = closedVertices(entity)!;
-    const polyline = doc.createPolyline(corners.map((point) => rotatePoint(point, base, angle)), true);
-    polyline.aci = entity.aci; polyline.color = entity.color;
-    polyline.layer = entity.layer;
-    polyline.workPlane = cloneEntity(entity).workPlane;
-    return polyline;
-  }
-  const result = cloneEntity(entity);
-  switch (result.type) {
-    case 'point': result.position = rotatePoint(result.position, base, angle); break;
-    case 'line': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); break;
-    case 'circle': result.center = rotatePoint(result.center, base, angle); break;
-    case 'ellipse':
-      result.center = rotatePoint(result.center, base, angle);
-      result.rotation += angle;
-      break;
-    case 'octagon': result.center = rotatePoint(result.center, base, angle); result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
-    case 'polyline': result.vertices = result.vertices.map((point) => rotatePoint(point, base, angle)); break;
-    case 'arc': result.center = rotatePoint(result.center, base, angle); result.startAngle += angle; break;
-    case 'bezier':
-      result.start = rotatePoint(result.start, base, angle);
-      result.segments = result.segments.map((segment) => ({
-        control1: rotatePoint(segment.control1, base, angle),
-        control2: rotatePoint(segment.control2, base, angle),
-        end: rotatePoint(segment.end, base, angle),
-      }));
-      break;
-    case 'text': result.position = rotatePoint(result.position, base, angle); result.rotation = (result.rotation ?? 0) + angle; break;
-    case 'dimension': result.start = rotatePoint(result.start, base, angle); result.end = rotatePoint(result.end, base, angle); result.offset = rotatePoint(result.offset, base, angle); break;
-    case 'insert': result.position = rotatePoint(result.position, base, angle); result.rotation += angle; break;
-  }
-  return result;
-}
+export { rotateEntity };
 
 export function rotateSolidAroundPlane(solid: Solid, centerLocal: Vec3, angle: number, plane: typeof WORLD_WORK_PLANE): Solid {
   const rotated = cloneSolid(solid);
@@ -339,7 +305,7 @@ export function rotateObjects(run: CommandRun): StepOutcome {
   return applyTo(run, 'Rotate',
     { entities, solids, surfaces },
     {
-      entities: entities.map((entity) => rotateEntity(entity, base, angle, ctx.doc)),
+      entities: entities.map((entity) => rotateEntity(entity, base, angle)),
       solids: solids.map((solid) => rotateSolidAroundPlane(cloneSolid(solid), { x: base.x, y: base.y, z: 0 }, angle, plane)),
       surfaces: surfaces.map((surface) => rotateSurfaceAroundPlane(cloneSurfaceValue(surface), { x: base.x, y: base.y, z: 0 }, angle, plane)),
     },
