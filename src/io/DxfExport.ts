@@ -220,7 +220,7 @@ function writeEntity(pair: Pair, entity: Entity): void {
       writePolyline(pair, entity, entity.vertices, true);
       break;
     case 'polyline':
-      writePolyline(pair, entity, entity.vertices, entity.closed);
+      writePolyline(pair, entity, entity.vertices, entity.closed, entity.bulges);
       break;
     case 'mline':
       // No native MLINE/MLINESTYLE writer yet — each parallel line exports as
@@ -307,11 +307,23 @@ function writeEllipse(pair: Pair, entity: EllipseEntity): void {
   pair(42, num(Math.PI * 2));
 }
 
-function writePolyline(pair: Pair, entity: { layer: string; aci: number }, vertices: Vec2[], closed: boolean): void {
+function writePolyline(
+  pair: Pair,
+  entity: { layer: string; aci: number; linetypeScale?: number },
+  vertices: Vec2[],
+  closed: boolean,
+  bulges?: readonly number[],
+): void {
   start(pair, 'LWPOLYLINE', entity);
   pair(90, vertices.length);
   pair(70, closed ? 1 : 0);
-  for (const vertex of vertices) point(pair, 10, 20, vertex);
+  for (const [index, vertex] of vertices.entries()) {
+    point(pair, 10, 20, vertex);
+    // 42 is the bulge of the segment leaving this vertex; 0 is the default, so
+    // a straight run writes nothing and an ordinary polyline is unchanged.
+    const bulge = bulges?.[index];
+    if (typeof bulge === 'number' && Number.isFinite(bulge) && bulge !== 0) pair(42, num(bulge));
+  }
 }
 
 function writeBezier(pair: Pair, entity: Extract<Entity, { type: 'bezier' }>): void {

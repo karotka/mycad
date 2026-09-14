@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
+import { bulgeArc } from '../core/entities/polylineArcs';
 import { importAsciiDxf } from './DxfImport';
 import { dimensionGeometry, entityBounds, expandedInsertEntities } from '../core/entities/types';
 
@@ -132,16 +133,28 @@ describe('DXF import keeps what the drawing says', () => {
   });
 
   // The old import dropped the bulge, turning arcs into chords with no warning.
-  it('expands a polyline bulge into the real arc and says it approximated it', () => {
+  it('keeps a polyline bulge as the arc it is, radius and all', () => {
+    // This used to be expanded into sampled points and counted as an
+    // approximation; a polyline now holds its own arc segments, so the arc
+    // survives exactly and can still say what its radius is.
     const doc = new Document();
     const result = importAsciiDxf(doc, dxf('0\nLWPOLYLINE\n8\nA\n70\n0\n10\n1\n20\n0\n42\n1\n10\n-1\n20\n0\n'));
     const polyline = result.entities[0];
     expect(polyline.type).toBe('polyline');
     if (polyline.type !== 'polyline') return;
-    expect(polyline.vertices.length).toBeGreaterThan(2);
-    // Every vertex sits on the half circle of radius 1 about the origin.
-    for (const vertex of polyline.vertices) expect(Math.hypot(vertex.x, vertex.y)).toBeCloseTo(1, 6);
-    expect(result.approximated).toBe(1);
+    expect(polyline.vertices).toEqual([{ x: 1, y: 0 }, { x: -1, y: 0 }]);
+    expect(polyline.bulges).toEqual([1]);
+    const arc = bulgeArc(polyline.vertices[0], polyline.vertices[1], polyline.bulges![0])!;
+    expect(arc.radius).toBeCloseTo(1, 9);
+    expect(arc.center).toEqual({ x: expect.closeTo(0, 9), y: expect.closeTo(0, 9) });
+    expect(result.approximated).toBe(0);
+  });
+
+  it('leaves a straight polyline with no bulge array at all', () => {
+    const doc = new Document();
+    const result = importAsciiDxf(doc, dxf('0\nLWPOLYLINE\n8\nA\n70\n0\n10\n0\n20\n0\n10\n5\n20\n0\n10\n5\n20\n5\n'));
+    const polyline = result.entities[0];
+    expect(polyline.type === 'polyline' && polyline.bulges).toBeUndefined();
   });
 
   it('imports TEXT with its height and rotation', () => {

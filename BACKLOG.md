@@ -89,6 +89,15 @@ window outlines can silently miss a new type.
 - Move the 3D window-selection outline sampler into the same trait system.
 - Extend object-snap tracking to follow configured polar angles, not only
   horizontal and vertical paths.
+- **Editing a polyline that holds arc segments.** A polyline now keeps its
+  arcs as DXF bulges (JOIN builds them, EXPLODE gives them back, and the exact
+  kernel cuts true cylinders from them). TRIM, EXTEND, OFFSET, FILLET and
+  CHAMFER still walk a polyline's vertices as straight chords, so they refuse
+  one with arcs and name EXPLODE instead of cutting where the shape is not.
+  Each needs arc-aware crossings and offsets to lift that.
+- **Grips on an arc segment.** Dragging a vertex keeps the bulge, so the arc
+  follows and changes radius (which is AutoCAD's behaviour); there is no grip
+  for the arc's own midpoint that would reshape the bulge itself.
 - **Linetypes in the 3D view.** The 3D viewport draws every entity as a solid
   line whatever its layer's linetype says; only the 2D canvas and the printed
   SVG honour it. The linetype scale (Settings > Drafting, and per object in

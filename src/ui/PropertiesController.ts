@@ -1,5 +1,6 @@
 import type { Document } from '../core/Document';
 import { DEFAULT_LINETYPE_SCALE } from '../core/lineStyles';
+import { polylineArcPieces } from '../core/entities/polylineArcs';
 import { cloneEntity, type Entity, type Solid } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
@@ -169,6 +170,23 @@ export class PropertiesController {
           { key: 'textOffset', label: 'Text offset', value: object.textOffset },
           ...numberFormat,
           { key: 'scale', label: 'Scale', value: object.scale },
+        ];
+      }
+      case 'polyline': {
+        // The radius of each arc segment, which is what a joined slot's caps
+        // are and the first thing anyone asks a joined outline about. Read-only
+        // for now: editing one means moving its vertices or its bulge, which
+        // grips and the drawing commands own.
+        const arcs = polylineArcPieces(object).map(({ segment, arc }, index) => ({
+          key: `_arc${index}`,
+          label: `Arc ${segment.index + 1} radius`,
+          value: arc.radius,
+          kind: 'readonly' as const,
+        }));
+        return [...common,
+          { key: '_vertices', label: 'Vertices', value: object.vertices.length, kind: 'readonly' },
+          { key: '_closed', label: 'Closed', value: object.closed ? 'Yes' : 'No', kind: 'readonly' },
+          ...arcs,
         ];
       }
       default: return [...common, { key: '_vertices', label: 'Vertices', value: object.type === 'bezier' ? 1 + object.segments.length * 3 : object.vertices.length, kind: 'readonly' }];

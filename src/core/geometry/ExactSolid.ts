@@ -1,9 +1,11 @@
 import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import type { Vec2 } from '../../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
 import type { AffineTransform3, Point3, SweepPathSegment3, SweepProfile3 } from './GeometryKernel';
 import { bezierKernelEdges as bezierWireEdges, entityKernelPath as exactSweepPath, entityKernelProfile as exactSweepProfile } from './EntityKernelGeometry';
+import { bulgeArc, bulgeMidpoint, bulgeThroughPoints, hasPolylineArcs, polylineSegments } from '../entities/polylineArcs';
 import { runBooleanJob, type BooleanOperand } from './booleanJob';
 
 export interface ExactSolidResult {
@@ -599,6 +601,41 @@ function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKerne
       y: point.y * transform.scaleY + transform.translateY,
       z,
     }));
+    local = kernel.extrudeWire(edges, vector);
+  } else if (feature.profile.type === 'polyline' && hasPolylineArcs(feature.profile)) {
+    // A slot's caps are real half circles; extruding the sampled outline
+    // instead gives a faceted wall and loses the cylinder for good. Same two
+    // limits the circle and Bezier branches have: a non-uniform scale would
+    // turn each arc into an ellipse, and tapering a curved boundary is not
+    // implemented.
+    if (Math.abs(Math.abs(transform.scaleX) - Math.abs(transform.scaleY)) > 1e-12) return null;
+    if (Math.abs(taperAngle) > 1e-12) return null;
+    const map = (point: Vec2): Vec2 => ({
+      x: point.x * transform.scaleX + transform.translateX,
+      y: point.y * transform.scaleY + transform.translateY,
+    });
+    const edges: SweepPathSegment3[] = [];
+    for (const segment of polylineSegments(feature.profile)) {
+      const start = map(segment.start), end = map(segment.end);
+      const mid = bulgeMidpoint(segment.start, segment.end, segment.bulge);
+      // Re-measured from the mapped points rather than carried across, so a
+      // mirrored extrusion (a negative scale) turns the right way round.
+      const arc = mid ? bulgeArc(start, end, bulgeThroughPoints(start, map(mid), end)) : null;
+      if (arc) {
+        edges.push({
+          kind: 'arc',
+          center: { ...arc.center, z },
+          normal: { x: 0, y: 0, z: 1 },
+          xAxis: { x: 1, y: 0, z: 0 },
+          radius: arc.radius,
+          startAngle: arc.startAngle,
+          sweepAngle: arc.sweepAngle,
+        });
+      } else if (Math.hypot(end.x - start.x, end.y - start.y) > 1e-9) {
+        edges.push({ kind: 'line', start: { ...start, z }, end: { ...end, z } });
+      }
+    }
+    if (edges.length < 2) return null;
     local = kernel.extrudeWire(edges, vector);
   } else {
     const vertices = closedVertices(feature.profile);

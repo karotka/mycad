@@ -9,6 +9,7 @@ import { AddEntityEdit, ReplaceObjectsEdit, UpdateEntityEdit } from '../../histo
 import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isClosedBezierEntity, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
 import { closePolyline, dist2, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
+import { bulgeMidpoint, bulgeThroughPoints, hasPolylineArcs, normalizedBulges, polylineSegments } from '../../entities/polylineArcs';
 import type { CommandRun, StepOutcome } from '../types';
 
 export function lineIntersectionParameters(a: Vec2, b: Vec2, c: Vec2, d: Vec2): { point: Vec2; t: number; u: number } | null {
@@ -993,6 +994,15 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
     ? (() => { const l = worldToLocal(targetPlane, localToWorld(ctx.doc.activeWorkPlane, rawClick)); return { x: l.x, y: l.y }; })()
     : null;
 
+  // Before any of the dispatches below: every one of them walks a polyline's
+  // vertices as straight chords, so an arc segment would be cut where it is
+  // not — silently, and in the wrong place. Named explicitly, because "select
+  // a line or polyline" reads like a mis-click when a polyline is what was
+  // selected.
+  if (target.type === 'polyline' && hasPolylineArcs(target)) {
+    ctx.log(`That polyline has arc segments, which ${mode} cannot cut yet — EXPLODE it into lines and arcs first.`);
+    return 'stay';
+  }
   // Trimming a circle is its own thing: it becomes an arc, there is no end to move.
   if (trimming && target.type === 'circle') {
     return trimCircleTarget(run, target, usable, localClick);
@@ -1166,6 +1176,10 @@ export function apply2dCornerModification(run: CommandRun, rounded: boolean): St
   if (!first || !second) { ctx.log('Select two sides first.'); return 'stay'; }
 
   if (first.entity.id === second.entity.id) {
+    if (first.entity.type === 'polyline' && hasPolylineArcs(first.entity)) {
+      ctx.log(`That polyline has arc segments, which ${rounded ? 'FILLET' : 'CHAMFER'} cannot corner yet — EXPLODE it into lines and arcs first.`);
+      return 'stay';
+    }
     if (first.entity.type === 'polyline') return polylineCornerModification(run, first.entity, first.pick, second.pick, rounded);
     ctx.log(`${rounded ? 'FILLET' : 'CHAMFER'}: pick two different lines, or two sides of one polyline.`);
     return 'stay';
@@ -1307,6 +1321,10 @@ function twoLineCornerModification(run: CommandRun, line1: LineEntity, pick1: Ve
 export function offsetEntity({ active, data, value, ctx }: CommandRun): StepOutcome {
   if (active.stepIndex === 0) {
     const entity = value as Entity;
+    if (entity.type === 'polyline' && hasPolylineArcs(entity)) {
+      ctx.log('That polyline has arc segments, which OFFSET cannot follow yet — EXPLODE it into lines and arcs first.');
+      return 'stay';
+    }
     if (!isOffsetEntity(entity)) {
       ctx.log('OFFSET accepts lines, arcs, circles, ellipses, rectangles, and polylines.');
       return 'stay';
@@ -1689,7 +1707,26 @@ export function joinObjects(run: CommandRun): StepOutcome {
     const local = worldToLocal(fittedPlane, point);
     return { x: local.x, y: local.y };
   };
-  const hasCurve = orderedPieces.some(({ entity }) => entity.type === 'arc' || entity.type === 'bezier');
+  // Lines and arcs go into a polyline, where DXF has always kept them: each
+  // arc becomes one segment with a bulge, so its radius survives the join
+  // exactly. Approximating them as Beziers (which is what a mixed chain used
+  // to become) reads back as "some curve" — the radius that says a slot end is
+  // a 1.75 mm cap, and that a cylinder can be cut from it, was gone for good.
+  const bezierPieces = orderedPieces.some(({ entity }) => entity.type === 'bezier');
+  const arcPieces = orderedPieces.some(({ entity }) => entity.type === 'arc');
+  if (!bezierPieces && arcPieces) {
+    const built = polylineFromLineAndArcPieces(orderedPieces, closed, toLocal2d);
+    if (built) {
+      const polyline = ctx.doc.createPolyline(built.vertices, closed);
+      polyline.bulges = built.bulges;
+      polyline.workPlane = fittedPlane ?? cloneWorkPlane(WORLD_WORK_PLANE);
+      ctx.history.execute(new ReplaceObjectsEdit('Join', lines, [], [polyline], []));
+      ctx.doc.selectEntity(polyline.id);
+      ctx.log(`Joined ${lines.length} objects into one ${closed ? 'closed polyline' : 'polyline'}, arcs and all.`);
+      return 'advance';
+    }
+  }
+  const hasCurve = bezierPieces || arcPieces;
   let joined: Entity;
   let noun: string;
   if (hasCurve) {
@@ -1724,4 +1761,60 @@ export function joinObjects(run: CommandRun): StepOutcome {
   ctx.doc.selectEntity(joined.id);
   ctx.log(`Joined ${lines.length} objects into one ${noun}.`);
   return 'advance';
+}
+
+/**
+ * A chain of lines and arcs as one polyline: each vertex, and the bulge of the
+ * segment leaving it. Null when a piece cannot be one segment — a closed
+ * polyline has no free ends to chain, and a Bezier has no bulge at all — in
+ * which case JOIN falls back to fitting a spline as before.
+ *
+ * Each segment is measured by three points in the *joined* polyline's own
+ * plane (see `bulgeThroughPoints`): an arc drawn on a work plane whose normal
+ * points the other way turns the opposite way once expressed here, so copying
+ * its own sweep angle across would bow it the wrong side.
+ */
+function polylineFromLineAndArcPieces(
+  pieces: ReadonlyArray<{ entity: Entity; reversed: boolean }>,
+  closed: boolean,
+  toLocal2d: (point: Vec3) => Vec2,
+): { vertices: Vec2[]; bulges?: number[] } | null {
+  type Span = { start: Vec3; mid: Vec3 | null; end: Vec3 };
+  const spans: Span[] = [];
+  for (const { entity, reversed } of pieces) {
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const toWorld = (point: Vec2): Vec3 => localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0);
+    let own: Span[];
+    if (entity.type === 'line') {
+      own = [{ start: toWorld(entity.start), mid: null, end: toWorld(entity.end) }];
+    } else if (entity.type === 'arc') {
+      const at = (angle: number): Vec3 => toWorld({
+        x: entity.center.x + Math.cos(angle) * entity.radius,
+        y: entity.center.y + Math.sin(angle) * entity.radius,
+      });
+      own = [{
+        start: at(entity.startAngle),
+        mid: at(entity.startAngle + entity.sweepAngle / 2),
+        end: at(entity.startAngle + entity.sweepAngle),
+      }];
+    } else if (entity.type === 'polyline' && !entity.closed) {
+      own = polylineSegments(entity).map((segment) => ({
+        start: toWorld(segment.start),
+        mid: (() => { const mid = bulgeMidpoint(segment.start, segment.end, segment.bulge); return mid ? toWorld(mid) : null; })(),
+        end: toWorld(segment.end),
+      }));
+    } else return null;
+    if (reversed) own = own.slice().reverse().map((span) => ({ start: span.end, mid: span.mid, end: span.start }));
+    spans.push(...own);
+  }
+  if (spans.length === 0) return null;
+  const vertices = spans.map((span) => toLocal2d(span.start));
+  // An open chain needs its far end too; a closed one already has it as its
+  // own first vertex, so repeating it would add a zero-length segment.
+  if (!closed) vertices.push(toLocal2d(spans[spans.length - 1].end));
+  const bulges = spans.map((span) => {
+    if (!span.mid) return 0;
+    return bulgeThroughPoints(toLocal2d(span.start), toLocal2d(span.mid), toLocal2d(span.end));
+  });
+  return { vertices, bulges: normalizedBulges(bulges, spans.length) };
 }

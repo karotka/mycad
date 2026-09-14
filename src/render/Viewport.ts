@@ -17,6 +17,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, DEFAULT_LINETYPE_SCALE, lineTypeDashArray, linetypeScaleFor, lineWeightToPixels } from '../core/lineStyles';
+import { polylineOutline } from '../core/entities/polylineArcs';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 import { hatchPatternSegments } from '../io/DxfHatch';
 import { aciToRgb } from '../io/DxfAci';
@@ -360,7 +361,8 @@ export class Canvas2DRenderer {
       }
       case 'octagon':
       case 'polyline': {
-        const verts = entity.type === 'octagon' ? entity.vertices : entity.vertices;
+        // A polyline's arc segments are drawn out here; an octagon has none.
+        const verts = entity.type === 'octagon' ? entity.vertices : polylineOutline(entity);
         if (verts.length < 2) break;
         this.ctx.beginPath();
         const first = toScreen(verts[0]);
@@ -2118,7 +2120,7 @@ export class Viewport3D {
           break;
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
         case 'octagon': points = entity.vertices; closed = true; break;
-        case 'polyline': points = entity.vertices; closed = entity.closed; break;
+        case 'polyline': points = polylineOutline(entity); closed = entity.closed; break;
         // v1 picks the mline by its centerline only, same as PickingService's 2D pick.
         case 'mline': points = entity.vertices; closed = entity.closed; break;
         case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
@@ -2311,7 +2313,7 @@ export class Viewport3D {
         loop = true;
         break;
       case 'polyline':
-        points.push(...entity.vertices);
+        points.push(...polylineOutline(entity));
         loop = entity.closed;
         break;
       case 'arc': points.push(...curvePoints(entity)); break;

@@ -13,6 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldPointInPlane, worldToLocal } from '../../math/workplane';
+import { polylineOutline } from '../entities/polylineArcs';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
@@ -806,7 +807,8 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         // Test the strokes, the way the renderer draws them. Testing only the
         // vertices made a polyline pickable at its corners and nowhere else.
         const closed = e.type === 'octagon' || e.closed;
-        if (hitsChain(point, closed ? closePolyline(e.vertices) : e.vertices, tolerance)) return e;
+        const outline = e.type === 'octagon' ? e.vertices : polylineOutline(e);
+        if (hitsChain(point, closed ? closePolyline(outline) : outline, tolerance)) return e;
         break;
       }
       case 'arc':

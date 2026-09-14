@@ -2,6 +2,7 @@ import { closePolyline, dist2, type Vec2, type Vec3 } from '../../math/geometry'
 import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { isStrokeFont, strokeTextHeight, strokeTextWidth } from '../text/strokeFont';
 import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
+import { hasPolylineArcs, polylineOutline } from './polylineArcs';
 
 export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert' | 'mline';
 
@@ -78,6 +79,13 @@ export interface PolylineEntity extends EntityBase {
   type: 'polyline';
   vertices: Vec2[];
   closed: boolean;
+  /**
+   * How much each segment bows, DXF's own bulge: `tan(θ/4)` of the included
+   * angle, signed counter-clockwise, indexed by the vertex the segment leaves.
+   * Absent (or all zero) is a chain of straight segments, which is what a
+   * polyline used to be able to be — see `./polylineArcs`.
+   */
+  bulges?: number[];
 }
 /** One parallel line of an MLINE, offset from the shared centerline it and its
  *  siblings are drawn against. */
@@ -1164,7 +1172,9 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     }
     case 'polyline': {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const v of e.vertices) {
+      // Through the outline, not the vertices: an arc segment bows past both of
+      // its own ends, so a slot's bounds are its caps, not its two vertices.
+      for (const v of polylineOutline(e)) {
         minX = Math.min(minX, v.x);
         minY = Math.min(minY, v.y);
         maxX = Math.max(maxX, v.x);
@@ -1242,7 +1252,10 @@ export function closedVertices(entity: Entity): Vec2[] | null {
   ];
   if (entity.type === 'octagon') return entity.vertices.map((point) => ({ ...point }));
   if (entity.type === 'polyline' && entity.closed) {
-    const vertices = entity.vertices.map((point) => ({ ...point }));
+    // Arc segments are drawn out here: a caller asking for "the corners of the
+    // area this encloses" wants a boundary it can walk, and a slot's outline
+    // is two straight sides and two round ends, not a two-point degenerate.
+    const vertices = polylineOutline(entity).map((point) => ({ ...point }));
     if (vertices.length > 1 && dist2(vertices[0], vertices.at(-1)!) < 1e-9) vertices.pop();
     return vertices;
   }
@@ -1381,15 +1394,26 @@ export function transformEntityPoints(e: Entity, transform: (p: Vec2) => Vec2): 
   return copy;
 }
 
-/** A line or polyline: what TRIM and EXTEND can cut against or reach to. */
+/**
+ * A line or polyline: what TRIM and EXTEND can cut against or reach to.
+ *
+ * A polyline holding arc segments is deliberately not one of these yet. Every
+ * one of those callers walks its vertices as straight chords, so it would cut
+ * and reach to a shape that is not on the drawing — silently, and in the wrong
+ * place. Refusing says so; EXPLODE gives back the real lines and arcs, which
+ * these commands do handle.
+ */
 export function isLineLikeEntity(entity: Entity): entity is Extract<Entity, { type: 'line' | 'polyline' }> {
-  return entity.type === 'line' || entity.type === 'polyline';
+  if (entity.type === 'line') return true;
+  return entity.type === 'polyline' && !hasPolylineArcs(entity);
 }
 
-/** Something OFFSET can make a parallel copy of. */
+/** Something OFFSET can make a parallel copy of. Arc segments inside a
+ *  polyline are the same "walks it as chords" gap as above. */
 export function isOffsetEntity(entity: Entity): boolean {
+  if (entity.type === 'polyline') return !hasPolylineArcs(entity);
   return entity.type === 'line' || entity.type === 'arc' || entity.type === 'circle' || entity.type === 'ellipse'
-    || entity.type === 'rectangle' || entity.type === 'octagon' || entity.type === 'polyline';
+    || entity.type === 'rectangle' || entity.type === 'octagon';
 }
 
 /** A Bezier/spline chain is a closed profile when its curve loops back to its

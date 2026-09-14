@@ -1,13 +1,17 @@
 import type { Document } from '../core/Document';
 import type { BlockDefinition, Entity, InsertEntity } from '../core/entities/types';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
-import { expandBulges, type BulgeVertex } from './DxfBulge';
+import { normalizedBulges } from '../core/entities/polylineArcs';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
 import { hatchDefinition } from './DxfHatch';
 import { fitCubicBeziers } from '../math/bezierFit';
 import { closePolyline } from '../math/geometry';
 
 type Pair = { code: number; value: string };
+
+/** A polyline vertex as DXF stores it: a point plus the bulge of the segment
+ *  leaving it. Kept as-is on the entity now — see core/entities/polylineArcs. */
+interface BulgeVertex { x: number; y: number; bulge: number }
 
 /** Close enough that fitting a Bezier chain to a sampled NURBS reads as the
  *  same curve, not a visibly different approximation of it. */
@@ -303,9 +307,12 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
 
   const addPolyline = (vertices: BulgeVertex[], closed: boolean, fields: Pair[], layer: string, type: string): void => {
     if (vertices.length < 2) { skip(type); return; }
-    const { points, arcs } = expandBulges(vertices, closed);
-    approximated += arcs;
-    finish(doc.createPolyline(points, closed), fields, layer);
+    // Bulges are kept as bulges: a polyline holds its own arc segments now, so
+    // an imported arc stays the arc it was drawn as instead of being expanded
+    // into sampled points that no longer know their own radius.
+    const polyline = doc.createPolyline(vertices.map(({ x, y }) => ({ x, y })), closed);
+    polyline.bulges = normalizedBulges(vertices.map((vertex) => vertex.bulge), closed ? vertices.length : vertices.length - 1);
+    finish(polyline, fields, layer);
   };
 
   const addText = (fields: Pair[], layer: string, value: string, position: { x: number; y: number }, type: string): void => {

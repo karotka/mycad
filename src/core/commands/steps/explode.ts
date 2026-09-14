@@ -11,6 +11,7 @@
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
 import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid } from '../../entities/types';
+import { bulgeArc, hasPolylineArcs, polylineSegments } from '../../entities/polylineArcs';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
@@ -52,6 +53,21 @@ function explodeEntity(entity: Entity, doc: Document): Entity[] {
       line.layer = entity.layer; line.aci = entity.aci; line.color = entity.color;
       line.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
       return line;
+    });
+  }
+  // A polyline that holds arc segments explodes into real lines and arcs, the
+  // way it was joined — the whole point of keeping the bulge is that this can
+  // give the arc back with its radius, not a chord or a chain of chords.
+  if (entity.type === 'polyline' && hasPolylineArcs(entity)) {
+    const stamp = <T extends Entity>(piece: T): T => {
+      piece.layer = entity.layer; piece.aci = entity.aci; piece.color = entity.color;
+      piece.workPlane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
+      return piece;
+    };
+    return polylineSegments(entity).flatMap((segment): Entity[] => {
+      const arc = bulgeArc(segment.start, segment.end, segment.bulge);
+      if (arc) return [stamp(doc.createArc(arc.center, arc.radius, arc.startAngle, arc.sweepAngle))];
+      return dist2(segment.start, segment.end) < 1e-18 ? [] : [stamp(doc.createLine(segment.start, segment.end))];
     });
   }
   let points: Vec2[] = [];

@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
+import { bulgeArc, polylineArcPieces, polylineSegments } from '../entities/polylineArcs';
 import { CommandHistory } from '../history/CommandHistory';
 import { CommandManager, hitTestEntity } from './CommandManager';
-import { ellipsePoints, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation, type Entity } from '../entities/types';
+import { ellipsePoints, entityBounds, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation, type Entity } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { editedSurface } from '../../ui/modelTree';
+import { PropertiesController } from '../../ui/PropertiesController';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
@@ -412,11 +414,11 @@ describe('CommandManager history integration', () => {
     }
   });
 
-  it('splits a wide arc sweep into multiple Bezier spans, each closely matching the true circle', async () => {
+  it('joins two semicircles into a closed polyline that is still exactly a circle', async () => {
+    // These used to be fitted as four cubic spans — close to a circle, but no
+    // longer a circle: nothing downstream could say what its radius was.
     const { doc, manager } = setup();
     const center = { x: 0, y: 0 }, radius = 10;
-    // Two semicircles, closing a full circle — each 180° sweep needs more
-    // than one cubic span to stay a close match to the true arc.
     const upper = doc.createArc(center, radius, 0, Math.PI);
     const lower = doc.createArc(center, radius, Math.PI, Math.PI);
     doc.entities.push(upper, lower);
@@ -424,20 +426,21 @@ describe('CommandManager history integration', () => {
     manager.startCommand('JOIN');
     expect(doc.entities).toHaveLength(1);
     const joined = doc.entities[0];
-    expect(joined).toMatchObject({ type: 'bezier', start: { x: 10, y: 0 } });
-    if (joined.type === 'bezier') {
-      expect(joined.segments).toHaveLength(4); // two spans per 180° sweep
-      // The loop closes back to its own start.
-      expect(joined.segments.at(-1)!.end.x).toBeCloseTo(10, 6);
-      expect(joined.segments.at(-1)!.end.y).toBeCloseTo(0, 6);
-      // Every span's own end sits on the true circle, not just near it.
-      for (const segment of joined.segments) {
-        expect(Math.hypot(segment.end.x - center.x, segment.end.y - center.y)).toBeCloseTo(radius, 6);
-      }
+    expect(joined).toMatchObject({ type: 'polyline', closed: true });
+    if (joined.type !== 'polyline') return;
+    expect(joined.vertices).toHaveLength(2);
+    expect(joined.bulges).toHaveLength(2);
+    // Both halves are exact half circles about the original centre.
+    for (const segment of polylineSegments(joined)) {
+      const arc = bulgeArc(segment.start, segment.end, segment.bulge)!;
+      expect(arc.radius).toBeCloseTo(radius, 9);
+      expect(arc.center.x).toBeCloseTo(center.x, 9);
+      expect(arc.center.y).toBeCloseTo(center.y, 9);
+      expect(Math.abs(arc.sweepAngle)).toBeCloseTo(Math.PI, 9);
     }
   });
 
-  it('joins an arc to a connected line into one exact spline, approximating only the arc', async () => {
+  it('joins an arc to a connected line into one polyline, keeping the arc exactly', async () => {
     const { doc, manager } = setup();
     const line = doc.createLine({ x: 0, y: 0 }, { x: 5, y: 0 });
     const arc = doc.createArc({ x: 5, y: 5 }, 5, -Math.PI / 2, Math.PI / 2);
@@ -448,14 +451,32 @@ describe('CommandManager history integration', () => {
     await manager.submitInput('');
     expect(doc.entities).toHaveLength(1);
     const joined = doc.entities[0];
-    expect(joined).toMatchObject({ type: 'bezier', start: { x: 0, y: 0 } });
-    if (joined.type === 'bezier') {
-      expect(joined.segments).toHaveLength(2);
-      expect(joined.segments[0].end).toMatchObject({ x: 5, y: 0 }); // the line's exact degenerate cubic
-      const arcEnd = joined.segments.at(-1)!.end;
-      expect(arcEnd.x).toBeCloseTo(10, 6);
-      expect(arcEnd.y).toBeCloseTo(5, 6);
-    }
+    expect(joined).toMatchObject({ type: 'polyline', closed: false });
+    if (joined.type !== 'polyline') return;
+    expect(joined.vertices).toEqual([
+      { x: expect.closeTo(0, 9), y: expect.closeTo(0, 9) },
+      { x: expect.closeTo(5, 9), y: expect.closeTo(0, 9) },
+      { x: expect.closeTo(10, 9), y: expect.closeTo(5, 9) },
+    ]);
+    // Straight first, then the arc — with its own centre and radius intact.
+    expect(joined.bulges![0]).toBe(0);
+    const quarter = bulgeArc(joined.vertices[1], joined.vertices[2], joined.bulges![1])!;
+    expect(quarter.radius).toBeCloseTo(5, 9);
+    expect(quarter.center.x).toBeCloseTo(5, 9);
+    expect(quarter.center.y).toBeCloseTo(5, 9);
+  });
+
+  it('still fits a spline when the chain holds a real Bezier, which has no bulge to keep', async () => {
+    const { doc, manager } = setup();
+    const arc = doc.createArc({ x: 5, y: 5 }, 5, -Math.PI / 2, Math.PI / 2);
+    const curve = doc.createBezier({ x: 10, y: 5 }, { x: 14, y: 5 }, { x: 18, y: 9 }, { x: 18, y: 13 });
+    doc.entities.push(arc, curve);
+    manager.startCommand('JOIN');
+    await manager.handleClick({ x: 7, y: 1 }, arc);
+    await manager.handleClick({ x: 14, y: 6 }, curve);
+    await manager.submitInput('');
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('bezier');
   });
 
   it('extends a line to a selected boundary', async () => {
@@ -5582,5 +5603,125 @@ describe('QDIM command', () => {
 
     expect(history.undo()).toBe(true);
     expect(doc.entities.filter((entity) => entity.type === 'dimension')).toHaveLength(0);
+  });
+});
+
+/** A stand-in for one of the Properties panel's DOM elements. */
+const panelElement = () => ({ hidden: false, addEventListener: vi.fn() }) as unknown as HTMLElement;
+
+describe('a polyline that holds its own arcs', () => {
+  /** The reported shape: a 3.5 mm slot, two straight sides and two 1.75 mm
+   *  caps, drawn as four separate objects the way anyone draws one. */
+  function slotPieces(doc: Document) {
+    const left = doc.createLine({ x: 0, y: 0 }, { x: 0, y: 6 });
+    const right = doc.createLine({ x: 3.5, y: 0 }, { x: 3.5, y: 6 });
+    const top = doc.createArc({ x: 1.75, y: 6 }, 1.75, 0, Math.PI);
+    const bottom = doc.createArc({ x: 1.75, y: 0 }, 1.75, Math.PI, Math.PI);
+    [left, right, top, bottom].forEach((entity) => doc.addEntity(entity));
+    return { left, right, top, bottom };
+  }
+
+  async function joinSlot(kit: ReturnType<typeof setup>) {
+    const pieces = slotPieces(kit.doc);
+    kit.manager.startCommand('JOIN');
+    for (const piece of Object.values(pieces)) await kit.manager.handleClick({ x: 0, y: 0 }, piece);
+    await kit.manager.submitInput('');
+    const joined = kit.doc.entities[0];
+    if (joined?.type !== 'polyline') throw new Error(`JOIN produced ${joined?.type ?? 'nothing'}`);
+    return joined;
+  }
+
+  it('keeps both slot ends as exact 1.75 mm arcs through JOIN', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+
+    expect(joined.closed).toBe(true);
+    const radii = polylineArcPieces(joined).map(({ arc }) => arc.radius);
+    expect(radii).toHaveLength(2);
+    for (const radius of radii) expect(radius).toBeCloseTo(1.75, 9);
+  });
+
+  it('says what those radii are in Properties, which is what was lost before', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+    const controller = new PropertiesController(kit.doc, kit.history, panelElement(), panelElement(), panelElement(), panelElement(), vi.fn());
+
+    const fields = (controller as unknown as { fields(object: Entity): Array<{ label: string; value: string | number }> }).fields(joined);
+    const radii = fields.filter((field) => field.label.endsWith('radius'));
+
+    expect(radii).toHaveLength(2);
+    for (const field of radii) expect(field.value).toBeCloseTo(1.75, 9);
+  });
+
+  it('explodes back into the lines and arcs it was joined from, radius and all', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+    kit.doc.selectEntity(joined.id);
+    kit.manager.startCommand('EXPLODE');
+
+    const types = kit.doc.entities.map((entity) => entity.type).sort();
+    expect(types).toEqual(['arc', 'arc', 'line', 'line']);
+    for (const entity of kit.doc.entities) {
+      if (entity.type === 'arc') expect(entity.radius).toBeCloseTo(1.75, 9);
+    }
+  });
+
+  it('extrudes into a solid with true cylindrical ends, not a faceted approximation', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+    // JOIN leaves its result selected, so EXTRUDE goes straight to the height.
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.submitInput('4');
+
+    expect(kit.doc.solids).toHaveLength(1);
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.solids[0], kernel);
+    expect(shape).not.toBeNull();
+    if (!shape) return;
+    // A slot is a 3.5 x 6 rectangle plus a full circle of radius 1.75; a
+    // polygon approximation of the caps would fall short of this by about a
+    // per cent, so the number itself is the evidence the arcs survived.
+    const area = 3.5 * 6 + Math.PI * 1.75 * 1.75;
+    const inspection = kernel.inspect(shape);
+    expect(inspection.volume).toBeCloseTo(area * 4, 6);
+    expect(inspection.solidCount).toBe(1);
+    // Two flat ends, two flat sides, two cylindrical caps.
+    expect(inspection.faceCount).toBe(6);
+    shape.dispose();
+  });
+
+  it('mirrors with its caps still bowing outwards', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+    kit.doc.selectEntity(joined.id);
+    kit.manager.startCommand('MIRROR');
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 10 });
+    await kit.manager.submitInput('N'); // keep the original
+
+    const mirrored = kit.doc.entities.find((entity) => entity.id !== joined.id);
+    expect(mirrored?.type).toBe('polyline');
+    if (mirrored?.type !== 'polyline') return;
+    // Same shape, reflected: still 3.5 wide across the slot and 1.75 at each
+    // cap. A bulge left unflipped would bow the caps into the slot instead,
+    // pulling the outline in rather than out.
+    const bounds = entityBounds(mirrored);
+    expect(bounds.max.x - bounds.min.x).toBeCloseTo(3.5, 6);
+    expect(bounds.max.y - bounds.min.y).toBeCloseTo(6 + 2 * 1.75, 6);
+  });
+
+  it('refuses to TRIM one, naming EXPLODE rather than cutting a shape that is not there', async () => {
+    const kit = setup();
+    const joined = await joinSlot(kit);
+    const knife = kit.doc.createLine({ x: -5, y: 3 }, { x: 10, y: 3 });
+    kit.doc.addEntity(knife);
+    kit.doc.clearSelection(); // JOIN leaves its result selected; TRIM would take it as a boundary
+    kit.manager.startCommand('TRIM');
+    await kit.manager.handleClick({ x: 0, y: 3 }, knife);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 1 }, joined);
+
+    expect(kit.log.mock.calls.flat().join('\n')).toContain('EXPLODE');
+    expect(kit.doc.getEntity(joined.id)).toMatchObject({ type: 'polyline', closed: true });
   });
 });

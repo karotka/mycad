@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
 import { exportAsciiDxf } from './DxfExport';
 import { importAsciiDxf } from './DxfImport';
+import { polylineArcPieces } from '../core/entities/polylineArcs';
 import { ellipsePoints, type Entity } from '../core/entities/types';
 
 /** Export `source`, read it straight back into a fresh document, return the entities. */
@@ -297,5 +298,35 @@ describe('linetype scale through DXF', () => {
     const dxf = exportAsciiDxf(doc).dxf.replace(/9\nLTSCALE\n40\n[^\n]*\n/, '').replace(/9\n\$LTSCALE\n40\n[^\n]*\n/, '');
 
     expect(importAsciiDxf(new Document(), dxf).linetypeScale).toBeUndefined();
+  });
+});
+
+describe('polyline arc segments through DXF', () => {
+  it('round-trips a slot outline as bulges, not as sampled points', () => {
+    const doc = new Document();
+    const slot = doc.createPolyline([{ x: 0, y: 0 }, { x: 0, y: 6 }], true);
+    slot.bulges = [-1, -1]; // both ends are half circles of radius 1.75
+    doc.addEntity(slot);
+
+    const entities = roundTrip(doc);
+
+    expect(entities).toHaveLength(1);
+    const read = entities[0];
+    expect(read.type).toBe('polyline');
+    if (read.type !== 'polyline') return;
+    // The closing duplicate `createPolyline` adds is written out too, so the
+    // segment count — and the bulges that go with it — must still line up.
+    for (const { arc } of polylineArcPieces(read)) expect(arc.radius).toBeCloseTo(3, 6);
+    expect(polylineArcPieces(read)).toHaveLength(2);
+  });
+
+  it('writes no bulge at all for an ordinary straight polyline', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createPolyline([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }], false));
+
+    const dxf = exportAsciiDxf(doc).dxf;
+
+    expect(dxf).toContain('LWPOLYLINE');
+    expect(dxf).not.toMatch(/\n42\n/);
   });
 });

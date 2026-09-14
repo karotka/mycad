@@ -12,6 +12,7 @@ import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 import { hatchPatternSegments } from '../../io/DxfHatch';
 import { mlineOffsetLines } from './mline';
+import { polylineOutline } from './polylineArcs';
 
 export interface EntityPath {
   points: Vec2[];
@@ -35,7 +36,7 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
       return [{ points: [entity.start, entity.end], closed: false }];
     case 'polyline':
       return entity.vertices.length >= 2
-        ? [{ points: [...entity.vertices], closed: entity.closed }]
+        ? [{ points: [...polylineOutline(entity)], closed: entity.closed }]
         : [];
     case 'rectangle':
       return [{

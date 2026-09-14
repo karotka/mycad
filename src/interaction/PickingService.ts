@@ -3,6 +3,7 @@ import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type En
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
+import { polylineOutline } from '../core/entities/polylineArcs';
 
 export interface SolidBounds {
   minX: number; minY: number; minZ: number;
@@ -125,7 +126,7 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
       };
     }
     case 'octagon': return { points: entity.vertices, closed: true };
-    case 'polyline': return { points: entity.vertices, closed: entity.closed };
+    case 'polyline': return { points: polylineOutline(entity), closed: entity.closed };
     // v1 picks the mline by its centerline only, not each parallel element —
     // matching where SnapService and GripController hook in for it too.
     case 'mline': return { points: entity.vertices, closed: entity.closed };

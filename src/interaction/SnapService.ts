@@ -1,4 +1,5 @@
 import type { Document } from '../core/Document';
+import { bulgeArc, hasPolylineArcs, polylineArcPieces, polylineOutline, polylineSegments } from '../core/entities/polylineArcs';
 import { curvePoints, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, type Entity, type Solid, type SolidMesh } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -263,7 +264,9 @@ function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
     points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
     closed = true;
   } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
-    points = entity.vertices;
+    // An arc segment is followed along its own curve, not across its chord —
+    // otherwise Nearest slides along a line that is not on the drawing.
+    points = entity.type === 'polyline' ? polylineOutline(entity) : entity.vertices;
     closed = entity.type === 'octagon' || entity.closed;
   } else if (entity.type === 'circle') {
     points = Array.from({ length: 32 }, (_, index) => {
@@ -561,6 +564,11 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
 function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityCenters(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon' || entity.type === 'ellipse') add(entity, entity.center);
+  // Each arc inside a polyline has a centre of its own — the hole a slot end
+  // was drawn around, which is exactly what gets aimed at next.
+  else if (entity.type === 'polyline') {
+    for (const { arc } of polylineArcPieces(entity)) add(entity, arc.center);
+  }
   else if (entity.type === 'rectangle') add(entity, midpoint(entity.first, entity.opposite));
   else if (entity.type === 'bezier') { const mid = bezierMidpoint(entity); if (mid) add(entity, mid); }
   else if (entity.type === 'text') add(entity, entity.position);
@@ -574,6 +582,15 @@ function addEntityMiddles(entity: Entity, add: (entity: Entity, point: Vec2) => 
   else if (entity.type === 'rectangle') {
     const corners = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }];
     corners.forEach((point, index) => add(entity, midpoint(point, corners[(index + 1) % corners.length])));
+  } else if (entity.type === 'polyline' && hasPolylineArcs(entity)) {
+    // The middle of a bulged segment is the top of its arc, not the middle of
+    // its chord — which for a half circle is not even on the drawing.
+    for (const segment of polylineSegments(entity)) {
+      const arc = bulgeArc(segment.start, segment.end, segment.bulge);
+      if (!arc) { add(entity, midpoint(segment.start, segment.end)); continue; }
+      const angle = arc.startAngle + arc.sweepAngle / 2;
+      add(entity, { x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius });
+    }
   } else if (entity.type === 'polyline' || entity.type === 'octagon' || entity.type === 'mline') {
     const vertices = entity.type !== 'octagon' && entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
     const segmentCount = entity.type === 'octagon' || entity.closed ? vertices.length : vertices.length - 1;

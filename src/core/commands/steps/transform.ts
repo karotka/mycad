@@ -203,6 +203,10 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
   // A mirror keeps the originals, so the copies need ids of their own.
   const mirrored = entities.map((entity) => {
     const copy = transformEntityPoints(entity, (point) => mirrorPoint2(point, axisStart, axisEnd));
+    // A reflection reverses the way round every arc turns, and a polyline says
+    // that with the sign of its bulge — left alone, a mirrored slot's caps bow
+    // into the slot instead of out of it.
+    if (copy.type === 'polyline' && copy.bulges) copy.bulges = copy.bulges.map((bulge) => -bulge);
     copy.id = genId(entity.type);
     return copy;
   });
