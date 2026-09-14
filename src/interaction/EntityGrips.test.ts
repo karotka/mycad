@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Vec2 } from '../math/geometry';
-import type { ArcEntity, BezierEntity, CircleEntity, PolylineEntity } from '../core/entities/types';
+import type { ArcEntity, BezierEntity, CircleEntity, EllipseEntity, PolylineEntity, RectangleEntity } from '../core/entities/types';
 import { entityReshapeGrips, reshapeEntityAtGrip } from './EntityGrips';
 
 const base = { id: 'e1', layer: '0', aci: 256, color: 0xffffff, selected: false };
@@ -26,6 +26,16 @@ describe('entityReshapeGrips', () => {
     };
     expect(entityReshapeGrips(circle)?.every(({ point }) => point.z === 7)).toBe(true);
     expect(entityReshapeGrips(arc)?.every(({ point }) => point.z === 9)).toBe(true);
+  });
+
+  it('gives an elevated rectangle four spatial corner grips', () => {
+    const rectangle: RectangleEntity = {
+      ...base, type: 'rectangle', first: elevated(1, 2, 6), opposite: elevated(5, 4, 6),
+    };
+    const grips = entityReshapeGrips(rectangle);
+    expect(grips?.map(({ point }) => point)).toEqual([
+      elevated(1, 2, 6), elevated(5, 2, 6), elevated(5, 4, 6), elevated(1, 4, 6),
+    ]);
   });
 });
 
@@ -53,5 +63,25 @@ describe('reshapeEntityAtGrip', () => {
     if (result?.type !== 'polyline') return;
     expect(result.vertices[0]).toEqual({ x: -1, y: -2 });
     expect(result.vertices.at(-1)).toEqual({ x: -1, y: -2 });
+  });
+
+  it('resizes a rotated ellipse in its own axis frame', () => {
+    const ellipse: EllipseEntity = {
+      ...base, type: 'ellipse', center: { x: 2, y: 3 },
+      radiusX: 4, radiusY: 2, rotation: Math.PI / 2,
+    };
+    const result = reshapeEntityAtGrip(ellipse, 1, { x: 2, y: 10 }, 0, 7);
+    expect(result?.type).toBe('ellipse');
+    if (result?.type === 'ellipse') expect(result.radiusX).toBeCloseTo(7);
+  });
+
+  it('reshapes a rectangle from a corner while keeping the opposite corner fixed', () => {
+    const rectangle: RectangleEntity = {
+      ...base, type: 'rectangle', first: { x: 0, y: 0 }, opposite: { x: 8, y: 4 },
+    };
+    const result = reshapeEntityAtGrip(rectangle, 1, { x: 10, y: -2 }, 2, -2);
+    expect(result).toMatchObject({
+      type: 'rectangle', first: { x: 0, y: 4 }, opposite: { x: 10, y: -2 },
+    });
   });
 });

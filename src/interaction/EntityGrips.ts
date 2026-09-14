@@ -1,4 +1,4 @@
-import { cloneEntity, type Entity } from '../core/entities/types';
+import { cloneEntity, ellipseAxisPoints, type Entity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
 
 export type EntityGrip = {
@@ -31,6 +31,22 @@ export function entityReshapeGrips(entity: Entity): EntityGrip[] | null {
       grips.push({ point: z === undefined ? point : { ...point, z }, index: index + 1, shape: 'square' });
     }
     return grips;
+  }
+  if (entity.type === 'ellipse') {
+    return [
+      { point: entity.center, index: 0, shape: 'square' },
+      ...ellipseAxisPoints(entity).map((point, index) => ({ point, index: index + 1, shape: 'square' as const })),
+    ];
+  }
+  if (entity.type === 'rectangle') {
+    const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
+    const corner = (x: number, y: number): Vec2 => z === undefined ? { x, y } : { x, y, z } as Vec2;
+    return [
+      corner(entity.first.x, entity.first.y),
+      corner(entity.opposite.x, entity.first.y),
+      corner(entity.opposite.x, entity.opposite.y),
+      corner(entity.first.x, entity.opposite.y),
+    ].map((point, index) => ({ point, index, shape: 'square' }));
   }
   if (entity.type === 'polyline') {
     const vertices = entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
@@ -76,6 +92,32 @@ export function reshapeEntityAtGrip(
   if (entity.type === 'circle' && original.type === 'circle') {
     if (gripIndex === 0) entity.center = pointWithElevation({ x: original.center.x + dx, y: original.center.y + dy }, original.center);
     else entity.radius = Math.max(0.0001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
+    return entity;
+  }
+  if (entity.type === 'ellipse' && original.type === 'ellipse') {
+    if (gripIndex === 0) {
+      entity.center = pointWithElevation({ x: original.center.x + dx, y: original.center.y + dy }, original.center);
+      return entity;
+    }
+    if (gripIndex < 1 || gripIndex > 4) return null;
+    const cos = Math.cos(-original.rotation), sin = Math.sin(-original.rotation);
+    const ox = cursor.x - original.center.x, oy = cursor.y - original.center.y;
+    const local = { x: ox * cos - oy * sin, y: ox * sin + oy * cos };
+    if (gripIndex % 2 === 1) entity.radiusX = Math.max(0.0001, Math.abs(local.x));
+    else entity.radiusY = Math.max(0.0001, Math.abs(local.y));
+    return entity;
+  }
+  if (entity.type === 'rectangle' && original.type === 'rectangle') {
+    if (gripIndex < 0 || gripIndex > 3) return null;
+    const corners = [
+      original.first,
+      { x: original.opposite.x, y: original.first.y },
+      original.opposite,
+      { x: original.first.x, y: original.opposite.y },
+    ];
+    const opposite = corners[(gripIndex + 2) % 4];
+    entity.first = pointWithElevation(opposite, original.first);
+    entity.opposite = pointWithElevation(cursor, original.opposite);
     return entity;
   }
   if (entity.type === 'polyline' && original.type === 'polyline') {

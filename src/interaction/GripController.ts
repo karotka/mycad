@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { cloneEntity, cloneSurfaceValue, dimensionDefaultTextPoint, dimensionGeometry, ellipseAxisPoints, getEntityPoints, transformEntityPoints, type Entity, type ExactSolidGeometry, type LoftFeature, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
+import { cloneEntity, cloneSurfaceValue, dimensionDefaultTextPoint, dimensionGeometry, getEntityPoints, transformEntityPoints, type Entity, type ExactSolidGeometry, type LoftFeature, type Solid, type SolidFeature, type Surface } from '../core/entities/types';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { UpdateEntityEdit, UpdateSolidEdit, UpdateSurfaceEdit, cloneSolid } from '../core/history/edits';
 import { arcFromSagitta } from '../math/arcFit';
@@ -423,30 +423,19 @@ export class GripController {
       return [{ point: GripController.edgeMidpoint(entity.first, entity.opposite), index: 0, shape: 'square' }];
     }
     if (entity?.type === 'rectangle') {
-      // Keep the corners' Z so a rectangle drawn off the work plane grips in place.
-      const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
-      const corner = (x: number, y: number): Vec2 => (z === undefined ? { x, y } : { x, y, z } as Vec2);
-      const corners = [
-        corner(entity.first.x, entity.first.y),
-        corner(entity.opposite.x, entity.first.y),
-        corner(entity.opposite.x, entity.opposite.y),
-        corner(entity.first.x, entity.opposite.y),
-      ];
+      const corners = entityReshapeGrips(entity)!;
       return [
-        ...corners.map((point, index) => ({ point, index, shape: 'square' as const })),
-        ...corners.map((point, index) => ({
-          point: GripController.edgeMidpoint(point, corners[(index + 1) % 4]),
+        ...corners,
+        ...corners.map((grip, index) => ({
+          point: GripController.edgeMidpoint(grip.point, corners[(index + 1) % 4].point),
           index: index + 4,
           shape: 'edge' as const,
-          angle: GripController.edgeAngle(point, corners[(index + 1) % 4]),
+          angle: GripController.edgeAngle(grip.point, corners[(index + 1) % 4].point),
         })),
       ];
     }
     if (entity?.type === 'ellipse' && !this.mode) {
-      return [
-        { point: entity.center, index: 0, shape: 'square' },
-        ...ellipseAxisPoints(entity).map((point, index) => ({ point, index: index + 1, shape: 'square' as const })),
-      ];
+      return entityReshapeGrips(entity)!;
     }
     if (entity?.type === 'circle' && !this.mode) {
       return entityReshapeGrips(entity)!;
@@ -809,6 +798,7 @@ export class GripController {
     const useSharedGrip = !(
       (original.type === 'line' && (this.mode === 'middle' || this.drag.gripIndex === 2))
       || (original.type === 'arc' && this.drag.gripIndex === 3)
+      || (original.type === 'rectangle' && (this.mode === 'center' || this.drag.gripIndex >= 4))
     );
     const reshaped = useSharedGrip
       ? reshapeEntityAtGrip(original, this.drag.gripIndex, cursor, dx, dy)
@@ -824,18 +814,6 @@ export class GripController {
     } else if (entity.type === 'line' && original.type === 'line') {
       entity.start = { x: original.start.x + dx, y: original.start.y + dy };
       entity.end = { x: original.end.x + dx, y: original.end.y + dy };
-    } else if (entity.type === 'ellipse' && original.type === 'ellipse') {
-      if (this.mode === 'center' || this.drag.gripIndex === 0) {
-        entity.center = { x: original.center.x + dx, y: original.center.y + dy };
-      } else {
-        // Grips 1 and 3 sit on the X axis, 2 and 4 on the Y; measure the cursor
-        // in the ellipse's own frame so a rotated one still resizes correctly.
-        const cos = Math.cos(-original.rotation), sin = Math.sin(-original.rotation);
-        const ox = cursor.x - original.center.x, oy = cursor.y - original.center.y;
-        const local = { x: ox * cos - oy * sin, y: ox * sin + oy * cos };
-        if (this.drag.gripIndex % 2 === 1) entity.radiusX = Math.max(0.0001, Math.abs(local.x));
-        else entity.radiusY = Math.max(0.0001, Math.abs(local.y));
-      }
     } else if(entity.type==='arc'&&original.type==='arc'){
       if(this.drag.gripIndex===3){
         // Midpoint grip: reshape via the arc's own start/end (the sagitta
@@ -871,16 +849,6 @@ export class GripController {
       if (this.mode === 'center') {
         entity.first = { x: original.first.x + dx, y: original.first.y + dy };
         entity.opposite = { x: original.opposite.x + dx, y: original.opposite.y + dy };
-      } else if (this.drag.gripIndex < 4) {
-        const corners = [
-          original.first,
-          { x: original.opposite.x, y: original.first.y },
-          original.opposite,
-          { x: original.first.x, y: original.opposite.y },
-        ];
-        const opposite = corners[(this.drag.gripIndex + 2) % 4];
-        entity.first = { ...opposite };
-        entity.opposite = { ...cursor };
       } else {
         // Mid-edge grips stretch only the selected side, keeping the opposite
         // side fixed. Indices 4..7 correspond to bottom/right/top/left.

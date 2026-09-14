@@ -106,6 +106,28 @@ reusable without forcing embedded loft members to expose inappropriate grips;
 otherwise retain them as controller-specific extensions and move to canonical
 paths/bounds.
 
+### 2026-09-14 — ellipse and rectangle reshape grips consolidated
+
+Status: **completed and verified; grip phase closed**.
+
+- Ellipse center/axis grips and their rotated-axis resizing now use the shared
+  `EntityGrips` implementation for ordinary and embedded entities.
+- Rectangle corner construction and corner reshaping are shared, including
+  optional elevation on all four displayed corners.
+- Embedded ellipse and rectangle profiles now reshape through their visible
+  basic grips instead of falling back to moving the entire profile regardless
+  of which grip was dragged.
+- Rectangle center movement and four mid-edge stretches, arc sagitta reshaping,
+  and dimension grips remain controller extensions because their interaction
+  semantics do not apply to loft members.
+- Added direct tests for elevated rectangle grip placement, rotated ellipse
+  resizing and fixed-opposite-corner rectangle reshaping.
+- Verification: TypeScript check passed; the full suite passed with 104 test
+  files and 1373 tests.
+
+No further grip refactoring is planned before user-facing grip behaviour changes.
+The next independent phase is canonical paths/bounds and picking.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in
