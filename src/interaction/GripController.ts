@@ -9,6 +9,7 @@ import { solidBounds } from './PickingService';
 import { translatedFeature } from '../core/solids/featureTransform';
 import { scaleAffine, transformedExactGeometry, translationAffine } from '../core/geometry/ExactTransform';
 import { buildExactFeature } from '../core/geometry/ExactSolid';
+import { entityReshapeGrips, reshapeEntityAtGrip } from './EntityGrips';
 
 /** A loft's own boundary — its embedded profiles, guides and optional path,
  *  each a real Entity value with its own work plane — flattened into one
@@ -76,40 +77,8 @@ function setEmbeddedLoftEntity(feature: LoftFeature, index: number, entity: Enti
  * of this feature, not repositioning the whole curve, which MOVE already does.
  */
 function gripsForEmbeddedEntity(entity: Entity): Grip[] {
-  if (entity.type === 'line') {
-    return [
-      { point: entity.start, index: 0, shape: 'square' },
-      { point: entity.end, index: 1, shape: 'square' },
-    ];
-  }
-  if (entity.type === 'circle') {
-    const result: Grip[] = [{ point: entity.center, index: 0, shape: 'square' }];
-    for (let i = 0; i < 4; i++) {
-      const angle = i * Math.PI / 2;
-      result.push({
-        point: { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius },
-        index: i + 1,
-        shape: 'square',
-      });
-    }
-    return result;
-  }
-  if (entity.type === 'polyline') {
-    const vertices = entity.closed ? entity.vertices.slice(0, -1) : entity.vertices;
-    return vertices.map((point, index) => ({ point, index, shape: 'square' as const }));
-  }
-  if (entity.type === 'bezier') {
-    const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
-    return points.map((point, index) => ({ point, index, shape: 'square' as const }));
-  }
-  if (entity.type === 'arc') {
-    const point = (a: number): Vec2 => ({ x: entity.center.x + Math.cos(a) * entity.radius, y: entity.center.y + Math.sin(a) * entity.radius });
-    return [
-      { point: entity.center, index: 0, shape: 'square' },
-      { point: point(entity.startAngle), index: 1, shape: 'square' },
-      { point: point(entity.startAngle + entity.sweepAngle), index: 2, shape: 'square' },
-    ];
-  }
+  const shared = entityReshapeGrips(entity);
+  if (shared) return shared;
   // A closed-profile type (rectangle, octagon, ellipse) used as a rail: no
   // bespoke reshape here, just its own raw point list — same fallback
   // visibleGrips() below already uses for anything it doesn't special-case.
@@ -123,65 +92,12 @@ function gripsForEmbeddedEntity(entity: Entity): Grip[] {
  * feature tree, not its own document object with an id to look up).
  */
 function applyEmbeddedEntityGripDrag(original: Entity, gripIndex: number, cursor: Vec2, dx: number, dy: number): Entity {
-  const entity = cloneEntity(original);
-  if (entity.type === 'line' && original.type === 'line') {
-    if (gripIndex === 0) entity.start = { ...cursor };
-    else entity.end = { ...cursor };
-    return entity;
-  }
-  if (entity.type === 'circle' && original.type === 'circle') {
-    if (gripIndex === 0) entity.center = { x: original.center.x + dx, y: original.center.y + dy };
-    else entity.radius = Math.max(0.0001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
-    return entity;
-  }
-  if (entity.type === 'polyline' && original.type === 'polyline') {
-    entity.vertices[gripIndex] = { ...cursor };
-    if (entity.closed && gripIndex === 0) entity.vertices[entity.vertices.length - 1] = { ...cursor };
-    return entity;
-  }
-  if (entity.type === 'bezier' && original.type === 'bezier') {
-    // Same elevation rule as updateEntity's own bezier branch: an axis-locked
-    // drag's cursor carries the elevation it asked for and wins, otherwise the
-    // point keeps the one it already had rather than being flattened.
-    const originalPoints = [original.start, ...original.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
-    const elevation = (cursor as Vec2 & { z?: number }).z
-      ?? (originalPoints[gripIndex] as (Vec2 & { z?: number }) | undefined)?.z;
-    const point: Vec2 & { z?: number } = elevation === undefined
-      ? { x: cursor.x, y: cursor.y }
-      : { x: cursor.x, y: cursor.y, z: elevation };
-    if (gripIndex === 0) entity.start = point;
-    else {
-      const segmentIndex = Math.floor((gripIndex - 1) / 3);
-      const field = (gripIndex - 1) % 3;
-      const segment = entity.segments[segmentIndex];
-      if (field === 0) segment.control1 = point;
-      else if (field === 1) segment.control2 = point;
-      else segment.end = point;
-    }
-    return entity;
-  }
-  if (entity.type === 'arc' && original.type === 'arc') {
-    if (gripIndex === 0) entity.center = { x: original.center.x + dx, y: original.center.y + dy };
-    else {
-      const a = Math.atan2(cursor.y - original.center.y, cursor.x - original.center.x);
-      entity.radius = Math.max(0.001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
-      if (gripIndex === 1) {
-        entity.startAngle = a;
-        let s = original.startAngle + original.sweepAngle - a;
-        while (s <= 0) s += Math.PI * 2;
-        entity.sweepAngle = s;
-      } else {
-        let s = a - original.startAngle;
-        if (s <= 0) s += Math.PI * 2;
-        entity.sweepAngle = s;
-      }
-    }
-    return entity;
-  }
+  const shared = reshapeEntityAtGrip(original, gripIndex, cursor, dx, dy);
+  if (shared) return shared;
   // Anything else (rectangle/octagon/ellipse) moves its whole raw point list
   // by the drag delta — rigid, rather than a bespoke per-type reshape for a
   // type unlikely to appear as a rail/guide in the first place.
-  return transformEntityPoints(entity, (point) => ({ x: point.x + dx, y: point.y + dy }));
+  return transformEntityPoints(original, (point) => ({ x: point.x + dx, y: point.y + dy }));
 }
 
 export type GripMode = 'end' | 'center' | 'middle';
@@ -500,8 +416,7 @@ export class GripController {
       return [{ point: GripController.edgeMidpoint(entity.start, entity.end), index: 0, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) }];
     }
     if (entity?.type === 'line') return [
-      { point: entity.start, index: 0, shape: 'square' },
-      { point: entity.end, index: 1, shape: 'square' },
+      ...entityReshapeGrips(entity)!,
       { point: GripController.edgeMidpoint(entity.start, entity.end), index: 2, shape: 'edge', angle: GripController.edgeAngle(entity.start, entity.end) },
     ];
     if (entity?.type === 'rectangle' && this.mode === 'center') {
@@ -534,30 +449,22 @@ export class GripController {
       ];
     }
     if (entity?.type === 'circle' && !this.mode) {
-      // The quadrant grips must keep the centre's Z, or a circle drawn off the
-      // work plane (in another UCS) shows its rim grips floating on the plane.
-      const z = (entity.center as Vec2 & { z?: number }).z;
-      const result: Grip[] = [{ point: entity.center, index: 0, shape: 'square' }];
-      for (let i = 0; i < 4; i++) {
-        const angle = i * Math.PI / 2;
-        const point: Vec2 = { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
-        result.push({ point: z === undefined ? point : { ...point, z } as Vec2, index: i + 1, shape: 'square' });
-      }
-      return result;
+      return entityReshapeGrips(entity)!;
     }
-    if ((entity?.type === 'octagon' || entity?.type === 'polyline') && !this.mode) {
-      const vertices = entity.type === 'polyline' && entity.closed
-        ? entity.vertices.slice(0, -1)
-        : entity.vertices;
-      return vertices.map((point, index) => ({ point, index, shape: 'square' }));
+    if (entity?.type === 'octagon' && !this.mode) {
+      return entity.vertices.map((point, index) => ({ point, index, shape: 'square' }));
     }
+    if (entity?.type === 'polyline' && !this.mode) return entityReshapeGrips(entity)!;
     if (entity?.type === 'bezier' && !this.mode) {
-      // Index 0 is the shared start; each segment after it contributes three
-      // more grips (its own control1, control2, end) at 1 + 3*segmentIndex.
-      const points = [entity.start, ...entity.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
-      return points.map((point, index) => ({ point, index, shape: 'square' as const }));
+      return entityReshapeGrips(entity)!;
     }
-    if (entity?.type === 'arc' && !this.mode) { const z=(entity.center as Vec2 & {z?:number}).z; const point=(a:number):Vec2=>{const p:Vec2={x:entity.center.x+Math.cos(a)*entity.radius,y:entity.center.y+Math.sin(a)*entity.radius}; return z===undefined?p:{...p,z} as Vec2;}; return [{point:entity.center,index:0,shape:'square'},{point:point(entity.startAngle),index:1,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle),index:2,shape:'square'},{point:point(entity.startAngle+entity.sweepAngle/2),index:3,shape:'edge'}]; }
+    if (entity?.type === 'arc' && !this.mode) {
+      const basic = entityReshapeGrips(entity)!;
+      const z = (entity.center as Vec2 & { z?: number }).z;
+      const angle = entity.startAngle + entity.sweepAngle / 2;
+      const flat = { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
+      return [...basic, { point: z === undefined ? flat : { ...flat, z }, index: 3, shape: 'edge' }];
+    }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
     if (entity?.type === 'dimension' && !this.mode) {
       const geometry = dimensionGeometry(entity);
@@ -899,22 +806,24 @@ export class GripController {
     const entity = this.doc.getEntity(this.drag.objectId);
     const original = this.drag.originalEntity;
     if (!entity) return;
+    const useSharedGrip = !(
+      (original.type === 'line' && (this.mode === 'middle' || this.drag.gripIndex === 2))
+      || (original.type === 'arc' && this.drag.gripIndex === 3)
+    );
+    const reshaped = useSharedGrip
+      ? reshapeEntityAtGrip(original, this.drag.gripIndex, cursor, dx, dy)
+      : null;
+    if (reshaped) {
+      Object.assign(entity, reshaped);
+      return;
+    }
     if (entity.type === 'point' && original.type === 'point') {
       entity.position = { ...cursor };
     } else if (entity.type === 'insert' && original.type === 'insert') {
       entity.position = { ...cursor };
     } else if (entity.type === 'line' && original.type === 'line') {
-      if (this.mode === 'middle' || this.drag.gripIndex === 2) {
-        entity.start = { x: original.start.x + dx, y: original.start.y + dy };
-        entity.end = { x: original.end.x + dx, y: original.end.y + dy };
-      } else if (this.drag.gripIndex === 0) entity.start = { ...cursor };
-      else if (this.drag.gripIndex === 1) entity.end = { ...cursor };
-    } else if (entity.type === 'circle' && original.type === 'circle') {
-      if (this.mode === 'center' || this.drag.gripIndex === 0) {
-        entity.center = { x: original.center.x + dx, y: original.center.y + dy };
-      } else {
-        entity.radius = Math.max(0.0001, Math.hypot(cursor.x - original.center.x, cursor.y - original.center.y));
-      }
+      entity.start = { x: original.start.x + dx, y: original.start.y + dy };
+      entity.end = { x: original.end.x + dx, y: original.end.y + dy };
     } else if (entity.type === 'ellipse' && original.type === 'ellipse') {
       if (this.mode === 'center' || this.drag.gripIndex === 0) {
         entity.center = { x: original.center.x + dx, y: original.center.y + dy };
@@ -927,44 +836,8 @@ export class GripController {
         if (this.drag.gripIndex % 2 === 1) entity.radiusX = Math.max(0.0001, Math.abs(local.x));
         else entity.radiusY = Math.max(0.0001, Math.abs(local.y));
       }
-    } else if (entity.type === 'polyline' && original.type === 'polyline') {
-      entity.vertices[this.drag.gripIndex] = { ...cursor };
-      if (entity.closed && this.drag.gripIndex === 0) {
-        entity.vertices[entity.vertices.length - 1] = { ...cursor };
-      }
-    } else if (entity.type === 'bezier' && original.type === 'bezier') {
-      // Index 0 is the shared start; grip i>0 is field (i-1)%3 of segment
-      // floor((i-1)/3) — the same layout activeGrips() lays the points out in.
-      const gripIndex = this.drag.gripIndex;
-      const originalPoints = [original.start, ...original.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
-      const draggedOriginal = originalPoints[gripIndex] as (Vec2 & { z?: number }) | undefined;
-      // A genuinely 3D curve (drawBezier building one from points on
-      // different Dynamic UCS planes, each keeping its own elevation) must
-      // not have that elevation silently dropped just because this grip's
-      // own drag cursor is a plain local (x, y) — reported directly, with
-      // screenshots showing the rest of the curve twisting into a
-      // self-crossing mess once one point's z vanished while its
-      // neighbours' did not.
-      //
-      // A cursor that DOES carry an elevation is an axis-locked drag
-      // (GripAxisDrag) deliberately pulling the point off its plane, and wins
-      // over the old one — that is the whole gesture.
-      const elevation = cursor.z ?? draggedOriginal?.z;
-      const point: Vec2 & { z?: number } = elevation === undefined
-        ? { x: cursor.x, y: cursor.y }
-        : { x: cursor.x, y: cursor.y, z: elevation };
-      if (gripIndex === 0) entity.start = point;
-      else {
-        const segmentIndex = Math.floor((gripIndex - 1) / 3);
-        const field = (gripIndex - 1) % 3;
-        const segment = entity.segments[segmentIndex];
-        if (field === 0) segment.control1 = point;
-        else if (field === 1) segment.control2 = point;
-        else segment.end = point;
-      }
     } else if(entity.type==='arc'&&original.type==='arc'){
-      if(this.drag.gripIndex===0)entity.center={x:original.center.x+dx,y:original.center.y+dy};
-      else if(this.drag.gripIndex===3){
+      if(this.drag.gripIndex===3){
         // Midpoint grip: reshape via the arc's own start/end (the sagitta
         // construction ARC_SER uses), so both endpoints stay put — unlike
         // grips 1/2, which move whichever endpoint they belong to.
@@ -972,7 +845,6 @@ export class GripController {
         const arc=arcFromSagitta(point(original.startAngle),point(original.startAngle+original.sweepAngle),cursor);
         if(arc){entity.center=arc.center;entity.radius=arc.radius;entity.startAngle=arc.startAngle;entity.sweepAngle=arc.sweepAngle;}
       }
-      else {const a=Math.atan2(cursor.y-original.center.y,cursor.x-original.center.x);entity.radius=Math.max(.001,Math.hypot(cursor.x-original.center.x,cursor.y-original.center.y));if(this.drag.gripIndex===1){entity.startAngle=a;let s=original.startAngle+original.sweepAngle-a;while(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}else {let s=a-original.startAngle;if(s<=0)s+=Math.PI*2;entity.sweepAngle=s;}}
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
     else if (entity.type === 'dimension' && original.type === 'dimension') {
       const gripIndex = this.drag.gripIndex;

@@ -81,6 +81,31 @@ Remaining in the kernel phase: evaluate the specialized extrusion conversion
 before sharing it, then connect canonical display paths only where doing so does
 not replace analytic kernel geometry with tessellation.
 
+### 2026-09-14 — basic entity reshape grips consolidated
+
+Status: **completed and verified**.
+
+- Added `src/interaction/EntityGrips.ts` with the shared basic grip layout and
+  reshape operation for lines, circles, polylines, Bezier chains and arcs.
+- Ordinary document entities and entities embedded in loft profiles,
+  rails/guides or paths now use the same indices and editing implementation.
+- Optional point elevation is preserved for line/polyline/Bezier edits and for
+  circle/arc centers and rim grips; an explicitly elevated axis-drag cursor
+  still overrides the previous value.
+- Closed polyline editing keeps the first and repeated closing vertex in sync.
+- Midpoint/whole-edge grips, arc sagitta reshaping, ellipse, rectangle and
+  dimension grips remain intentionally specialized in `GripController` because
+  embedded loft members do not expose the same interaction set.
+- Added direct regression tests for grip indices, spatial rim grips, elevation
+  preservation and closed-polyline editing.
+- Verification: TypeScript check passed; the full suite passed with 104 test
+  files and 1370 tests.
+
+Remaining in the grip phase: assess whether ellipse/rectangle helpers are
+reusable without forcing embedded loft members to expose inappropriate grips;
+otherwise retain them as controller-specific extensions and move to canonical
+paths/bounds.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in
