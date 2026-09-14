@@ -220,6 +220,7 @@ export function shellHtml(tools: ShellTools): string {
           <label class="property-row"><span>Length units</span><select id="dimension-unit-suffix"><option value="none">No suffix</option><option value="mm">mm</option></select></label>
           <label class="property-row"><span>Scale</span><input id="dimension-scale" type="number" min="0.01" step="0.1"></label>
           <label class="property-row"><span>Layer</span><select id="dimension-layer"></select></label>
+          <div class="property-row"><span>Existing dimensions</span><button id="dimension-apply-all" type="button" title="Bring every dimension already in the drawing up to these values — for a drawing whose dimensions were made at a different size (AutoCAD's DIMSTYLE Apply)">Apply style to all</button></div>
         </form>
         <form class="properties-content settings-tab-panel" id="hatch-settings-form" hidden>
           <label class="property-row"><span>Pattern</span><select id="hatch-pattern"><option value="lines">Lines</option><option value="cross">Cross</option><option value="solid">Solid</option></select></label>

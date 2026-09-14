@@ -37,6 +37,30 @@ export interface DimensionStyle {
   layer: string;
 }
 
+/**
+ * The part of a dimension its drawing's style decides — everything but where
+ * it sits and what it measures.
+ *
+ * A dimension carries its own copy of each of these rather than reading the
+ * style live, so this is the one list that says which fields those are: the
+ * style panel and the "draw a new dimension" path both use it, and neither can
+ * fall behind the other.
+ */
+export function dimensionStyleFields(style: DimensionStyle) {
+  return {
+    textHeight: style.textHeight,
+    arrowSize: style.arrowSize,
+    arrowType: style.arrowType,
+    extensionBeyond: style.extensionBeyond,
+    extensionOffset: style.extensionOffset,
+    textOffset: style.textOffset,
+    precision: style.precision,
+    angularPrecision: style.angularPrecision,
+    unitSuffix: style.unitSuffix,
+    scale: style.scale,
+  };
+}
+
 export interface HatchSettings {
   pattern: 'lines' | 'cross' | 'solid';
   angle: number;

@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import type { DimensionStyle } from '../core/settings';
+import { dimensionStyleFields, type DimensionStyle } from '../core/settings';
 import { ACI_WHITE, aciToRgb } from '../io/DxfAci';
 import { SETTINGS_DEFAULT_KEYS, storeDefault } from './settingsDefaults';
 
@@ -10,6 +10,25 @@ export class DimensionStyleController {
     private readonly changed: () => void,
   ) {
     form.addEventListener('input', () => this.apply());
+    // Editing a value applies it to the whole drawing, but a drawing whose
+    // dimensions were drawn at another size and then saved alongside a style
+    // it never followed has nothing to edit — the panel already shows the
+    // numbers wanted. This is the way to say "yes, those ones too".
+    form.querySelector('#dimension-apply-all')?.addEventListener('click', () => this.applyToAllDimensions());
+  }
+
+  /** AutoCAD's DIMSTYLE Apply: every dimension takes the drawing's style. */
+  applyToAllDimensions(): number {
+    const fields = dimensionStyleFields(this.doc.dimensionStyle);
+    let count = 0;
+    for (const entity of this.doc.entities) {
+      if (entity.type !== 'dimension') continue;
+      Object.assign(entity, fields);
+      count++;
+    }
+    this.doc.notify();
+    this.changed();
+    return count;
   }
 
   private applying = false;
@@ -82,18 +101,16 @@ export class DimensionStyleController {
       layer,
     };
     this.doc.dimensionStyle = style;
+    // Every dimension in the drawing, not only those on the style's own layer.
+    // A drawing has one dimension style, so setting it has to reach the
+    // dimensions that are already drawn — reported on a house plan whose 140
+    // dimensions sat on a layer named "koty" while the style's layer said
+    // "dims": the style was saved with the file and read back correctly, and
+    // changed nothing anyone could see. The layer still decides where a *new*
+    // dimension is put, which is what it is for.
+    const fields = dimensionStyleFields(style);
     for (const entity of this.doc.entities) {
-      if (entity.type !== 'dimension' || entity.layer !== layer) continue;
-      entity.textHeight = style.textHeight;
-      entity.arrowSize = style.arrowSize;
-      entity.arrowType = style.arrowType;
-      entity.extensionBeyond = style.extensionBeyond;
-      entity.extensionOffset = style.extensionOffset;
-      entity.textOffset = style.textOffset;
-      entity.precision = style.precision;
-      entity.angularPrecision = style.angularPrecision;
-      entity.unitSuffix = style.unitSuffix;
-      entity.scale = style.scale;
+      if (entity.type === 'dimension') Object.assign(entity, fields);
     }
     storeDefault(SETTINGS_DEFAULT_KEYS.dimensionStyle, style);
     this.doc.notify();

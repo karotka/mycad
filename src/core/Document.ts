@@ -27,7 +27,7 @@ import {
   type MlineElement,
   type MlineEntity,
 } from './entities/types';
-import { defaultDimensionStyle, defaultDraftingSettings, defaultGcodeOptions, defaultHatchSettings, defaultMlineStyles, STANDARD_MLINE_STYLE_ID, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type MlineStyle } from './settings';
+import { defaultDimensionStyle, defaultDraftingSettings, dimensionStyleFields, defaultGcodeOptions, defaultHatchSettings, defaultMlineStyles, STANDARD_MLINE_STYLE_ID, type DimensionStyle, type DraftingSettings, type GcodeOptions, type HatchSettings, type MlineStyle } from './settings';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci, rgbToAci } from '../io/DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM } from './lineStyles';
 
@@ -526,13 +526,7 @@ export class Document {
       id: genId('dim'), type: 'dimension', layer,
       aci: ACI_BYLAYER, color: this.layerColorFor(layer), selected: false,
       workPlane: cloneWorkPlane(this.activeWorkPlane), start, end, offset, dimensionKind, rotation,
-      textHeight: this.dimensionStyle.textHeight, arrowSize: this.dimensionStyle.arrowSize,
-      arrowType: this.dimensionStyle.arrowType, extensionBeyond: this.dimensionStyle.extensionBeyond,
-      extensionOffset: this.dimensionStyle.extensionOffset, textOffset: this.dimensionStyle.textOffset,
-      precision: this.dimensionStyle.precision,
-      angularPrecision: this.dimensionStyle.angularPrecision,
-      unitSuffix: this.dimensionStyle.unitSuffix,
-      scale: this.dimensionStyle.scale,
+      ...dimensionStyleFields(this.dimensionStyle),
     };
   }
 
