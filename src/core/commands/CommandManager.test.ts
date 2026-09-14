@@ -13,7 +13,7 @@ import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMes
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from './steps/solids';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../solids/SolidTopology';
-import { buildExactFeature, openExactShape } from '../geometry/ExactSolid';
+import { buildExactFeature, exactResult, openExactShape } from '../geometry/ExactSolid';
 import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 import { bezierLineIntersections, cubicBezierLineParameters, evaluateCubicBezier, splitCubicBezier } from './steps/edit2d';
 import { worldPointsAreCoplanar } from './steps/draw';
@@ -2381,7 +2381,17 @@ describe('CommandManager history integration', () => {
 
     expect(manager.active).toBeNull();
     expect(doc.solids).toHaveLength(2);
-    expect(doc.solids.every((solid) => solid.feature.kind === 'mesh')).toBe(true);
+    // Each half keeps the recipe it was cut from — it used to be baked to a
+    // plain mesh, which ended the model tree at the cut.
+    expect(doc.solids.map((solid) => solid.feature.kind)).toEqual(['slice', 'slice']);
+    for (const solid of doc.solids) {
+      if (solid.feature.kind !== 'slice') continue;
+      expect(solid.feature.source).toMatchObject({ kind: 'primitive', primitive: 'box' });
+      expect(solid.feature.sourceMesh).toBeUndefined(); // the source rebuilds itself
+    }
+    // The cut is the x = 0 plane, so one half is on each side of it.
+    expect(doc.solids.map((solid) => solid.feature.kind === 'slice' ? solid.feature.side : '').sort())
+      .toEqual(['back', 'front']);
     expect(doc.solids.map((solid) => solid.name)).toEqual(['Block_Slice1', 'Block_Slice2']);
     expect(doc.getSelectedSolids()).toHaveLength(2);
 
@@ -5723,5 +5733,93 @@ describe('a polyline that holds its own arcs', () => {
 
     expect(kit.log.mock.calls.flat().join('\n')).toContain('EXPLODE');
     expect(kit.doc.getEntity(joined.id)).toMatchObject({ type: 'polyline', closed: true });
+  });
+});
+
+describe('a sliced solid keeps its recipe', () => {
+  /** Cuts a 10 x 6 x 4 box down the x = 0 plane and hands back both halves. */
+  async function sliceABox(kit: ReturnType<typeof setup>) {
+    const source = kit.doc.createSolid(createBoxMesh(10, 6, 4), 'Block', 4, [], undefined, {
+      kind: 'primitive', primitive: 'box', center: { x: 0, y: 0 }, width: 10, depth: 6, height: 4,
+    });
+    kit.doc.addSolid(source);
+    kit.manager.startCommand('SLICE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, source.id);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: -3, z: 0 });
+    await kit.manager.handleClick({ x: 0, y: 3, z: 0 });
+    await kit.manager.handleClick({ x: 0, y: 0, z: 4 });
+    return kit.doc.solids;
+  }
+
+  it('rebuilds each half when the shape it was cut from changes', async () => {
+    const kit = setup();
+    const halves = await sliceABox(kit);
+    const front = halves.find((solid) => solid.feature.kind === 'slice' && solid.feature.side === 'front')!;
+    expect(front.feature.kind).toBe('slice');
+    if (front.feature.kind !== 'slice') return;
+
+    // Widen the box the cut was made from: the half must follow it.
+    const wider = {
+      ...front.feature,
+      source: { ...front.feature.source, width: 30 } as typeof front.feature.source,
+    };
+    const rebuilt = await buildExactFeature(wider, 1);
+
+    expect(rebuilt).not.toBeNull();
+    if (!rebuilt) return;
+    const xs: number[] = [];
+    for (let index = 0; index < rebuilt.mesh.positions.length; index += 3) xs.push(rebuilt.mesh.positions[index]);
+    // Still the half on the plane's own side, now reaching to the new edge.
+    expect(Math.min(...xs)).toBeCloseTo(0, 6);
+    expect(Math.max(...xs)).toBeCloseTo(15, 6);
+  });
+
+  it('cuts the same half in half again, so the tree can go deeper', async () => {
+    const kit = setup();
+    const halves = await sliceABox(kit);
+    const first = halves[0];
+    kit.doc.clearSelection();
+    kit.manager.startCommand('SLICE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: -5, y: 0, z: 0 });
+    await kit.manager.handleClick({ x: 5, y: 0, z: 0 });
+    await kit.manager.handleClick({ x: 0, y: 0, z: 4 });
+
+    const quarters = kit.doc.solids.filter((solid) => solid.name.includes('_Slice') && solid.name.split('_Slice').length === 3);
+    expect(quarters).toHaveLength(2);
+    for (const quarter of quarters) {
+      expect(quarter.feature.kind).toBe('slice');
+      if (quarter.feature.kind === 'slice') expect(quarter.feature.source.kind).toBe('slice');
+    }
+  });
+
+  it('bakes to a mesh when the cut makes more than two pieces, rather than naming one it cannot find again', async () => {
+    const kit = setup();
+    // A U: two uprights joined by a base, cut straight across both uprights.
+    const left = kit.doc.createSolid(createBoxMesh(2, 4, 10), 'Left', 10, [], undefined, { kind: 'mesh' });
+    const right = kit.doc.createSolid(createBoxMesh(2, 4, 10), 'Right', 10, [], undefined, { kind: 'mesh' });
+    for (let index = 0; index < left.mesh.positions.length; index += 3) left.mesh.positions[index] -= 6;
+    for (let index = 0; index < right.mesh.positions.length; index += 3) right.mesh.positions[index] += 6;
+    const kernel = await openCascadeKernel();
+    const shapes = [left, right].map((solid) => kernel.fromMesh([...solid.mesh.positions], [...solid.mesh.indices]));
+    const fused = kernel.union(shapes);
+    const geometry = exactResult(kernel, fused, 0);
+    const both = kit.doc.createSolid(geometry.mesh, 'Two posts', 10, [], undefined, { kind: 'mesh' });
+    both.exact = geometry.exact;
+    kit.doc.addSolid(both);
+    shapes.forEach((shape) => shape.dispose());
+    fused.dispose();
+
+    kit.manager.startCommand('SLICE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, both.id);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: -20, y: -2, z: 5 });
+    await kit.manager.handleClick({ x: 20, y: -2, z: 5 });
+    await kit.manager.handleClick({ x: 0, y: 2, z: 5 });
+
+    expect(kit.doc.solids.length).toBeGreaterThan(2);
+    expect(kit.doc.solids.every((solid) => solid.feature.kind === 'mesh')).toBe(true);
   });
 });

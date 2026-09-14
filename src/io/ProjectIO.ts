@@ -126,7 +126,7 @@ function trimFeatureForSave(feature: SolidFeature): SolidFeature {
   if (feature.kind === 'boolean') {
     return { ...feature, operands: feature.operands.map(trimFeatureForSave) };
   }
-  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region') {
+  if (feature.kind === 'edge-modification' || feature.kind === 'presspull-region' || feature.kind === 'slice') {
     const source = trimFeatureForSave(feature.source);
     if (source.kind === 'mesh') return { ...feature, source };
     const { sourceMesh: _dropped, ...rest } = feature;

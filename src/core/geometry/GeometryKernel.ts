@@ -67,6 +67,10 @@ export interface SolidInspection {
   faceCount: number;
   solidCount: number;
   volume: number;
+  /** The volume's own centre of mass — not the bounding box's centre, which
+   *  for an L-shaped piece is not even inside it. What says which side of a
+   *  cutting plane a sliced piece is on. */
+  centroid: Point3;
   valid: boolean;
 }
 

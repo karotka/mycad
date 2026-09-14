@@ -687,6 +687,30 @@ export interface DraftFeature {
 }
 
 /**
+ * One of the pieces a SLICE cut a solid into.
+ *
+ * Both halves used to be baked to a plain mesh, which is why a sliced solid's
+ * model tree ended at "mesh" — everything that made it was still true, and
+ * nothing downstream could reach it any more.
+ *
+ * The piece is named by which side of the cutting plane its own volume centroid
+ * falls on, not by the order OpenCascade happened to return the pieces in: that
+ * order is not part of the model, while the side is. It follows that a cut into
+ * more than two pieces has no such name, so SLICE bakes those to a mesh as
+ * before rather than pretending.
+ */
+export interface SliceFeature {
+  kind: 'slice';
+  source: SolidFeature;
+  plane: { origin: Vec3; normal: Vec3 };
+  /** 'front' is the side the plane's own normal points toward. */
+  side: 'front' | 'back';
+  /** Geometry immediately before this operation — kept only when the source is a
+   * baked mesh with no recipe; a regenerable source drops it to keep files small. */
+  sourceMesh?: SerializedSolidMesh;
+}
+
+/**
  * A solid built directly through an ordered sequence of closed profiles —
  * a leaf feature, like ExtrusionFeature/SweepFeature, since there is no
  * single "source" solid it modifies.
@@ -756,7 +780,7 @@ export interface OffsetSurfaceFeature {
   sourceMesh?: SerializedSolidMesh;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature | OffsetSurfaceFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature | OffsetSurfaceFeature | SliceFeature;
 
 export interface Solid {
   id: string;

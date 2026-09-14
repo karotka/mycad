@@ -1,4 +1,4 @@
-import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SliceFeature, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import type { Vec2 } from '../../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -94,6 +94,7 @@ function exactShapeFromFeature(feature: SolidFeature, kernel: OpenCascadeKernel)
   if (feature.kind === 'shell') return exactShellShape(feature, kernel);
   if (feature.kind === 'loft') return exactLoftShape(feature, kernel);
   if (feature.kind === 'draft') return exactDraftShape(feature, kernel);
+  if (feature.kind === 'slice') return exactSliceShape(feature, kernel);
   if (feature.kind === 'surface-offset') return exactOffsetSurfaceShape(feature, kernel);
   if (feature.kind !== 'boolean' || feature.operands.length === 0) return null;
 
@@ -174,6 +175,45 @@ function exactOffsetSurfaceShape(feature: OffsetSurfaceFeature, kernel: OpenCasc
   } finally {
     source.dispose();
   }
+}
+
+/**
+ * Re-cuts the source and keeps the piece on the side this one was named by.
+ *
+ * Null when the cut no longer produces exactly one piece on that side — an
+ * upstream edit can turn one cut into several, and there is no honest way to
+ * say which of them the original was. Callers fall back to the geometry
+ * already stored, so the solid stays as it is rather than becoming a different
+ * one without being asked.
+ */
+function exactSliceShape(feature: SliceFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  const source = exactFeatureSource(feature.source, feature.sourceMesh, kernel);
+  if (!source) return null;
+  let pieces: OpenCascadeSolid[] = [];
+  try {
+    pieces = kernel.splitByPlane(source, feature.plane);
+  } catch {
+    return null;
+  } finally {
+    source.dispose();
+  }
+  const wanted = pieces.filter((piece) => slicePieceSide(kernel, piece, feature.plane) === feature.side);
+  const keep = wanted.length === 1 ? wanted[0] : null;
+  for (const piece of pieces) if (piece !== keep) piece.dispose();
+  return keep;
+}
+
+/** Which side of the cutting plane a piece's own volume centroid falls on. */
+export function slicePieceSide(
+  kernel: OpenCascadeKernel,
+  piece: OpenCascadeSolid,
+  plane: { origin: Point3; normal: Point3 },
+): 'front' | 'back' {
+  const centroid = kernel.inspect(piece).centroid;
+  const offset = (centroid.x - plane.origin.x) * plane.normal.x
+    + (centroid.y - plane.origin.y) * plane.normal.y
+    + (centroid.z - plane.origin.z) * plane.normal.z;
+  return offset >= 0 ? 'front' : 'back';
 }
 
 function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {

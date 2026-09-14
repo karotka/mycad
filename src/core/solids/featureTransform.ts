@@ -132,6 +132,22 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
         },
       };
     }
+    // The cutting plane moves with the solid; which side the piece is on is a
+    // property of the cut, not of the size, so it is carried unchanged — a
+    // negative factor flips the normal and the geometry together, so the piece
+    // still ends up on the side it names.
+    case 'slice': {
+      const scaleFlip = factor < 0 ? -1 : 1;
+      return {
+        ...feature,
+        source: scaledFeature(feature.source, base, factor) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, (point) => scaledPoint(point, base, factor), factor < 0),
+        plane: {
+          origin: scaledPoint(feature.plane.origin, base, factor),
+          normal: scaleDirection(feature.plane.normal, scaleFlip),
+        },
+      };
+    }
     case 'sweep':
       return null;
     // A loft has no single work plane of its own — each profile/guide is its
@@ -206,6 +222,15 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
         source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, move),
         neutralPlane: { origin: move(feature.neutralPlane.origin), normal: feature.neutralPlane.normal },
+      };
+    }
+    case 'slice': {
+      const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
+      return {
+        ...feature,
+        source: translatedFeature(feature.source, delta) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, move),
+        plane: { origin: move(feature.plane.origin), normal: feature.plane.normal },
       };
     }
     // An extrusion goes through its plane too, not through its transform: the
@@ -294,6 +319,15 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
         source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, turn),
         neutralPlane: { origin: turn(feature.neutralPlane.origin), normal: turnDirection(feature.neutralPlane.normal, unit, angle) },
+      };
+    }
+    case 'slice': {
+      const turn = (point: Vec3): Vec3 => turnPoint(point, origin, unit, angle);
+      return {
+        ...feature,
+        source: rotatedFeature(feature.source, origin, unit, angle) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, turn),
+        plane: { origin: turn(feature.plane.origin), normal: turnDirection(feature.plane.normal, unit, angle) },
       };
     }
     case 'primitive':
@@ -386,6 +420,15 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
         source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
         sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
         neutralPlane: { origin: reflectPoint(feature.neutralPlane.origin), normal: reflectDirection(feature.neutralPlane.normal) },
+      };
+    // The normal is reflected along with the geometry, so a piece that was on
+    // the normal's side of the cut is still on it afterwards.
+    case 'slice':
+      return {
+        ...feature,
+        source: mirroredFeature(feature.source, mirrorPlane, axisStart, axisEnd) ?? { kind: 'mesh' },
+        sourceMesh: transformedMesh(feature.sourceMesh, reflectPoint, true),
+        plane: { origin: reflectPoint(feature.plane.origin), normal: reflectDirection(feature.plane.normal) },
       };
     case 'boolean': {
       const operands = feature.operands.map((operand) => mirroredFeature(operand, mirrorPlane, axisStart, axisEnd));

@@ -1,14 +1,29 @@
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import { localToWorld } from '../../../math/workplane';
-import type { Solid, SolidFaceSelection, SolidMesh } from '../../entities/types';
+import type { SerializedSolidMesh, Solid, SolidFaceSelection, SolidFeature, SolidMesh } from '../../entities/types';
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { exactResult, openExactShape, promoteSolidToExact } from '../../geometry/ExactSolid';
+import { exactResult, openExactShape, promoteSolidToExact, slicePieceSide } from '../../geometry/ExactSolid';
 import { openCascadeKernel } from '../../geometry/OpenCascadeRuntime';
 import type { CommandContext, CommandRun, StepOutcome } from '../types';
 
 interface CuttingPlane {
   origin: Vec3;
   normal: Vec3;
+}
+
+/**
+ * The geometry a slice was cut from, kept only when the source has no recipe
+ * of its own to rebuild from — the same rule shell and draft follow, so a file
+ * does not carry a mesh it will never read.
+ */
+function sliceSourceMesh(source: Solid): { sourceMesh?: SerializedSolidMesh } {
+  if (source.feature.kind !== 'mesh') return {};
+  return {
+    sourceMesh: {
+      positions: Array.from(source.mesh.positions),
+      indices: Array.from(source.mesh.indices),
+    },
+  };
 }
 
 function isFaceSelection(value: unknown): value is SolidFaceSelection {
@@ -54,6 +69,7 @@ function slicedPiece(
   source: Solid,
   mesh: SolidMesh,
   index: number,
+  feature: SolidFeature,
   exact?: NonNullable<Solid['exact']>,
 ): Solid {
   const piece = ctx.doc.createSolid(
@@ -62,7 +78,7 @@ function slicedPiece(
     source.height,
     [...source.sourceEntityIds],
     source.color,
-    { kind: 'mesh' },
+    feature,
   );
   // A cut changes shape, not ownership or appearance.
   piece.layer = source.layer;
@@ -90,10 +106,27 @@ async function applySlice(ctx: CommandContext, sources: readonly Solid[], plane:
         continue;
       }
       removed.push(current);
+      // A cut into exactly two keeps its recipe: each piece is "the source,
+      // cut by this plane, the half on this side", so an earlier feature can
+      // still be edited and both halves follow. A cut into more than two has
+      // no such name for a piece (see SliceFeature), so those stay baked.
+      const sides = exactPieces.map((piece) => slicePieceSide(exactKernel, piece, plane));
+      const nameable = exactPieces.length === 2 && sides[0] !== sides[1];
+      const sourceFeature = current.feature;
+      const keptMesh = sliceSourceMesh(current);
       exactPieces.forEach((pieceShape, index) => {
         try {
           const geometry = exactResult(exactKernel, pieceShape, 0);
-          pieces.push(slicedPiece(ctx, current, geometry.mesh, index + 1, geometry.exact));
+          const feature: SolidFeature = nameable
+            ? {
+              kind: 'slice',
+              source: sourceFeature,
+              plane: { origin: { ...plane.origin }, normal: { ...plane.normal } },
+              side: sides[index],
+              ...keptMesh,
+            }
+            : { kind: 'mesh' };
+          pieces.push(slicedPiece(ctx, current, geometry.mesh, index + 1, feature, geometry.exact));
         } finally {
           pieceShape.dispose();
         }

@@ -81,6 +81,9 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       };
     case 'draft':
       return { label: 'Draft', detail: `${Number(feature.angle.toFixed(2))}°` };
+    case 'slice':
+      // Which half this is, in the words the cut was made in.
+      return { label: 'Slice', detail: feature.side === 'front' ? 'keep front' : 'keep back' };
     case 'surface-offset':
       // The sign is the direction, so it stays visible rather than being
       // absolute-valued the way shell's thickness is.

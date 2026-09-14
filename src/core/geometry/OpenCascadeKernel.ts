@@ -1579,6 +1579,12 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       faceCount: this.countSubShapes(shape, this.oc.TopAbs_ShapeEnum.TopAbs_FACE),
       solidCount: this.countSubShapes(shape, this.oc.TopAbs_ShapeEnum.TopAbs_SOLID),
       volume,
+      centroid: (() => {
+        const centre = properties.CentreOfMass();
+        const point = { x: centre.X(), y: centre.Y(), z: centre.Z() };
+        centre.delete();
+        return point;
+      })(),
       valid,
     };
 
