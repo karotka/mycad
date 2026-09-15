@@ -19,6 +19,7 @@ import type { MlineStyle } from '../../settings';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, worldPointsShareElevation, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import { interpolatingBeziers, interpolatingBeziers3 } from '../../../math/bezierFit';
 import { arcFromSagitta } from '../../../math/arcFit';
+import { helixCurve, helixLength } from '../../../math/helix';
 
 function keepCommandDrawingPlane<T extends Entity>(entity: T, data: Record<string, unknown>): T {
   const plane = data.drawingPlane as WorkPlane | undefined;
@@ -519,4 +520,64 @@ export function drawSpline(run: CommandRun): StepOutcome {
   ctx.history.execute(new AddEntityEdit('Spline', spline));
   ctx.log(`Spline created: ${points.length} fit point(s), ${fits.length} segment(s), bent through 3D.`);
   return 'advance';
+}
+
+/**
+ * HELIX: a spring, a thread, a spiral ramp. Asked for the way AutoCAD asks —
+ * centre, base radius, top radius, turns, height — and drawn as a spline,
+ * because that is what SWEEP and EXTRUDE Path already take.
+ *
+ * The top radius is optional: Enter makes it the base radius, which is the
+ * cylindrical helix nearly every use of the command wants.
+ */
+export function drawHelix({ ctx, active, data, value }: CommandRun): StepOutcome {
+  switch (active.stepIndex) {
+    case 0:
+      data.center = value;
+      return 'advance';
+    case 1: {
+      const radius = dist2(data.center as Vec2, value as Vec2);
+      if (radius < 1e-9) { ctx.log('The base radius must be greater than zero.'); return 'stay'; }
+      data.baseRadius = radius;
+      return 'advance';
+    }
+    case 2: {
+      // Enter, or a number: a top radius of zero is a cone drawn to a point,
+      // which is legal, so only a missing answer falls back to the base.
+      const top = value === null ? (data.baseRadius as number) : Number(value);
+      if (!Number.isFinite(top) || top < 0) { ctx.log('The top radius cannot be negative.'); return 'stay'; }
+      data.topRadius = top;
+      return 'advance';
+    }
+    case 3: {
+      const turns = Number(value);
+      if (!Number.isFinite(turns) || turns <= 0) { ctx.log('Enter a number of turns greater than zero.'); return 'stay'; }
+      data.turns = turns;
+      return 'advance';
+    }
+    default: {
+      const height = Number(value);
+      if (!Number.isFinite(height)) { ctx.log('Enter a height.'); return 'stay'; }
+      const options = {
+        center: data.center as Vec2,
+        baseRadius: data.baseRadius as number,
+        topRadius: data.topRadius as number,
+        height,
+        turns: data.turns as number,
+      };
+      const curve = helixCurve(options);
+      if (!curve) {
+        ctx.log('HELIX failed: those numbers describe nothing that can be drawn.');
+        return 'stay';
+      }
+      const helix = ctx.doc.createSpline(curve.start, curve.segments);
+      ctx.history.execute(new AddEntityEdit('Helix', keepCommandDrawingPlane(helix, data)));
+      const shape = Math.abs(options.topRadius - options.baseRadius) < 1e-9
+        ? `r=${options.baseRadius.toFixed(4)}`
+        : `r=${options.baseRadius.toFixed(4)} to ${options.topRadius.toFixed(4)}`;
+      ctx.log(`Helix created: center ${formatPoint(options.center)}, ${shape}`
+        + `, ${options.turns} turn(s), height ${height.toFixed(4)}, length ${helixLength(options).toFixed(4)}.`);
+      return 'advance';
+    }
+  }
 }

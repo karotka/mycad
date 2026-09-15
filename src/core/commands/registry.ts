@@ -9,7 +9,7 @@
  */
 import { cloneEntity, expandedInsertSolids, isOffsetEntity, isSweepProfileEntity, type Entity } from '../entities/types';
 import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcome } from './types';
-import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawMline, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
+import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawHelix, drawLine, drawMline, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects, matchProperties, rotateObjects3d } from './steps/transform';
@@ -194,6 +194,17 @@ export const COMMANDS = [
   { name: 'SPLINE', aliases: ['SPL', 'SPLINE'], execute: drawSpline, help: 'draw a smooth curve through clicked points', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify next point (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({ points: [] }) },
+  // A helix is drawn as a spline, so SWEEP and EXTRUDE Path take it as they
+  // take any other curve — no new entity, and grip editing works on it too.
+  { name: 'HELIX', aliases: ['HELIX', 'HLX'], execute: drawHelix, help: 'draw a helix or spiral as a 3D spline', suggest: true, sticky: true, pointInput: true,
+    steps: [
+      { kind: 'point', label: 'Specify center point of base:' },
+      { kind: 'point', label: 'Specify base radius or a point at that distance:', rememberDistanceFrom: 'center' },
+      { kind: 'number', label: 'Specify top radius (Enter for the same as the base):', optional: true },
+      { kind: 'number', label: 'Enter number of turns:' },
+      { kind: 'number', label: 'Specify helix height:' },
+      { kind: 'done' },
+    ] },
   { name: 'TEXT', aliases: ['T', 'TEXT'], help: 'place single-line text', execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   // Same entity, same steps as TEXT — creating one is only different in that
   // the final step answers from the on-canvas multi-line editor (see

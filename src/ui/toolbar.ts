@@ -34,6 +34,9 @@ export const arcTools: Array<[string, string, CommandName]> = [
 export const curveTools: Array<[string, string, CommandName]> = [
   ['Fit', 'Spline — the curve passes through every clicked point', 'SPLINE'],
   ['CV', 'Spline — control points shape the curve without it passing through them', 'BEZIER'],
+  // Generated rather than clicked, but it is a spline like the other two, and
+  // it is what SWEEP is pointed at to make a spring or a thread.
+  ['Helix', 'Helix or spiral — a spline generated from a radius, turns and a height', 'HELIX'],
 ];
 export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE'], ['Align', 'ALIGN']];
 export const solidTools: Array<[string, CommandName]> = [

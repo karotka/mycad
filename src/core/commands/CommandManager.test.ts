@@ -6738,3 +6738,75 @@ describe('SWEEP along a path that climbs out of its own plane', () => {
     expect(volume / expected).toBeLessThan(1.01);
   }, 60000);
 });
+
+describe('HELIX', () => {
+  async function drawHelix(kit: ReturnType<typeof setup>, turns: string, height: string, topRadius = '') {
+    kit.manager.startCommand('HELIX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.submitInput(topRadius);
+    await kit.manager.submitInput(turns);
+    await kit.manager.submitInput(height);
+    return kit.doc.entities.at(-1)!;
+  }
+
+  it('draws a spline that rises out of the plane it was started on', async () => {
+    const kit = setup();
+    const helix = await drawHelix(kit, '3', '30');
+    expect(helix.type).toBe('bezier');
+    if (helix.type !== 'bezier') return;
+    // Twelve quarter-turn spans for three turns, starting on the base circle
+    // and ending a full rise above it.
+    expect(helix.segments).toHaveLength(12);
+    expect(helix.start).toMatchObject({ x: 10, y: 0, z: 0 });
+    expect((helix.segments.at(-1)!.end as { z?: number }).z).toBeCloseTo(30, 6);
+    // Every vertex carries its own height — without that the curve is flat and
+    // sweeping along it gives a ring, not a spring.
+    const heights = helix.segments.map((segment) => (segment.end as { z?: number }).z ?? 0);
+    expect(heights).toEqual([...heights].sort((a, b) => a - b));
+    expect(new Set(heights).size).toBe(heights.length);
+  });
+
+  it('takes a top radius to draw a cone, and Enter to stay cylindrical', async () => {
+    const cone = await drawHelix(setup(), '2', '20', '3');
+    const cylinder = await drawHelix(setup(), '2', '20');
+    const radiusOf = (entity: Entity) => {
+      if (entity.type !== 'bezier') return NaN;
+      const end = entity.segments.at(-1)!.end;
+      return Math.hypot(end.x, end.y);
+    };
+    expect(radiusOf(cone)).toBeCloseTo(3, 6);
+    expect(radiusOf(cylinder)).toBeCloseTo(10, 6);
+  });
+
+  it('refuses a helix with no turns instead of drawing nothing quietly', async () => {
+    const kit = setup();
+    kit.manager.startCommand('HELIX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 0 });
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('0');
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('turns greater than zero'));
+    expect(kit.doc.entities).toHaveLength(0);
+  });
+
+  it('sweeps a section along one, which is what a spring is', async () => {
+    const kit = setup();
+    // The helper's two clicks put the base radius at 10.
+    const radius = 10, tube = 1.5, pitch = 40, turns = 1;
+    const helix = await drawHelix(kit, String(turns), String(pitch));
+    const profile = kit.doc.createCircle({ x: radius, y: 0 }, tube);
+    kit.doc.addEntity(profile);
+    kit.manager.startCommand('SWEEP');
+    await kit.manager.handleClick({ x: radius, y: 0 }, profile);
+    await kit.manager.handleClick({ x: radius, y: 0 }, helix);
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.solids[0], kernel);
+    const volume = shape ? kernel.inspect(shape).volume : NaN;
+    shape?.dispose();
+    const expected = Math.PI * tube * tube * Math.hypot(2 * Math.PI * radius, pitch);
+    expect(volume / expected).toBeGreaterThan(0.97);
+    expect(volume / expected).toBeLessThan(1.03);
+  }, 60000);
+});
