@@ -3,6 +3,7 @@ import { localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '..
 import { isStrokeFont, strokeTextHeight, strokeTextWidth } from '../text/strokeFont';
 import type { AffineTransform3, SerializedKernelSolid } from '../geometry/GeometryKernel';
 import { hasPolylineArcs, polylineOutline } from './polylineArcs';
+import { canonicalEntityBounds } from './EntityGeometry';
 
 export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert' | 'mline';
 
@@ -612,6 +613,28 @@ export interface SweepFeature {
   workPlane?: WorkPlane;
 }
 
+/**
+ * A closed profile turned about an axis — the fourth way a solid is made,
+ * beside extruding, sweeping and lofting.
+ *
+ * The profile is kept as the entity it was drawn as, like a sweep's is, so the
+ * solid rebuilds from the drawing rather than from a snapshot: a circle stays a
+ * circle and a polyline's arcs stay arcs, and a revolved arc becomes a true
+ * curved face rather than a fan of flat ones.
+ *
+ * The axis is two world points, not a direction and a length: it is picked by
+ * two points, and keeping it that way means a transform moves it the same way
+ * it moves everything else.
+ */
+export interface RevolveFeature {
+  kind: 'revolve';
+  profile: Entity;
+  axisStart: Vec3;
+  axisEnd: Vec3;
+  /** Radians, signed — which way round it turns is part of the shape. */
+  angle: number;
+}
+
 export interface MeshFeature {
   kind: 'mesh';
 }
@@ -780,7 +803,7 @@ export interface OffsetSurfaceFeature {
   sourceMesh?: SerializedSolidMesh;
 }
 
-export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature | OffsetSurfaceFeature | SliceFeature;
+export type SolidFeature = ExtrusionFeature | BooleanFeature | SweepFeature | PrimitiveFeature | MeshFeature | EdgeModificationFeature | PressPullFeature | ShellFeature | LoftFeature | DraftFeature | OffsetSurfaceFeature | SliceFeature | RevolveFeature;
 
 export interface Solid {
   id: string;
@@ -1170,10 +1193,7 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       };
     }
     case 'line':
-      return {
-        min: { x: Math.min(e.start.x, e.end.x), y: Math.min(e.start.y, e.end.y) },
-        max: { x: Math.max(e.start.x, e.end.x), y: Math.max(e.start.y, e.end.y) },
-      };
+      return canonicalEntityBounds(e);
     case 'circle':
       return {
         min: { x: e.center.x - e.radius, y: e.center.y - e.radius },
@@ -1195,16 +1215,7 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
     }
     case 'polyline': {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      // Through the outline, not the vertices: an arc segment bows past both of
-      // its own ends, so a slot's bounds are its caps, not its two vertices.
-      for (const v of polylineOutline(e)) {
-        minX = Math.min(minX, v.x);
-        minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x);
-        maxY = Math.max(maxY, v.y);
-      }
-      return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+      return canonicalEntityBounds(e);
     }
     case 'mline': {
       // A conservative box — the centerline's own extent padded by the widest

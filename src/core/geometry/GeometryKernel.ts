@@ -157,6 +157,8 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   isPlanarShape(solid: Solid): boolean;
   /** EXTRUDE on a flat Surface: a straight prism of its own already-built
    *  face(s), rather than building a new face from 2D points first. */
+  /** A closed profile turned about an axis (origin + direction) by `angle`. */
+  revolveProfile(profile: SweepProfile3, origin: Point3, direction: Point3, angle: number): Solid;
   prismShape(solid: Solid, vector: Point3): Solid;
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;

@@ -52,7 +52,11 @@ export const solidModifyTools: Array<[string, string, CommandName]> = [
   ['Draft', 'Taper solid faces by an angle from a neutral plane', 'DRAFT'],
 ];
 export const arrayTools: Array<[string, string, CommandName]> = [['Rectangular', 'Rectangular Array', 'ARRAY_RECTANGULAR'], ['Polar', 'Polar Array', 'ARRAY_POLAR']];
-export const extrudeTools: Array<[string, string, CommandName]> = [['Extrude', 'Extrude', 'EXTRUDE'], ['Sweep', 'Sweep Along Path', 'SWEEP']];
+export const extrudeTools: Array<[string, string, CommandName]> = [
+  ['Extrude', 'Extrude', 'EXTRUDE'],
+  ['Sweep', 'Sweep Along Path', 'SWEEP'],
+  ['Revolve', 'Turn a closed profile about an axis', 'REVOLVE'],
+];
 export const dimensionTools: Array<[string, string, CommandName]> = [
   ['Linear', 'Linear Dimension — horizontal or vertical', 'MEASURE'],
   ['Aligned', 'Aligned Dimension — the true distance', 'DIMALIGNED'],

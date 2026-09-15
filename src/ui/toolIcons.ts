@@ -20,6 +20,8 @@ export function toolIcon(command: ToolbarIcon): string {
     SPLINE: '<path d="M3 17c3-10 7-10 9-4s6 6 9-4"/><circle cx="3" cy="17" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="21" cy="9" r="1.5"/>',
     // Two shapes overlapping, with the outline round the pair picked out:
     // what BOUNDARY hands back from a click in the middle.
+    // A profile beside an axis, with the arc it sweeps.
+    REVOLVE: '<path d="M5 3v18"/><path d="M12 7h6v10h-6z"/><path d="M12 5a7 3 0 0012 0" opacity="0.8"/>',
     BOUNDARY: '<path d="M9 6a5 5 0 100 12 5 5 0 100-12z"/><path d="M15 6a5 5 0 100 12 5 5 0 100-12z"/><circle cx="12" cy="12" r="1.2"/>',
     HATCH: '<path d="M4 5h16v14H4z"/><path d="M3 16L12 7M7 20L20 7M14 20l7-7"/>',
     TEXT: '<path d="M4 20L11 4h2l7 16M7 14h10"/>',

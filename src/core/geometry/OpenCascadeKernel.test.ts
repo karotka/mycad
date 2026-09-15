@@ -1006,3 +1006,67 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(() => kernel.readStep('not a step file')).toThrow();
   });
 });
+
+describe('revolveProfile', () => {
+  let kernel: OpenCascadeKernel;
+  beforeAll(async () => { kernel = await createNodeOpenCascadeKernel(); });
+
+  it('turns a rectangle about a parallel axis into a ring of the right volume', async () => {
+    // A 2 x 3 rectangle whose near side is 5 from the axis: a rectangular
+    // ring. Pappus: volume = area x the distance its centroid travels.
+    const profile = {
+      kind: 'polygon' as const,
+      points: [{ x: 5, y: 0, z: 0 }, { x: 7, y: 0, z: 0 }, { x: 7, y: 0, z: 3 }, { x: 5, y: 0, z: 3 }],
+    };
+    const solid = kernel.revolveProfile(profile, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }, Math.PI * 2);
+    try {
+      const inspection = kernel.inspect(solid);
+      expect(inspection.solidCount).toBe(1);
+      expect(inspection.valid).toBe(true);
+      expect(inspection.volume).toBeCloseTo(2 * 3 * (2 * Math.PI * 6), 6);
+      // Round outside and inside, flat top and bottom.
+      expect(inspection.bounds.max.x).toBeCloseTo(7, 6);
+      expect(inspection.bounds.min.x).toBeCloseTo(-7, 6);
+      expect(inspection.bounds.max.z).toBeCloseTo(3, 6);
+    } finally {
+      solid.dispose();
+    }
+  }, 30000);
+
+  it('turns a circle into a torus, keeping it a true circle rather than facets', async () => {
+    const profile = {
+      kind: 'circle' as const,
+      center: { x: 10, y: 0, z: 0 },
+      normal: { x: 0, y: 1, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 },
+      radius: 2,
+    };
+    const solid = kernel.revolveProfile(profile, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }, Math.PI * 2);
+    try {
+      // Pappus again: pi*r*r * 2*pi*R. A faceted profile would fall short.
+      expect(kernel.inspect(solid).volume).toBeCloseTo(Math.PI * 4 * 2 * Math.PI * 10, 5);
+    } finally {
+      solid.dispose();
+    }
+  }, 30000);
+
+  it('makes a part turn, not only a whole one', async () => {
+    const profile = {
+      kind: 'polygon' as const,
+      points: [{ x: 5, y: 0, z: 0 }, { x: 7, y: 0, z: 0 }, { x: 7, y: 0, z: 3 }, { x: 5, y: 0, z: 3 }],
+    };
+    const quarter = kernel.revolveProfile(profile, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }, Math.PI / 2);
+    try {
+      expect(kernel.inspect(quarter).volume).toBeCloseTo(2 * 3 * (2 * Math.PI * 6) / 4, 6);
+    } finally {
+      quarter.dispose();
+    }
+  }, 30000);
+
+  it('refuses a turn of nothing, and more than a full one', async () => {
+    const profile = { kind: 'polygon' as const, points: [{ x: 5, y: 0, z: 0 }, { x: 7, y: 0, z: 0 }, { x: 7, y: 0, z: 3 }] };
+    const axis = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }] as const;
+    expect(() => kernel.revolveProfile(profile, axis[0], axis[1], 0)).toThrow(/must not be zero/);
+    expect(() => kernel.revolveProfile(profile, axis[0], axis[1], Math.PI * 3)).toThrow(/full turn/);
+  }, 30000);
+});

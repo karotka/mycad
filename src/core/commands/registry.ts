@@ -15,7 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects, matchProperties, rotateObjects3d } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
-import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
+import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
 import { createThread } from './steps/thread';
@@ -502,6 +502,17 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  { name: 'REVOLVE', aliases: ['REV', 'REVOLVE'], execute: revolveProfileStep, help: 'turn a closed profile about an axis into a solid', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select a closed profile to revolve:' },
+      { kind: 'point', label: 'Specify first point on the revolve axis:' },
+      { kind: 'point', label: 'Specify second point on the revolve axis:' },
+      { kind: 'number', label: 'Specify revolve angle (degrees):', remember: true },
+      { kind: 'done' },
+    ],
+    data: () => ({}),
+    onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Specify the first axis point.') },
+
   // Enquiry: these answer a question and change nothing, so none of them goes
   // through the history.
   { name: 'DIST', aliases: ['DIST', 'DI'], execute: measurePointDistance, help: 'measure the distance and angle between two points', suggest: true, pointInput: true,

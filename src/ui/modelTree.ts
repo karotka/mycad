@@ -81,6 +81,8 @@ export function featureLabel(feature: SolidFeature): { label: string; detail: st
       };
     case 'draft':
       return { label: 'Draft', detail: `${Number(feature.angle.toFixed(2))}°` };
+    case 'revolve':
+      return { label: 'Revolve', detail: `${Number((feature.angle * 180 / Math.PI).toFixed(2))}°` };
     case 'slice':
       // Which half this is, in the words the cut was made in.
       return { label: 'Slice', detail: feature.side === 'front' ? 'keep front' : 'keep back' };

@@ -1222,6 +1222,53 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
    * and its siblings use, just skipping the "build a face from 2D points
    * first" step, since the face already exists here.
    */
+  /**
+   * A closed profile turned about an axis — the fourth way a solid is made,
+   * beside extruding, sweeping and lofting.
+   *
+   * The profile arrives as the same `SweepProfile3` EXTRUDE, SWEEP and LOFT
+   * all take, so a circle stays a circle and a polyline's arc segments stay
+   * arcs: a revolved arc becomes a true torus-like face rather than a fan of
+   * flat ones. A full turn closes on itself and needs no seam handling of its
+   * own; OCCT does that.
+   *
+   * The axis must not cross the profile. OCCT will build something for a
+   * profile that straddles it, but the result is a self-intersecting solid
+   * that fails its own validity check — so that is refused here, where the
+   * reason can be named.
+   */
+  revolveProfile(profile: SweepProfile3, origin: Point3, direction: Point3, angle: number): OpenCascadeSolid {
+    if (!Number.isFinite(angle) || Math.abs(angle) < 1e-9) throw new Error('Revolve angle must not be zero.');
+    if (Math.abs(angle) > Math.PI * 2 + 1e-9) throw new Error('Revolve angle must not exceed a full turn.');
+    this.validateVector(direction, 'Revolve axis');
+    const owned: Array<{ delete(): void }> = [];
+    let revol: InstanceType<typeof this.oc.BRepPrimAPI_MakeRevol_1> | null = null;
+    try {
+      const wire = this.makeSweepProfileWire(profile, owned);
+      const faceMaker = new this.oc.BRepBuilderAPI_MakeFace_15(wire, true);
+      owned.push(faceMaker);
+      if (!faceMaker.IsDone()) throw new Error('OpenCascade could not create the revolve profile face.');
+      const face = faceMaker.Face();
+      owned.push(face);
+      const point = new this.oc.gp_Pnt_3(origin.x, origin.y, origin.z);
+      owned.push(point);
+      const axisDirection = new this.oc.gp_Dir_4(direction.x, direction.y, direction.z);
+      owned.push(axisDirection);
+      const axis = new this.oc.gp_Ax1_2(point, axisDirection);
+      owned.push(axis);
+      revol = new this.oc.BRepPrimAPI_MakeRevol_1(face, axis, angle, true);
+      const shape = revol.Shape();
+      if (shape.IsNull() || !this.hasSolid(shape)) {
+        shape.delete();
+        throw new Error('OpenCascade failed to revolve the profile.');
+      }
+      return this.wrap(shape);
+    } finally {
+      revol?.delete();
+      owned.reverse().forEach((item) => item.delete());
+    }
+  }
+
   prismShape(solid: OpenCascadeSolid, vector: Point3): OpenCascadeSolid {
     this.validateVector(vector, 'Extrusion');
     const prismVector = new this.oc.gp_Vec_4(vector.x, vector.y, vector.z);

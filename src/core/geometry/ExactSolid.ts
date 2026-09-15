@@ -1,4 +1,4 @@
-import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SliceFeature, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
+import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type RevolveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SliceFeature, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
 import type { Vec2 } from '../../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
@@ -95,6 +95,7 @@ function exactShapeFromFeature(feature: SolidFeature, kernel: OpenCascadeKernel)
   if (feature.kind === 'loft') return exactLoftShape(feature, kernel);
   if (feature.kind === 'draft') return exactDraftShape(feature, kernel);
   if (feature.kind === 'slice') return exactSliceShape(feature, kernel);
+  if (feature.kind === 'revolve') return exactRevolveShape(feature, kernel);
   if (feature.kind === 'surface-offset') return exactOffsetSurfaceShape(feature, kernel);
   if (feature.kind !== 'boolean' || feature.operands.length === 0) return null;
 
@@ -214,6 +215,31 @@ export function slicePieceSide(
     + (centroid.y - plane.origin.y) * plane.normal.y
     + (centroid.z - plane.origin.z) * plane.normal.z;
   return offset >= 0 ? 'front' : 'back';
+}
+
+/**
+ * A closed profile turned about its axis. The profile goes to the kernel as the
+ * same exact wire EXTRUDE and LOFT use, so a circle stays a circle and a
+ * polyline's arc segments stay arcs — which is the whole reason a revolved part
+ * is worth having as a feature rather than as a mesh.
+ */
+function exactRevolveShape(feature: RevolveFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
+  const plane = feature.profile.workPlane ?? WORLD_WORK_PLANE;
+  const profile = exactSweepProfile(feature.profile, plane);
+  if (!profile) return null;
+  const direction = {
+    x: feature.axisEnd.x - feature.axisStart.x,
+    y: feature.axisEnd.y - feature.axisStart.y,
+    z: feature.axisEnd.z - feature.axisStart.z,
+  };
+  if (Math.hypot(direction.x, direction.y, direction.z) < 1e-9) return null;
+  try {
+    return kernel.revolveProfile(profile, feature.axisStart, direction, feature.angle);
+  } catch {
+    // A profile the axis passes through sweeps into itself; OCCT builds
+    // something, and it is not a solid anyone asked for.
+    return null;
+  }
 }
 
 function exactDraftShape(feature: DraftFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {

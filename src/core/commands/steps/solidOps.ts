@@ -1072,3 +1072,70 @@ export async function deleteFaceStep(run: CommandRun): Promise<StepOutcome> {
     : 'Delete Face complete — adjacent planes were extended and the body was healed.');
   return 'advance';
 }
+
+/**
+ * REVOLVE: a closed profile turned about an axis — the fourth way a solid is
+ * made, beside extruding, sweeping and lofting, and the one every turned part
+ * needs.
+ *
+ * The axis is two picked points rather than a keyword, which is the general
+ * case and needs nothing new: pick along an edge to turn about that edge, or
+ * along the UCS cross to turn about an axis. The profile is consumed the way
+ * EXTRUDE consumes its own, and kept in the feature so the solid rebuilds from
+ * the drawing rather than from a snapshot.
+ */
+export async function revolveProfileStep(run: CommandRun): Promise<StepOutcome> {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    const profile = value as Entity;
+    if (!isSweepProfileEntity(profile)) {
+      ctx.log('Revolve profile must be a closed circle, rectangle, octagon or polyline.');
+      return 'stay';
+    }
+    data.profile = profile;
+    ctx.doc.selectEntity(profile.id);
+    return 'advance';
+  }
+  const plane = ctx.doc.activeWorkPlane;
+  const toWorld = (point: Vec2 & { z?: number }): Vec3 => localToWorld(plane, point, point.z ?? 0);
+  if (active.stepIndex === 1) { data.axisStart = toWorld(value as Vec2); return 'advance'; }
+  if (active.stepIndex === 2) {
+    const start = data.axisStart as Vec3;
+    const end = toWorld(value as Vec2);
+    if (Math.hypot(end.x - start.x, end.y - start.y, end.z - start.z) < 1e-9) {
+      ctx.log('The two axis points must be different. Specify the second point again.');
+      return 'stay';
+    }
+    data.axisEnd = end;
+    return 'advance';
+  }
+
+  const degrees = Number(value);
+  if (!Number.isFinite(degrees) || Math.abs(degrees) < 1e-9 || Math.abs(degrees) > 360) {
+    ctx.log('Enter a revolve angle between -360 and 360 degrees.');
+    return 'stay';
+  }
+  const profile = data.profile as Entity;
+  const feature: SolidFeature = {
+    kind: 'revolve',
+    profile: cloneEntity(profile),
+    axisStart: data.axisStart as Vec3,
+    axisEnd: data.axisEnd as Vec3,
+    angle: degrees * Math.PI / 180,
+  };
+  ctx.log('Revolving…');
+  const exact = await buildExactFeature(feature, 0).catch(() => null);
+  if (!exact) {
+    // Nearly always the axis crossing the profile: the sweep runs into itself
+    // and what comes back is not a solid anyone asked for.
+    ctx.log('REVOLVE failed. The axis must not pass through the profile.');
+    return 'stay';
+  }
+  const solid = ctx.doc.createSolid(exact.mesh, 'Revolve', 0, [profile.id], undefined, feature);
+  solid.exact = exact.exact;
+  ctx.history.execute(new ReplaceObjectsEdit('Revolve', [profile], [], [], [solid]));
+  ctx.doc.clearSelection();
+  ctx.doc.selectSolid(solid.id);
+  ctx.log(`Revolve complete: ${Number(degrees)}° about the picked axis.`);
+  return 'advance';
+}

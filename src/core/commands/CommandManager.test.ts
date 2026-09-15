@@ -6151,3 +6151,151 @@ describe('3DROTATE', () => {
     expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(6, 6);
   }, 30000);
 });
+
+describe('REVOLVE', () => {
+  /** A 2 x 3 rectangle whose near side is 5 from the Y axis — turned about
+   *  that axis it is a rectangular ring, and Pappus says what it weighs. */
+  const ringProfile = (doc: Document) => {
+    const profile = doc.createRectangle({ x: 5, y: 0 }, { x: 7, y: 3 });
+    doc.addEntity(profile);
+    return profile;
+  };
+
+  it('turns a profile into a solid of the right volume, and consumes the profile', async () => {
+    const kit = setup();
+    const profile = ringProfile(kit.doc);
+
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('360');
+
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.doc.solids).toHaveLength(1);
+    const solid = kit.doc.solids[0];
+    expect(solid.feature.kind).toBe('revolve');
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(solid, kernel);
+    expect(shape).not.toBeNull();
+    if (!shape) return;
+    // area x the distance the centroid travels.
+    expect(kernel.inspect(shape).volume).toBeCloseTo(2 * 3 * (2 * Math.PI * 6), 5);
+    shape.dispose();
+  }, 40000);
+
+  it('rebuilds when the profile it was made from changes', async () => {
+    const kit = setup();
+    const profile = ringProfile(kit.doc);
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('360');
+    const feature = kit.doc.solids[0].feature;
+    if (feature.kind !== 'revolve') throw new Error('expected a revolve');
+
+    // Twice as far from the axis: twice the ring, by Pappus.
+    const moved = {
+      ...feature,
+      profile: { ...feature.profile, first: { x: 10, y: 0 }, opposite: { x: 12, y: 3 } } as typeof feature.profile,
+    };
+    const rebuilt = await buildExactFeature(moved, 1);
+
+    expect(rebuilt).not.toBeNull();
+    if (!rebuilt) return;
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape({ ...kit.doc.solids[0], exact: rebuilt.exact, revision: 1 }, kernel);
+    expect(kernel.inspect(shape!).volume).toBeCloseTo(2 * 3 * (2 * Math.PI * 11), 5);
+    shape?.dispose();
+  }, 40000);
+
+  it('keeps a circular profile a true circle, not a ring of facets', async () => {
+    const kit = setup();
+    const profile = kit.doc.createCircle({ x: 10, y: 0 }, 2);
+    kit.doc.addEntity(profile);
+
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 10, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('360');
+
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.solids[0], kernel);
+    // A torus: pi*r*r x 2*pi*R. A sampled profile would fall short of this.
+    expect(kernel.inspect(shape!).volume).toBeCloseTo(Math.PI * 4 * 2 * Math.PI * 10, 4);
+    shape?.dispose();
+  }, 40000);
+
+  it('makes a part turn as readily as a whole one', async () => {
+    const kit = setup();
+    const profile = ringProfile(kit.doc);
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('90');
+
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.solids[0], kernel);
+    expect(kernel.inspect(shape!).volume).toBeCloseTo(2 * 3 * (2 * Math.PI * 6) / 4, 5);
+    shape?.dispose();
+  }, 40000);
+
+  it('says why rather than making a solid that intersects itself', async () => {
+    const kit = setup();
+    // A profile straddling the axis: turning it sweeps it through itself.
+    const profile = kit.doc.createRectangle({ x: -3, y: 0 }, { x: 3, y: 4 });
+    kit.doc.addEntity(profile);
+
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('360');
+
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(1); // the profile is still there
+    expect(kit.log.mock.calls.flat().join('\n')).toContain('axis must not pass through');
+  }, 40000);
+
+  it('mirrors with its turn reversed, so it is the same shape and not another one', async () => {
+    const kit = setup();
+    const profile = ringProfile(kit.doc);
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('90');
+    const before = kit.doc.solids[0].feature;
+    if (before.kind !== 'revolve') throw new Error('expected a revolve');
+
+    kit.doc.clearSelection();
+    kit.doc.selectSolid(kit.doc.solids[0].id);
+    kit.manager.startCommand('MIRROR');
+    await kit.manager.handleClick({ x: 0, y: -10 });
+    await kit.manager.handleClick({ x: 0, y: 10 });
+    await kit.manager.submitInput('N'); // keep the original alongside the copy
+
+    const after = kit.doc.solids.find((solid) => solid.name.endsWith('_mirror'))!.feature;
+    expect(after.kind).toBe('revolve');
+    // A reflection reverses the way round it sweeps; left alone the mirrored
+    // solid would be the quarter on the other side of where it belongs.
+    if (after.kind === 'revolve') expect(after.angle).toBeCloseTo(-before.angle, 9);
+  }, 40000);
+
+  it('undoes back to the profile it was made from', async () => {
+    const kit = setup();
+    const profile = ringProfile(kit.doc);
+    kit.manager.startCommand('REVOLVE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput('360');
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(1);
+  }, 40000);
+});

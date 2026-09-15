@@ -159,6 +159,16 @@ export function scaledFeature(feature: SolidFeature, base: Vec3, factor: number)
     // as primitive/extrusion do above) plus scaling the entity's own local
     // points about its OWN local origin (not `base` re-expressed locally)
     // is the correct split, not an approximation of one.
+    // The profile is an embedded entity, exactly like a loft's, and the axis is
+    // two world points that move like any other. The angle is an angle: a
+    // uniform scale does not change it.
+    case 'revolve':
+      return {
+        ...feature,
+        profile: scaleEmbeddedLoftEntity(feature.profile, base, factor),
+        axisStart: scaledPoint(feature.axisStart, base, factor),
+        axisEnd: scaledPoint(feature.axisEnd, base, factor),
+      };
     case 'loft': {
       const scaleEmbedded = (entity: Entity): Entity => scaleEmbeddedLoftEntity(entity, base, factor);
       return {
@@ -252,6 +262,15 @@ export function translatedFeature(feature: SolidFeature, delta: Vec3): SolidFeat
     // A loft's own boundary is several embedded entities, each with its own
     // work plane — move every one of them by the same world delta, the same
     // trick as extrusion/primitive/sweep just above applied per-entity.
+    case 'revolve': {
+      const move = (point: Vec3): Vec3 => ({ x: point.x + delta.x, y: point.y + delta.y, z: point.z + delta.z });
+      return {
+        ...feature,
+        profile: translatedEmbeddedLoftEntity(feature.profile, delta),
+        axisStart: move(feature.axisStart),
+        axisEnd: move(feature.axisEnd),
+      };
+    }
     case 'loft': {
       const moveEmbedded = (entity: Entity): Entity => translatedEmbeddedLoftEntity(entity, delta);
       return {
@@ -351,6 +370,13 @@ export function rotatedFeature(feature: SolidFeature, origin: Vec3, axis: Vec3, 
     // rotation is only ever the plane turned (origin swung about the axis,
     // its three axes turned in place) — local points never move, because
     // they stay expressed in that same, now-turned, frame.
+    case 'revolve':
+      return {
+        ...feature,
+        profile: rotatedEmbeddedLoftEntity(feature.profile, origin, unit, angle),
+        axisStart: turnPoint(feature.axisStart, origin, unit, angle),
+        axisEnd: turnPoint(feature.axisEnd, origin, unit, angle),
+      };
     case 'loft': {
       const turnEmbedded = (entity: Entity): Entity => rotatedEmbeddedLoftEntity(entity, origin, unit, angle);
       return {
@@ -458,6 +484,17 @@ export function mirroredFeature(feature: SolidFeature, mirrorPlane: WorkPlane, a
     // expressed in that frame, without touching the entity's own local data
     // — unlike a sweep, a loft's rails/guides carry no separate derived
     // moving frames that could lose their handedness this way.
+    // A reflection reverses the way round the profile is swept, so the angle
+    // changes sign — left alone, a mirrored revolve would turn the other way
+    // and come out as a different solid.
+    case 'revolve':
+      return {
+        ...feature,
+        profile: mirroredEmbeddedLoftEntity(feature.profile, reflectPoint, reflectDirection),
+        axisStart: reflectPoint(feature.axisStart),
+        axisEnd: reflectPoint(feature.axisEnd),
+        angle: -feature.angle,
+      };
     case 'loft': {
       const reflectEmbedded = (entity: Entity): Entity => mirroredEmbeddedLoftEntity(entity, reflectPoint, reflectDirection);
       return {
