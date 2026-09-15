@@ -28,6 +28,10 @@ import { removeGeometricDuplicates } from './steps/overkill';
 import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
 import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
 import { traceBoundaryAt } from './steps/boundary';
+import {
+  exportDxfCommand, exportGcodeCommand, importDxfCommand, importExcellonCommand, importPdfCommand,
+  importStepCommand, newProjectCommand, openProjectCommand, plotCommand, saveProjectAsCommand, saveProjectCommand,
+} from './steps/file';
 import { createHatch } from './steps/hatch';
 import { editText } from './steps/textEdit';
 import { measureArea } from './steps/area';
@@ -496,6 +500,20 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  // The file operations. Reachable only from the native menu before, so none
+  // of them could be typed or searched for; AutoCAD's own names where it has
+  // one. Each does exactly what the menu item does.
+  { name: 'NEW', aliases: ['NEW'], run: newProjectCommand, help: 'start a new drawing', suggest: true },
+  { name: 'OPEN', aliases: ['OPEN'], run: openProjectCommand, help: 'open a drawing', suggest: true },
+  { name: 'SAVE', aliases: ['SAVE', 'QSAVE'], run: saveProjectCommand, help: 'save the drawing', suggest: true },
+  { name: 'SAVEAS', aliases: ['SAVEAS'], run: saveProjectAsCommand, help: 'save the drawing under a new name', suggest: true },
+  { name: 'DXFOUT', aliases: ['DXFOUT', 'EXPORTDXF'], run: exportDxfCommand, help: 'export the drawing as DXF', suggest: true },
+  { name: 'DXFIN', aliases: ['DXFIN', 'IMPORTDXF'], run: importDxfCommand, help: 'import a DXF drawing', suggest: true },
+  { name: 'EXPORTGCODE', aliases: ['GCODE', 'EXPORTGCODE'], run: exportGcodeCommand, help: 'export the drawing as plotter/cutter G-code', suggest: true },
+  { name: 'IMPORTSTEP', aliases: ['STEPIN', 'IMPORTSTEP'], run: importStepCommand, help: 'import 3D solids from a STEP file', suggest: true },
+  { name: 'IMPORTEXCELLON', aliases: ['EXCELLON', 'IMPORTEXCELLON'], run: importExcellonCommand, help: 'import PCB drill holes from an Excellon file', suggest: true },
+  { name: 'PDFIMPORT', aliases: ['PDFIMPORT', 'IMPORTPDF'], run: importPdfCommand, help: 'import geometry from a PDF', suggest: true },
+  { name: 'PLOT', aliases: ['PLOT', 'PRINT'], run: plotCommand, help: 'print, or export the drawing as PDF', suggest: true },
   { name: 'EXPORTSTL', aliases: ['STL', 'EXPORTSTL'], execute: exportStlSelection, help: 'export selected 3D solids or 3D blocks to STL',
     steps: [{ kind: 'entity', label: 'Select 3D solid(s) or block(s) to export, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
@@ -518,7 +536,10 @@ export const COMMANDS = [
       active.data.entities = [...entities];
       ctx.log(`${solids.length + entities.length} object(s) preselected for STEP export.`);
     } },
-  { name: 'PRINTAREA', aliases: ['PRINTAREA', 'PLOT'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
+  // 'PLOT' belongs to the command that opens the print settings, which is what
+  // it means in AutoCAD; this one picks the window to print, and is reached
+  // from there or by its own name.
+  { name: 'PRINTAREA', aliases: ['PRINTAREA'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
     steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], help: 'draw a regular octagon', sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'done' }],

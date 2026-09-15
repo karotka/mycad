@@ -29,6 +29,30 @@ export interface CommandContext {
   exportPdf?: (win: { min: Vec2; max: Vec2 }) => void | Promise<void>;
   /** Replaces and selects the command-line text, used by in-place text editing. */
   prefillCommandInput?: (value: string) => void;
+  /**
+   * The file operations, which the application owns — opening dialogs, talking
+   * to the shell, deciding what "the current file" is. They live behind the
+   * context for the same reason the export flows above do: a command says what
+   * the user asked for, and the application does it.
+   *
+   * Optional, so a Document driven without an application (the tests, the MCP
+   * server) still runs every other command; one that is not wired says so
+   * rather than doing nothing.
+   */
+  file?: {
+    newProject?: () => void;
+    open?: () => void | Promise<void>;
+    save?: () => void | Promise<void>;
+    saveAs?: () => void | Promise<void>;
+    exportDxf?: () => void | Promise<void>;
+    exportGcode?: () => void | Promise<void>;
+    importDxf?: () => void | Promise<void>;
+    importStep?: () => void | Promise<void>;
+    importExcellon?: () => void | Promise<void>;
+    importPdf?: () => void | Promise<void>;
+    /** Opens the print/plot settings, where the sheet and area are chosen. */
+    print?: () => void;
+  };
 }
 
 /**

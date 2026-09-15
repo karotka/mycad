@@ -9,6 +9,7 @@ import { COMMAND_LIST, commandDef } from './registry';
 import { dimensionGeometry } from '../entities/types';
 import { editedSurface } from '../../ui/modelTree';
 import { PropertiesController } from '../../ui/PropertiesController';
+import { searchCommands } from '../../ui/commandSearch';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE } from '../../math/workplane';
 import { createBoxMesh, createCylinderMesh, primitivePreviewMesh as primitiveMesh } from '../geometry/PrimitiveMesh';
 import { regenerateExactFeatureMesh as regenerateSolidFeature } from '../geometry/FeatureMesh';
@@ -168,7 +169,7 @@ describe('CommandManager history integration', () => {
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
     expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR', 'MLCUT', 'MLWELD', 'MLCORNER']);
-    expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL']);
+    expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL', 'PDFIMPORT', 'PLOT']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
     expect(manager.resolveAlias('mo')).toBe('MOVE');
@@ -5912,5 +5913,48 @@ describe('BOUNDARY', () => {
     const xs = boundary.vertices.map((point) => point.x);
     expect(Math.min(...xs)).toBeCloseTo(0, 9);
     expect(Math.max(...xs)).toBeCloseTo(5, 9);
+  });
+});
+
+describe('the file operations as commands', () => {
+  /** Every file action, and the command that should reach it. */
+  const wiring = [
+    ['NEW', 'newProject'], ['OPEN', 'open'], ['SAVE', 'save'], ['SAVEAS', 'saveAs'],
+    ['DXFOUT', 'exportDxf'], ['DXFIN', 'importDxf'], ['EXPORTGCODE', 'exportGcode'],
+    ['IMPORTSTEP', 'importStep'], ['IMPORTEXCELLON', 'importExcellon'], ['PDFIMPORT', 'importPdf'],
+    ['PLOT', 'print'],
+  ] as const;
+
+  it('calls the application action each one stands for, and nothing else', () => {
+    for (const [command, action] of wiring) {
+      const { manager } = setup();
+      const file = Object.fromEntries(wiring.map(([, name]) => [name, vi.fn()]));
+      manager.updateContext({ file });
+
+      manager.startCommand(command);
+
+      expect(file[action], `${command} did not call ${action}`).toHaveBeenCalledTimes(1);
+      for (const [, other] of wiring) {
+        if (other !== action) expect(file[other], `${command} also called ${other}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('says so rather than doing nothing when the application has not wired one', () => {
+    // A document driven without an application — the tests, the MCP server —
+    // still runs every other command; these say why they cannot.
+    const { manager, log } = setup();
+
+    manager.startCommand('DXFOUT');
+
+    expect(log.mock.calls.flat().join('\n')).toContain('not available');
+  });
+
+  it('can be found by searching, which is the point of them being commands', () => {
+    for (const [command] of wiring) {
+      expect(searchCommands(command).map((match) => match.name), command).toContain(command);
+    }
+    // And by what they do, for someone who does not know the name.
+    expect(searchCommands('dxf').map((match) => match.name)).toEqual(expect.arrayContaining(['DXFIN', 'DXFOUT']));
   });
 });

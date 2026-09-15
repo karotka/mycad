@@ -915,6 +915,21 @@ commands.updateContext({
       keepLineweights: get<HTMLInputElement>('print-keep-lineweights').checked,
     },
   ),
+  // The same actions the native menu triggers — so every one of them can also
+  // be typed, and found by the command search.
+  file: {
+    newProject: () => projectController.newProject(),
+    open: () => projectController.open(),
+    save: () => projectController.quickSave(),
+    saveAs: () => projectController.saveAs(),
+    exportDxf: () => projectController.exportDxf(),
+    exportGcode: () => projectController.exportGcode(),
+    importDxf: () => projectController.importDxf(),
+    importStep: () => projectController.importStep(),
+    importExcellon: () => projectController.importExcellon(),
+    importPdf: () => projectController.importPdf(),
+    print: () => settingsController.openTab(printTab),
+  },
 });
 
 const cadMcp = new CadModelApi(cadDocument, history, () => projectController.currentFilePath ?? null);
@@ -1925,6 +1940,7 @@ resize();
 applyDefaultTwoDView();
 namedUcsController.render();
 redraw();
+
 
 
 
