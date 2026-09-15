@@ -43,6 +43,21 @@ export function midpoint2(a: Vec2, b: Vec2): Vec2 {
 }
 
 /**
+ * A point a fraction `t` of the way from `a` to `b`, elevation included.
+ *
+ * Interpolating x and y alone is how a curve bent through 3D gets flattened
+ * by an operation that only meant to cut it: the new point lands at no height
+ * at all while the points either side keep theirs. Only points that carry an
+ * elevation get one back, so a flat curve is untouched.
+ */
+export function lerpPoint(a: Vec2, b: Vec2, t: number): Vec2 {
+  const point: Vec2 & { z?: number } = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  const from = (a as { z?: number }).z, to = (b as { z?: number }).z;
+  if (from !== undefined || to !== undefined) point.z = (from ?? 0) + ((to ?? 0) - (from ?? 0)) * t;
+  return point;
+}
+
+/**
  * A point turned about another, anticlockwise, by `angle` radians.
  *
  * Any elevation the point carries (the `Vec2 & { z?: number }` convention a

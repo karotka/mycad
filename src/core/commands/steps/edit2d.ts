@@ -7,7 +7,7 @@
  */
 import { AddEntityEdit, ReplaceObjectsEdit, UpdateEntityEdit } from '../../history/edits';
 import { cloneEntity, closedVertices, curvePoints, ellipsePoints, isClosedBezierEntity, isLineLikeEntity, isOffsetEntity, type ArcEntity, type BezierEntity, type BezierSegment, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
-import { closePolyline, dist2, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
+import { closePolyline, dist2, lerpPoint, midpoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXAxis, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import { bulgeMidpoint, bulgeThroughPoints, hasPolylineArcs, normalizedBulges, polylineSegments } from '../../entities/polylineArcs';
 import type { CommandRun, StepOutcome } from '../types';
@@ -87,7 +87,10 @@ export function evaluateCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: n
 /** De Casteljau subdivision: splits one cubic at t into the two cubics that
  *  together retrace it exactly, meeting at the same point the split lands on. */
 export function splitCubicBezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): { left: [Vec2, Vec2, Vec2, Vec2]; right: [Vec2, Vec2, Vec2, Vec2] } {
-  const lerp = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  // lerpPoint, not a plain x/y blend: every point this makes is new, and a
+  // spline bent through 3D loses its shape entirely if they come out flat
+  // while the two ends it keeps are still at their own heights.
+  const lerp = (a: Vec2, b: Vec2): Vec2 => lerpPoint(a, b, t);
   const p01 = lerp(p0, p1), p12 = lerp(p1, p2), p23 = lerp(p2, p3);
   const p012 = lerp(p01, p12), p123 = lerp(p12, p23);
   const p0123 = lerp(p012, p123);
@@ -599,9 +602,23 @@ function bezierGeometryUpTo(target: BezierEntity, segments: Array<{ p0: Vec2; p1
   } else if (localT > 1e-9) {
     const segment = segments[index];
     const { left } = splitCubicBezier(segment.p0, segment.p1, segment.p2, segment.p3, localT);
-    kept.push({ control1: left[1], control2: left[2], end: exactPoint });
+    kept.push({ control1: left[1], control2: left[2], end: atElevationOf(exactPoint, left[3]) });
   }
   return { start: target.start, segments: kept };
+}
+
+/**
+ * `point` where it is, at the height the curve has there.
+ *
+ * A crossing is worked out in the plane, so it comes back with no elevation —
+ * but the split either side of it does carry one, and a junction left flat
+ * between two points that are not is worse than the curve being flat all
+ * through. The crossing stays authoritative for where the point is; this only
+ * says how high up it sits.
+ */
+function atElevationOf(point: Vec2, source: Vec2): Vec2 {
+  const z = (source as { z?: number }).z;
+  return z === undefined ? point : ({ ...point, z } as Vec2);
 }
 
 /** The mirror of `bezierGeometryUpTo`: `target`'s segments from global
@@ -611,15 +628,19 @@ function bezierGeometryFrom(target: BezierEntity, segments: Array<{ p0: Vec2; p1
   const index = Math.min(segments.length - 1, Math.max(0, Math.floor(s + 1e-9)));
   const localT = Math.max(0, Math.min(1, s - index));
   const rest: BezierSegment[] = [];
+  let startsAt: Vec2 = segments[index].p0;
   if (localT <= 1e-9) {
     rest.push(target.segments[index]);
   } else if (localT < 1 - 1e-9) {
     const segment = segments[index];
     const { right } = splitCubicBezier(segment.p0, segment.p1, segment.p2, segment.p3, localT);
     rest.push({ control1: right[1], control2: right[2], end: right[3] });
+    startsAt = right[0];
+  } else {
+    startsAt = segments[index].p3;
   }
   rest.push(...target.segments.slice(index + 1));
-  return { start: exactPoint, segments: rest };
+  return { start: atElevationOf(exactPoint, startsAt), segments: rest };
 }
 
 /**

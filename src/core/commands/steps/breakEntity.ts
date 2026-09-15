@@ -13,7 +13,7 @@
 import { cloneEntity, genId, type ArcEntity, type BezierEntity, type CircleEntity, type Entity, type LineEntity, type PolylineEntity } from '../../entities/types';
 import { bulgeArc, polylineSegments } from '../../entities/polylineArcs';
 import { splitCubicBezier } from './edit2d';
-import type { Vec2 } from '../../../math/geometry';
+import { lerpPoint, type Vec2 } from '../../../math/geometry';
 import { ReplaceObjectsEdit } from '../../history/edits';
 import type { CommandRun, StepOutcome } from '../types';
 
@@ -62,10 +62,7 @@ export function breakEntity(entity: BreakableEntity, a: number, b: number): Brea
   const [from, to] = a <= b ? [a, b] : [b, a];
   switch (entity.type) {
     case 'line': {
-      const at = (t: number): Vec2 => ({
-        x: entity.start.x + (entity.end.x - entity.start.x) * t,
-        y: entity.start.y + (entity.end.y - entity.start.y) * t,
-      });
+      const at = (t: number): Vec2 => lerpPoint(entity.start, entity.end, t);
       return [
         ...(from > 1e-9 ? [withPoints(entity, { start: entity.start, end: at(from) })] : []),
         ...(to < 1 - 1e-9 ? [withPoints(entity, { start: at(to), end: entity.end })] : []),
@@ -178,7 +175,7 @@ function nearestOnSegments(spans: readonly Sampled[], point: Vec2): number | nul
 function pointOnPolylineSegment(segment: { start: Vec2; end: Vec2; bulge: number }, t: number): Vec2 {
   const arc = bulgeArc(segment.start, segment.end, segment.bulge);
   if (!arc) {
-    return { x: segment.start.x + (segment.end.x - segment.start.x) * t, y: segment.start.y + (segment.end.y - segment.start.y) * t };
+    return lerpPoint(segment.start, segment.end, t);
   }
   const angle = arc.startAngle + arc.sweepAngle * t;
   return { x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius };

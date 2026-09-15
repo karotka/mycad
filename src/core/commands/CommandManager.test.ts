@@ -6810,3 +6810,118 @@ describe('HELIX', () => {
     expect(volume / expected).toBeLessThan(1.03);
   }, 60000);
 });
+
+describe('BREAK on geometry that is bent through 3D', () => {
+  /** Every point of a curve, control points included, with its own height. */
+  const heights = (entity: Entity): number[] => {
+    if (entity.type !== 'bezier') return [];
+    const z = (point: Vec2) => (point as { z?: number }).z ?? 0;
+    return [z(entity.start), ...entity.segments.flatMap((s) => [z(s.control1), z(s.control2), z(s.end)])];
+  };
+
+  it('leaves a broken helix standing in space rather than collapsing it', async () => {
+    const kit = setup();
+    kit.manager.startCommand('HELIX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 20, y: 0 });
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('3');
+    await kit.manager.submitInput('60');
+    const helix = kit.doc.entities.at(-1)!;
+    expect(Math.max(...heights(helix))).toBeCloseTo(60, 6);
+
+    kit.manager.startCommand('BREAK');
+    await kit.manager.handleClick({ x: 20, y: 0 }, helix);
+    // Both breaks land in the middle of a span, not on the joins between
+    // them — a cut on a join needs no split at all and would test nothing.
+    const on = (degrees: number) => ({ x: Math.cos(degrees * Math.PI / 180) * 20, y: Math.sin(degrees * Math.PI / 180) * 20 });
+    await kit.manager.handleClick(on(45));
+    await kit.manager.handleClick(on(135));
+
+    const pieces = kit.doc.entities.filter((entity) => entity.type === 'bezier')
+      .map(heights).sort((a, b) => a[0] - b[0]);
+    expect(pieces).toHaveLength(2);
+    // The split makes new points, and taking them flat is what wrenched the
+    // curve out of shape. Twelve spans over 60, so a cut an eighth of a turn
+    // in is at 2.5 and one three eighths in at 7.5 — near enough, since the
+    // parameter comes from the nearest point rather than from the angle.
+    const [head, tail] = pieces;
+    expect(head[0]).toBeCloseTo(0, 6);
+    expect(head.at(-1)!).toBeCloseTo(2.5, 1);
+    expect(tail[0]).toBeCloseTo(7.5, 1);
+    expect(tail.at(-1)!).toBeCloseTo(60, 6);
+    // And each piece climbs all the way along, with nothing flat in between.
+    for (const climb of pieces) expect(climb).toEqual([...climb].sort((a, b) => a - b));
+  });
+
+  it('keeps the height of a line that climbs', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 100, y: 0, z: 50 } as Vec2);
+    doc.addEntity(line);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.handleClick({ x: 40, y: 0 });
+    await manager.handleClick({ x: 60, y: 0 });
+
+    const lines = doc.entities.filter((entity) => entity.type === 'line');
+    expect(lines).toHaveLength(2);
+    const ends = lines.map((entity) => entity.type === 'line'
+      ? [(entity.start as { z?: number }).z ?? 0, (entity.end as { z?: number }).z ?? 0]
+      : []).sort((a, b) => a[0] - b[0]);
+    expect(ends[0]).toEqual([0, 20]);
+    expect(ends[1]).toEqual([30, 50]);
+  });
+
+  it('keeps the height of a polyline vertex the break lands between', async () => {
+    const { doc, manager } = setup();
+    const polyline = doc.createPolyline([
+      { x: 0, y: 0, z: 0 }, { x: 100, y: 0, z: 100 },
+    ] as unknown as Vec2[], false);
+    doc.addEntity(polyline);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, polyline);
+    await manager.handleClick({ x: 25, y: 0 });
+    await manager.handleClick({ x: 75, y: 0 });
+
+    const pieces = doc.entities.filter((entity) => entity.type === 'polyline');
+    expect(pieces).toHaveLength(2);
+    const cuts = pieces.map((entity) => entity.type === 'polyline'
+      ? (entity.vertices.map((v) => (v as { z?: number }).z ?? 0))
+      : []).sort((a, b) => a[0] - b[0]);
+    expect(cuts[0]).toEqual([0, 25]);
+    expect(cuts[1]).toEqual([75, 100]);
+  });
+});
+
+describe('TRIM on a curve bent through 3D', () => {
+  it('cuts it at the height the curve has there, not down at the plane', async () => {
+    const { doc, manager } = setup();
+    const cutter = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    // A straight climb in z along x, so the height at the crossing is known
+    // exactly: half way along, half way up.
+    const spline = doc.createBezier(
+      { x: 0, y: 0, z: 0 } as Vec2,
+      { x: 10 / 3, y: 0, z: 40 / 3 } as Vec2,
+      { x: 20 / 3, y: 0, z: 80 / 3 } as Vec2,
+      { x: 10, y: 0, z: 40 } as Vec2,
+    );
+    doc.entities.push(cutter, spline);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 0 }, cutter);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 8, y: 0 }, spline);
+
+    const trimmed = doc.getEntity(spline.id);
+    expect(trimmed?.type).toBe('bezier');
+    if (trimmed?.type !== 'bezier') return;
+    const z = (point: Vec2) => (point as { z?: number }).z;
+    // The crossing is worked out in the plane and so comes back flat; the cut
+    // end has to take its height from the curve, or the curve ends nowhere
+    // near where it was and the pieces no longer meet what they were cut from.
+    expect(z(trimmed.segments.at(-1)!.end)).toBeCloseTo(20, 6);
+    expect(z(trimmed.start)).toBeCloseTo(0, 9);
+    expect(z(trimmed.segments[0].control1)).toBeCloseTo(20 / 3, 6);
+  });
+});
