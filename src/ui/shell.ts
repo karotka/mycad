@@ -270,6 +270,10 @@ export function shellHtml(tools: ShellTools): string {
     </footer>
   </main>
   <div class="context-menu" id="grip-menu" hidden>
+    <section class="command-search" id="command-search" hidden>
+      <input id="command-search-input" type="text" placeholder="Search commands…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search commands" />
+      <div class="command-search-results" id="command-search-results" role="listbox"></div>
+    </section>
     <section class="context-exit">
       <button data-context-action="exit">Exit</button>
     </section>

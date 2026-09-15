@@ -1,6 +1,8 @@
 import type { Vec2 } from '../math/geometry';
 import type { Document } from '../core/Document';
 import { pickEntityAt } from './PickingService';
+import { searchCommands } from '../ui/commandSearch';
+import type { CommandName } from '../core/commands/registry';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { cloneEntity, removeBezierNode, removePolylineVertex } from '../core/entities/types';
@@ -208,7 +210,85 @@ export function createToolActions(ctx: ToolActionsContext) {
     placeMenuAt(event, UCS_MENU_OFFSET);
   }
 
+  /**
+   * With nothing selected, a right click in the drawing is not asking about an
+   * object — there is none — so it opens a box to search the commands in
+   * instead of a menu of things to do to a selection. Requested directly:
+   * "melo by se objevit vyhledavaci pole do ktereho se da psat a hleda se v
+   * prikazech ... samozrejme, pokud neni vybrana entita".
+   *
+   * Not while a command is asking for a point, and not mid-drag: there the
+   * right click already means "snap this one point differently", which is the
+   * more useful thing to have at that moment.
+   */
+  function shouldSearchCommands(): boolean {
+    if (gripController.isDragging || drawingInteraction.isPointStep) return false;
+    return doc.selectedEntityIds.size === 0
+      && doc.selectedSolidIds.size === 0
+      && doc.selectedSurfaceIds.size === 0;
+  }
+
+  function openCommandSearch(event: PointerEvent): void {
+    const section = gripMenu.querySelector<HTMLElement>('.command-search');
+    const input = gripMenu.querySelector<HTMLInputElement>('#command-search-input');
+    if (!section || !input) return;
+    for (const other of ['.context-exit', '.ucs-actions', '.entity-actions', '.one-shot-snaps', '.vertex-actions', '.persistent-snaps']) {
+      const element = gripMenu.querySelector<HTMLElement>(other);
+      if (element) element.hidden = true;
+    }
+    section.hidden = false;
+    input.value = '';
+    renderCommandSearch();
+    placeMenuAt(event);
+    // After placing, or the box is not in the document's focus order yet.
+    input.focus();
+  }
+
+  /** The matches for what is typed, with the first one marked as the one Enter
+   *  will run. Rebuilt on every keystroke — a dozen rows is nothing to redraw,
+   *  and it keeps "what is shown" and "what Enter does" the same list. */
+  function renderCommandSearch(activeIndex = 0): void {
+    const input = gripMenu.querySelector<HTMLInputElement>('#command-search-input');
+    const results = gripMenu.querySelector<HTMLElement>('.command-search-results');
+    if (!input || !results) return;
+    const matches = searchCommands(input.value);
+    commandSearchMatches = matches.map((match) => match.name);
+    commandSearchActive = matches.length === 0 ? -1 : Math.min(Math.max(0, activeIndex), matches.length - 1);
+    if (matches.length === 0) {
+      results.innerHTML = '<div class="command-search-empty">No command matches that.</div>';
+      return;
+    }
+    results.innerHTML = matches.map((match, index) => `<button type="button" data-search-command="${match.name}" class="${index === commandSearchActive ? 'active' : ''}">`
+      + `<span class="command-search-name">${match.name}</span>`
+      + (match.shortcut ? `<span class="command-search-shortcut">${match.shortcut}</span>` : '')
+      + `<span class="command-search-help">${escapeHtml(match.help)}</span>`
+      + '</button>').join('');
+  }
+
+/** Text going into markup: a command's own help is ours, but escaping it costs
+ *  nothing and keeps the one rule for all of it. */
+  const escapeHtml = (value: string): string =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+  /** Which commands the box is currently offering, and which of them Enter
+   *  takes — read by the keyboard handling wired in main.ts. */
+  let commandSearchMatches: CommandName[] = [];
+  let commandSearchActive = -1;
+
+  function moveCommandSearch(delta: number): void {
+    if (commandSearchMatches.length === 0) return;
+    const count = commandSearchMatches.length;
+    renderCommandSearch((commandSearchActive + delta + count) % count);
+  }
+
+  function activeCommandSearchName(): CommandName | null {
+    return commandSearchActive >= 0 ? commandSearchMatches[commandSearchActive] ?? null : null;
+  }
+
   function openContextMenu(event: PointerEvent): void {
+    if (shouldSearchCommands()) { openCommandSearch(event); return; }
+    gripMenu.querySelector<HTMLElement>('.command-search')!.hidden = true;
+    gripMenu.querySelector<HTMLElement>('.context-exit')!.hidden = false;
     const menuTitle = gripMenu.querySelector<HTMLElement>('.context-menu-title');
     const oneShotSection = gripMenu.querySelector<HTMLElement>('.one-shot-snaps');
     const vertexSection = gripMenu.querySelector<HTMLElement>('.vertex-actions');
@@ -367,5 +447,8 @@ export function createToolActions(ctx: ToolActionsContext) {
     openContextMenu,
     openUcsAxisMenu,
     deletePendingNode,
+    renderCommandSearch,
+    moveCommandSearch,
+    activeCommandSearchName,
   };
 }

@@ -1306,6 +1306,38 @@ html, body, #app {
   display: none;
 }
 
+/* The command search box a right click opens when nothing is selected. Its
+   width is fixed so the menu does not stretch to whatever the longest help
+   line happens to be, and each row's help truncates rather than pushing the
+   name off the edge. */
+.command-search { width: 300px; padding: 2px; }
+.command-search input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
+  background: #0d1218; color: #d8e2ec; border: 1px solid #33404d; border-radius: 3px;
+  font: inherit; font-size: 12px; outline: none;
+}
+.command-search input:focus { border-color: #4a7fb5; }
+.command-search-results { margin-top: 4px; max-height: 300px; overflow-y: auto; }
+/* More specific than `.context-menu button`, which is a plain block and would
+   otherwise win on source order and flatten the row. */
+.context-menu .command-search-results button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+}
+.context-menu .command-search-results button.active,
+.context-menu .command-search-results button:hover { background: #24425f; }
+.command-search-results .command-search-name { flex: none; font-weight: 600; }
+.command-search-results .command-search-shortcut {
+  flex: none; color: #7f8c9b; font-size: 10px; letter-spacing: 0.5px;
+}
+.command-search-results .command-search-help {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #8b98a8; font-size: 11px; text-align: right;
+}
+.command-search-empty { padding: 7px 8px; color: #7f8c9b; font-size: 12px; }
+
 .context-menu-title {
   padding: 5px 8px 7px;
   color: #8b98a8;

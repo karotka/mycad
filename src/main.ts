@@ -1611,6 +1611,34 @@ gripMenu.querySelector<HTMLButtonElement>('[data-grip-action="delete-vertex"]')?
   gripMenu.hidden = true;
 });
 
+// The command search box: typing filters, Enter runs what is highlighted,
+// Up/Down move the highlight, Escape puts the menu away. Clicking a row runs
+// it too — the rows are rebuilt on every keystroke, so the click is delegated
+// from the container rather than bound to each one.
+const commandSearchInput = get<HTMLInputElement>('command-search-input');
+const runSearchedCommand = (name: CommandName | null): void => {
+  if (!name) return;
+  gripMenu.hidden = true;
+  commands.startCommand(name);
+  redraw();
+  input.focus({ preventScroll: true });
+};
+commandSearchInput.addEventListener('input', () => toolActions.renderCommandSearch());
+commandSearchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown') { event.preventDefault(); toolActions.moveCommandSearch(1); }
+  else if (event.key === 'ArrowUp') { event.preventDefault(); toolActions.moveCommandSearch(-1); }
+  else if (event.key === 'Enter') { event.preventDefault(); runSearchedCommand(toolActions.activeCommandSearchName()); }
+  else if (event.key === 'Escape') { event.preventDefault(); gripMenu.hidden = true; input.focus({ preventScroll: true }); }
+  // Everything else is typing, and must not reach the viewport's own shortcuts.
+  event.stopPropagation();
+});
+get('command-search-results').addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-search-command]');
+  if (!button) return;
+  event.stopPropagation();
+  runSearchedCommand(button.dataset.searchCommand as CommandName);
+});
+
 gripMenu.querySelector<HTMLButtonElement>('[data-context-action="exit"]')?.addEventListener('click', (event) => {
   event.stopPropagation();
   escapeAll();
@@ -1897,6 +1925,7 @@ resize();
 applyDefaultTwoDView();
 namedUcsController.render();
 redraw();
+
 
 
 

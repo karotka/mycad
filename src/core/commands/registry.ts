@@ -163,7 +163,7 @@ export const COMMANDS = [
   { name: 'ELLIPSE', aliases: ['EL', 'ELLIPSE'], help: 'draw ellipse', suggest: true, sticky: true, pointInput: true, execute: drawEllipse,
     steps: [{ kind: 'point', label: 'Specify ellipse center:' }, { kind: 'point', label: 'Specify first axis endpoint:' }, { kind: 'point', label: 'Specify second axis distance:' }, { kind: 'done' }] },
   { name: 'POLYGON', aliases: ['P', 'POL', 'POLYGON'], execute: drawPolygon, help: 'draw regular polygon', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify polygon center:' }, { kind: 'number', label: 'Enter number of sides:' }, { kind: 'point', label: 'Specify perpendicular distance to side:' }, { kind: 'done' }] },
-  { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
+  { name: 'ARC', aliases: ['A', 'ARC'], execute: drawArc, help: 'draw an arc by its centre, start and end', suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify arc center:' }, { kind: 'point', label: 'Specify start point:' }, { kind: 'point', label: 'Specify end point or angle:' }, { kind: 'done' }] },
   { name: 'ARC_SER', aliases: ['ASER', 'ARC_SER'], execute: drawArcStartEndRadius, help: 'draw arc by start point, end point, radius', suggest: true, sticky: true, pointInput: true,
     steps: [
       { kind: 'point', label: 'Specify arc start point:' },
@@ -187,7 +187,7 @@ export const COMMANDS = [
   { name: 'SPLINE', aliases: ['SPL', 'SPLINE'], execute: drawSpline, help: 'draw a smooth curve through clicked points', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify next point (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({ points: [] }) },
-  { name: 'TEXT', aliases: ['T', 'TEXT'], execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
+  { name: 'TEXT', aliases: ['T', 'TEXT'], help: 'place single-line text', execute: drawText, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'text', label: 'Select font:' }, { kind: 'number', label: 'Enter text height in mm:' }, { kind: 'point', label: 'Specify text insertion point:' }, { kind: 'text', label: 'Enter text:' }, { kind: 'done' }] },
   // Same entity, same steps as TEXT — creating one is only different in that
   // the final step answers from the on-canvas multi-line editor (see
   // syncMtextEditor in main.ts) instead of the single-line command input.
@@ -233,11 +233,11 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
-  { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
+  { name: 'DIMRADIUS', aliases: ['DR', 'DRA', 'DIMRADIUS'], help: 'dimension a circle or arc by its radius', execute: measureRadius, suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for radius dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
-  { name: 'DIMDIAMETER', aliases: ['DD', 'DDI', 'DIMDIAMETER'], execute: measureRadius, suggest: true, sticky: true, pointInput: true,
+  { name: 'DIMDIAMETER', aliases: ['DD', 'DDI', 'DIMDIAMETER'], help: 'dimension a circle or arc by its diameter', execute: measureRadius, suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for diameter dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
@@ -268,7 +268,7 @@ export const COMMANDS = [
   // Takes solids, like SCALE beside it. It used to say "2D object(s)" and mean
   // it: a solid could be scaled but not turned, which is not a rule anyone
   // decided, only one command's step that never grew the other's.
-  { name: 'ROTATE', aliases: ['RO', 'ROTATE'], execute: rotateObjects, suggest: true, pointInput: true, transformsObjects: true,
+  { name: 'ROTATE', aliases: ['RO', 'ROTATE'], execute: rotateObjects, help: 'rotate objects about a base point', suggest: true, pointInput: true, transformsObjects: true,
     steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify rotation base point.`) },
@@ -366,13 +366,13 @@ export const COMMANDS = [
     ] },
   { name: 'DELETEFACE', aliases: ['DF', 'DELETEFACE'], execute: deleteFaceStep, help: 'delete a solid face and heal the body', suggest: true,
     steps: [{ kind: 'solid', label: 'Select planar solid face to delete:' }, { kind: 'done' }] },
-  { name: 'BOX', aliases: ['BX', 'BOX'], execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
-  { name: 'WEDGE', aliases: ['WE', 'WEDGE'], execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
-  { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
-  { name: 'CONE', aliases: ['CONE'], execute: createCone, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cone base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify cone height:' }, { kind: 'done' }] },
-  { name: 'CYLINDER', aliases: ['CYL', 'CYLINDER'], execute: createCylinder, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cylinder center:' }, { kind: 'point', label: 'Specify radius:' }, { kind: 'number', label: 'Specify cylinder height:' }, { kind: 'done' }] },
-  { name: 'PYRAMID', aliases: ['PYR', 'PYRAMID'], execute: createPyramid, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify pyramid base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify pyramid height:' }, { kind: 'done' }] },
-  { name: 'TORUS', aliases: ['TOR', 'TORUS'], execute: createTorus, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify torus center:' }, { kind: 'point', label: 'Specify torus radius:' }, { kind: 'number', label: 'Specify tube radius:' }, { kind: 'done' }] },
+  { name: 'BOX', aliases: ['BX', 'BOX'], help: 'draw a 3D box', execute: createBox, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify box height:' }, { kind: 'done' }] },
+  { name: 'WEDGE', aliases: ['WE', 'WEDGE'], help: 'draw a 3D wedge', execute: createWedge, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify first base corner:' }, { kind: 'point', label: 'Specify opposite base corner:', ignoresDirection: true }, { kind: 'number', label: 'Specify wedge height:' }, { kind: 'done' }] },
+  { name: 'SPHERE', aliases: ['SPH', 'SPHERE'], help: 'draw a 3D sphere', execute: createSphere, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify sphere center:' }, { kind: 'point', label: 'Specify sphere radius:' }, { kind: 'done' }] },
+  { name: 'CONE', aliases: ['CONE'], help: 'draw a 3D cone', execute: createCone, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cone base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify cone height:' }, { kind: 'done' }] },
+  { name: 'CYLINDER', aliases: ['CYL', 'CYLINDER'], help: 'draw a 3D cylinder', execute: createCylinder, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify cylinder center:' }, { kind: 'point', label: 'Specify radius:' }, { kind: 'number', label: 'Specify cylinder height:' }, { kind: 'done' }] },
+  { name: 'PYRAMID', aliases: ['PYR', 'PYRAMID'], help: 'draw a 3D pyramid', execute: createPyramid, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify pyramid base center:' }, { kind: 'point', label: 'Specify base radius:' }, { kind: 'number', label: 'Specify pyramid height:' }, { kind: 'done' }] },
+  { name: 'TORUS', aliases: ['TOR', 'TORUS'], help: 'draw a 3D torus', execute: createTorus, suggest: true, sticky: true, pointInput: true, steps: [{ kind: 'point', label: 'Specify torus center:' }, { kind: 'point', label: 'Specify torus radius:' }, { kind: 'number', label: 'Specify tube radius:' }, { kind: 'done' }] },
   { name: 'ARRAY_RECTANGULAR', aliases: ['ARR', 'ARRAY', 'RECTARRAY', 'ARRAYRECTANGULAR', 'RECTANGULAR'], execute: arrayRectangular, help: 'create a rectangular array', suggest: true,
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'number', label: 'Enter number of rows:' }, { kind: 'number', label: 'Enter number of columns:' }, { kind: 'number', label: 'Enter row spacing:' }, { kind: 'number', label: 'Enter column spacing:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
@@ -493,7 +493,7 @@ export const COMMANDS = [
       active.stepIndex = 1;
       ctx.log(`${solids.length} solid(s) preselected. Specify the slice plane.`);
     } },
-  { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
+  { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
   { name: 'EXPORTSTL', aliases: ['STL', 'EXPORTSTL'], execute: exportStlSelection, help: 'export selected 3D solids or 3D blocks to STL',
@@ -520,7 +520,7 @@ export const COMMANDS = [
     } },
   { name: 'PRINTAREA', aliases: ['PRINTAREA', 'PLOT'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
     steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
-  { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
+  { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], help: 'draw a regular octagon', sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
   { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
@@ -528,7 +528,7 @@ export const COMMANDS = [
     steps: [{ kind: 'number', label: 'Enter fitting and endpoint-joining tolerance in mm (try 0.2, 0.5, or 1):', remember: true }, { kind: 'done' }] },
   { name: 'VIEW2D', aliases: ['V2', 'VIEW2D'], help: '2D view', run: (ctx) => { ctx.doc.viewMode = '2d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 2D'); } },
   { name: 'VIEW3D', aliases: ['V3', 'VIEW3D'], help: '3D view', run: (ctx) => { ctx.doc.viewMode = '3d'; ctx.redraw(); ctx.log('Rezim zobrazeni: 3D'); } },
-  { name: 'ZOOM', aliases: ['Z', 'ZOOM'], run: (ctx) => ctx.log('Zoom extents aktivujte tlacitkem ZOOM nebo koleckem mysi.') },
+  { name: 'ZOOM', aliases: ['Z', 'ZOOM'], help: 'zoom the view to everything drawn', run: (ctx) => ctx.log('Zoom extents aktivujte tlacitkem ZOOM nebo koleckem mysi.') },
   { name: 'SNAP', aliases: ['SN', 'SNAP'], help: 'toggle snap', run: (ctx) => { ctx.doc.snapEnabled = !ctx.doc.snapEnabled; ctx.log(`Snap: ${ctx.doc.snapEnabled ? 'ON' : 'OFF'}`); } },
   { name: 'UNDO', aliases: ['UNDO'], help: 'undo last edit', run: (ctx) => { ctx.log(ctx.history.undo() ? 'Undo complete.' : 'Nothing to undo.'); ctx.redraw(); } },
   { name: 'REDO', aliases: ['REDO'], help: 'redo last edit', run: (ctx) => { ctx.log(ctx.history.redo() ? 'Redo complete.' : 'Nothing to redo.'); ctx.redraw(); } },
