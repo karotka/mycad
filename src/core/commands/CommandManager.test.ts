@@ -6679,3 +6679,62 @@ describe('EXTRUDE on an open profile', () => {
     expect(kit.doc.entities).toHaveLength(1);
   }, 40000);
 });
+
+describe('SWEEP along a path that climbs out of its own plane', () => {
+  /** One turn of a helix as four cubic spans: the circle's own control-point
+   *  rule in x and y, plus a straight rise in z. */
+  function helixBezier(doc: Document, radius: number, pitch: number, spans = 4) {
+    const step = Math.PI * 2 / spans;
+    const handle = (4 / 3) * Math.tan(step / 4) * radius;
+    const at = (index: number) => ({ x: Math.cos(index * step) * radius, y: Math.sin(index * step) * radius, z: pitch * index / spans });
+    const segments = [];
+    for (let index = 0; index < spans; index++) {
+      const a = index * step, b = (index + 1) * step;
+      const from = at(index), to = at(index + 1);
+      const rise = pitch / spans;
+      segments.push({
+        control1: { x: from.x - Math.sin(a) * handle, y: from.y + Math.cos(a) * handle, z: from.z + rise / 3 },
+        control2: { x: to.x + Math.sin(b) * handle, y: to.y - Math.cos(b) * handle, z: to.z - rise / 3 },
+        end: to,
+      });
+    }
+    const path = doc.createBezier(at(0), segments[0].control1, segments[0].control2, segments[0].end);
+    if (path.type === 'bezier') path.segments = segments as never;
+    doc.addEntity(path);
+    return path;
+  }
+
+  async function sweepHelix(pitch: number) {
+    const kit = setup();
+    const radius = 20, tube = 2;
+    const path = helixBezier(kit.doc, radius, pitch);
+    const profile = kit.doc.createCircle({ x: radius, y: 0 }, tube);
+    kit.doc.addEntity(profile);
+    kit.manager.startCommand('SWEEP');
+    await kit.manager.handleClick({ x: radius, y: 0 }, profile);
+    await kit.manager.handleClick({ x: radius, y: 0 }, path);
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.solids[0], kernel);
+    const volume = shape ? kernel.inspect(shape).volume : NaN;
+    shape?.dispose();
+    // A pipe's volume is its section times the length of the path it follows.
+    return { volume, expected: Math.PI * tube * tube * Math.hypot(2 * Math.PI * radius, pitch) };
+  }
+
+  it('keeps the section square to a steeply climbing path', async () => {
+    // Radius 20 rising 100 a turn: the tangent leaves the plane by 38.5
+    // degrees. Taken from the flat shadow of that tangent, the section is
+    // tilted by the same angle and the solid comes out cos(38.5°) light —
+    // measured at 20 per cent before this.
+    const { volume, expected } = await sweepHelix(100);
+    expect(volume / expected).toBeGreaterThan(0.97);
+    expect(volume / expected).toBeLessThan(1.03);
+  }, 60000);
+
+  it('is unchanged for a gently climbing one, which was nearly right already', async () => {
+    const { volume, expected } = await sweepHelix(12);
+    expect(volume / expected).toBeGreaterThan(0.99);
+    expect(volume / expected).toBeLessThan(1.01);
+  }, 60000);
+});

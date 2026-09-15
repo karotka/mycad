@@ -1,5 +1,5 @@
 import { closedVertices, entityBounds, getEntityPoints, isClosedBezierEntity, isSweepProfileEntity, transformEntityPoints, type BooleanFeature, type DraftFeature, type Entity, type ExtrusionFeature, type LoftFeature, type OffsetSurfaceFeature, type PressPullFeature, type PrimitiveFeature, type RevolveFeature, type ShellFeature, type Solid, type SolidEdgeSelection, type SolidFaceRegion, type SolidFaceSelection, type SliceFeature, type SolidFeature, type SolidMesh, type SweepFeature } from '../entities/types';
-import type { Vec2 } from '../../math/geometry';
+import type { Vec2, Vec3 } from '../../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, type WorkPlane } from '../../math/workplane';
 import { OpenCascadeKernel, type OpenCascadeSolid } from './OpenCascadeKernel';
 import { openCascadeKernel } from './OpenCascadeRuntime';
@@ -551,16 +551,19 @@ function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): Open
   const pathPlane = feature.path.workPlane ?? feature.workPlane ?? WORLD_WORK_PLANE;
   const startAndTangent = pathStartAndTangent(feature.path);
   if (!startAndTangent) return null;
-  const pathStart = localToWorld(pathPlane, startAndTangent.start);
-  const tangent = planeDirection(pathPlane, startAndTangent.tangent);
-  const crossX = planeDirection(pathPlane, {
-    x: -startAndTangent.tangent.y,
-    y: startAndTangent.tangent.x,
-  });
+  const pathStart = localToWorld(pathPlane, startAndTangent.start, startAndTangent.start.z);
+  const tangent = planeDirection3(pathPlane, startAndTangent.tangent);
+  // Square to the path, and — for a path that stays in its plane — exactly the
+  // in-plane perpendicular this used to take, so nothing about a flat sweep
+  // changes: the plane's own normal crossed with the tangent is the 2D tangent
+  // turned a quarter turn. A path setting off along that normal has no such
+  // perpendicular, so any direction square to it will do.
+  const crossX = unitOrNull(cross3(pathPlane.zAxis, tangent)) ?? unitOrNull(cross3(pathPlane.xAxis, tangent));
+  if (!crossX) return null;
   const crossPlane: WorkPlane = {
     origin: pathStart,
     xAxis: crossX,
-    yAxis: { ...pathPlane.zAxis },
+    yAxis: cross3(tangent, crossX),
     zAxis: tangent,
   };
   const profile = exactSweepProfile(profileCentredOnOrigin(feature.profile), crossPlane);
@@ -568,62 +571,88 @@ function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): Open
   return profile && path ? kernel.sweep(profile, path) : null;
 }
 
-function pathStartAndTangent(path: Entity): { start: { x: number; y: number }; tangent: { x: number; y: number } } | null {
-  let start: { x: number; y: number };
-  let tangent: { x: number; y: number };
+/**
+ * Where a sweep path begins and which way it sets off, in the path's own plane
+ * — including how fast it leaves that plane.
+ *
+ * The elevation matters: a path whose points carry their own z (a spline bent
+ * through space, and a helix above all) climbs as it goes, and a section placed
+ * square to the flat shadow of that direction is tilted by the climb. Measured
+ * on a helix of radius 20 rising 100 per turn — a tangent 38.5 degrees out of
+ * plane — the swept solid came out 20 per cent light, which is exactly
+ * cos(38.5°) of the section it should have had.
+ */
+function pathStartAndTangent(path: Entity): { start: Vec3; tangent: Vec3 } | null {
+  const elevation = (point: { x: number; y: number }): number => (point as { z?: number }).z ?? 0;
+  const at = (point: { x: number; y: number }): Vec3 => ({ x: point.x, y: point.y, z: elevation(point) });
+  const between = (from: { x: number; y: number }, to: { x: number; y: number }): Vec3 =>
+    ({ x: to.x - from.x, y: to.y - from.y, z: elevation(to) - elevation(from) });
+  let start: Vec3;
+  let tangent: Vec3;
   switch (path.type) {
     case 'line':
-      start = path.start;
-      tangent = { x: path.end.x - path.start.x, y: path.end.y - path.start.y };
+      start = at(path.start);
+      tangent = between(path.start, path.end);
       break;
     case 'polyline': {
       if (path.vertices.length < 2) return null;
-      start = path.vertices[0];
-      const next = path.vertices.find((point, index) => index > 0 && Math.hypot(point.x - start.x, point.y - start.y) > 1e-9);
+      const first = path.vertices[0];
+      start = at(first);
+      const next = path.vertices.find((point, index) => index > 0 && Math.hypot(point.x - first.x, point.y - first.y) > 1e-9);
       if (!next) return null;
-      tangent = { x: next.x - start.x, y: next.y - start.y };
+      tangent = between(first, next);
       break;
     }
     case 'arc': {
       start = {
         x: path.center.x + Math.cos(path.startAngle) * path.radius,
         y: path.center.y + Math.sin(path.startAngle) * path.radius,
+        z: elevation(path.center),
       };
       const sign = path.sweepAngle < 0 ? -1 : 1;
-      tangent = { x: -Math.sin(path.startAngle) * sign, y: Math.cos(path.startAngle) * sign };
+      tangent = { x: -Math.sin(path.startAngle) * sign, y: Math.cos(path.startAngle) * sign, z: 0 };
       break;
     }
     case 'circle':
-      start = { x: path.center.x + path.radius, y: path.center.y };
-      tangent = { x: 0, y: 1 };
+      start = { x: path.center.x + path.radius, y: path.center.y, z: elevation(path.center) };
+      tangent = { x: 0, y: 1, z: 0 };
       break;
     case 'bezier': {
-      start = path.start;
+      start = at(path.start);
       const first = path.segments[0];
-      tangent = { x: first.control1.x - path.start.x, y: first.control1.y - path.start.y };
-      if (Math.hypot(tangent.x, tangent.y) <= 1e-9) {
-        tangent = { x: first.control2.x - path.start.x, y: first.control2.y - path.start.y };
-      }
-      if (Math.hypot(tangent.x, tangent.y) <= 1e-9) {
-        tangent = { x: first.end.x - path.start.x, y: first.end.y - path.start.y };
-      }
+      // The first control point that is not on top of the start says which way
+      // the curve leaves it.
+      tangent = [first.control1, first.control2, first.end]
+        .map((point) => between(path.start, point))
+        .find((candidate) => Math.hypot(candidate.x, candidate.y, candidate.z) > 1e-9)
+        ?? { x: 0, y: 0, z: 0 };
       break;
     }
     default:
       return null;
   }
-  const length = Math.hypot(tangent.x, tangent.y);
+  const length = Math.hypot(tangent.x, tangent.y, tangent.z);
   return length > 1e-9
-    ? { start, tangent: { x: tangent.x / length, y: tangent.y / length } }
+    ? { start, tangent: { x: tangent.x / length, y: tangent.y / length, z: tangent.z / length } }
     : null;
 }
 
-function planeDirection(plane: WorkPlane, vector: { x: number; y: number }): Point3 {
+/** A direction given in a plane's own frame, as a world vector. */
+function planeDirection3(plane: WorkPlane, vector: Vec3): Point3 {
   return {
-    x: plane.xAxis.x * vector.x + plane.yAxis.x * vector.y,
-    y: plane.xAxis.y * vector.x + plane.yAxis.y * vector.y,
-    z: plane.xAxis.z * vector.x + plane.yAxis.z * vector.y,
+    x: plane.xAxis.x * vector.x + plane.yAxis.x * vector.y + plane.zAxis.x * vector.z,
+    y: plane.xAxis.y * vector.x + plane.yAxis.y * vector.y + plane.zAxis.y * vector.z,
+    z: plane.xAxis.z * vector.x + plane.yAxis.z * vector.y + plane.zAxis.z * vector.z,
   };
+}
+
+function cross3(a: Point3, b: Point3): Point3 {
+  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+}
+
+function unitOrNull(vector: Point3): Point3 | null {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  return length < 1e-9 ? null : { x: vector.x / length, y: vector.y / length, z: vector.z / length };
 }
 
 function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKernel): OpenCascadeSolid | null {
