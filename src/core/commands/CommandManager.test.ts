@@ -6299,3 +6299,157 @@ describe('REVOLVE', () => {
     expect(kit.doc.entities).toHaveLength(1);
   }, 40000);
 });
+
+describe('BREAK', () => {
+  it('takes a gap out of the middle of a line, leaving two', async () => {
+    const { doc, history, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.addEntity(line);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.handleClick({ x: 30, y: 0 });
+    await manager.handleClick({ x: 70, y: 0 });
+
+    const lines = doc.entities.filter((entity) => entity.type === 'line');
+    expect(lines).toHaveLength(2);
+    const spans = lines.map((entity) => entity.type === 'line' ? [entity.start.x, entity.end.x] : []).sort((a, b) => a[0] - b[0]);
+    expect(spans[0]).toEqual([0, 30]);
+    expect(spans[1]).toEqual([70, 100]);
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(1);
+  });
+
+  it('shortens rather than splits when the gap reaches an end', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.addEntity(line);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.handleClick({ x: 60, y: 0 });
+    await manager.handleClick({ x: 200, y: 0 }); // past the end: clamps to it
+
+    const lines = doc.entities.filter((entity) => entity.type === 'line');
+    expect(lines).toHaveLength(1);
+    if (lines[0].type === 'line') expect(lines[0].end.x).toBeCloseTo(60, 9);
+  });
+
+  it('opens a circle into the arc that is left', async () => {
+    const { doc, manager } = setup();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 10);
+    doc.addEntity(circle);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, circle);
+    await manager.handleClick({ x: 10, y: 0 });   // 0°
+    await manager.handleClick({ x: 0, y: 10 });   // 90°
+
+    expect(doc.entities).toHaveLength(1);
+    const arc = doc.entities[0];
+    expect(arc.type).toBe('arc');
+    // The quarter between the picks is gone; three quarters are left.
+    if (arc.type === 'arc') {
+      expect(arc.radius).toBeCloseTo(10, 9);
+      expect(arc.sweepAngle).toBeCloseTo(Math.PI * 1.5, 6);
+      expect(arc.startAngle).toBeCloseTo(Math.PI / 2, 6);
+    }
+  });
+
+  it('takes a bite out of an arc without changing its radius', async () => {
+    const { doc, manager } = setup();
+    const arc = doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI);
+    doc.addEntity(arc);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 10, y: 0 }, arc);
+    await manager.handleClick({ x: Math.cos(0.6) * 10, y: Math.sin(0.6) * 10 });
+    await manager.handleClick({ x: Math.cos(1.4) * 10, y: Math.sin(1.4) * 10 });
+
+    const arcs = doc.entities.filter((entity) => entity.type === 'arc');
+    expect(arcs).toHaveLength(2);
+    for (const piece of arcs) if (piece.type === 'arc') expect(piece.radius).toBeCloseTo(10, 9);
+    const sweeps = arcs.map((piece) => piece.type === 'arc' ? piece.sweepAngle : 0).sort((a, b) => a - b);
+    expect(sweeps[0]).toBeCloseTo(0.6, 3);
+    expect(sweeps[1]).toBeCloseTo(Math.PI - 1.4, 3);
+  });
+
+  it('opens a closed polyline into the run the gap is not on', async () => {
+    const { doc, manager } = setup();
+    const square = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }], true);
+    doc.addEntity(square);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, square);
+    await manager.handleClick({ x: 3, y: 0 });
+    await manager.handleClick({ x: 7, y: 0 });
+
+    expect(doc.entities).toHaveLength(1);
+    const opened = doc.entities[0];
+    expect(opened).toMatchObject({ type: 'polyline', closed: false });
+    if (opened.type !== 'polyline') return;
+    // It starts where the gap ends and runs the long way round back to it.
+    expect(opened.vertices[0]).toEqual({ x: expect.closeTo(7, 6), y: expect.closeTo(0, 6) });
+    expect(opened.vertices.at(-1)).toEqual({ x: expect.closeTo(3, 6), y: expect.closeTo(0, 6) });
+    expect(opened.vertices).toHaveLength(6); // both cuts plus the four corners
+  });
+
+  it('breaks through an arc segment, leaving two smaller arcs of the same circle', async () => {
+    const { doc, manager } = setup();
+    // One half circle: centre (10, 0), radius 10, running below the chord.
+    const bow = doc.createPolyline([{ x: 0, y: 0 }, { x: 20, y: 0 }], false);
+    bow.bulges = [1];
+    doc.addEntity(bow);
+    const on = (degrees: number) => ({
+      x: 10 + Math.cos(degrees * Math.PI / 180) * 10,
+      y: Math.sin(degrees * Math.PI / 180) * 10,
+    });
+
+    manager.startCommand('BREAK');
+    await manager.handleClick(on(270), bow);
+    await manager.handleClick(on(225));
+    await manager.handleClick(on(315));
+
+    const pieces = doc.entities.filter((entity) => entity.type === 'polyline');
+    expect(pieces).toHaveLength(2);
+    for (const piece of pieces) {
+      if (piece.type !== 'polyline') continue;
+      const [{ arc }] = polylineArcPieces(piece);
+      // A 45° piece of the same circle, not the whole half turn carried over.
+      expect(arc.radius).toBeCloseTo(10, 6);
+      expect(arc.center.x).toBeCloseTo(10, 6);
+      expect(Math.abs(arc.sweepAngle)).toBeCloseTo(Math.PI / 4, 6);
+    }
+  });
+
+  it('splits a spline exactly, not by refitting it', async () => {
+    const { doc, manager } = setup();
+    const curve = doc.createBezier({ x: 0, y: 0 }, { x: 10, y: 20 }, { x: 30, y: 20 }, { x: 40, y: 0 });
+    doc.addEntity(curve);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 20, y: 15 }, curve);
+    await manager.handleClick({ x: 10, y: 11 });
+    await manager.handleClick({ x: 30, y: 11 });
+
+    const pieces = doc.entities.filter((entity) => entity.type === 'bezier');
+    expect(pieces).toHaveLength(2);
+    // Each keeps an end of the original: a refit would not.
+    const starts = pieces.map((piece) => piece.type === 'bezier' ? piece.start : null);
+    expect(starts).toContainEqual({ x: 0, y: 0 });
+  });
+
+  it('refuses two points at the same place rather than doing nothing', async () => {
+    const { doc, manager, log } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.addEntity(line);
+
+    manager.startCommand('BREAK');
+    await manager.handleClick({ x: 0, y: 0 }, line);
+    await manager.handleClick({ x: 50, y: 0 });
+    await manager.handleClick({ x: 50, y: 0 });
+
+    expect(doc.entities).toHaveLength(1);
+    expect(log.mock.calls.flat().join('\n')).toContain('must be different');
+  });
+});

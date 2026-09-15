@@ -28,6 +28,7 @@ import { removeGeometricDuplicates } from './steps/overkill';
 import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
 import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
 import { traceBoundaryAt } from './steps/boundary';
+import { breakObject, isBreakableEntity } from './steps/breakEntity';
 import { listObjects, measurePointDistance, solidMassProperties } from './steps/enquiry';
 import {
   exportDxfCommand, exportGcodeCommand, importDxfCommand, importExcellonCommand, importPdfCommand,
@@ -502,6 +503,15 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  { name: 'BREAK', aliases: ['BR', 'BREAK'], execute: breakObject, help: 'take a piece out of an object between two points', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select the object to break:' },
+      { kind: 'point', label: 'Specify first break point:' },
+      { kind: 'point', label: 'Specify second break point:' },
+      { kind: 'done' },
+    ],
+    data: () => ({}),
+    onStart: preselectOne('target', isBreakableEntity, 'Object preselected. Specify the first break point.') },
   { name: 'REVOLVE', aliases: ['REV', 'REVOLVE'], execute: revolveProfileStep, help: 'turn a closed profile about an axis into a solid', suggest: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select a closed profile to revolve:' },

@@ -67,7 +67,7 @@ export const dimensionTools: Array<[string, string, CommandName]> = [
 ];
 export const zoomTools: Array<[string, 'ZOOM_ALL' | 'ZOOM_WINDOW']> = [['Zoom All', 'ZOOM_ALL'], ['Zoom Window', 'ZOOM_WINDOW']];
 export const editTools: Array<[string, CommandName]> = [
-  ['Extend', 'EXTEND'], ['Trim', 'TRIM'], ['Join', 'JOIN'], ['Explode', 'EXPLODE'], ['Offset', 'OFFSET'],
+  ['Extend', 'EXTEND'], ['Trim', 'TRIM'], ['Break', 'BREAK'], ['Join', 'JOIN'], ['Explode', 'EXPLODE'], ['Offset', 'OFFSET'],
 ];
 
 export function toolButtons(tools: Array<[string, CommandName]>): string {
