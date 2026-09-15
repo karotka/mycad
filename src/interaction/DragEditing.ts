@@ -5,11 +5,12 @@ import type { Document } from '../core/Document';
 import type { CommandManager, CommandName } from '../core/commands/CommandManager';
 import type { CommandHistory, DocumentEdit } from '../core/history/CommandHistory';
 import { CompositeEdit, UpdateEntityEdit, UpdateSolidEdit, UpdateSurfaceEdit, cloneSolid } from '../core/history/edits';
-import { cloneEntity, cloneSurfaceValue, entityBounds, transformEntityPoints, type Entity, type SolidFaceSelection, type SolidMesh } from '../core/entities/types';
+import { cloneEntity, cloneSurfaceValue, entityBounds, transformEntityPoints, type Entity, type SolidFaceSelection, type SolidMesh, type SolidFeature } from '../core/entities/types';
 import { translatedFeature } from '../core/solids/featureTransform';
 import { preserveExactTransform, translationAffine } from '../core/geometry/ExactTransform';
 import { boxLikePrimitiveFeature, radialLikePrimitiveFeature, torusPrimitiveFeature } from '../core/commands/steps/solids';
 import { extrusionFeature } from '../core/solids/extrusion';
+import { isOpenExtrudeProfile } from '../core/commands/steps/solidOps';
 import { buildExactFeature } from '../core/geometry/ExactSolid';
 import { primitivePreviewMesh } from '../core/geometry/PrimitiveMesh';
 import { axisOffsetUnderRay } from './AxisDrag';
@@ -296,11 +297,97 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     // Built by the engine that will build the real one, so the preview cannot
     // promise a shape the command then declines to make. The await settles in a
     // microtask, before anything is painted, so this does not flicker.
-    void buildExactFeature(extrusionFeature(drag.profile, drag.height)).then((geometry) => {
+    // An open profile is allowed to come back as a shell, exactly as the
+    // command itself allows — otherwise a surface extrusion shows nothing.
+    void buildExactFeature(extrusionFeature(drag.profile, drag.height), 0, isOpenExtrudeProfile(drag.profile))
+      .then((geometry) => {
+        if (!geometry || token !== extrudePreviewToken) return;
+        previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: geometry.mesh } });
+        redraw();
+      });
+  }
+
+  /**
+   * The angle a REVOLVE would sweep to if the cursor were clicked now.
+   *
+   * The same question extruding asks of its height, put to an angle: the
+   * pointer ray is met with the plane the profile turns in — the one through
+   * the profile, square to the axis — and the angle of that meeting point
+   * about the axis is the sweep, measured from where the profile itself
+   * stands. Sweeping is what a revolve does, so aiming round the axis is how
+   * to say how far.
+   */
+  function revolveAngleUnderCursor(event: PointerEvent): { degrees: number; feature: SolidFeature } | null {
+    const active = commands.active;
+    if (doc.viewMode !== '3d' || active?.name !== 'REVOLVE' || active.stepIndex !== 3) return null;
+    const profile = active.data.profile as Entity | undefined;
+    const axisStart = active.data.axisStart as Vec3 | undefined;
+    const axisEnd = active.data.axisEnd as Vec3 | undefined;
+    if (!profile || !axisStart || !axisEnd) return null;
+    const axis = normalized({ x: axisEnd.x - axisStart.x, y: axisEnd.y - axisStart.y, z: axisEnd.z - axisStart.z });
+    if (!axis) return null;
+
+    const plane = profile.workPlane ?? WORLD_WORK_PLANE;
+    const bounds = entityBounds(profile);
+    const centre = localToWorld(plane, { x: (bounds.min.x + bounds.max.x) / 2, y: (bounds.min.y + bounds.max.y) / 2 }, 0);
+    // Where the profile stands, square to the axis: the direction 0° is
+    // measured from, and the radius the ray is met at.
+    const reference = perpendicularPart({ x: centre.x - axisStart.x, y: centre.y - axisStart.y, z: centre.z - axisStart.z }, axis);
+    const radial = normalized(reference);
+    if (!radial) return null;
+    const across = cross3(axis, radial);
+
+    const ray = renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY);
+    const along = ray.direction.x * axis.x + ray.direction.y * axis.y + ray.direction.z * axis.z;
+    if (Math.abs(along) < 1e-6) return null; // looking along the sweep plane: no answer
+    const toPlane = ((centre.x - ray.origin.x) * axis.x + (centre.y - ray.origin.y) * axis.y + (centre.z - ray.origin.z) * axis.z) / along;
+    const hit = {
+      x: ray.origin.x + ray.direction.x * toPlane,
+      y: ray.origin.y + ray.direction.y * toPlane,
+      z: ray.origin.z + ray.direction.z * toPlane,
+    };
+    const offset = perpendicularPart({ x: hit.x - axisStart.x, y: hit.y - axisStart.y, z: hit.z - axisStart.z }, axis);
+    if (Math.hypot(offset.x, offset.y, offset.z) < 1e-9) return null;
+    const turn = Math.atan2(
+      offset.x * across.x + offset.y * across.y + offset.z * across.z,
+      offset.x * radial.x + offset.y * radial.y + offset.z * radial.z,
+    );
+    // A sweep runs one way round from where the profile is, so the half turn
+    // behind it reads as most of the way round rather than as a negative.
+    const sweep = turn <= 0 ? turn + Math.PI * 2 : turn;
+    const degrees = Number((sweep * 180 / Math.PI).toFixed(2));
+    if (degrees < 0.5) return null;
+    return {
+      degrees,
+      feature: { kind: 'revolve', profile, axisStart, axisEnd, angle: degrees * Math.PI / 180 },
+    };
+  }
+
+  function updateRevolvePreview(event: PointerEvent, sx: number, sy: number): void {
+    const drag = revolveAngleUnderCursor(event);
+    if (!drag) return;
+    previewController.showDimension(`Revolve ${drag.degrees.toFixed(2)}°`, sx, sy);
+    const token = ++extrudePreviewToken;
+    void buildExactFeature(drag.feature).then((geometry) => {
       if (!geometry || token !== extrudePreviewToken) return;
       previewController.setPreview({ type: 'solid', data: { solidId: '', mesh: geometry.mesh } });
       redraw();
     });
+  }
+
+  function normalized(vector: Vec3): Vec3 | null {
+    const length = Math.hypot(vector.x, vector.y, vector.z);
+    return length < 1e-9 ? null : { x: vector.x / length, y: vector.y / length, z: vector.z / length };
+  }
+
+  /** The part of a vector square to `axis`, which must already be a unit. */
+  function perpendicularPart(vector: Vec3, axis: Vec3): Vec3 {
+    const along = vector.x * axis.x + vector.y * axis.y + vector.z * axis.z;
+    return { x: vector.x - axis.x * along, y: vector.y - axis.y * along, z: vector.z - axis.z * along };
+  }
+
+  function cross3(a: Vec3, b: Vec3): Vec3 {
+    return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
   }
 
   return {
@@ -309,5 +396,7 @@ export function createSolidDragPreview(ctx: SolidDragPreviewContext) {
     primitiveFinalUnderCursor,
     updatePrimitiveFinalPreview,
     updateExtrudePreview,
+    revolveAngleUnderCursor,
+    updateRevolvePreview,
   };
 }

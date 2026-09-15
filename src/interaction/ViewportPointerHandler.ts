@@ -163,7 +163,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     nearestMeasurementPoint, nearestGripTargetSnap, nearestPersistentSnap,
     endpointAnchorFromSnap, updateTrackingGuide,
   } = ctx.resolver;
-  const { pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor, updateExtrudePreview, updatePrimitiveFinalPreview } = ctx.dragPreview;
+  const { pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor, updateExtrudePreview, updatePrimitiveFinalPreview, revolveAngleUnderCursor, updateRevolvePreview } = ctx.dragPreview;
   const { canAcquireDynamicUcs, snapKeepsDynamicUcs, acquireDynamicUcs, releaseDynamicUcs, beforeDynamicUcsAnswer, afterDynamicUcsAnswer, ownsActiveCommand } = ctx.ducs;
   const { openContextMenu, openUcsAxisMenu } = ctx.toolActions;
   const {
@@ -681,6 +681,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     const pressPull = pressPullDrag(event);
     if (pressPull) showDimension(`${pressPull.delta > 0 ? 'Pull' : 'Push'} ${Math.abs(pressPull.delta).toFixed(2)} mm`, sx, sy);
     updateExtrudePreview(event, sx, sy);
+    updateRevolvePreview(event, sx, sy);
     const primitiveFinalDrag = updatePrimitiveFinalPreview(event, sx, sy);
     const active = commands.active;
     if (active?.name === 'ROTATE' && active.stepIndex === 2 && active.data.basePoint) {
@@ -950,6 +951,17 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     // fire only when a vertex was under the cursor, and measured that against the
     // *active* work plane rather than the profile's — so moving the UCS after
     // drawing put the height on the wrong ruler.
+    // Aiming round the axis answers REVOLVE's angle the same way aiming along
+    // the normal answers an extrusion's height.
+    const revolveDrag = revolveAngleUnderCursor(event);
+    if (revolveDrag) {
+      previewController.clearPreview();
+      await commands.submitInput(String(revolveDrag.degrees));
+      snapMarker.hidden = true;
+      input.focus();
+      event.preventDefault();
+      return;
+    }
     const extrudeDrag = extrudeHeightUnderCursor(event);
     if (extrudeDrag) {
       previewController.clearPreview();
