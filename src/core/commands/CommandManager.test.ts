@@ -6453,3 +6453,136 @@ describe('BREAK', () => {
     expect(log.mock.calls.flat().join('\n')).toContain('must be different');
   });
 });
+
+describe('ALIGN', () => {
+  it('moves and turns objects so the two picked points land where they are sent', async () => {
+    const { doc, history, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    // Send its two ends to (5,5) and (5,15): a quarter turn and a shift.
+    manager.startCommand('ALIGN');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 5, y: 5 });
+    await manager.handleClick({ x: 10, y: 0 });
+    await manager.handleClick({ x: 5, y: 15 });
+    await manager.submitInput('N');
+
+    const moved = doc.getEntity(line.id)!;
+    expect(moved.type).toBe('line');
+    if (moved.type !== 'line') return;
+    expect(moved.start).toEqual({ x: expect.closeTo(5, 9), y: expect.closeTo(5, 9) });
+    // Not scaled, so it keeps its own 10 and stops short of the second target.
+    expect(moved.end).toEqual({ x: expect.closeTo(5, 9), y: expect.closeTo(15, 9) });
+    expect(history.undo()).toBe(true);
+    expect(doc.getEntity(line.id)).toMatchObject({ start: { x: 0, y: 0 } });
+  });
+
+  it('leaves the size alone unless scaling is asked for, and fits it when it is', async () => {
+    const align = async (answer: string) => {
+      const { doc, manager } = setup();
+      const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+      doc.addEntity(line);
+      doc.selectEntity(line.id);
+      manager.startCommand('ALIGN');
+      await manager.handleClick({ x: 0, y: 0 });
+      await manager.handleClick({ x: 0, y: 0 });
+      await manager.handleClick({ x: 10, y: 0 });
+      await manager.handleClick({ x: 40, y: 0 }); // four times as far
+      await manager.submitInput(answer);
+      const moved = doc.getEntity(line.id)!;
+      return moved.type === 'line' ? moved.end.x : NaN;
+    };
+
+    expect(await align('N')).toBeCloseTo(10, 9);
+    expect(await align('Yes')).toBeCloseTo(40, 9);
+  });
+
+  it('refuses two source points at the same place', async () => {
+    const { doc, manager, log } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    manager.startCommand('ALIGN');
+    await manager.handleClick({ x: 2, y: 2 });
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 2, y: 2 });
+    await manager.handleClick({ x: 9, y: 9 });
+    await manager.submitInput('N');
+
+    expect(log.mock.calls.flat().join('\n')).toContain('must be different');
+    expect(doc.getEntity(line.id)).toMatchObject({ start: { x: 0, y: 0 } });
+  });
+});
+
+describe('DIVIDE', () => {
+  it('places one point fewer than the number of segments, evenly along a line', async () => {
+    const { doc, history, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.addEntity(line);
+
+    manager.startCommand('DIVIDE');
+    await manager.handleClick({ x: 50, y: 0 }, line);
+    await manager.submitInput('4');
+
+    const points = doc.entities.filter((entity) => entity.type === 'point');
+    expect(points).toHaveLength(3);
+    expect(points.map((point) => point.type === 'point' ? Math.round(point.position.x) : 0).sort((a, b) => a - b))
+      .toEqual([25, 50, 75]);
+    // The object it divided is still there.
+    expect(doc.getEntity(line.id)).toMatchObject({ type: 'line' });
+    expect(history.undo()).toBe(true);
+    expect(doc.entities.filter((entity) => entity.type === 'point')).toHaveLength(0);
+  });
+
+  it('measures along a curve, not across its chords', async () => {
+    const { doc, manager } = setup();
+    // A half circle of radius 10: its length is pi*r, so quartering it puts
+    // points at 45, 90 and 135 degrees.
+    const arc = doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI);
+    doc.addEntity(arc);
+
+    manager.startCommand('DIVIDE');
+    await manager.handleClick({ x: 0, y: 10 }, arc);
+    await manager.submitInput('4');
+
+    const angles = doc.entities
+      .filter((entity) => entity.type === 'point')
+      .map((entity) => entity.type === 'point' ? Math.atan2(entity.position.y, entity.position.x) * 180 / Math.PI : 0)
+      .sort((a, b) => a - b);
+    expect(angles).toHaveLength(3);
+    expect(angles[0]).toBeCloseTo(45, 1);
+    expect(angles[1]).toBeCloseTo(90, 1);
+    expect(angles[2]).toBeCloseTo(135, 1);
+  });
+
+  it('puts the marks on the divided object\'s own layer, so they hide with it', async () => {
+    const { doc, manager } = setup();
+    doc.layers.push('setting-out');
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line.layer = 'setting-out';
+    doc.addEntity(line);
+
+    manager.startCommand('DIVIDE');
+    await manager.handleClick({ x: 5, y: 0 }, line);
+    await manager.submitInput('2');
+
+    const point = doc.entities.find((entity) => entity.type === 'point')!;
+    expect(point.layer).toBe('setting-out');
+  });
+
+  it('refuses a count that is not a whole number of segments', async () => {
+    const { doc, manager, log } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+
+    manager.startCommand('DIVIDE');
+    await manager.handleClick({ x: 5, y: 0 }, line);
+    await manager.submitInput('1');
+
+    expect(doc.entities.filter((entity) => entity.type === 'point')).toHaveLength(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('between 2 and');
+  });
+});

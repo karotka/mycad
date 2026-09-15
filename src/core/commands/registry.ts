@@ -29,6 +29,7 @@ import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, show
 import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
 import { traceBoundaryAt } from './steps/boundary';
 import { breakObject, isBreakableEntity } from './steps/breakEntity';
+import { alignObjects, divideObject } from './steps/alignDivide';
 import { listObjects, measurePointDistance, solidMassProperties } from './steps/enquiry';
 import {
   exportDxfCommand, exportGcodeCommand, importDxfCommand, importExcellonCommand, importPdfCommand,
@@ -503,6 +504,25 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  { name: 'ALIGN', aliases: ['AL', 'ALIGN'], execute: alignObjects, help: 'move objects by saying where two of their points should end up', suggest: true, pointInput: true, transformsObjects: true,
+    steps: [
+      { kind: 'entity', label: 'Select object(s) to align, then press Enter:', multi: true },
+      { kind: 'point', label: 'Specify first source point:' },
+      { kind: 'point', label: 'Specify first destination point:' },
+      { kind: 'point', label: 'Specify second source point:' },
+      { kind: 'point', label: 'Specify second destination point:' },
+      { kind: 'text', label: 'Scale objects to the destination distance? [Yes/No] <No>:' },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Specify the first source point.`) },
+  { name: 'DIVIDE', aliases: ['DIV', 'DIVIDE'], execute: divideObject, help: 'mark an object at even intervals along its length', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select the object to divide:' },
+      { kind: 'number', label: 'Enter the number of segments:', remember: true },
+      { kind: 'done' },
+    ],
+    data: () => ({}) },
   { name: 'BREAK', aliases: ['BR', 'BREAK'], execute: breakObject, help: 'take a piece out of an object between two points', suggest: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select the object to break:' },

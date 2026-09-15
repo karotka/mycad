@@ -35,7 +35,7 @@ export const curveTools: Array<[string, string, CommandName]> = [
   ['Fit', 'Spline — the curve passes through every clicked point', 'SPLINE'],
   ['CV', 'Spline — control points shape the curve without it passing through them', 'BEZIER'],
 ];
-export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE']];
+export const modifyTools: Array<[string, CommandName]> = [['Move', 'MOVE'], ['Copy', 'COPY'], ['Mirror', 'MIRROR'], ['Scale', 'SCALE'], ['Rotate', 'ROTATE'], ['Align', 'ALIGN']];
 export const solidTools: Array<[string, CommandName]> = [
   ['Union', 'UNION'], ['Subtract', 'SUBTRACT'], ['Intersect', 'INTERSECT'], ['PressPull', 'PRESSPULL'],
   ['Chamfer', 'CHAMFER'], ['Fillet', 'FILLET'], ['Delete Face', 'DELETEFACE'], ['Slice', 'SLICE'],

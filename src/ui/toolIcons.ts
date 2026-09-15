@@ -22,6 +22,10 @@ export function toolIcon(command: ToolbarIcon): string {
     // what BOUNDARY hands back from a click in the middle.
     // A profile beside an axis, with the arc it sweeps.
     // A line with a piece missing from the middle of it.
+    // Two points and the pair they are sent to.
+    ALIGN: '<path d="M4 18L12 6"/><circle cx="4" cy="18" r="1.6"/><circle cx="12" cy="6" r="1.6"/><path d="M14 19h6M17 16l3 3-3 3" opacity="0.7"/>',
+    // A line with marks at even intervals.
+    DIVIDE: '<path d="M3 12h18"/><path d="M8 9v6M12 9v6M16 9v6"/>',
     BREAK: '<path d="M3 12h7M14 12h7"/><path d="M10 7v10M14 7v10" opacity="0.55"/>',
     REVOLVE: '<path d="M5 3v18"/><path d="M12 7h6v10h-6z"/><path d="M12 5a7 3 0 0012 0" opacity="0.8"/>',
     BOUNDARY: '<path d="M9 6a5 5 0 100 12 5 5 0 100-12z"/><path d="M15 6a5 5 0 100 12 5 5 0 100-12z"/><circle cx="12" cy="12" r="1.2"/>',
