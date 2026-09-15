@@ -110,6 +110,8 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   fromMesh(positions: ArrayLike<number>, indices: ArrayLike<number>): Solid;
   extrudePolygon(profile: readonly Point3[], vector: Point3): Solid;
   extrudeWire(edges: readonly SweepPathSegment3[], vector: Point3): Solid;
+  /** An open curve swept along a vector — a shell rather than a solid. */
+  extrudeOpenWire(edges: readonly SweepPathSegment3[], vector: Point3): Solid;
   extrudeRegion(loops: readonly (readonly Point3[])[], vector: Point3): Solid;
   extrudeCircle(radius: number, center: Point3, vector: Point3): Solid;
   loftPolygons(sections: readonly (readonly Point3[])[]): Solid;

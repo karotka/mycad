@@ -639,7 +639,25 @@ function exactExtrusionShape(feature: ExtrusionFeature, kernel: OpenCascadeKerne
     ? { ...feature.direction }
     : { x: 0, y: 0, z: feature.height };
   let local: OpenCascadeSolid;
-  if (feature.profile.type === 'circle') {
+  // An open profile — a line, an open polyline, an arc, a spline — bounds no
+  // area, so sweeping it gives a surface rather than a solid. The wire is the
+  // same exact one a closed profile would give, arcs and all; only the prism
+  // is taken on the wire instead of on a face of it.
+  if (!isSweepProfileEntity(feature.profile)) {
+    // Tapering needs an inward offset of the boundary, which an open curve has
+    // no inside to be offset toward.
+    if (Math.abs(taperAngle) > 1e-12) return null;
+    // Scaling would have to scale an arc segment's radius too, which the 2D
+    // transform here cannot say; a scaled one keeps the geometry it has rather
+    // than rebuilding into something that is not the same shape.
+    if (Math.abs(transform.scaleX - 1) > 1e-12 || Math.abs(transform.scaleY - 1) > 1e-12) return null;
+    const edges = exactSweepPath(feature.profile, {
+      ...WORLD_WORK_PLANE,
+      origin: { x: transform.translateX, y: transform.translateY, z },
+    });
+    if (!edges) return null;
+    local = kernel.extrudeOpenWire(edges, vector);
+  } else if (feature.profile.type === 'circle') {
     if (Math.abs(Math.abs(transform.scaleX) - Math.abs(transform.scaleY)) > 1e-12) return null;
     const radius = feature.profile.radius * Math.abs(transform.scaleX);
     const center = {

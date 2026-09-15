@@ -7,7 +7,7 @@
  * happened.
  */
 import { ReplaceObjectsEdit, UpdateSolidEdit, cloneSolid } from '../../history/edits';
-import { cloneEntity, curvePoints, entityBounds, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidFeature, type SolidMesh, type Surface } from '../../entities/types';
+import { cloneEntity, curvePoints, entityBounds, isSweepProfileEntity, type Entity, type LoftFeature, type Solid, type SolidFaceSelection, type SolidEdgeSelection, type SolidFeature, type SolidMesh, type Surface, isClosedBezierEntity } from '../../entities/types';
 import { minimumCurvatureRadius } from '../../../math/curvature';
 import { featureRemovalForPoint } from '../../solids/featureRemoval';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
@@ -52,8 +52,10 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
       return 'stay';
     }
     const profile = value as Entity;
-    if (!isSweepProfileEntity(profile)) {
-      ctx.log('Extrude profile must be a closed circle, rectangle, octagon or polyline.');
+    // An open curve extrudes too — into a surface rather than a solid, which
+    // is what sweeping something that bounds no area gives.
+    if (!isSweepProfileEntity(profile) && !isOpenExtrudeProfile(profile)) {
+      ctx.log('Extrude profile must be a closed shape, or an open line, polyline, arc or spline.');
       return 'stay';
     }
     run.gather(profile);
@@ -61,7 +63,7 @@ export async function extrudeProfileStep(run: CommandRun): Promise<StepOutcome> 
   }
 
   const surface = data.surface as Surface | undefined;
-  const entities = (data.entities as Entity[]).filter(isSweepProfileEntity);
+  const entities = (data.entities as Entity[]).filter((entity) => isSweepProfileEntity(entity) || isOpenExtrudeProfile(entity));
   if (!surface && entities.length === 0) {
     ctx.log('No profile selected.');
     return 'advance';
@@ -159,26 +161,54 @@ async function completeLinearExtrude(
   const results = await Promise.all(profiles.map(async (profile) => {
     const feature = extrusionFeature(profile, entered, taperAngle);
     // Built from the feature, not beside it: the mesh and its editable recipe
-    // stay the same answer for every selected profile.
-    const exact = await buildExactFeature(feature);
-    return exact ? { profile, feature, mesh: exact.mesh, exact } : null;
+    // stay the same answer for every selected profile. An open profile is
+    // allowed to come back as a shell — that is the answer for one.
+    const open = isOpenExtrudeProfile(profile);
+    const exact = await buildExactFeature(feature, 0, open);
+    return exact ? { profile, feature, open, mesh: exact.mesh, exact } : null;
   }));
   const completed = results.filter((result): result is NonNullable<typeof result> => result !== null);
   if (completed.length === 0) {
     ctx.log(taperAngle
       ? 'Extrusion failed — the taper is too large for this profile and height.'
-      : 'Extrusion failed — select one or more closed profiles.');
+      : 'Extrusion failed.');
     return 'advance';
   }
-  const solids = completed.map(({ profile, feature, mesh, exact }) => {
+  const solids = completed.filter(({ open }) => !open).map(({ profile, feature, mesh, exact }) => {
     const solid = ctx.doc.createSolid(mesh, `Extrusion_${profile.id}`, feature.height, [profile.id], undefined, feature);
     if (exact) solid.exact = exact.exact;
     return solid;
   });
-  ctx.history.execute(new ReplaceObjectsEdit('Extrude', completed.map(({ profile }) => profile), [], [], solids));
+  const surfaces = completed.filter(({ open }) => open).map(({ profile, feature, mesh, exact }) => {
+    const created = ctx.doc.createSurface(mesh, `Surface_${profile.id}`, [profile.id], undefined, feature);
+    created.exact = exact?.exact;
+    return created;
+  });
+  ctx.history.execute(new ReplaceObjectsEdit(
+    'Extrude', completed.map(({ profile }) => profile), [], [], solids, [], surfaces,
+  ));
   ctx.doc.viewMode = '3d';
-  ctx.log(`Extrusion complete: ${solids.length} solid(s), height=${entered}${taperAngle ? `, taper=${taperAngle}°` : ''}`);
+  const made = [
+    solids.length ? `${solids.length} solid(s)` : '',
+    surfaces.length ? `${surfaces.length} surface(s)` : '',
+  ].filter(Boolean).join(' and ');
+  ctx.log(`Extrusion complete: ${made}, height=${entered}${taperAngle ? `, taper=${taperAngle}°` : ''}`);
   return 'advance';
+}
+
+/**
+ * Whether EXTRUDE should make a surface of this rather than a solid: an open
+ * curve bounds no area, so sweeping it gives the sheet it traces out.
+ *
+ * A closed shape is not one of these — `isSweepProfileEntity` claims those —
+ * and neither is anything with no length to sweep.
+ */
+export function isOpenExtrudeProfile(entity: Entity): boolean {
+  if (isSweepProfileEntity(entity)) return false;
+  if (entity.type === 'line' || entity.type === 'arc') return true;
+  if (entity.type === 'polyline') return !entity.closed && entity.vertices.length >= 2;
+  if (entity.type === 'bezier') return !isClosedBezierEntity(entity) && entity.segments.length >= 1;
+  return false;
 }
 
 /**

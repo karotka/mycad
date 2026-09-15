@@ -389,9 +389,9 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to array, then press Enter:', multi: true }, { kind: 'point', label: 'Specify array center:' }, { kind: 'number', label: 'Enter number of items:' }, { kind: 'number', label: 'Enter total angle:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], totalAngle: 360 }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Enter polar array settings.`) },
-  { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], execute: extrudeProfileStep, help: 'extrude closed profile', suggest: true,
+  { name: 'EXTRUDE', aliases: ['E', 'EXT', 'EXTRUDE'], execute: extrudeProfileStep, help: 'extrude a profile into a solid, or an open curve into a surface', suggest: true,
     steps: [
-      { kind: 'entity', label: 'Select closed 2D profile(s) or a flat surface, then press Enter:', multi: true, accepts: ['entity', 'surface'] },
+      { kind: 'entity', label: 'Select 2D profile(s), open curve(s) or a flat surface, then press Enter:', multi: true, accepts: ['entity', 'surface'] },
       { kind: 'number-or-option', label: 'Specify extrusion height or [Direction/Path/Taper angle]:', remember: true },
       { kind: 'done' },
     ],

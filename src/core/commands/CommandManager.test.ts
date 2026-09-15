@@ -6586,3 +6586,96 @@ describe('DIVIDE', () => {
     expect(log.mock.calls.flat().join('\n')).toContain('between 2 and');
   });
 });
+
+describe('EXTRUDE on an open profile', () => {
+  it('sweeps a line into a surface, not a solid', async () => {
+    const kit = setup();
+    const line = kit.doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    kit.doc.addEntity(line);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 0 }, line);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('4');
+
+    expect(kit.doc.solids).toHaveLength(0);
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.entities).toHaveLength(0); // the line is consumed, as a closed profile is
+    const surface = kit.doc.surfaces[0];
+    // It rebuilds: the recipe is the extrusion, not a baked mesh.
+    expect(surface.feature.kind).toBe('extrusion');
+    const zs: number[] = [];
+    for (let index = 2; index < surface.mesh.positions.length; index += 3) zs.push(surface.mesh.positions[index]);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(4, 6);
+  }, 40000);
+
+  it('sweeps an open polyline, keeping its arc segments curved', async () => {
+    const kit = setup();
+    const bow = kit.doc.createPolyline([{ x: 0, y: 0 }, { x: 20, y: 0 }], false);
+    bow.bulges = [1]; // a half circle of radius 10
+    kit.doc.addEntity(bow);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 10, y: -10 }, bow);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('5');
+
+    expect(kit.doc.surfaces).toHaveLength(1);
+    const kernel = await openCascadeKernel();
+    const shape = await openExactShape(kit.doc.surfaces[0], kernel);
+    expect(shape).not.toBeNull();
+    if (!shape) return;
+    const inspection = kernel.inspect(shape);
+    // A sheet, not a body: no volume, and one curved face rather than a fan.
+    expect(inspection.solidCount).toBe(0);
+    expect(inspection.faceCount).toBe(1);
+    // It reaches the bottom of the half circle, which a chord never would.
+    expect(inspection.bounds.min.y).toBeCloseTo(-10, 6);
+    shape.dispose();
+  }, 40000);
+
+  it('sweeps a spline as the curve it is', async () => {
+    const kit = setup();
+    const curve = kit.doc.createBezier({ x: 0, y: 0 }, { x: 10, y: 20 }, { x: 30, y: 20 }, { x: 40, y: 0 });
+    kit.doc.addEntity(curve);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 20, y: 15 }, curve);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('6');
+
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.solids).toHaveLength(0);
+  }, 40000);
+
+  it('still makes a solid of a closed profile, and both at once when both are picked', async () => {
+    const kit = setup();
+    const closed = kit.doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 6 });
+    const open = kit.doc.createLine({ x: 20, y: 0 }, { x: 30, y: 0 });
+    kit.doc.addEntity(closed); kit.doc.addEntity(open);
+
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 3 }, closed);
+    await kit.manager.handleClick({ x: 25, y: 0 }, open);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('4');
+
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.log.mock.calls.flat().join('\n')).toContain('1 solid(s) and 1 surface(s)');
+  }, 40000);
+
+  it('undoes the surface back to the curve it was made from', async () => {
+    const kit = setup();
+    const line = kit.doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    kit.doc.addEntity(line);
+    kit.manager.startCommand('EXTRUDE');
+    await kit.manager.handleClick({ x: 5, y: 0 }, line);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('4');
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.surfaces).toHaveLength(0);
+    expect(kit.doc.entities).toHaveLength(1);
+  }, 40000);
+});

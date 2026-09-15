@@ -320,6 +320,35 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
   /** Extrudes a closed loop of exact edges — lines, arcs, Bezier curves, any mix
    *  — the same way `extrudePolygon` extrudes a straight-edged one, so a closed
    *  spline profile keeps its true curved boundary instead of being faceted. */
+  /**
+   * An open curve swept along a vector: a surface, not a solid.
+   *
+   * The wire is prismed as a wire rather than as a face, because an open one
+   * bounds nothing there is a face of. What comes back is a shell — the shape
+   * a Surface is made of, the same one LOFT between two open rails produces.
+   */
+  extrudeOpenWire(edges: readonly SweepPathSegment3[], vector: Point3): OpenCascadeSolid {
+    if (edges.length === 0) throw new Error('Extrusion profile requires at least one edge.');
+    this.validateVector(vector, 'Extrusion');
+    const owned: Array<{ delete(): void }> = [];
+    let prism: InstanceType<typeof this.oc.BRepPrimAPI_MakePrism_1> | null = null;
+    try {
+      const wire = this.buildWireFromEdges(edges, owned, 'OpenCascade could not build the extrusion profile.');
+      const prismVector = new this.oc.gp_Vec_4(vector.x, vector.y, vector.z);
+      owned.push(prismVector);
+      prism = new this.oc.BRepPrimAPI_MakePrism_1(wire, prismVector, true, true);
+      const shape = prism.Shape();
+      if (shape.IsNull()) {
+        shape.delete();
+        throw new Error('OpenCascade failed to extrude the open profile.');
+      }
+      return this.wrap(shape);
+    } finally {
+      prism?.delete();
+      owned.reverse().forEach((item) => item.delete());
+    }
+  }
+
   extrudeWire(edges: readonly SweepPathSegment3[], vector: Point3): OpenCascadeSolid {
     if (edges.length === 0) throw new Error('Extrusion profile requires at least one edge.');
     this.validateVector(vector, 'Extrusion');
