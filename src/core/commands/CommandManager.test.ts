@@ -5830,3 +5830,87 @@ describe('a sliced solid keeps its recipe', () => {
     expect(kit.doc.solids.every((solid) => solid.feature.kind === 'mesh')).toBe(true);
   });
 });
+
+describe('BOUNDARY', () => {
+  it('traces the outline round a point into a closed polyline, leaving the originals alone', () => {
+    const { doc, manager } = setup();
+    // Four lines crossing past each other, so nothing is a closed shape yet.
+    const lines = [
+      doc.createLine({ x: -5, y: 0 }, { x: 15, y: 0 }),
+      doc.createLine({ x: 10, y: -5 }, { x: 10, y: 15 }),
+      doc.createLine({ x: 15, y: 10 }, { x: -5, y: 10 }),
+      doc.createLine({ x: 0, y: 15 }, { x: 0, y: -5 }),
+    ];
+    lines.forEach((line) => doc.addEntity(line));
+
+    manager.startCommand('BOUNDARY');
+    void manager.handleClick({ x: 5, y: 5 });
+
+    expect(doc.entities).toHaveLength(5);
+    const boundary = doc.entities.at(-1)!;
+    expect(boundary).toMatchObject({ type: 'polyline', closed: true });
+    if (boundary.type !== 'polyline') return;
+    // Four segments — a closed polyline also stores its first vertex again at
+    // the end, the way every other closed one in this document does.
+    expect(polylineSegments(boundary)).toHaveLength(4);
+    expect(boundary.vertices.slice(0, 4).map((point) => `${Math.round(point.x)},${Math.round(point.y)}`).sort())
+      .toEqual(['0,0', '0,10', '10,0', '10,10']);
+    // The lines it was traced from are untouched.
+    for (const line of lines) expect(doc.getEntity(line.id)).toMatchObject({ type: 'line' });
+  });
+
+  it('keeps arcs as arcs, so a traced circle outline is still circular', () => {
+    const { doc, manager } = setup();
+    doc.addEntity(doc.createCircle({ x: 0, y: 0 }, 10));
+    doc.addEntity(doc.createCircle({ x: 14, y: 0 }, 10));
+
+    manager.startCommand('BOUNDARY');
+    void manager.handleClick({ x: 7, y: 0 }); // inside both: the lens they share
+
+    const boundary = doc.entities.at(-1)!;
+    expect(boundary.type).toBe('polyline');
+    if (boundary.type !== 'polyline') return;
+    expect(boundary.closed).toBe(true);
+    const arcs = polylineArcPieces(boundary);
+    expect(arcs).toHaveLength(2);
+    for (const { arc } of arcs) expect(arc.radius).toBeCloseTo(10, 6);
+  });
+
+  it('says so and draws nothing when the point is not enclosed', () => {
+    const { doc, manager, log } = setup();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+
+    manager.startCommand('BOUNDARY');
+    void manager.handleClick({ x: 5, y: 5 });
+
+    expect(doc.entities).toHaveLength(1);
+    expect(log.mock.calls.flat().join('\n')).toContain('No enclosed area');
+  });
+
+  it('undoes as one object', () => {
+    const { doc, history, manager } = setup();
+    doc.addEntity(doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 10 }));
+
+    manager.startCommand('BOUNDARY');
+    void manager.handleClick({ x: 5, y: 5 });
+    expect(doc.entities).toHaveLength(2);
+
+    expect(history.undo()).toBe(true);
+    expect(doc.entities).toHaveLength(1);
+  });
+
+  it('traces the cell a dividing line makes, not the whole shape around it', () => {
+    const { doc, manager } = setup();
+    doc.addEntity(doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 10 }));
+    doc.addEntity(doc.createLine({ x: 5, y: -2 }, { x: 5, y: 12 }));
+
+    manager.startCommand('BOUNDARY');
+    void manager.handleClick({ x: 2, y: 5 });
+
+    const boundary = doc.entities.at(-1)!;
+    if (boundary.type !== 'polyline') throw new Error('expected a polyline');
+    const xs = boundary.vertices.map((point) => point.x);
+    expect(Math.min(...xs)).toBeCloseTo(0, 9);
+    expect(Math.max(...xs)).toBeCloseTo(5, 9);
+  });
+});

@@ -8,7 +8,7 @@ import { toolIcon } from './toolIcons';
  */
 
 export const drawTools: Array<[string, CommandName]> = [
-  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
+  ['Line', 'LINE'], ['Polyline', 'POLYLINE'], ['Rectangle', 'RECTANGLE'], ['Polygon', 'POLYGON'], ['Boundary', 'BOUNDARY'], ['Hatch', 'HATCH'], ['Text', 'TEXT'], ['MText', 'MTEXT'],
 ];
 // Draw and its three edit operations together — MLINE is the default click,
 // holding for more reaches MLCUT/MLWELD/MLCORNER, so the whole multiline

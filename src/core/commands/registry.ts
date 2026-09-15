@@ -27,6 +27,7 @@ import { createBlock, insertBlock, purgeUnreachableBlocks } from './steps/blocks
 import { removeGeometricDuplicates } from './steps/overkill';
 import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
 import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
+import { traceBoundaryAt } from './steps/boundary';
 import { createHatch } from './steps/hatch';
 import { editText } from './steps/textEdit';
 import { measureArea } from './steps/area';
@@ -301,6 +302,9 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select objects to explode, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to explode.`, { skipStep: false }) },
+  { name: 'BOUNDARY', aliases: ['BO', 'BOUNDARY'], execute: traceBoundaryAt, help: 'trace the outline enclosing a picked point into a closed polyline', suggest: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Pick a point inside the area to trace:' }, { kind: 'done' }],
+    data: () => ({}) },
   { name: 'HATCH', aliases: ['HA', 'HATCH'], execute: createHatch, help: 'hatch closed boundaries using the current Hatch settings', suggest: true,
     steps: [{ kind: 'entity', label: 'Select closed boundaries, then press Enter:', multi: true }, { kind: 'done' }],
     data: () => ({ entities: [] }),
