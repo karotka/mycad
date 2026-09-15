@@ -347,3 +347,62 @@ describe('PreviewController', () => {
     expect(snap.style.top).toBe('34px');
   });
 });
+
+describe('HELIX preview', () => {
+  function controllerWith(typed: string) {
+    const dimension = element(), origin = element(), target = element(), snap = element();
+    return new PreviewController(dimension, origin, target, snap, undefined, undefined, snap, undefined, () => typed);
+  }
+  const active = (stepIndex: number, data: Record<string, unknown>) =>
+    ({ name: 'HELIX', stepIndex, steps: [], data } as never);
+
+  it('rubber-bands the base circle while the radius is being dragged', () => {
+    const controller = controllerWith('');
+    controller.update(active(1, { center: { x: 2, y: 3 } }), { x: 12, y: 3 }, null);
+    expect(controller.preview).toMatchObject({ type: 'circle', data: { center: { x: 2, y: 3 }, cursor: { x: 12, y: 3 } } });
+  });
+
+  it('shows a whole helix once the radius is settled, before anything else is answered', () => {
+    const controller = controllerWith('');
+    controller.update(active(2, { center: { x: 0, y: 0 }, baseRadius: 10 }), { x: 0, y: 0 }, null);
+    const data = controller.preview?.data as { start: { z: number }; segments: Array<{ end: { z: number } }> };
+    expect(controller.preview?.type).toBe('spline');
+    expect(data.start.z).toBe(0);
+    // Three provisional turns rising to twice the radius — a shape that reads
+    // as a helix rather than as a circle drawn over itself.
+    expect(data.segments).toHaveLength(12);
+    expect(data.segments.at(-1)!.end.z).toBeCloseTo(20, 6);
+  });
+
+  it('follows the number being typed, before it is submitted', () => {
+    const data = (controller: PreviewController) =>
+      controller.preview?.data as { segments: Array<{ end: { x: number; y: number; z: number } }> };
+
+    const turns = controllerWith('6');
+    turns.update(active(3, { center: { x: 0, y: 0 }, baseRadius: 10, topRadius: 10 }), { x: 0, y: 0 }, null);
+    expect(data(turns).segments).toHaveLength(24);
+
+    const height = controllerWith('75');
+    height.update(active(4, { center: { x: 0, y: 0 }, baseRadius: 10, topRadius: 10, turns: 2 }), { x: 0, y: 0 }, null);
+    expect(data(height).segments.at(-1)!.end.z).toBeCloseTo(75, 6);
+
+    const top = controllerWith('3');
+    top.update(active(2, { center: { x: 0, y: 0 }, baseRadius: 10 }), { x: 0, y: 0 }, null);
+    const last = data(top).segments.at(-1)!.end;
+    expect(Math.hypot(last.x, last.y)).toBeCloseTo(3, 6);
+  });
+
+  it('keeps the last shape while a step is answered with nonsense rather than blinking out', () => {
+    const controller = controllerWith('abc');
+    controller.update(active(3, { center: { x: 0, y: 0 }, baseRadius: 10, topRadius: 10 }), { x: 0, y: 0 }, null);
+    expect(controller.preview?.type).toBe('spline');
+  });
+
+  it('redraws where the cursor last was when only the typed text changed', () => {
+    const controller = controllerWith('');
+    controller.update(active(1, { center: { x: 0, y: 0 } }), { x: 7, y: 0 }, null);
+    controller.clearPreview();
+    controller.refresh(active(1, { center: { x: 0, y: 0 } }), null);
+    expect(controller.preview).toMatchObject({ data: { cursor: { x: 7, y: 0 } } });
+  });
+});

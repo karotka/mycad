@@ -1,6 +1,6 @@
 import './styles/app.css';
 import { document as cadDocument } from './core/Document';
-import { CommandManager, type CommandName } from './core/commands/CommandManager';
+import { CommandManager, type ActiveCommand, type CommandName } from './core/commands/CommandManager';
 import { dimensionGeometry, entityBounds, type Entity, type Solid, type Surface, type TextEntity } from './core/entities/types';
 import { CommandHistory } from './core/history/CommandHistory';
 import { worldToScreen, type Vec2 } from './math/geometry';
@@ -177,6 +177,7 @@ const previewController = new PreviewController(
   (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
   drawingPlaneMarker,
   () => cadDocument.viewMode === '3d' ? cadDocument.activeWorkPlane : null,
+  () => input.value,
 );
 const navigation = new ViewportNavigationController(
   cadDocument,
@@ -1523,6 +1524,7 @@ new InputController(input, commandForm, {
   commandInputChanged: () => {
     suggestionIndex = 0;
     updateCommandSuggestions();
+    refreshTypedPreview();
   },
 });
 
@@ -1575,6 +1577,9 @@ commandForm.addEventListener('submit', async (event) => {
   afterDynamicUcsAnswer(dynamicAnswer);
   updateCommandSuggestions();
   if (!commands.active) previewController.clearPreview();
+  // An answer moves the command on to the next step, which is a different
+  // preview — and for a numeric step nothing else will come along to draw it.
+  else refreshTypedPreview();
   redraw();
 });
 
@@ -1594,7 +1599,31 @@ input.addEventListener('keydown', (event) => {
 input.addEventListener('input', () => {
   suggestionIndex = 0;
   updateCommandSuggestions();
+  refreshTypedPreview();
 });
+
+/**
+ * Redraw a preview that follows the number being typed. A numeric step has no
+ * pointer movement to redraw on — and the drawing commands' own pointer path
+ * bails out before the preview for a step that is not a point — so without
+ * this the shape would only catch up once something else happened to move.
+ *
+ * Called from both ways the command line changes: the DOM's own input event,
+ * and InputController's keydown path, which preventDefaults the keystroke and
+ * writes the value itself (so no input event is fired at all — measured: the
+ * DOM listener above never once ran while a number was being typed).
+ */
+function refreshTypedPreview(): void {
+  const active = commands.active;
+  if (!active || !previewFollowsTypedInput(active)) return;
+  previewController.refresh(active, hoverState.ucsHoverPoint);
+  redraw();
+}
+
+/** Commands whose preview reads the unsubmitted command line. */
+function previewFollowsTypedInput(active: ActiveCommand): boolean {
+  return active.name === 'HELIX' && active.stepIndex >= 2;
+}
 
 /**
  * Opens the object menu at the press. Called from the release of a right button

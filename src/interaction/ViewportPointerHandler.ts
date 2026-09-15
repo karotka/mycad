@@ -779,6 +779,13 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
           const radius = Math.hypot(p.x - center.x, p.y - center.y);
           showPreviewLabel(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
         }
+      } else if (active.name === 'HELIX' && active.data.center) {
+        // Sizing the base circle, the one step of HELIX the cursor answers.
+        // showDimension rather than showPreviewLabel so the number is there in
+        // the 2D view too, the same reason ARC below does it.
+        const center = active.data.center as Vec2;
+        const radius = Math.hypot(p.x - center.x, p.y - center.y);
+        showDimension(`R ${radius.toFixed(2)} mm · Ø ${(radius * 2).toFixed(2)} mm`, sx, sy);
       } else if (active.name === 'ARC' && active.data.center) {
         // Placing the start point (step 1, centre already set): only the
         // radius is known yet — the same partial readout CIRCLE gives at

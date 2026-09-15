@@ -20,7 +20,15 @@ export class PreviewController {
      *  BEZIER/SPLINE use it, to notice that their points no longer all sit
      *  on it — see `curvePreviewChain`. */
     private readonly curvePreviewPlane?: () => WorkPlane | null,
+    /** What stands in the command line right now, unsubmitted. A numeric step
+     *  has no cursor to follow, so this is the only thing a preview of one can
+     *  react to — see `helixPreviewOptions`. */
+    private readonly typedInput?: () => string,
   ) {}
+
+  /** The last cursor `update` was given, so a preview that changed for a
+   *  reason other than the pointer moving can be redrawn where it is. */
+  private lastCursor: Vec2 = { x: 0, y: 0 };
 
   get preview(): PreviewFrame | undefined { return this.frame; }
 
@@ -56,7 +64,17 @@ export class PreviewController {
       || (active.name === 'TEXTEDIT' && active.stepIndex === 1);
   }
 
+  /**
+   * Redraw the current preview without the pointer having moved — what a
+   * command whose preview follows the typed number needs, since typing moves
+   * nothing. Replays the cursor last seen, which is where it still is.
+   */
+  refresh(active: ActiveCommand | null, ucsHoverPoint: { x: number; y: number; z: number } | null): void {
+    this.update(active, this.lastCursor, ucsHoverPoint);
+  }
+
   update(active: ActiveCommand | null, cursor: Vec2, ucsHoverPoint: { x: number; y: number; z: number } | null): void {
+    this.lastCursor = cursor;
     if (active && this.isTextEntryStep(active)) {
       // The on-canvas text editor drives this preview itself, as the user types
       // and edits height — the cursor has nothing to do with it, so a pointer
@@ -323,12 +341,61 @@ export class PreviewController {
       });
       return;
     }
+    if (active.name === 'HELIX') { this.updateHelix(active, cursor, drawingPlane); return; }
     if (active.stepIndex !== 1) return;
     if (active.name === 'LINE' && active.data.start) this.setPreview({ type: 'line', data: { start: active.data.start, end: cursor, workPlane: drawingPlane } });
     else if (active.name === 'RECTANGLE' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
     else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) this.setPreview({ type: active.name === 'CIRCLE' ? 'circle' : 'circleDiameter', data: { center: active.data.center, cursor, workPlane: drawingPlane } });
     else if (active.name === 'OCTAGON' && active.data.center) this.setPreview({ type: 'octagon', data: { center: active.data.center, cursor } });
     else if (active.name === 'PRINTAREA' && active.data.start) this.setPreview({ type: 'rectangle', data: { start: active.data.start, end: cursor } });
+  }
+
+  /**
+   * HELIX, at every step after the centre is placed.
+   *
+   * The base radius is set with the cursor, so that step rubber-bands the base
+   * circle the way CIRCLE does. Everything after it is typed, and a typed step
+   * has nothing to follow — so the preview takes the number standing in the
+   * command line, unsubmitted, and stands in provisional values for whatever
+   * has not been asked for yet. The shape is therefore a helix from the second
+   * step onwards, and each answer only makes it more nearly the real one.
+   */
+  private updateHelix(active: ActiveCommand, cursor: Vec2, drawingPlane: WorkPlane | undefined): void {
+    const center = active.data.center as (Vec2 & { z?: number }) | undefined;
+    if (!center) return;
+    if (active.stepIndex <= 1) {
+      this.setPreview({ type: 'circle', data: { center, cursor, workPlane: drawingPlane } });
+      return;
+    }
+    const curve = helixCurve(this.helixPreviewOptions(active));
+    if (!curve) return;
+    this.setPreview({ type: 'spline', data: { start: curve.start, segments: curve.segments, workPlane: drawingPlane } });
+  }
+
+  /** What the helix looks like with the answers given so far, the number being
+   *  typed for the step in hand, and stand-ins for the rest. */
+  private helixPreviewOptions(active: ActiveCommand): HelixOptions {
+    const typed = (this.typedInput?.() ?? '').trim();
+    const pending = typed !== '' && Number.isFinite(Number(typed)) ? Number(typed) : null;
+    const center = active.data.center as Vec2;
+    const baseRadius = active.data.baseRadius as number;
+    // Enough turns and rise to read as a helix rather than as a circle drawn
+    // twice — they last only until the step that asks for them.
+    const PROVISIONAL_TURNS = 3;
+    const provisionalHeight = baseRadius * 2;
+    const answeredTop = active.data.topRadius as number | undefined;
+    const answeredTurns = active.data.turns as number | undefined;
+    return {
+      center,
+      baseRadius,
+      topRadius: active.stepIndex === 2
+        ? (pending !== null && pending >= 0 ? pending : baseRadius)
+        : answeredTop ?? baseRadius,
+      turns: active.stepIndex === 3
+        ? (pending !== null && pending > 0 ? pending : PROVISIONAL_TURNS)
+        : answeredTurns ?? PROVISIONAL_TURNS,
+      height: active.stepIndex === 4 && pending !== null ? pending : provisionalHeight,
+    };
   }
 
   /**
@@ -415,4 +482,5 @@ import type { Vec2, Vec3 } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, worldPointsShareElevation, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import { interpolatingBeziers, interpolatingBeziers3 } from '../math/bezierFit';
 import { arcFromSagitta } from '../math/arcFit';
+import { helixCurve, type HelixOptions } from '../math/helix';
 import type { MlineStyle } from '../core/settings';
