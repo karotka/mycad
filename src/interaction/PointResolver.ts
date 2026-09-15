@@ -18,6 +18,7 @@ import {
   objectSnapCandidates,
   rectangleMidpointOwner,
   rectangleSymmetryGuides,
+  rimAimedCenterCandidates,
   tangentDragCandidates,
   type ObjectSnapMode,
   type SnapTarget,
@@ -538,6 +539,7 @@ export function createPointResolver(ctx: PointResolverContext) {
     const reference = commandOrDragReferencePoint();
     const candidates = objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference);
     if (mode === 'tangent') candidates.push(...tangentCircleDragCandidates(event));
+    if (mode === 'center') candidates.push(...rimAimedCenterCandidates(doc, cursorWorldPoint(event), gripController.draggingObjectId));
     if (doc.viewMode === '3d') {
       const rect = viewport.getBoundingClientRect();
       return nearestCandidateProjected(
@@ -577,6 +579,8 @@ export function createPointResolver(ctx: PointResolverContext) {
     const candidates = modes.flatMap((mode) =>
       objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference));
     if (modes.includes('tangent')) candidates.push(...tangentCircleDragCandidates(event));
+    // Aiming at a circle catches its centre — see rimAimedCenterCandidates.
+    if (modes.includes('center')) candidates.push(...rimAimedCenterCandidates(doc, cursorWorldPoint(event), gripController.draggingObjectId));
     // Not gated on 'center' being an active running osnap — this candidate is
     // earned by the priming gesture itself, not by the ambient mode list.
     candidates.push(...derivedRectangleCenterCandidates(doc, primedRectangleCenters, gripController.draggingObjectId));

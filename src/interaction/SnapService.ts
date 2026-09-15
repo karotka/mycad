@@ -19,6 +19,13 @@ export interface SnapTarget {
 export interface SnapCandidate {
   world: Vec3;
   mode?: ObjectSnapMode;
+  /**
+   * Where the cursor has to be for this candidate to apply, when that is
+   * somewhere other than the candidate itself. A circle's centre is caught by
+   * aiming at the circle — the marker jumps to the middle, which is the whole
+   * point of a Centre snap on something whose middle is empty air.
+   */
+  aim?: Vec3;
 }
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
@@ -561,6 +568,83 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
   else if (entity.type === 'text') add(entity, entity.position);
 }
 
+/**
+ * Centres caught by aiming at the curve that goes round them, rather than at
+ * the centre itself — AutoCAD's own Centre osnap, and the only way to catch
+ * the middle of a circle at all when there is nothing drawn there to aim at.
+ *
+ * The aim point is the point of the curve nearest the cursor, so it is one
+ * candidate per curve however large the drawing, and the ordinary
+ * nearest-candidate search decides whether it is close enough — in screen
+ * pixels, the same aperture every other snap uses.
+ */
+export function rimAimedCenterCandidates(doc: Document, cursor: Vec3 | null, excludedId?: string | null): SnapCandidate[] {
+  if (!cursor) return [];
+  const candidates: SnapCandidate[] = [];
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const localCursor = worldToLocal(plane, cursor);
+    const offset = entityPlaneOffset(entity);
+    const emit = (center: Vec2, rim: Vec2): void => {
+      candidates.push({
+        world: localToWorld(plane, center, localPointZ(center) ?? offset),
+        aim: localToWorld(plane, rim, localPointZ(rim) ?? offset),
+        mode: 'center',
+      });
+    };
+    if (entity.type === 'circle') emit(entity.center, pointOnCircle(entity.center, entity.radius, localCursor));
+    else if (entity.type === 'arc') emit(entity.center, pointOnArc(entity, localCursor));
+    else if (entity.type === 'ellipse') emit(entity.center, nearestOf(ellipsePoints(entity, 64), localCursor));
+    else if (entity.type === 'polyline') {
+      for (const { segment, arc } of polylineArcPieces(entity)) {
+        const span = { ...arc, startAngle: arc.startAngle, sweepAngle: arc.sweepAngle };
+        emit(arc.center, pointOnArc(span, localCursor, segment.start));
+      }
+    }
+  }
+  return candidates;
+}
+
+/** The point of a full circle nearest `from`; its own centre when `from` is
+ *  exactly there, which simply makes the candidate aim at itself. */
+function pointOnCircle(center: Vec2, radius: number, from: Vec2): Vec2 {
+  const dx = from.x - center.x, dy = from.y - center.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-12) return { x: center.x + radius, y: center.y };
+  return { x: center.x + (dx / length) * radius, y: center.y + (dy / length) * radius };
+}
+
+/** The same for an arc, kept within the sweep it actually draws. */
+function pointOnArc(
+  arc: { center: Vec2; radius: number; startAngle: number; sweepAngle: number },
+  from: Vec2,
+  fallback?: Vec2,
+): Vec2 {
+  const at = (angle: number): Vec2 => ({
+    x: arc.center.x + Math.cos(angle) * arc.radius,
+    y: arc.center.y + Math.sin(angle) * arc.radius,
+  });
+  const dx = from.x - arc.center.x, dy = from.y - arc.center.y;
+  if (Math.hypot(dx, dy) < 1e-12) return fallback ?? at(arc.startAngle);
+  const sweep = arc.sweepAngle;
+  const turn = (((Math.atan2(dy, dx) - arc.startAngle) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const along = sweep >= 0 ? turn : turn - Math.PI * 2;
+  // Past either end, the nearest point on the arc is that end.
+  if (Math.abs(along) <= Math.abs(sweep)) return at(arc.startAngle + along);
+  return at(arc.startAngle + (Math.abs(along - sweep) < Math.abs(along) ? sweep : 0));
+}
+
+function nearestOf(points: readonly Vec2[], from: Vec2): Vec2 {
+  let best = points[0];
+  let bestDistance = Infinity;
+  for (const point of points) {
+    const distance = Math.hypot(point.x - from.x, point.y - from.y);
+    if (distance < bestDistance) { bestDistance = distance; best = point; }
+  }
+  return best;
+}
+
 function addEntityCenters(entity: Entity, add: (entity: Entity, point: Vec2) => void): void {
   if (entity.type === 'insert') { expandedInsertEntities(entity).forEach((child) => addEntityCenters(child, (_child, point) => add(entity, point))); return; }
   if (entity.type === 'circle' || entity.type === 'arc' || entity.type === 'octagon' || entity.type === 'ellipse') add(entity, entity.center);
@@ -679,11 +763,12 @@ export function nearestCandidate2d(candidates: readonly SnapCandidate[], cursor:
   let best = tolerance;
   let result: SnapTarget | null = null;
   for (const candidate of candidates) {
-    const local = worldToLocal(plane, candidate.world);
+    const local = worldToLocal(plane, candidate.aim ?? candidate.world);
     const distance = Math.hypot(local.x - cursor.x, local.y - cursor.y);
     if (distance <= best) {
       best = distance;
-      result = { point: { x: local.x, y: local.y }, world: candidate.world, mode: candidate.mode };
+      const point = worldToLocal(plane, candidate.world);
+      result = { point: { x: point.x, y: point.y }, world: candidate.world, mode: candidate.mode };
     }
   }
   return result;
@@ -702,7 +787,7 @@ export function nearestCandidateProjected(
 ): SnapTarget | null {
   const withinTolerance: Array<{ candidate: SnapCandidate; distance: number; depth: number }> = [];
   for (const candidate of candidates) {
-    const projected = project(candidate.world);
+    const projected = project(candidate.aim ?? candidate.world);
     if (!projected) continue;
     const distance = Math.hypot(projected.x - cursor.x, projected.y - cursor.y);
     if (distance <= tolerance) withinTolerance.push({ candidate, distance, depth: projected.depth ?? 0 });

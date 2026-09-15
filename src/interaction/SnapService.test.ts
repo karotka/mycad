@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { derivedRectangleCenterCandidates, measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, rectangleMidpointOwner, rectangleSymmetryGuides, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate } from './SnapService';
+import { derivedRectangleCenterCandidates, measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, rectangleMidpointOwner, rectangleSymmetryGuides, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate , rimAimedCenterCandidates } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -477,5 +477,90 @@ describe('nearestCandidateProjected depth tie-break', () => {
       : { x: 60, y: 50, depth: -0.9 }); // 10px further — well outside the tie margin
     const hit = nearestCandidateProjected(candidates, { x: 50, y: 50 }, project, 14, WORLD_WORK_PLANE);
     expect(hit?.world).toEqual(closer);
+  });
+});
+
+describe('Centre snap is aimed at the curve, not at the centre', () => {
+  it('catches a circle\'s centre from a cursor on its rim', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 100, y: 50 }, 20);
+    doc.entities.push(circle);
+
+    // On the rim, as far from the centre as the radius.
+    const candidates = rimAimedCenterCandidates(doc, { x: 120, y: 50, z: 0 });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].world).toEqual({ x: 100, y: 50, z: 0 });
+    expect(candidates[0].aim).toEqual({ x: expect.closeTo(120, 9), y: expect.closeTo(50, 9), z: 0 });
+    expect(candidates[0].mode).toBe('center');
+  });
+
+  it('aims at the point of the rim nearest the cursor, wherever that is', () => {
+    const doc = new Document();
+    doc.entities.push(doc.createCircle({ x: 0, y: 0 }, 10));
+
+    for (const cursor of [{ x: 30, y: 0 }, { x: 0, y: -30 }, { x: -20, y: 20 }]) {
+      const [candidate] = rimAimedCenterCandidates(doc, { ...cursor, z: 0 });
+      // The aim sits on the circle, in the cursor's own direction from it.
+      expect(Math.hypot(candidate.aim!.x, candidate.aim!.y)).toBeCloseTo(10, 9);
+      expect(Math.atan2(candidate.aim!.y, candidate.aim!.x)).toBeCloseTo(Math.atan2(cursor.y, cursor.x), 9);
+    }
+  });
+
+  it('keeps an arc\'s aim on the part of it that is drawn', () => {
+    const doc = new Document();
+    // A quarter arc from 0° to 90°; the cursor is off the far side of the circle.
+    doc.entities.push(doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI / 2));
+
+    const [candidate] = rimAimedCenterCandidates(doc, { x: -30, y: -1, z: 0 });
+
+    // Not the nearest point of the whole circle (which would be at 180°), but
+    // the nearer of the arc's own two ends.
+    expect(candidate.aim!.x).toBeCloseTo(0, 6);
+    expect(candidate.aim!.y).toBeCloseTo(10, 6);
+  });
+
+  it('gives a polyline\'s own arc segments a centre each', () => {
+    const doc = new Document();
+    // Two half circles back to back between the same pair of vertices — the
+    // shape a joined slot's ends make, each with a centre of its own to catch.
+    const capped = doc.createPolyline([{ x: 0, y: 0 }, { x: 0, y: 6 }], true);
+    capped.bulges = [1, 1];
+    doc.entities.push(capped);
+
+    const candidates = rimAimedCenterCandidates(doc, { x: 4, y: 3, z: 0 });
+
+    expect(candidates).toHaveLength(2);
+    for (const candidate of candidates) {
+      expect(candidate.world.x).toBeCloseTo(0, 6);
+      expect(candidate.world.y).toBeCloseTo(3, 6);
+      // And each aims at its own arc, three units out from that centre.
+      expect(Math.hypot(candidate.aim!.x - 0, candidate.aim!.y - 3)).toBeCloseTo(3, 6);
+    }
+  });
+
+  it('offers nothing for a hidden layer or the object being dragged', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 10);
+    doc.entities.push(circle);
+
+    expect(rimAimedCenterCandidates(doc, { x: 10, y: 0, z: 0 }, circle.id)).toEqual([]);
+    doc.hiddenLayers.add(circle.layer);
+    expect(rimAimedCenterCandidates(doc, { x: 10, y: 0, z: 0 })).toEqual([]);
+  });
+
+  it('resolves through the ordinary nearest-candidate search, marker and all', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 100, y: 50 }, 20);
+    doc.entities.push(circle);
+    const candidates = rimAimedCenterCandidates(doc, { x: 120, y: 50, z: 0 });
+
+    // A cursor 2 units off the rim, and 18 from the centre: within a tolerance
+    // that would never have reached the centre itself.
+    const target = nearestCandidate2d(candidates, { x: 122, y: 50 }, WORLD_WORK_PLANE, 5);
+
+    expect(target).not.toBeNull();
+    expect(target!.point).toEqual({ x: 100, y: 50 });
+    expect(target!.mode).toBe('center');
   });
 });
