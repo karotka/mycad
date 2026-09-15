@@ -82,29 +82,25 @@ cut with caps and section edges, not a modelling operation like SLICE.
 
 Measured against the working set, not against the whole of AutoCAD — every one
 of these is something a drawing reaches for, listed in the order it would be
-missed. The file operations that used to be menu-only are done (NEW, OPEN,
-SAVE, SAVEAS, DXFOUT, DXFIN, EXPORTGCODE, IMPORTSTEP, IMPORTEXCELLON,
-PDFIMPORT, PLOT).
+missed.
+
+Done since this list was written: the file operations that used to be menu-only
+(NEW, OPEN, SAVE, SAVEAS, DXFOUT, DXFIN, EXPORTGCODE, IMPORTSTEP,
+IMPORTEXCELLON, PDFIMPORT, PLOT), then DIST, LIST, MASSPROP, MATCHPROP,
+3DROTATE, REVOLVE, BREAK, ALIGN and DIVIDE.
 
 ### Modelling and editing
 
-- **REVOLVE** — a profile turned about an axis. EXTRUDE, SWEEP and LOFT are all
-  there; this is the fourth way a solid is made, and the one every turned part
-  needs. The exact kernel already has the pieces (a wire profile and an axis).
 - **STRETCH** — move the vertices a crossing window catches and leave the rest,
   the usual way a drawing is made longer or wider. Grips move one point;
   nothing moves a set of them together.
-- **BREAK** / **BREAKATPOINT** — cut an object between two points. TRIM needs a
-  cutting edge; this needs none.
-- **ALIGN** — place an object by two or three point pairs at once, instead of
-  move-then-rotate-then-scale.
 - **LENGTHEN** — extend or shorten by a length, an angle, or a percentage.
 - **PEDIT** — join, close, taper and curve-fit a polyline. JOIN covers part of
   the first; the rest has no route.
-- **MATCHPROP** — copy layer, colour and linetype from one object to others.
 - **GROUP** — a named selection that is not a block.
 - **ARRAYPATH** — copies distributed along a curve (polar and rectangular exist).
-- **3DROTATE / 3DALIGN** — ROTATE turns within the UCS plane only.
+- **3DALIGN** — align by three point pairs in space; ALIGN and 3DROTATE cover
+  the flat and the single-axis cases.
 
 ### Drawing and annotation
 
@@ -112,17 +108,7 @@ PDFIMPORT, PLOT).
   set out with.
 - **MLEADER / LEADER** — a leader with text on it. Callouts in a real drawing
   (examples/2d/house.mycad is full of them) are hand-drawn lines plus TEXT.
-- **DIVIDE / MEASURE (point)** — points or blocks placed evenly along an
-  object. Our MEASURE dimensions a distance; AutoCAD's divides an object.
 - **REVCLOUD**, **DONUT**, **WIPEOUT**, **TABLE**.
-
-### Enquiry
-
-- **DIST** — the distance and angle between two points, without leaving a
-  dimension behind. AREA and MEASURE cover the other two questions.
-- **LIST** — an object's own properties as text.
-- **MASSPROP** — volume, centre of mass and inertia of a solid. The kernel
-  already computes volume and centroid for its own use (SolidInspection).
 
 ### Whole subsystems, not single commands
 
