@@ -15,7 +15,7 @@ import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldPointInPlane, worldToLocal } from '../../math/workplane';
 import { polylineOutline } from '../entities/polylineArcs';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { curvePoints, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
+import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
@@ -735,6 +735,34 @@ export function pointInEllipse(point: Vec2, e: Extract<Entity, { type: 'ellipse'
 }
 
 /** True when the point is within tolerance of any segment of the chain. */
+/**
+ * Whether a click lands on a dimension as it is actually drawn: its two
+ * extension lines, its dimension line (a chain of points, so an angular one's
+ * arc is followed), each arrowhead, and the box its text occupies.
+ *
+ * The bounding box this replaces is mostly empty air — a dimension spans the
+ * distance it measures, and its own ink runs around the edge of that. Measured
+ * on a house plan: 125 of its 529 lines could not be picked on their own
+ * midpoint, because a dimension whose nearest stroke was up to 834 mm away had
+ * claimed the click first.
+ */
+function hitsDimension(point: Vec2, entity: Extract<Entity, { type: 'dimension' }>, tolerance: number): boolean {
+  const geometry = dimensionGeometry(entity);
+  const chains: Vec2[][] = [geometry.extensionStart, geometry.extensionEnd, geometry.dimensionLine, ...geometry.arrows];
+  if (chains.some((chain) => hitsChain(point, chain, tolerance))) return true;
+  // The text, as the box the renderer lays it into: centred on textPoint,
+  // turned by textAngle, one text height tall. Arial's digits run about 0.55
+  // of their height wide; 0.65 leaves a little room either side rather than
+  // making the last character unclickable.
+  const height = entity.textHeight * (entity.scale || 1);
+  const width = height * 0.65 * Math.max(1, geometry.text.length);
+  const cos = Math.cos(geometry.textAngle), sin = Math.sin(geometry.textAngle);
+  const dx = point.x - geometry.textPoint.x, dy = point.y - geometry.textPoint.y;
+  const along = dx * cos + dy * sin;
+  const across = -dx * sin + dy * cos;
+  return Math.abs(along) <= width / 2 + tolerance && Math.abs(across) <= height / 2 + tolerance;
+}
+
 function hitsChain(point: Vec2, vertices: Vec2[], tolerance: number): boolean {
   for (let i = 1; i < vertices.length; i++) {
     if (distanceToSegment(point, vertices[i - 1], vertices[i]) <= tolerance) return true;
@@ -785,21 +813,16 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         break;
       }
       case 'circle': {
-        const d = Math.hypot(point.x - e.center.x, point.y - e.center.y);
-        if (Math.abs(d - e.radius) <= tolerance || d <= e.radius) return e;
+        if (Math.abs(Math.hypot(point.x - e.center.x, point.y - e.center.y) - e.radius) <= tolerance) return e;
         break;
       }
       case 'ellipse': {
-        // Inside counts, as it does for a circle; otherwise test the outline.
-        if (pointInEllipse(point, e) || hitsChain(point, ellipsePoints(e, 64), tolerance)) return e;
+        if (hitsChain(point, ellipsePoints(e, 64), tolerance)) return e;
         break;
       }
       case 'rectangle': {
-        const minX = Math.min(e.first.x, e.opposite.x);
-        const maxX = Math.max(e.first.x, e.opposite.x);
-        const minY = Math.min(e.first.y, e.opposite.y);
-        const maxY = Math.max(e.first.y, e.opposite.y);
-        if (point.x >= minX - tolerance && point.x <= maxX + tolerance && point.y >= minY - tolerance && point.y <= maxY + tolerance) return e;
+        const corners = [e.first, { x: e.opposite.x, y: e.first.y }, e.opposite, { x: e.first.x, y: e.opposite.y }];
+        if (hitsChain(point, closePolyline(corners), tolerance)) return e;
         break;
       }
       case 'octagon':
@@ -820,15 +843,18 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         const hitsBoundary = e.loops.some((loop) => hitsChain(point, closePolyline(loop), tolerance));
         const hitsPattern = e.pattern !== 'solid' && hatchPatternSegments(e.loops, e.patternLines)
           .some(([start, end]) => distanceToSegment(point, start, end) <= tolerance);
-        const inside = Boolean(e.loops[0] && insidePolygon(point, e.loops[0]))
-          && !e.loops.slice(1).some((hole) => insidePolygon(point, hole));
-        if (hitsBoundary || hitsPattern || inside) return e;
+        if (hitsBoundary || hitsPattern) return e;
         break;
       }
-      case 'text':
-      case 'dimension': {
+      // A text block's bounding box is roughly where its ink is, so it stands
+      // for the glyphs themselves.
+      case 'text': {
         const b = entityBounds(e);
         if (point.x >= b.min.x - tolerance && point.x <= b.max.x + tolerance && point.y >= b.min.y - tolerance && point.y <= b.max.y + tolerance) return e;
+        break;
+      }
+      case 'dimension': {
+        if (hitsDimension(point, e, tolerance)) return e;
         break;
       }
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
+import { dimensionGeometry } from '../core/entities/types';
 import { applyProjectedWindowSelection, applyWindowSelection, hitTestSurface2d, pickEntityAt } from './PickingService';
 import { snapPoint2 } from '../math/geometry';
 import { createBoxMesh } from '../core/geometry/PrimitiveMesh';
@@ -321,5 +322,63 @@ describe('picking an entity that lives in its own work plane', () => {
     panelAt(doc, 0, 0);
     panelAt(doc, 200, 0);
     expect(pickEntityAt(doc, { x: 150, y: 25 }, 0.2)).toBeNull();
+  });
+});
+
+describe('what wins a click: strokes first, enclosed areas only after', () => {
+  /** A dimension spans the distance it measures; its own ink runs around the
+   *  edge of that span, and the middle is air. Measured on a house plan:
+   *  125 of its 529 lines could not be picked at their own midpoint, because
+   *  a dimension whose nearest stroke was up to 834 mm away claimed the click
+   *  from its bounding box. */
+  it('does not let a dimension claim a line drawn across the middle of it', () => {
+    const doc = new Document();
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 500, y: 400 });
+    const line = doc.createLine({ x: 200, y: 200 }, { x: 800, y: 200 });
+    // The dimension is added last, the way a drawing is dimensioned once its
+    // geometry is there — so it is the one tested first.
+    doc.entities.push(line, dimension);
+
+    // Well inside the dimension's bounding box, and right on the line.
+    expect(pickEntityAt(doc, { x: 500, y: 200 }, 5)).toMatchObject({ id: line.id });
+  });
+
+  it('still picks the dimension by the parts of it that are actually drawn', () => {
+    const doc = new Document();
+    const dimension = doc.createDimension({ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 500, y: 400 });
+    doc.entities.push(dimension);
+    const geometry = dimensionGeometry(dimension);
+
+    // Its dimension line, an extension line, and its text.
+    expect(pickEntityAt(doc, geometry.dimensionLine[0], 5)).toMatchObject({ id: dimension.id });
+    expect(pickEntityAt(doc, geometry.extensionStart[1], 5)).toMatchObject({ id: dimension.id });
+    expect(pickEntityAt(doc, geometry.textPoint, 5)).toMatchObject({ id: dimension.id });
+    // And not from the empty middle.
+    expect(pickEntityAt(doc, { x: 500, y: 200 }, 5)).toBeNull();
+  });
+
+  it('gives a line crossing a rectangle to the line, not to the rectangle it crosses', () => {
+    const doc = new Document();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 100, y: 100 });
+    const line = doc.createLine({ x: 10, y: 50 }, { x: 90, y: 50 });
+    // The rectangle is drawn last, so it used to win on top of everything.
+    doc.entities.push(line, rectangle);
+
+    expect(pickEntityAt(doc, { x: 50, y: 50 }, 1)).toMatchObject({ id: line.id });
+    // The rectangle is still picked from inside, where nothing else is.
+    expect(pickEntityAt(doc, { x: 50, y: 20 }, 1)).toMatchObject({ id: rectangle.id });
+    // And on its own edge.
+    expect(pickEntityAt(doc, { x: 50, y: 0 }, 1)).toMatchObject({ id: rectangle.id });
+  });
+
+  it('gives a line crossing a circle to the line', () => {
+    const doc = new Document();
+    const circle = doc.createCircle({ x: 0, y: 0 }, 50);
+    const line = doc.createLine({ x: -40, y: 10 }, { x: 40, y: 10 });
+    doc.entities.push(line, circle);
+
+    expect(pickEntityAt(doc, { x: 0, y: 10 }, 1)).toMatchObject({ id: line.id });
+    expect(pickEntityAt(doc, { x: 0, y: -20 }, 1)).toMatchObject({ id: circle.id });
+    expect(pickEntityAt(doc, { x: 50, y: 0 }, 1)).toMatchObject({ id: circle.id });
   });
 });

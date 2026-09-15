@@ -1,10 +1,11 @@
 import type { Vec2 } from '../math/geometry';
 import type { Document } from '../core/Document';
+import { pickEntityAt } from './PickingService';
 import type { CommandHistory } from '../core/history/CommandHistory';
 import { ReplaceObjectsEdit, cloneSolid } from '../core/history/edits';
 import { cloneEntity, removeBezierNode, removePolylineVertex } from '../core/entities/types';
 import { clipboardSize, readClipboard, setClipboard } from './clipboard';
-import { hitTestEntity } from '../core/commands/CommandManager';
+
 import { hitTestSolid2d } from './PickingService';
 import { type GripMode } from './GripController';
 import type { GripController } from './GripController';
@@ -254,7 +255,10 @@ export function createToolActions(ctx: ToolActionsContext) {
     const tolerance = doc.viewMode === '2d'
       ? 8 / renderer2d.zoom
       : Math.max(0.2, renderer3d.orbitRadius * 0.025);
-    const entity = hitTestEntity(doc.entities, point, tolerance);
+    // The same two passes a left-click goes through (strokes first, then
+    // enclosed areas), so the menu offers the object a click would have
+    // selected rather than a different one.
+    const entity = pickEntityAt(doc, point, tolerance);
     const solidId = doc.viewMode === '3d'
       ? renderer3d.pickSolid(renderer3d.renderer.domElement, event.clientX, event.clientY)
       : null;

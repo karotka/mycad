@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../Document';
 import { bulgeArc, polylineArcPieces, polylineSegments } from '../entities/polylineArcs';
 import { CommandHistory } from '../history/CommandHistory';
+import { pickEntityAt } from '../../interaction/PickingService';
 import { CommandManager, hitTestEntity } from './CommandManager';
 import { ellipsePoints, entityBounds, expandedInsertSolids, isClosedBezierEntity, linearDimensionRotation, type Entity } from '../entities/types';
 import { COMMAND_LIST, commandDef } from './registry';
@@ -3547,11 +3548,17 @@ describe('ELLIPSE and CIRCLE_DIAMETER', () => {
     const { doc } = setup();
     const ellipse = doc.createEllipse({ x: 0, y: 0 }, 10, 4, 0);
     doc.entities.push(ellipse);
+    // hitTestEntity is the stroke pass: the outline, and only the outline.
     expect(hitTestEntity(doc.entities, { x: 10, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
     expect(hitTestEntity(doc.entities, { x: 0, y: 4 }, 0.2)).toMatchObject({ id: ellipse.id });
-    expect(hitTestEntity(doc.entities, { x: 0, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
+    expect(hitTestEntity(doc.entities, { x: 0, y: 0 }, 0.2)).toBeNull();
     // Outside the curve: 10 along X is on it, but 10 along Y is nowhere near.
     expect(hitTestEntity(doc.entities, { x: 0, y: 10 }, 0.2)).toBeNull();
+    // Clicking it still picks it from inside — that is the enclosed-area pass,
+    // which runs only where no stroke was found, so a line drawn across the
+    // ellipse is picked instead of the ellipse it crosses.
+    expect(pickEntityAt(doc, { x: 0, y: 0 }, 0.2)).toMatchObject({ id: ellipse.id });
+    expect(pickEntityAt(doc, { x: 0, y: 10 }, 0.2)).toBeNull();
   });
 });
 
