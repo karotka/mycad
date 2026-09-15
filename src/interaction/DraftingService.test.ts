@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { DraftingSettings } from '../core/settings';
 import { defaultDraftingSettings } from '../core/settings';
 import { constrainDraftingPoint, resolveDraftingPoint } from './DraftingService';
 
@@ -34,10 +35,10 @@ describe('resolveDraftingPoint', () => {
 
   it('gives an object snap the exact point, over everything else', () => {
     const resolved = resolveDraftingPoint({
-      cursor: { x: 9, y: 9 }, base, anchor, snap: { x: 3.3, y: 7.7 }, settings: ortho(), captureDistance: 1,
+      cursor: { x: 9, y: 9 }, base, anchors: [anchor], snap: { x: 3.3, y: 7.7 }, settings: ortho(), captureDistance: 1,
     });
     expect(resolved.point).toMatchObject({ x: 3.3, y: 7.7 });
-    expect(resolved.guide).toBeNull();
+    expect(resolved.guides[0] ?? null).toBeNull();
   });
 
   describe('with Ortho on, the direction is never broken', () => {
@@ -51,13 +52,13 @@ describe('resolveDraftingPoint', () => {
       ['right at the anchor', { x: 5, y: 40 }],
       ['beyond the anchor', { x: 60, y: 39.5 }],
     ])('holds an axis %s', (_label, cursor) => {
-      const resolved = resolveDraftingPoint({ cursor, base, anchor, snap: null, settings: ortho(), captureDistance: 1 });
+      const resolved = resolveDraftingPoint({ cursor, base, anchors: [anchor], snap: null, settings: ortho(), captureDistance: 1 });
       expect(isOrthogonal(base, resolved.point), `${JSON.stringify(resolved.point)} is off-axis`).toBe(true);
     });
 
     it('runs along the ray while the crossing is out of reach', () => {
-      const far = resolveDraftingPoint({ cursor: { x: 20, y: 3 }, base, anchor, snap: null, settings: ortho(), captureDistance: 1 });
-      const further = resolveDraftingPoint({ cursor: { x: 35, y: 3 }, base, anchor, snap: null, settings: ortho(), captureDistance: 1 });
+      const far = resolveDraftingPoint({ cursor: { x: 20, y: 3 }, base, anchors: [anchor], snap: null, settings: ortho(), captureDistance: 1 });
+      const further = resolveDraftingPoint({ cursor: { x: 35, y: 3 }, base, anchors: [anchor], snap: null, settings: ortho(), captureDistance: 1 });
       // The cursor still drags the point — it is not pinned to the crossing.
       expect(far.point).toMatchObject({ x: 20, y: 0 });
       expect(further.point).toMatchObject({ x: 35, y: 0 });
@@ -67,33 +68,33 @@ describe('resolveDraftingPoint', () => {
       // Cursor mostly vertical, so Ortho gives the vertical ray x=0; the
       // anchor's horizontal y=40 crosses it at (0, 40).
       const resolved = resolveDraftingPoint({
-        cursor: { x: 3, y: 40.4 }, base, anchor, snap: null, settings: ortho(), captureDistance: 1,
+        cursor: { x: 3, y: 40.4 }, base, anchors: [anchor], snap: null, settings: ortho(), captureDistance: 1,
       });
       expect(resolved.point.x).toBeCloseTo(0);
       expect(resolved.point.y).toBeCloseTo(40);
-      expect(resolved.guide?.start).toMatchObject(anchor);
+      expect(resolved.guides[0]?.start).toMatchObject(anchor);
     });
   });
 
   describe('with no direction constraint, the path is the constraint', () => {
     it('captures the point onto the path and slides it along', () => {
       for (const cursor of [{ x: 20, y: 40.3 }, { x: 35, y: 39.8 }]) {
-        const resolved = resolveDraftingPoint({ cursor, base, anchor, snap: null, settings: free(), captureDistance: 1 });
+        const resolved = resolveDraftingPoint({ cursor, base, anchors: [anchor], snap: null, settings: free(), captureDistance: 1 });
         expect(resolved.point.y).toBeCloseTo(anchor.y);
         expect(resolved.point.x).toBeCloseTo(cursor.x);
       }
     });
 
     it('will not let the point off the path once captured', () => {
-      const resolved = resolveDraftingPoint({ cursor: { x: 20, y: 40.6 }, base, anchor, snap: null, settings: free(), captureDistance: 1 });
+      const resolved = resolveDraftingPoint({ cursor: { x: 20, y: 40.6 }, base, anchors: [anchor], snap: null, settings: free(), captureDistance: 1 });
       expect(resolved.point.y).toBeCloseTo(anchor.y);
       expect(resolved.point.y).not.toBeCloseTo(40.6);
     });
 
     it('releases the point when the cursor leaves the path', () => {
-      const resolved = resolveDraftingPoint({ cursor: { x: 20, y: 30 }, base, anchor, snap: null, settings: free(), captureDistance: 1 });
+      const resolved = resolveDraftingPoint({ cursor: { x: 20, y: 30 }, base, anchors: [anchor], snap: null, settings: free(), captureDistance: 1 });
       expect(resolved.point).toMatchObject({ x: 20, y: 30 });
-      expect(resolved.guide).toBeNull();
+      expect(resolved.guides[0] ?? null).toBeNull();
     });
   });
 });
@@ -110,18 +111,18 @@ describe('object snap tracking can be switched off (F11)', () => {
   it('lays an acquired point\'s path when tracking is turned on', () => {
     expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(false);
     const resolved = resolveDraftingPoint({
-      cursor: { x: 20, y: 40.3 }, base, anchor, snap: null, settings: withTracking(true), captureDistance: 1,
+      cursor: { x: 20, y: 40.3 }, base, anchors: [anchor], snap: null, settings: withTracking(true), captureDistance: 1,
     });
     expect(resolved.point.y).toBeCloseTo(anchor.y);
-    expect(resolved.guide).not.toBeNull();
+    expect(resolved.guides[0] ?? null).not.toBeNull();
   });
 
   it('leaves the cursor alone once it is off, even right on the path', () => {
     const resolved = resolveDraftingPoint({
-      cursor: { x: 20, y: 40 }, base, anchor, snap: null, settings: withTracking(false), captureDistance: 1,
+      cursor: { x: 20, y: 40 }, base, anchors: [anchor], snap: null, settings: withTracking(false), captureDistance: 1,
     });
     expect(resolved.point).toMatchObject({ x: 20, y: 40 });
-    expect(resolved.guide).toBeNull();
+    expect(resolved.guides[0] ?? null).toBeNull();
   });
 
   // With Ortho on the path is what the ray extends to, so switching tracking off
@@ -130,7 +131,7 @@ describe('object snap tracking can be switched off (F11)', () => {
     const settings = withTracking(false);
     settings.orthoEnabled = true;
     const resolved = resolveDraftingPoint({
-      cursor: { x: 3, y: 40.4 }, base, anchor, snap: null, settings, captureDistance: 1,
+      cursor: { x: 3, y: 40.4 }, base, anchors: [anchor], snap: null, settings, captureDistance: 1,
     });
     // Ortho still holds the axis; it just runs on past the anchor's path.
     expect(resolved.point.x).toBeCloseTo(0);
@@ -141,8 +142,94 @@ describe('object snap tracking can be switched off (F11)', () => {
     const settings = withTracking(false);
     settings.orthoEnabled = true;
     const resolved = resolveDraftingPoint({
-      cursor: { x: 20, y: 3 }, base, anchor, snap: null, settings, captureDistance: 1,
+      cursor: { x: 20, y: 3 }, base, anchors: [anchor], snap: null, settings, captureDistance: 1,
     });
     expect(resolved.point).toMatchObject({ x: 20, y: 0 });
+  });
+});
+
+describe('two acquired points, caught where their paths cross', () => {
+  const tracking = (): DraftingSettings => ({
+    orthoEnabled: false, polarEnabled: false, polarAngles: [30, 45, 90],
+    objectSnapEnabled: true, objectSnapTrackingEnabled: true, objectSnapModes: ['middle'],
+    linetypeScale: 1,
+  });
+
+  /** A 100 x 60 rectangle's bottom and left edge midpoints: the two points one
+   *  hovers to reach a centre that has nothing drawn at it. */
+  const bottomMid = { x: 50, y: 0 };
+  const leftMid = { x: 0, y: 30 };
+
+  it('lands on the crossing — the rectangle\'s own centre — when the cursor comes near it', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 51, y: 31 }, base: null, anchors: [leftMid, bottomMid], snap: null,
+      settings: tracking(), captureDistance: 5,
+    });
+
+    expect(resolved.point).toEqual({ x: 50, y: 30 });
+    // And it says so with a path from each acquired point.
+    expect(resolved.guides).toHaveLength(2);
+    expect(resolved.guides.map((guide) => guide.start)).toEqual(expect.arrayContaining([leftMid, bottomMid]));
+    for (const guide of resolved.guides) expect(guide.end).toEqual({ x: 50, y: 30 });
+  });
+
+  it('leaves the cursor alone while it is nowhere near a crossing', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 80, y: 12 }, base: null, anchors: [leftMid, bottomMid], snap: null,
+      settings: tracking(), captureDistance: 5,
+    });
+
+    expect(resolved.point).toEqual({ x: 80, y: 12 });
+  });
+
+  it('needs two: one acquired point still only offers its own path', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 51, y: 31 }, base: null, anchors: [bottomMid], snap: null,
+      settings: tracking(), captureDistance: 5,
+    });
+
+    expect(resolved.point).not.toEqual({ x: 50, y: 30 });
+  });
+
+  it('holds the crossing even with Ortho on, which would otherwise overrule tracking', () => {
+    // The crossing IS the point being aimed at; an axis from the base has
+    // nothing to say about a point that no base was measured from.
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 51, y: 31 }, base: { x: 0, y: 0 }, anchors: [leftMid, bottomMid], snap: null,
+      settings: { ...tracking(), orthoEnabled: true }, captureDistance: 5,
+    });
+
+    expect(resolved.point).toEqual({ x: 50, y: 30 });
+  });
+
+  it('is silent while object snap tracking is off (F11)', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 51, y: 31 }, base: null, anchors: [leftMid, bottomMid], snap: null,
+      settings: { ...tracking(), objectSnapTrackingEnabled: false }, captureDistance: 5,
+    });
+
+    expect(resolved.point).toEqual({ x: 51, y: 31 });
+    expect(resolved.guides).toEqual([]);
+  });
+
+  it('an exact object snap still wins outright', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 51, y: 31 }, base: null, anchors: [leftMid, bottomMid], snap: { x: 7, y: 7 },
+      settings: tracking(), captureDistance: 5,
+    });
+
+    expect(resolved.point).toEqual({ x: 7, y: 7 });
+  });
+
+  it('crosses on a polar angle too, once polar tracking is on', () => {
+    // A path at 45° from the origin meets the vertical through (50, 0) at
+    // (50, 50) — a point neither anchor could have named alone.
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 49, y: 49 }, base: null, anchors: [{ x: 0, y: 0 }, bottomMid], snap: null,
+      settings: { ...tracking(), polarEnabled: true }, captureDistance: 5,
+    });
+
+    expect(resolved.point.x).toBeCloseTo(50, 9);
+    expect(resolved.point.y).toBeCloseTo(50, 9);
   });
 });

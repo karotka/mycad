@@ -16,15 +16,22 @@ export interface AlignmentGuide {
 
 export interface ResolvedPoint {
   point: Vec2;
-  guide: AlignmentGuide | null;
+  /** The dotted paths to draw — none, one, or the pair whose crossing caught
+   *  the point. */
+  guides: AlignmentGuide[];
 }
 
 export interface PointRequest {
   cursor: Vec2;
   /** Ortho and polar measure direction from here: the last point, or the grip's origin. */
   base: Vec2 | null;
-  /** A point acquired by hovering it, whose alignment path the cursor can catch (F11). */
-  anchor: Vec2 | null;
+  /**
+   * Points acquired by hovering them, whose alignment paths the cursor can
+   * catch (F11). Two of them can be caught where their paths cross — which is
+   * how a rectangle's centre is reached without anything drawn there: hover
+   * the midpoint of one side, then of an adjacent side, and aim at the middle.
+   */
+  anchors: Vec2[];
   /** An exact object snap under the cursor, if any. */
   snap: Vec2 | null;
   settings: DraftingSettings;
@@ -48,9 +55,17 @@ export interface PointRequest {
  */
 export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
   const { cursor, base, snap, settings, captureDistance } = request;
-  if (snap) return { point: snap, guide: null };
+  if (snap) return { point: snap, guides: [] };
   // F11 off means an acquired point lays no path, so it has nothing to say here.
-  const anchor = settings.objectSnapTrackingEnabled ? request.anchor : null;
+  const anchors = settings.objectSnapTrackingEnabled ? request.anchors : [];
+  const anchor = anchors[0] ?? null;
+
+  // Two acquired points beat everything below: their paths cross at exactly
+  // one place, which is a point the drawing does not contain and no single
+  // constraint could have named. Ortho does not get to overrule that, because
+  // the crossing IS the answer being aimed at.
+  const crossed = crossingOfTwoAnchors(anchors, cursor, captureDistance, settings);
+  if (crossed) return crossed;
 
   if (settings.orthoEnabled || settings.polarEnabled) {
     const constrained = constrainDraftingPoint(cursor, base, settings);
@@ -59,21 +74,89 @@ export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
       if (crossing) {
         return {
           point: crossing,
-          guide: { start: { ...anchor }, end: crossing, angle: directionDegrees(anchor, crossing) },
+          guides: [{ start: { ...anchor }, end: crossing, angle: directionDegrees(anchor, crossing) }],
         };
       }
     }
     return {
       point: constrained.point,
-      guide: constrained.tracked && base
-        ? { start: base, end: constrained.point, angle: constrained.angle }
-        : null,
+      guides: constrained.tracked && base
+        ? [{ start: base, end: constrained.point, angle: constrained.angle }]
+        : [],
     };
   }
 
   const path = anchor ? alignmentPath(cursor, anchor, captureDistance) : null;
-  if (path) return { point: path.end, guide: path };
-  return { point: cursor, guide: null };
+  if (path) return { point: path.end, guides: [path] };
+  return { point: cursor, guides: [] };
+}
+
+/**
+ * The directions an acquired point lays a path along: the two axes always, and
+ * the polar angles as well while polar tracking is on — the same set the cursor
+ * is already being steered by, so the paths and the steering agree.
+ *
+ * Each is a line rather than a ray: an alignment path shows on both sides of
+ * the point it comes from, as AutoCAD draws it.
+ */
+function trackingAngles(settings: DraftingSettings): number[] {
+  const angles = [0, 90];
+  if (settings.polarEnabled) {
+    for (const angle of settings.polarAngles) {
+      const reduced = ((angle % 180) + 180) % 180;
+      if (!angles.some((existing) => Math.abs(existing - reduced) < 1e-9)) angles.push(reduced);
+    }
+  }
+  return angles;
+}
+
+/**
+ * Where a path from one acquired point crosses a path from another, when the
+ * cursor is near enough to that crossing to be asking for it. The nearest such
+ * crossing wins, so two anchors offering several do not fight.
+ */
+function crossingOfTwoAnchors(
+  anchors: readonly Vec2[],
+  cursor: Vec2,
+  captureDistance: number,
+  settings: DraftingSettings,
+): ResolvedPoint | null {
+  if (anchors.length < 2) return null;
+  const angles = trackingAngles(settings);
+  let best: ResolvedPoint | null = null;
+  let bestDistance = captureDistance;
+  for (let a = 0; a < anchors.length; a++) {
+    for (let b = a + 1; b < anchors.length; b++) {
+      for (const angleA of angles) {
+        for (const angleB of angles) {
+          const point = lineCrossing(anchors[a], angleA, anchors[b], angleB);
+          if (!point) continue;
+          const distance = Math.hypot(point.x - cursor.x, point.y - cursor.y);
+          if (distance > bestDistance) continue;
+          bestDistance = distance;
+          best = {
+            point,
+            guides: [
+              { start: { ...anchors[a] }, end: point, angle: angleA },
+              { start: { ...anchors[b] }, end: point, angle: angleB },
+            ],
+          };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/** Where the infinite lines through two points at two angles meet, or null
+ *  when they run parallel. */
+function lineCrossing(a: Vec2, angleA: number, b: Vec2, angleB: number): Vec2 | null {
+  const da = { x: Math.cos(angleA * Math.PI / 180), y: Math.sin(angleA * Math.PI / 180) };
+  const db = { x: Math.cos(angleB * Math.PI / 180), y: Math.sin(angleB * Math.PI / 180) };
+  const denominator = da.x * db.y - da.y * db.x;
+  if (Math.abs(denominator) < 1e-9) return null;
+  const t = ((b.x - a.x) * db.y - (b.y - a.y) * db.x) / denominator;
+  return { x: a.x + da.x * t, y: a.y + da.y * t };
 }
 
 /**

@@ -89,6 +89,11 @@ window outlines can silently miss a new type.
 - Move the 3D window-selection outline sampler into the same trait system.
 - Extend object-snap tracking to follow configured polar angles, not only
   horizontal and vertical paths.
+- **A drawn point can carry a stray `world` field into the file.** The point
+  resolver attaches the true 3D position to a resolved point so a command that
+  needs it can read it; commands that do not simply store the point as it is,
+  so a saved entity can end up with `start: { x, y, world: {...} }`. Harmless
+  to read back, but it is data no one asked for in every file.
 - **Settings changes are outside undo.** Every Settings tab writes straight to
   the document — drafting, hatch, G-code, and now the dimension style, which
   rewrites every dimension in the drawing. Undo cannot take any of it back.

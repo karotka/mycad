@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Document } from '../core/Document';
-import { createPointResolver, type PointResolverContext } from './PointResolver';
+import { acquiredAnchors, createPointResolver, type PointResolverContext } from './PointResolver';
 
 /**
  * A minimal fake covering only what `interactionPoint`'s generic 3D tail
@@ -33,10 +33,10 @@ function makeCtx(overrides: {
     } as unknown as PointResolverContext['renderer3d'],
     viewport: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) } as unknown as HTMLElement,
     trackingLine: {} as unknown as HTMLElement,
-    centerGuideA: { style: {} } as unknown as HTMLElement,
-    centerGuideB: { style: {} } as unknown as HTMLElement,
+    trackingLineB: { style: {} } as unknown as HTMLElement,
+    trackingLineC: { style: {} } as unknown as HTMLElement,
     size: () => ({ width: 800, height: 600 }),
-    state: { activeTracking: null, activeEndpointAnchor: null },
+    state: { activeTracking: [], trackingAnchors: [] },
   };
 }
 
@@ -91,95 +91,6 @@ describe('nearestPersistentSnap', () => {
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('nearest');
     expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
-  });
-});
-
-describe('nearestPersistentSnap: a rectangle\'s derived centre, earned by grazing two of its edge midpoints', () => {
-  // A big rectangle (0,0)->(100,60) so the default 10-unit snap aperture
-  // cannot accidentally reach a neighbouring edge midpoint from the centre —
-  // this is about which candidates exist, not about aperture tuning. Edge
-  // midpoints at (50,0), (100,30), (50,60), (0,30); true centre at (50,30) —
-  // not itself a drawn point, so only reachable this way or via the ambient
-  // Center object snap (deliberately left off below, to prove this path does
-  // not depend on it).
-  function setupRectangle() {
-    const doc = new Document();
-    doc.viewMode = '2d';
-    doc.drafting.objectSnapEnabled = true;
-    doc.drafting.objectSnapModes = ['middle'];
-    doc.addEntity(doc.createRectangle({ x: 0, y: 0 }, { x: 100, y: 60 }));
-    return doc;
-  }
-  // Keyed by clientX alone (rect.left is 0 in the mock, and sy is unused by
-  // any of these points) so each call in a test can ask for a specific world
-  // point just by picking which clientX it passes.
-  function screenToWorldAt(points: Record<number, { x: number; y: number }>) {
-    return (sx: number) => points[sx] ?? { x: 999, y: 999 };
-  }
-
-  it('offers the true centre once two different edge midpoints have been hovered', () => {
-    const doc = setupRectangle();
-    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 20: { x: 0, y: 30 }, 30: { x: 50, y: 30 } }) });
-    const resolver = createPointResolver(ctx);
-
-    const first = resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
-    expect(first?.mode).toBe('middle');
-    const second = resolver.nearestPersistentSnap({ clientX: 20, clientY: 0 });
-    expect(second?.mode).toBe('middle');
-
-    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
-    expect(atCenter?.mode).toBe('center');
-    expect(atCenter?.world).toEqual({ x: 50, y: 30, z: 0 });
-  });
-
-  it('shows the two symmetry guide lines once primed and the cursor is near the rectangle, and hides them when it wanders off', () => {
-    const doc = setupRectangle();
-    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({
-      10: { x: 50, y: 0 }, 20: { x: 0, y: 30 }, 30: { x: 50, y: 30 }, 40: { x: 1000, y: 1000 },
-    }) });
-    const resolver = createPointResolver(ctx);
-
-    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 }); // prime edge 0
-    resolver.nearestPersistentSnap({ clientX: 20, clientY: 0 }); // prime edge 3 — two different edges now
-
-    resolver.updateCenterGuideLines({ clientX: 30, clientY: 0 }); // cursor near the centre
-    expect((ctx.centerGuideA as unknown as { hidden: boolean }).hidden).toBe(false);
-    expect((ctx.centerGuideB as unknown as { hidden: boolean }).hidden).toBe(false);
-    // Vertical symmetry line: bottom-edge midpoint (50,0) <-> top-edge (50,60),
-    // canvas 800x600, no pan/zoom — screen (450,300) <-> (450,240).
-    expect(ctx.centerGuideA.style.left).toBe('450px');
-    expect(ctx.centerGuideA.style.top).toBe('300px');
-    expect(ctx.centerGuideA.style.width).toBe('60px');
-    // Horizontal symmetry line: right-edge midpoint (100,30) <-> left-edge (0,30)
-    // — screen (500,270) <-> (400,270).
-    expect(ctx.centerGuideB.style.left).toBe('500px');
-    expect(ctx.centerGuideB.style.top).toBe('270px');
-    expect(ctx.centerGuideB.style.width).toBe('100px');
-
-    resolver.updateCenterGuideLines({ clientX: 40, clientY: 0 }); // cursor far away now
-    expect((ctx.centerGuideA as unknown as { hidden: boolean }).hidden).toBe(true);
-    expect((ctx.centerGuideB as unknown as { hidden: boolean }).hidden).toBe(true);
-  });
-
-  it('offers nothing at the centre after only one edge midpoint has been hovered', () => {
-    const doc = setupRectangle();
-    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 30: { x: 50, y: 30 } }) });
-    const resolver = createPointResolver(ctx);
-
-    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
-    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
-    expect(atCenter).toBeNull();
-  });
-
-  it('offers nothing at the centre after hovering the same edge midpoint twice (not two different edges)', () => {
-    const doc = setupRectangle();
-    const ctx = makeCtx({ doc, screenToWorld: screenToWorldAt({ 10: { x: 50, y: 0 }, 30: { x: 50, y: 30 } }) });
-    const resolver = createPointResolver(ctx);
-
-    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
-    resolver.nearestPersistentSnap({ clientX: 10, clientY: 0 });
-    const atCenter = resolver.nearestPersistentSnap({ clientX: 30, clientY: 0 });
-    expect(atCenter).toBeNull();
   });
 });
 
@@ -340,5 +251,21 @@ describe('interactionPoint (drawing branch): BEZIER/SPLINE ignore a frozen drawi
 
     expect(workPlanePoint).toHaveBeenCalledWith(ctx.renderer3d.renderer.domElement, 50, 50, frozenPlane);
     expect(result).toEqual({ x: 99, y: 99 });
+  });
+});
+
+describe('acquiredAnchors', () => {
+  it('puts the newest in front and keeps only what a crossing needs', () => {
+    const a = { x: 1, y: 1 }, b = { x: 2, y: 2 }, c = { x: 3, y: 3 };
+    expect(acquiredAnchors([], a)).toEqual([a]);
+    expect(acquiredAnchors([a], b)).toEqual([b, a]);
+    // A third pushes the oldest out.
+    expect(acquiredAnchors([b, a], c)).toEqual([c, b]);
+  });
+
+  it('does not stack the same point twice while the cursor rests on it', () => {
+    const a = { x: 1, y: 1 };
+    expect(acquiredAnchors([a], { ...a })).toEqual([a]);
+    expect(acquiredAnchors([{ x: 5, y: 5 }, a], { ...a })).toEqual([a, { x: 5, y: 5 }]);
   });
 });

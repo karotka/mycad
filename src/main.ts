@@ -120,8 +120,8 @@ const measureTarget = get<HTMLElement>('measure-target');
 const snapMarker = get<HTMLElement>('snap-marker');
 const drawingPlaneMarker = get<HTMLElement>('drawing-plane-marker');
 const trackingLine = get<HTMLElement>('tracking-line');
-const centerGuideA = get<HTMLElement>('center-guide-a');
-const centerGuideB = get<HTMLElement>('center-guide-b');
+const trackingLineB = get<HTMLElement>('tracking-line-b');
+const trackingLineC = get<HTMLElement>('tracking-line-c');
 const gripMenu = get<HTMLElement>('grip-menu');
 const dimensionToast = get<HTMLElement>('dimension-toast');
 const textOptions = get<HTMLElement>('text-options');
@@ -285,7 +285,7 @@ const hoverState: { ucsHoverPoint: { x: number; y: number; z: number } | null } 
 let menuOnStillRelease = false;
 let zoomWindowMode = false;
 let currentSuggestions: CommandName[] = [];
-const pointerState: PointResolverState = { activeTracking: null, activeEndpointAnchor: null };
+const pointerState: PointResolverState = { activeTracking: [], trackingAnchors: [] };
 
 function enter3dForOrbit(): void {
   if (cadDocument.viewMode === '3d') return;
@@ -588,7 +588,7 @@ function gripEditingPoint(
   return resolvePoint(
     worldPoint(event),
     gripController.isDragging ? gripController.draggingOrigin : null,
-    gripController.endpointBase(endpointAnchor),
+    endpointAnchor ? [gripController.endpointBase(endpointAnchor)].filter((point): point is Vec2 => point !== null) : [],
     snap?.point ?? null,
   );
 }
@@ -791,8 +791,8 @@ const pointResolver = createPointResolver({
   renderer3d,
   viewport,
   trackingLine,
-  centerGuideA,
-  centerGuideB,
+  trackingLineB,
+  trackingLineC,
   size: () => ({ width, height }),
   state: pointerState,
 });
@@ -1453,8 +1453,8 @@ function escapeAll(): void {
   document.querySelector<HTMLButtonElement>('[data-view-action="zoom-window"]')?.classList.remove('active');
   commands.cancelActive();
   previewController.reset();
-  pointerState.activeTracking = null;
-  pointerState.activeEndpointAnchor = null;
+  pointerState.activeTracking = [];
+  pointerState.trackingAnchors = [];
   trackingLine.hidden = true;
   gripController.mode = null;
   gripController.hoveredGrip = -1;
@@ -1897,4 +1897,6 @@ resize();
 applyDefaultTwoDView();
 namedUcsController.render();
 redraw();
+
+
 

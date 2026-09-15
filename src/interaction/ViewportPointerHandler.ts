@@ -21,6 +21,7 @@ import { hitTestSolid2d, hitTestSurface2d, pickEntityAt } from './PickingService
 import { createPointResolver, type PointResolverState } from './PointResolver';
 import { createSolidDragPreview } from './DragEditing';
 import { createDynamicUcsCoordinator } from './DynamicUcsCoordinator';
+import { acquiredAnchors } from './PointResolver';
 import { createToolActions } from './ToolActions';
 import { nearestPlaneAxisDirection, pointWorkPlaneAxisAt, rotateWorkPlaneAboutAxis, type UcsHandleName } from '../math/ucsAxisRotation';
 
@@ -160,7 +161,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
   const {
     interactionPoint, worldPoint, worldPoint3d, rawWorldPoint, rawWorldPoint3d,
     nearestMeasurementPoint, nearestGripTargetSnap, nearestPersistentSnap,
-    endpointAnchorFromSnap, updateTrackingGuide, updateCenterGuideLines,
+    endpointAnchorFromSnap, updateTrackingGuide,
   } = ctx.resolver;
   const { pressPullDrag, extrudeHeightUnderCursor, primitiveFinalUnderCursor, updateExtrudePreview, updatePrimitiveFinalPreview } = ctx.dragPreview;
   const { canAcquireDynamicUcs, snapKeepsDynamicUcs, acquireDynamicUcs, releaseDynamicUcs, beforeDynamicUcsAnswer, afterDynamicUcsAnswer, ownsActiveCommand } = ctx.ducs;
@@ -445,7 +446,6 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     crosshair.style.left = `${sx}px`;
     crosshair.style.top = `${sy}px`;
     updateUcsCursor(event, sx, sy);
-    updateCenterGuideLines(event);
     // AutoCAD's own convention: a cross where a picked point established a
     // temporary, UCS-parallel drawing plane, so a later point landing
     // somewhere unexpected in the same command has an obvious reason why —
@@ -601,12 +601,12 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
       ?? (gripController.isDragging && cadDocument.viewMode === '2d'
         ? gripController.polylineEndpointAnchor(rawWorldPoint(event), 8 / renderer2d.zoom)
         : null);
-    if (endpointAnchor) pointerState.activeEndpointAnchor = endpointAnchor;
+    if (endpointAnchor) pointerState.trackingAnchors = acquiredAnchors(pointerState.trackingAnchors, endpointAnchor);
     // The hot grip's own axis arrows, and which one the cursor is over: shown
     // for as long as the drag is latched, so picking an axis is a plain click
     // on it (AutoCAD's own gesture — "click the grip, click the axis, pull").
     updateGripAxisTriad(event);
-    const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.activeEndpointAnchor) : interactionPoint(event);
+    const p = gripController.isDragging ? gripEditingPoint(event, gripSnap, pointerState.trackingAnchors[0] ?? null) : interactionPoint(event);
     if (!p) { trackingLine.hidden = true; return; }
     if (gripController.isDragging && awaitingGripAxis()) {
       // The cross is up and no axis has been picked yet: the point holds
@@ -673,7 +673,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     }
     coords.textContent = `X: ${p.x.toFixed(3)} mm Y: ${p.y.toFixed(3)} mm`;
     updateTrackingGuide();
-    if (pointerState.activeTracking) showDimension(`∠ ${pointerState.activeTracking.angle.toFixed(0)}°`, sx, sy);
+    if (pointerState.activeTracking.length > 0) showDimension(`∠ ${pointerState.activeTracking[0].angle.toFixed(0)}°`, sx, sy);
     updatePreview(p);
     // After updatePreview, which clears the frame before deciding what to draw:
     // this one is steered by the pointer ray rather than by the work-plane point
@@ -1470,7 +1470,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     navigation.endPan(event.pointerId);
     if (wasStillPress && !openUcsMenuIfOnAxis(event)) openContextMenu(event);
     gripInteraction.commitIfNotLatched();
-    if (!gripController.isDragging) pointerState.activeEndpointAnchor = null;
+    // Acquired points last as long as the command asking for a point does —
+    // hovering one, then another, then aiming at their crossing is a gesture
+    // that spans several clicks. Outside a command there is nothing for them
+    // to serve, so releasing the button lets them go.
+    if (!gripController.isDragging && !commands.active) pointerState.trackingAnchors = [];
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
   });
 

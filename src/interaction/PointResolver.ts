@@ -9,15 +9,12 @@ import { takesPointInput, transformsObjects } from '../core/commands/registry';
 import { resolveDraftingPoint } from './DraftingService';
 import { DYNAMIC_UCS_PER_POINT_COMMANDS } from './DynamicUcsCoordinator';
 import {
-  derivedRectangleCenterCandidates,
   measurementCandidates,
   nearestCandidate2d,
   nearestCandidateProjected,
   nearestEdgeLocalPoint,
   nearestEdgeWorldPoint,
   objectSnapCandidates,
-  rectangleMidpointOwner,
-  rectangleSymmetryGuides,
   rimAimedCenterCandidates,
   tangentDragCandidates,
   type ObjectSnapMode,
@@ -38,8 +35,26 @@ type GripSnapTarget = SnapTarget;
  * mutable object both sides hold rather than inside this module.
  */
 export interface PointResolverState {
-  activeTracking: { base: Vec2; point: Vec2; angle: number } | null;
-  activeEndpointAnchor: Vec2 | null;
+  /** The dotted paths to draw right now — none, one, or the pair whose
+   *  crossing caught the point. */
+  activeTracking: Array<{ base: Vec2; point: Vec2; angle: number }>;
+  /**
+   * Points acquired by hovering a snap, most recent first, at most
+   * TRACKING_ANCHOR_LIMIT of them. Two is what a crossing needs, and is what
+   * reaches a shape's centre through the midpoints of two of its sides.
+   */
+  trackingAnchors: Vec2[];
+}
+
+/** How many acquired points are kept. Two paths are all a crossing takes, and
+ *  more of them on screen at once is noise rather than help. */
+export const TRACKING_ANCHOR_LIMIT = 2;
+
+/** `anchors` with `point` in front, dropping any duplicate of it and anything
+ *  past the limit — the acquisition rule, kept where it can be tested. */
+export function acquiredAnchors(anchors: readonly Vec2[], point: Vec2, tolerance = 1e-6): Vec2[] {
+  const rest = anchors.filter((anchor) => Math.hypot(anchor.x - point.x, anchor.y - point.y) > tolerance);
+  return [{ ...point }, ...rest].slice(0, TRACKING_ANCHOR_LIMIT);
 }
 
 export interface PointResolverContext {
@@ -52,8 +67,9 @@ export interface PointResolverContext {
   renderer3d: Viewport3D;
   viewport: HTMLElement;
   trackingLine: HTMLElement;
-  centerGuideA: HTMLElement;
-  centerGuideB: HTMLElement;
+  /** Two more of the same, for the second and third path on screen at once. */
+  trackingLineB: HTMLElement;
+  trackingLineC: HTMLElement;
   size(): { width: number; height: number };
   state: PointResolverState;
 }
@@ -65,26 +81,10 @@ export interface PointResolverContext {
  * `ctx` and the two transient markers live on `ctx.state`.
  */
 export function createPointResolver(ctx: PointResolverContext) {
-  const { doc, commands, gripController, gripInteraction, drawingInteraction, renderer2d, renderer3d, viewport, trackingLine, centerGuideA, centerGuideB, state } = ctx;
+  const { doc, commands, gripController, gripInteraction, drawingInteraction, renderer2d, renderer3d, viewport, trackingLine, trackingLineB, trackingLineC, state } = ctx;
 
-  // Rectangles a Middle-snap hover has, this session, caught on two of their
-  // own different edges — once that happens, the rectangle's true centre
-  // (not itself a drawn point) becomes an ordinary snap candidate too, so
-  // aiming toward it catches it without a diagonal construction line and
-  // without needing Center object-snap separately enabled. Session-lived by
-  // design: once earned for a given rectangle, re-priming it every time
-  // would defeat the point ("no need to keep re-finding it by hand").
-  const primedRectangleCenters = new Set<string>();
-  let lastMidpointHover: { entityId: string; edgeIndex: number } | null = null;
-  function notePotentialRectangleMidpoint(target: GripSnapTarget | null): void {
-    if (target?.mode !== 'middle') return;
-    const owner = rectangleMidpointOwner(doc, target.world, gripController.draggingObjectId);
-    if (!owner) return;
-    if (lastMidpointHover && lastMidpointHover.entityId === owner.entityId && lastMidpointHover.edgeIndex !== owner.edgeIndex) {
-      primedRectangleCenters.add(owner.entityId);
-    }
-    lastMidpointHover = owner;
-  }
+  /** Which command the anchors below belong to; see interactionPoint. */
+  let anchorsAcquiredUnder: unknown = undefined;
 
   function worldPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Vec2 {
     const raw = rawWorldPoint(event);
@@ -119,8 +119,14 @@ export function createPointResolver(ctx: PointResolverContext) {
    * because it had latched onto a past hover position, not the current one.
    */
   function interactionPoint(event: Pick<PointerEvent, 'clientX' | 'clientY'>, commit = false): Vec2 | null {
-    state.activeTracking = null;
+    state.activeTracking = [];
     const active = commands.active;
+    // Points acquired while placing one shape have nothing to say about the
+    // next one, so a new command starts with none.
+    if (active !== anchorsAcquiredUnder) {
+      anchorsAcquiredUnder = active ?? null;
+      state.trackingAnchors = [];
+    }
     const angularPlane = active?.name === 'DIMANGULAR'
       && active.stepIndex >= 5
       ? active.data.angularSource as { workPlane?: WorkPlane } | undefined
@@ -191,8 +197,16 @@ export function createPointResolver(ctx: PointResolverContext) {
         // along its alignment path rather than losing it. A "Nearest" snap slides
         // along an edge and is never a tracking anchor — acquiring one drew a
         // guide line to an arbitrary point on the edge.
-        const acquired = targetedSnap.mode === 'nearest' ? null : endpointAnchorFromSnap(targetedSnap);
-        if (acquired) state.activeEndpointAnchor = acquired;
+        // Any snap the cursor rests on is acquired, not only an endpoint: the
+        // midpoint of a side is exactly what one aims at to reach a centre
+        // that has nothing drawn at it. "Nearest" is the exception, as it
+        // slides along an edge and so names no particular point to track from.
+        // Acquired by resting on it, not by clicking it: the point is caught
+        // on the way past, and it is moving off it afterwards that the paths
+        // are for.
+        if (targetedSnap.mode !== 'nearest') {
+          state.trackingAnchors = acquiredAnchors(state.trackingAnchors, targetedSnap.point);
+        }
         // Carry how far the snap sits off the active plane, not just its shadow on
         // it, so a line drawn in 3D lands on the point it snapped to even when that
         // point belongs to another UCS. The line keeps the active plane; only the
@@ -319,7 +333,7 @@ export function createPointResolver(ctx: PointResolverContext) {
   }
 
   function constrainedPoint(point: Vec2, baseOverride: Vec2 | null = null): Vec2 {
-    return resolvePoint(point, baseOverride ?? draftingBasePoint(), state.activeEndpointAnchor, null);
+    return resolvePoint(point, baseOverride ?? draftingBasePoint(), state.trackingAnchors, null);
   }
 
   /**
@@ -327,18 +341,16 @@ export function createPointResolver(ctx: PointResolverContext) {
    * acquired point's alignment path, then Ortho/Polar. Also publishes the guide
    * to draw, so what is shown and where the point lands cannot disagree.
    */
-  function resolvePoint(cursor: Vec2, base: Vec2 | null, anchor: Vec2 | null, snap: Vec2 | null): Vec2 {
+  function resolvePoint(cursor: Vec2, base: Vec2 | null, anchors: Vec2[], snap: Vec2 | null): Vec2 {
     const resolved = resolveDraftingPoint({
       cursor,
       base,
-      anchor,
+      anchors,
       snap,
       settings: doc.drafting,
       captureDistance: 8 / renderer2d.zoom,
     });
-    state.activeTracking = resolved.guide
-      ? { base: resolved.guide.start, point: resolved.guide.end, angle: resolved.guide.angle }
-      : null;
+    state.activeTracking = resolved.guides.map((guide) => ({ base: guide.start, point: guide.end, angle: guide.angle }));
     return resolved.point;
   }
 
@@ -358,62 +370,31 @@ export function createPointResolver(ctx: PointResolverContext) {
     return candidates.some((candidate) => samePoint3d(candidate.world, snap.world)) ? snap.point : null;
   }
 
+  /** One dotted path per element, in order; the rest are hidden. */
   function updateTrackingGuide(): void {
-    if (!state.activeTracking) {
-      trackingLine.hidden = true;
-      return;
-    }
+    const elements = [trackingLine, trackingLineB, trackingLineC];
     const { width, height } = ctx.size();
-    let start: Vec2 | null;
-    let end: Vec2 | null;
-    if (doc.viewMode === '2d') {
-      start = worldToScreen(state.activeTracking.base, width, height, renderer2d.pan, renderer2d.zoom);
-      end = worldToScreen(state.activeTracking.point, width, height, renderer2d.pan, renderer2d.zoom);
-    } else {
-      const guidePlane = commands.active?.data.drawingPlane as WorkPlane | undefined ?? doc.activeWorkPlane;
-      start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, state.activeTracking.base));
-      end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, state.activeTracking.point));
-    }
-    if (!start || !end) { trackingLine.hidden = true; return; }
-    const dx = end.x - start.x, dy = end.y - start.y;
-    trackingLine.style.left = `${start.x}px`;
-    trackingLine.style.top = `${start.y}px`;
-    trackingLine.style.width = `${Math.hypot(dx, dy)}px`;
-    trackingLine.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
-    trackingLine.hidden = false;
-  }
-
-  /** One of the two derived-centre symmetry guide lines — same projection
-   *  convention `updateTrackingGuide` above uses (2D: onto the active plane
-   *  then screen; 3D: `projectCadPoint`), just from a world-space start/end
-   *  rather than ones already local to a guide plane the caller tracked. */
-  function positionCenterGuide(element: HTMLElement, guide: { start: Vec3; end: Vec3 } | null): void {
-    if (!guide) { element.hidden = true; return; }
-    let start: Vec2 | null;
-    let end: Vec2 | null;
-    if (doc.viewMode === '2d') {
-      const { width, height } = ctx.size();
-      start = worldToScreen(worldToLocal(doc.activeWorkPlane, guide.start), width, height, renderer2d.pan, renderer2d.zoom);
-      end = worldToScreen(worldToLocal(doc.activeWorkPlane, guide.end), width, height, renderer2d.pan, renderer2d.zoom);
-    } else {
-      start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, guide.start);
-      end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, guide.end);
-    }
-    if (!start || !end) { element.hidden = true; return; }
-    const dx = end.x - start.x, dy = end.y - start.y;
-    element.style.left = `${start.x}px`;
-    element.style.top = `${start.y}px`;
-    element.style.width = `${Math.hypot(dx, dy)}px`;
-    element.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
-    element.hidden = false;
-  }
-
-  /** Updates both derived-centre guide lines from the current cursor — see
-   *  `primedRectangleGuides`'s own doc comment for what triggers them. */
-  function updateCenterGuideLines(event: Pick<PointerEvent, 'clientX' | 'clientY'>): void {
-    const guides = primedRectangleGuides(event);
-    positionCenterGuide(centerGuideA, guides?.a ?? null);
-    positionCenterGuide(centerGuideB, guides?.b ?? null);
+    const guidePlane = commands.active?.data.drawingPlane as WorkPlane | undefined ?? doc.activeWorkPlane;
+    elements.forEach((element, index) => {
+      const guide = state.activeTracking[index];
+      if (!guide) { element.hidden = true; return; }
+      let start: Vec2 | null;
+      let end: Vec2 | null;
+      if (doc.viewMode === '2d') {
+        start = worldToScreen(guide.base, width, height, renderer2d.pan, renderer2d.zoom);
+        end = worldToScreen(guide.point, width, height, renderer2d.pan, renderer2d.zoom);
+      } else {
+        start = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, guide.base));
+        end = renderer3d.projectCadPoint(renderer3d.renderer.domElement, localToWorld(guidePlane, guide.point));
+      }
+      if (!start || !end) { element.hidden = true; return; }
+      const dx = end.x - start.x, dy = end.y - start.y;
+      element.style.left = `${start.x}px`;
+      element.style.top = `${start.y}px`;
+      element.style.width = `${Math.hypot(dx, dy)}px`;
+      element.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+      element.hidden = false;
+    });
   }
 
   /**
@@ -453,39 +434,6 @@ export function createPointResolver(ctx: PointResolverContext) {
       return localToWorld(doc.activeWorkPlane, referenceValue as Vec2);
     }
     return gripController.dragReferencePoint();
-  }
-
-  /**
-   * The two symmetry guide lines for whichever primed rectangle the cursor
-   * is currently near — so aiming for the centre has a visual crosshair to
-   * follow instead of hunting blind for the exact snap pixel (the user's
-   * own follow-up request, after the plain snap point shipped: "no need to
-   * circle the cursor around looking for it"). "Near" is that rectangle's
-   * own bounding box, expanded by a margin, in its own local frame — one
-   * primed earlier in the session stays quiet everywhere else in the
-   * drawing until the cursor is actually back near it again.
-   */
-  function primedRectangleGuides(event: Pick<PointerEvent, 'clientX' | 'clientY'>): { a: { start: Vec3; end: Vec3 }; b: { start: Vec3; end: Vec3 } } | null {
-    if (primedRectangleCenters.size === 0) return null;
-    const cursor = cursorWorldPoint(event);
-    if (!cursor) return null;
-    for (const id of primedRectangleCenters) {
-      const entity = doc.getEntity(id);
-      if (!entity || entity.type !== 'rectangle') continue;
-      const plane = entity.workPlane ?? WORLD_WORK_PLANE;
-      const local = worldToLocal(plane, cursor);
-      const minX = Math.min(entity.first.x, entity.opposite.x), maxX = Math.max(entity.first.x, entity.opposite.x);
-      const minY = Math.min(entity.first.y, entity.opposite.y), maxY = Math.max(entity.first.y, entity.opposite.y);
-      const marginX = (maxX - minX) * 0.2, marginY = (maxY - minY) * 0.2;
-      if (local.x < minX - marginX || local.x > maxX + marginX || local.y < minY - marginY || local.y > maxY + marginY) continue;
-      const [guideA, guideB] = rectangleSymmetryGuides(entity);
-      const toWorld = (point: Vec2): Vec3 => localToWorld(plane, point);
-      return {
-        a: { start: toWorld(guideA.start), end: toWorld(guideA.end) },
-        b: { start: toWorld(guideB.start), end: toWorld(guideB.end) },
-      };
-    }
-    return null;
   }
 
   /** The cursor's own world point, standing in for a reference when a snap
@@ -581,9 +529,6 @@ export function createPointResolver(ctx: PointResolverContext) {
     if (modes.includes('tangent')) candidates.push(...tangentCircleDragCandidates(event));
     // Aiming at a circle catches its centre — see rimAimedCenterCandidates.
     if (modes.includes('center')) candidates.push(...rimAimedCenterCandidates(doc, cursorWorldPoint(event), gripController.draggingObjectId));
-    // Not gated on 'center' being an active running osnap — this candidate is
-    // earned by the priming gesture itself, not by the ambient mode list.
-    candidates.push(...derivedRectangleCenterCandidates(doc, primedRectangleCenters, gripController.draggingObjectId));
     const rect = viewport.getBoundingClientRect();
     const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const discrete = doc.viewMode === '3d'
@@ -595,7 +540,6 @@ export function createPointResolver(ctx: PointResolverContext) {
         doc.activeWorkPlane,
       )
       : nearestCandidate2d(candidates, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom);
-    notePotentialRectangleMidpoint(discrete);
     // Discrete snaps (end, mid, centre…) win; the "Nearest" edge snap only fills
     // in when none of them is under the cursor, so ending a line on an edge keeps
     // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
@@ -636,7 +580,5 @@ export function createPointResolver(ctx: PointResolverContext) {
     nearestMeasurementPoint,
     nearestGripTargetSnap,
     nearestPersistentSnap,
-    primedRectangleGuides,
-    updateCenterGuideLines,
   };
 }
