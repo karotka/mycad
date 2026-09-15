@@ -12,7 +12,7 @@ import type { ActiveCommand, CommandContext, CommandRun, CommandStep, StepOutcom
 import { drawArc, drawArcStartEndRadius, drawBezier, drawCircle, drawCircleByDiameter, drawEllipse, drawLine, drawMline, drawOctagon, drawPolygon, drawPolyline, drawRectangle, drawSpline, drawText } from './steps/draw';
 import { createBox, createCone, createCylinder, createPyramid, createSphere, createTorus, createWedge } from './steps/solids';
 import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
-import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects } from './steps/transform';
+import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects, matchProperties, rotateObjects3d } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep } from './steps/solidOps';
@@ -28,6 +28,7 @@ import { removeGeometricDuplicates } from './steps/overkill';
 import { changeToCurrentLayer, hideSelectedObjects, isolateSelectedObjects, showAllObjects } from './steps/objectVisibility';
 import { optimizeDrawingPathsCommand } from './steps/optimizePaths';
 import { traceBoundaryAt } from './steps/boundary';
+import { listObjects, measurePointDistance, solidMassProperties } from './steps/enquiry';
 import {
   exportDxfCommand, exportGcodeCommand, importDxfCommand, importExcellonCommand, importPdfCommand,
   importStepCommand, newProjectCommand, openProjectCommand, plotCommand, saveProjectAsCommand, saveProjectCommand,
@@ -219,7 +220,8 @@ export const COMMANDS = [
   { name: 'AREA', aliases: ['AA', 'AREA'], execute: measureArea, help: 'measure polygon area and perimeter', suggest: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Specify first corner point:' }, { kind: 'point', label: 'Specify next point (Enter or click first point to finish):', optional: true }, { kind: 'done' }],
     data: () => ({ vertices: [] }) },
-  { name: 'MEASURE', aliases: ['D', 'DI', 'DIM', 'DIMENSION', 'MEASURE'], execute: measureDistance, help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
+  // 'DI' is AutoCAD's DIST, which now exists and has it.
+  { name: 'MEASURE', aliases: ['D', 'DIM', 'DIMENSION', 'MEASURE'], execute: measureDistance, help: 'dimension the horizontal or vertical distance', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'point', label: 'Select first measurement point:' }, { kind: 'point', label: 'Select second measurement point:' }, { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true }, DIMENSION_TEXT_STEP, { kind: 'done' }],
     data: (ctx) => ({ dimensionStyle: { ...ctx.doc.dimensionStyle } }) },
   { name: 'DIMALIGNED', aliases: ['DAL', 'DIMALIGNED'], execute: measureDistance, help: 'dimension the true distance between two points', suggest: true, sticky: true, pointInput: true,
@@ -500,6 +502,37 @@ export const COMMANDS = [
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.
+  // Enquiry: these answer a question and change nothing, so none of them goes
+  // through the history.
+  { name: 'DIST', aliases: ['DIST', 'DI'], execute: measurePointDistance, help: 'measure the distance and angle between two points', suggest: true, pointInput: true,
+    steps: [{ kind: 'point', label: 'Specify first point:' }, { kind: 'point', label: 'Specify second point:' }, { kind: 'done' }],
+    data: () => ({}) },
+  { name: 'LIST', aliases: ['LIST', 'LI'], execute: listObjects, help: 'list what the selected objects are', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select objects to list, then press Enter:', multi: true, accepts: ['entity', 'solid'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to list them.`, { skipStep: false }) },
+  { name: 'MASSPROP', aliases: ['MASSPROP'], execute: solidMassProperties, help: 'report volume, centroid and extents of 3D solids', suggest: true,
+    steps: [{ kind: 'entity', label: 'Select 3D solids to measure, then press Enter:', multi: true, accepts: ['solid'] }, { kind: 'done' }],
+    data: () => ({ entities: [], solids: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Press Enter to measure.`, { skipStep: false }) },
+  { name: 'MATCHPROP', aliases: ['MATCHPROP', 'MA'], execute: matchProperties, help: 'paint one object’s layer, colour and linetype scale onto others', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select the object to take properties from:' },
+      { kind: 'entity', label: 'Select objects to paint, then press Enter:', multi: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [] }) },
+  { name: '3DROTATE', aliases: ['3DROTATE', '3R'], execute: rotateObjects3d, help: 'rotate objects about any axis in space', suggest: true, pointInput: true, transformsObjects: true,
+    steps: [
+      { kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] },
+      { kind: 'point', label: 'Specify first point on the rotation axis:' },
+      { kind: 'point', label: 'Specify second point on the rotation axis:' },
+      { kind: 'number', label: 'Specify rotation angle (degrees):' },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [], solids: [], surfaces: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Specify the first axis point.`) },
+
   // The file operations. Reachable only from the native menu before, so none
   // of them could be typed or searched for; AutoCAD's own names where it has
   // one. Each does exactly what the menu item does.

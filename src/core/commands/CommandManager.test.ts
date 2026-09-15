@@ -168,7 +168,7 @@ describe('CommandManager history integration', () => {
   });
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
-    expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR', 'MLCUT', 'MLWELD', 'MLCORNER']);
+    expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR', 'MLCUT', 'MLWELD', 'MLCORNER', 'MASSPROP', 'MATCHPROP']);
     expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL', 'PDFIMPORT', 'PLOT']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
@@ -5957,4 +5957,197 @@ describe('the file operations as commands', () => {
     // And by what they do, for someone who does not know the name.
     expect(searchCommands('dxf').map((match) => match.name)).toEqual(expect.arrayContaining(['DXFIN', 'DXFOUT']));
   });
+});
+
+describe('the enquiry commands', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  it('DIST reports the distance, both angles and each axis, and draws nothing', async () => {
+    const { doc, manager, log } = setup();
+    manager.startCommand('DIST');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 3, y: 4 });
+
+    const text = logged(log);
+    expect(text).toContain('Distance = 5');
+    expect(text).toContain('Angle in XY plane = 53.1301');
+    expect(text).toContain('Delta X = 3, Delta Y = 4, Delta Z = 0');
+    expect(doc.entities).toHaveLength(0);
+  });
+
+  it('DIST measures through space, not only across the plane', async () => {
+    const { manager, log } = setup();
+    manager.startCommand('DIST');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 0, y: 3, z: 4 } as never);
+
+    expect(logged(log)).toContain('Distance = 5');
+    expect(logged(log)).toContain('Delta Z = 4');
+  });
+
+  it('LIST says what an object is, with its own numbers', () => {
+    const { doc, manager, log } = setup();
+    const circle = doc.createCircle({ x: 2, y: 3 }, 5);
+    circle.layer = 'holes';
+    doc.addEntity(circle);
+    doc.selectEntity(circle.id);
+
+    manager.startCommand('LIST');
+
+    const text = logged(log);
+    expect(text).toContain('CIRCLE');
+    expect(text).toContain('Layer: holes');
+    expect(text).toContain('Radius 5');
+    expect(text).toContain('Diameter 10');
+    // Circumference and area, from the outline rather than from a formula
+    // written twice.
+    expect(text).toMatch(/Length: 31\.4/);
+    expect(text).toMatch(/Area: 78\.[45]/);
+  });
+
+  it('lists nothing and ends when Enter is pressed with nothing selected', async () => {
+    const { manager, log } = setup();
+    manager.startCommand('LIST');
+    await manager.submitInput('');
+
+    // The gather step ends the command itself when it caught nothing, which is
+    // what every other multi-object command does.
+    expect(manager.active).toBeNull();
+    expect(logged(log)).not.toContain('Layer:');
+  });
+
+  it('MASSPROP measures a solid from its exact geometry, not its facets', async () => {
+    const kit = setup();
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 6 });
+    await kit.manager.submitInput('4');
+    kit.doc.clearSelection();
+    kit.doc.selectSolid(kit.doc.solids[0].id);
+
+    kit.manager.startCommand('MASSPROP');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Volume:'), { timeout: 20000 });
+
+    const text = logged(kit.log);
+    expect(text).toContain('Volume: 240');
+    // The centre of a box is its middle, which a facet count cannot change.
+    expect(text).toMatch(/Centroid: \(5, 3, 2\)/);
+  }, 30000);
+});
+
+describe('MATCHPROP', () => {
+  it('paints layer, colour and linetype scale, and leaves the geometry alone', async () => {
+    const { doc, history, manager } = setup();
+    doc.layers.push('thin');
+    const source = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+    source.layer = 'thin'; source.aci = 3; source.color = 0x00ff00; source.linetypeScale = 7;
+    const target = doc.createCircle({ x: 5, y: 5 }, 2);
+    doc.addEntity(source); doc.addEntity(target);
+
+    manager.startCommand('MATCHPROP');
+    await manager.handleClick({ x: 0, y: 0 }, source);
+    await manager.handleClick({ x: 7, y: 5 }, target);
+    await manager.submitInput('');
+
+    const painted = doc.getEntity(target.id)!;
+    expect(painted).toMatchObject({ type: 'circle', layer: 'thin', aci: 3, color: 0x00ff00, linetypeScale: 7 });
+    if (painted.type === 'circle') expect(painted.radius).toBe(2); // geometry untouched
+    expect(history.undo()).toBe(true);
+    expect(doc.getEntity(target.id)).toMatchObject({ layer: '0' });
+  });
+
+  it('clears a linetype scale the source does not have', async () => {
+    const { doc, manager } = setup();
+    const source = doc.createLine({ x: 0, y: 0 }, { x: 1, y: 0 });
+    const target = doc.createLine({ x: 5, y: 0 }, { x: 6, y: 0 });
+    target.linetypeScale = 12;
+    doc.addEntity(source); doc.addEntity(target);
+
+    manager.startCommand('MATCHPROP');
+    await manager.handleClick({ x: 0, y: 0 }, source);
+    await manager.handleClick({ x: 5, y: 0 }, target);
+    await manager.submitInput('');
+
+    expect(doc.getEntity(target.id)!.linetypeScale).toBeUndefined();
+  });
+});
+
+describe('3DROTATE', () => {
+  it('turns an entity rigidly about a picked axis, taking its plane with it', async () => {
+    const { doc, history, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    // A quarter turn about the world X axis: the line lies along X, so it
+    // stays put, but its plane's own Y axis swings up into Z.
+    manager.startCommand('3DROTATE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 1, y: 0 });
+    await manager.submitInput('90');
+
+    const turned = doc.getEntity(line.id)!;
+    expect(turned.workPlane!.yAxis.z).toBeCloseTo(1, 9);
+    expect(turned.workPlane!.zAxis.y).toBeCloseTo(-1, 9);
+    // The stored points never moved; the plane did.
+    expect(turned).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 10, y: 0 } });
+    expect(history.undo()).toBe(true);
+    expect(doc.getEntity(line.id)!.workPlane!.yAxis.z).toBeCloseTo(0, 9);
+  });
+
+  it('stands a drawn rectangle up out of its plane', async () => {
+    const { doc, manager } = setup();
+    const rectangle = doc.createRectangle({ x: 0, y: 0 }, { x: 10, y: 4 });
+    doc.addEntity(rectangle);
+    doc.selectEntity(rectangle.id);
+
+    manager.startCommand('3DROTATE');
+    await manager.handleClick({ x: 0, y: 0 });
+    await manager.handleClick({ x: 1, y: 0 });
+    await manager.submitInput('90');
+
+    // Its far corner, which was 4 along Y, is now 4 up in Z.
+    const turned = doc.getEntity(rectangle.id)!;
+    const corner = localToWorld(turned.workPlane!, { x: 10, y: 4 });
+    expect(corner.x).toBeCloseTo(10, 9);
+    expect(corner.y).toBeCloseTo(0, 9);
+    expect(corner.z).toBeCloseTo(4, 9);
+  });
+
+  it('refuses an axis of no length rather than turning about nothing', async () => {
+    const { doc, manager, log } = setup();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    doc.selectEntity(doc.entities[0].id);
+
+    manager.startCommand('3DROTATE');
+    await manager.handleClick({ x: 5, y: 5 });
+    await manager.handleClick({ x: 5, y: 5 });
+
+    expect(log.mock.calls.flat().join('\n')).toContain('must be different');
+  });
+
+  it('turns a solid with its recipe and its exact geometry', async () => {
+    const kit = setup();
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 6 });
+    await kit.manager.submitInput('4');
+    const solid = kit.doc.solids[0];
+    kit.doc.clearSelection();
+    kit.doc.selectSolid(solid.id);
+
+    kit.manager.startCommand('3DROTATE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 1, y: 0 });
+    await kit.manager.submitInput('90');
+
+    const turned = kit.doc.solids[0];
+    // Still a primitive box, not baked to a mesh.
+    expect(turned.feature.kind).toBe('primitive');
+    const zs: number[] = [];
+    for (let index = 2; index < turned.mesh.positions.length; index += 3) zs.push(turned.mesh.positions[index]);
+    // Four tall and six deep before; six tall and four deep after.
+    expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(6, 6);
+  }, 30000);
 });

@@ -431,3 +431,155 @@ export function copyObjects(run: CommandRun): StepOutcome {
   active.stepIndex = 1;
   return 'advance';
 }
+
+/**
+ * MATCHPROP: give objects the look of another one.
+ *
+ * Layer, colour and linetype scale — the three things that decide how an object
+ * is drawn without changing where it is. Not its geometry, and not the style
+ * fields a dimension carries: those belong to the dimension style, which has
+ * its own way of reaching every dimension at once.
+ */
+export function matchProperties(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) {
+    data.source = value;
+    const source = value as Entity;
+    ctx.log(`Properties taken from ${source.type} on layer ${source.layer}. Select objects to paint, then press Enter.`);
+    return 'advance';
+  }
+  if (run.gather(value)) return 'stay';
+  const source = data.source as Entity;
+  const targets = ((data.entities as Entity[] | undefined) ?? []).filter((entity) => entity.id !== source.id);
+  if (targets.length === 0) {
+    ctx.log('MATCHPROP: select at least one object to paint.');
+    return 'stay';
+  }
+  const painted = targets.map((entity) => {
+    const copy = cloneEntity(entity);
+    copy.layer = source.layer;
+    copy.aci = source.aci;
+    copy.color = source.color;
+    if (source.linetypeScale === undefined) delete copy.linetypeScale;
+    else copy.linetypeScale = source.linetypeScale;
+    return copy;
+  });
+  return applyTo(run, 'Match properties',
+    { entities: targets, solids: [] },
+    { entities: painted, solids: [] },
+    (count) => `Painted ${count} object(s) with the source's layer, colour and linetype scale.`);
+}
+
+/**
+ * 3DROTATE: turn objects about any axis in space, not only about the work
+ * plane's normal the way ROTATE does.
+ *
+ * The axis is the two picked points, which is the general case and needs no
+ * keywords: pick along an edge for "turn about this edge", or use the UCS cross
+ * to pick along an axis.
+ *
+ * An entity's points are stored in its own work plane, so turning the *plane*
+ * turns the whole entity rigidly, whatever is drawn on it — including a curve
+ * whose points carry their own elevation. A solid turns by its mesh, its
+ * feature tree and its exact geometry together, as every other transform does.
+ */
+export function rotateObjects3d(run: CommandRun): StepOutcome {
+  const { active, data, value, ctx } = run;
+  if (active.stepIndex === 0) return run.gather(value) ? 'stay' : 'advance';
+  const plane = ctx.doc.activeWorkPlane;
+  if (active.stepIndex === 1) {
+    data.axisStart = localToWorld(plane, value as Vec2, ((value as Vec2 & { z?: number }).z) ?? 0);
+    return 'advance';
+  }
+  if (active.stepIndex === 2) {
+    const start = data.axisStart as Vec3;
+    const end = localToWorld(plane, value as Vec2, ((value as Vec2 & { z?: number }).z) ?? 0);
+    const axis = { x: end.x - start.x, y: end.y - start.y, z: end.z - start.z };
+    if (Math.hypot(axis.x, axis.y, axis.z) < 1e-9) {
+      ctx.log('The two axis points must be different. Specify the second point again.');
+      return 'stay';
+    }
+    data.axis = axis;
+    return 'advance';
+  }
+  const origin = data.axisStart as Vec3;
+  const axis = data.axis as Vec3;
+  const angle = Number(value) * Math.PI / 180;
+  if (!Number.isFinite(angle)) { ctx.log('Enter a rotation angle in degrees.'); return 'stay'; }
+  const entities = (data.entities as Entity[] | undefined) ?? [];
+  const solids = (data.solids as Solid[] | undefined) ?? [];
+  const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
+  return applyTo(run, '3D rotate',
+    { entities, solids, surfaces },
+    {
+      entities: entities.map((entity) => rotateEntityAboutAxis(entity, origin, axis, angle)),
+      solids: solids.map((solid) => rotateBodyAboutAxis(cloneSolid(solid), origin, axis, angle)),
+      surfaces: surfaces.map((surface) => rotateBodyAboutAxis(cloneSurfaceValue(surface), origin, axis, angle)),
+    },
+    (count) => `Rotated ${count} object(s) by ${Number(value)}° about the picked axis.`);
+}
+
+/** Turns a point about an axis through `origin` (Rodrigues' rotation). */
+function turnedPoint(point: Vec3, origin: Vec3, unit: Vec3, angle: number): Vec3 {
+  const relative = { x: point.x - origin.x, y: point.y - origin.y, z: point.z - origin.z };
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const dot = relative.x * unit.x + relative.y * unit.y + relative.z * unit.z;
+  const cross = {
+    x: unit.y * relative.z - unit.z * relative.y,
+    y: unit.z * relative.x - unit.x * relative.z,
+    z: unit.x * relative.y - unit.y * relative.x,
+  };
+  return {
+    x: origin.x + relative.x * cos + cross.x * sin + unit.x * dot * (1 - cos),
+    y: origin.y + relative.y * cos + cross.y * sin + unit.y * dot * (1 - cos),
+    z: origin.z + relative.z * cos + cross.z * sin + unit.z * dot * (1 - cos),
+  };
+}
+
+function unitAxis(axis: Vec3): Vec3 {
+  const length = Math.hypot(axis.x, axis.y, axis.z);
+  return { x: axis.x / length, y: axis.y / length, z: axis.z / length };
+}
+
+/**
+ * An entity turned rigidly: its own work plane turns, its stored points do not.
+ * Rotating the points instead would only ever turn it within its own plane,
+ * which is what ROTATE already does.
+ */
+export function rotateEntityAboutAxis(entity: Entity, origin: Vec3, axis: Vec3, angle: number): Entity {
+  const unit = unitAxis(axis);
+  const plane = cloneWorkPlane(entity.workPlane ?? WORLD_WORK_PLANE);
+  const turnedDirection = (direction: Vec3): Vec3 => {
+    const moved = turnedPoint({ x: plane.origin.x + direction.x, y: plane.origin.y + direction.y, z: plane.origin.z + direction.z }, origin, unit, angle);
+    const movedOrigin = turnedPoint(plane.origin, origin, unit, angle);
+    return { x: moved.x - movedOrigin.x, y: moved.y - movedOrigin.y, z: moved.z - movedOrigin.z };
+  };
+  const copy = cloneEntity(entity);
+  copy.workPlane = {
+    xAxis: turnedDirection(plane.xAxis),
+    yAxis: turnedDirection(plane.yAxis),
+    zAxis: turnedDirection(plane.zAxis),
+    origin: turnedPoint(plane.origin, origin, unit, angle),
+  };
+  return copy;
+}
+
+/** A solid or surface turned about the same axis: mesh, recipe and exact
+ *  geometry together, so it can still be rebuilt afterwards. */
+function rotateBodyAboutAxis<T extends Solid | Surface>(body: T, origin: Vec3, axis: Vec3, angle: number): T {
+  const unit = unitAxis(axis);
+  for (let index = 0; index + 2 < body.mesh.positions.length; index += 3) {
+    const turned = turnedPoint(
+      { x: body.mesh.positions[index], y: body.mesh.positions[index + 1], z: body.mesh.positions[index + 2] },
+      origin, unit, angle,
+    );
+    body.mesh.positions[index] = turned.x;
+    body.mesh.positions[index + 1] = turned.y;
+    body.mesh.positions[index + 2] = turned.z;
+  }
+  body.feature = rotatedFeature(body.feature, origin, unit, angle) ?? { kind: 'mesh' };
+  preserveExactTransform(body, rotationAffine(origin, unit, angle));
+  body.revision++;
+  body.selected = false;
+  return body;
+}
