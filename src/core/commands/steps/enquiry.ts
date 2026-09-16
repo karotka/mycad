@@ -190,10 +190,21 @@ export async function solidMassProperties(run: CommandRun): Promise<StepOutcome>
       const inspection = kernel.inspect(shape);
       totalVolume += inspection.volume;
       ctx.log(`${solid.name}`);
-      ctx.log(`  Volume: ${format(inspection.volume)}`);
+      ctx.log(`  Volume: ${format(inspection.volume)}    Surface area: ${format(inspection.surfaceArea)}`);
       ctx.log(`  Centroid: (${format(inspection.centroid.x)}, ${format(inspection.centroid.y)}, ${format(inspection.centroid.z)})`);
       ctx.log(`  Bounding box: (${format(inspection.bounds.min.x)}, ${format(inspection.bounds.min.y)}, ${format(inspection.bounds.min.z)})`
         + ` to (${format(inspection.bounds.max.x)}, ${format(inspection.bounds.max.y)}, ${format(inspection.bounds.max.z)})`);
+      // Per unit density, so multiplying by a material's own density gives the
+      // real figure — the same convention AutoCAD's MASSPROP prints under.
+      const { principalMoments, axes, radiiOfGyration } = inspection.inertia;
+      ctx.log('  Principal moments of inertia about the centroid (per unit density),');
+      ctx.log('  with the axis each is about:');
+      const moment = [principalMoments.x, principalMoments.y, principalMoments.z];
+      const radius = [radiiOfGyration.x, radiiOfGyration.y, radiiOfGyration.z];
+      axes.forEach((axis, index) => {
+        ctx.log(`    I = ${format(moment[index])}   about (${format(axis.x)}, ${format(axis.y)}, ${format(axis.z)})`
+          + `   radius of gyration ${format(radius[index])}`);
+      });
       ctx.log(`  Faces: ${inspection.faceCount}    Valid: ${inspection.valid ? 'yes' : 'no'}`);
     } finally {
       shape.dispose();

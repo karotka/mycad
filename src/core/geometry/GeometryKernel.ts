@@ -71,6 +71,20 @@ export interface SolidInspection {
    *  for an L-shaped piece is not even inside it. What says which side of a
    *  cutting plane a sliced piece is on. */
   centroid: Point3;
+  /** Total area of every face, which is what a coating, a cooling rate or a
+   *  sheet-metal blank is costed from. Zero-thickness shells included, since
+   *  a surface has area and no volume at all. */
+  surfaceArea: number;
+  /** The moments of inertia about the three principal axes through the centre
+   *  of mass, and those axes — per unit density, so multiplying by a material
+   *  density gives the real thing. The axes say which way a part is stiffest
+   *  and which way it will tip. */
+  inertia: {
+    principalMoments: Point3;
+    axes: [Point3, Point3, Point3];
+    /** Radii of gyration about the same three axes. */
+    radiiOfGyration: Point3;
+  };
   valid: boolean;
 }
 

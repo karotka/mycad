@@ -1166,3 +1166,59 @@ describe('revolveProfile', () => {
     expect(() => kernel.revolveProfile(profile, axis[0], axis[1], Math.PI * 3)).toThrow(/full turn/);
   }, 30000);
 });
+
+describe('what a solid weighs up to', () => {
+  let kernel: OpenCascadeKernel;
+  const held: OpenCascadeSolid[] = [];
+  beforeAll(async () => { kernel = await createNodeOpenCascadeKernel(); });
+  afterAll(() => { held.forEach((solid) => solid.dispose()); });
+  const keep = (solid: OpenCascadeSolid): OpenCascadeSolid => { held.push(solid); return solid; };
+
+  it('measures a box against what the textbook says it should be', () => {
+    // 20 x 10 x 6. Area 2(200 + 120 + 60); for a box of sides a, b, c the
+    // moment about the axis along a is m(b² + c²)/12, and with unit density
+    // the mass is the volume.
+    const box = keep(kernel.makeBox({ x: 20, y: 10, z: 6 }));
+    const { volume, surfaceArea, inertia } = kernel.inspect(box);
+    expect(volume).toBeCloseTo(1200, 6);
+    expect(surfaceArea).toBeCloseTo(760, 6);
+
+    // Each moment comes back paired with the axis it is about, in whatever
+    // order OpenCascade ranks them — so look each one up by its own axis.
+    const about = (x: number, y: number, z: number) => {
+      const index = inertia.axes.findIndex((axis) =>
+        Math.abs(Math.abs(axis.x) - x) < 1e-6 && Math.abs(Math.abs(axis.y) - y) < 1e-6 && Math.abs(Math.abs(axis.z) - z) < 1e-6);
+      return [inertia.principalMoments.x, inertia.principalMoments.y, inertia.principalMoments.z][index];
+    };
+    expect(about(1, 0, 0)).toBeCloseTo(1200 * (10 * 10 + 6 * 6) / 12, 4);
+    expect(about(0, 1, 0)).toBeCloseTo(1200 * (20 * 20 + 6 * 6) / 12, 4);
+    expect(about(0, 0, 1)).toBeCloseTo(1200 * (20 * 20 + 10 * 10) / 12, 4);
+
+    // The radius of gyration is where all the mass could sit and spin the same.
+    const radii = [inertia.radiiOfGyration.x, inertia.radiiOfGyration.y, inertia.radiiOfGyration.z];
+    const moments = [inertia.principalMoments.x, inertia.principalMoments.y, inertia.principalMoments.z];
+    radii.forEach((value, index) => expect(value).toBeCloseTo(Math.sqrt(moments[index] / 1200), 6));
+  });
+
+  it('gives a sphere the area its own radius says, and equal moments every way', () => {
+    const sphere = keep(kernel.makeSphere(5));
+    const { surfaceArea, inertia } = kernel.inspect(sphere);
+    expect(surfaceArea).toBeCloseTo(4 * Math.PI * 25, 2);
+    // 2/5 m r² about any axis through the centre, the same in all three.
+    const expected = (4 / 3) * Math.PI * 125 * (2 / 5) * 25;
+    for (const moment of [inertia.principalMoments.x, inertia.principalMoments.y, inertia.principalMoments.z]) {
+      expect(moment).toBeCloseTo(expected, 1);
+    }
+  });
+
+  it('gives a surface an area although it has no volume at all', () => {
+    const sheet = keep(kernel.loftGuidedSurface(
+      [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }],
+      [{ kind: 'line' as const, start: { x: 0, y: 4, z: 0 }, end: { x: 10, y: 4, z: 0 } }],
+      [],
+    ));
+    const { volume, surfaceArea } = kernel.inspect(sheet);
+    expect(volume).toBeCloseTo(0, 6);
+    expect(surfaceArea).toBeCloseTo(40, 3);
+  });
+});

@@ -6034,6 +6034,14 @@ describe('the enquiry commands', () => {
     expect(text).toContain('Volume: 240');
     // The centre of a box is its middle, which a facet count cannot change.
     expect(text).toMatch(/Centroid: \(5, 3, 2\)/);
+    // 2(60 + 40 + 24) for a 10 x 6 x 4 box.
+    expect(text).toContain('Surface area: 248');
+    // And what it takes to spin: m(b² + c²)/12 about each axis in turn, here
+    // 1040 about the 10-long one. Printed with the axis it is about, because
+    // a moment on its own says nothing about which way.
+    expect(text).toContain('Principal moments of inertia');
+    expect(text).toMatch(/I = 1040\s+about \(1, 0, 0\)/);
+    expect(text).toMatch(/radius of gyration 2\.0817/);
   }, 30000);
 });
 

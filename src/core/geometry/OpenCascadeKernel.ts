@@ -1808,6 +1808,13 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     this.oc.BRepGProp.VolumeProperties_2(shape, properties, 1e-12, true, false);
     const volume = properties.Mass();
 
+    // Area is its own integral, not a by-product of the volume one: a shell
+    // has area and no volume at all, and that is exactly the case a surface
+    // is asked about.
+    const surface = new this.oc.GProp_GProps_1();
+    this.oc.BRepGProp.SurfaceProperties_1(shape, surface, false, false);
+    const surfaceArea = surface.Mass();
+
     const analyzer = new this.oc.BRepCheck_Analyzer(shape, true, false);
     const valid = analyzer.IsValid_2();
 
@@ -1825,15 +1832,67 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         centre.delete();
         return point;
       })(),
+      surfaceArea,
+      inertia: this.principalInertia(properties),
       valid,
     };
 
     analyzer.delete();
+    surface.delete();
     properties.delete();
     max.delete();
     min.delete();
     boundingBox.delete();
     return inspection;
+  }
+
+  /**
+   * The moments of inertia about the principal axes through the centre of
+   * mass, with those axes and the matching radii of gyration.
+   *
+   * Read through the inertia matrix rather than through
+   * `GProp_PrincipalProps.Moments`, whose three answers come back through
+   * out-parameters — a C++ calling convention the JavaScript binding has no
+   * way to express. The matrix comes back by value, and its own eigenvalues
+   * ARE the principal moments, so the axes and the moments are read from the
+   * two calls that do return something.
+   */
+  private principalInertia(properties: InstanceType<typeof this.oc.GProp_GProps_1>): SolidInspection['inertia'] {
+    const principal = properties.PrincipalProperties();
+    const readAxis = (vector: { X(): number; Y(): number; Z(): number; delete(): void }): Point3 => {
+      const axis = { x: vector.X(), y: vector.Y(), z: vector.Z() };
+      vector.delete();
+      return axis;
+    };
+    const axes: [Point3, Point3, Point3] = [
+      readAxis(principal.FirstAxisOfInertia()),
+      readAxis(principal.SecondAxisOfInertia()),
+      readAxis(principal.ThirdAxisOfInertia()),
+    ];
+    const matrix = properties.MatrixOfInertia();
+    // The moment about a principal axis is that axis run through the inertia
+    // matrix from both sides — aᵀ I a — which for an eigenvector is its own
+    // eigenvalue, and needs no out-parameters to get at.
+    const moment = (axis: Point3): number => {
+      const a = [axis.x, axis.y, axis.z];
+      let total = 0;
+      for (let row = 0; row < 3; row++) {
+        for (let column = 0; column < 3; column++) total += a[row] * matrix.Value(row + 1, column + 1) * a[column];
+      }
+      return total;
+    };
+    const moments = axes.map(moment) as [number, number, number];
+    matrix.delete();
+    principal.delete();
+    const mass = properties.Mass();
+    // Radius of gyration: how far out all the mass could sit and spin the
+    // same. Undefined for something with no mass, which a shell has.
+    const radius = (value: number) => (Math.abs(mass) < 1e-15 ? 0 : Math.sqrt(Math.abs(value / mass)));
+    return {
+      principalMoments: { x: moments[0], y: moments[1], z: moments[2] },
+      axes,
+      radiiOfGyration: { x: radius(moments[0]), y: radius(moments[1]), z: radius(moments[2]) },
+    };
   }
 
   tessellate(
