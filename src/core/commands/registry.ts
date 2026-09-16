@@ -15,6 +15,7 @@ import { intersectSolids, subtractSolids, unionSolids } from './steps/booleans';
 import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, scaleObjects, matchProperties, rotateObjects3d } from './steps/transform';
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
+import { convertToSpline } from './steps/toSpline';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -524,6 +525,17 @@ export const COMMANDS = [
         ctx.log(`${solids.length} solid(s) preselected. Specify the slice plane.`);
       }
     } },
+  // Giving up an arc's radius (or a circle's centre, or a rectangle's corners)
+  // in exchange for a curve that can be pulled anywhere — and the same for the
+  // rails a Surface was lofted through, which are as rigid inside it as they
+  // were in the drawing.
+  { name: 'TOSPLINE', aliases: ['TOSPLINE', 'TOSPL'], execute: convertToSpline, help: 'redraw objects as splines, so they can be reshaped', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select objects to redraw as splines, then press Enter:', multi: true, accepts: ['entity', 'surface'] },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [], surfaces: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 
   // Not offered by autocomplete.

@@ -7223,3 +7223,89 @@ describe('ERASE reaches surfaces too', () => {
     expect(kit.doc.surfaces).toHaveLength(1);
   });
 });
+
+describe('TOSPLINE', () => {
+  const sampleAt = (entity: Entity, index: number, t: number) => {
+    if (entity.type !== 'bezier') return { x: NaN, y: NaN };
+    const segment = entity.segments[index];
+    const p0 = index === 0 ? entity.start : entity.segments[index - 1].end;
+    const u = 1 - t;
+    const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+    const points = [p0, segment.control1, segment.control2, segment.end];
+    return {
+      x: points.reduce((sum, point, i) => sum + point.x * w[i], 0),
+      y: points.reduce((sum, point, i) => sum + point.y * w[i], 0),
+    };
+  };
+
+  it('redraws an arc as a spline that follows it, keeping its layer and colour', async () => {
+    const kit = setup();
+    const arc = kit.doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI);
+    arc.color = 0x00ff00;
+    kit.doc.addEntity(arc);
+
+    kit.manager.startCommand('TOSPLINE');
+    await kit.manager.handleClick({ x: 10, y: 0 }, arc);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities).toHaveLength(1);
+    const spline = kit.doc.entities[0];
+    expect(spline.type).toBe('bezier');
+    expect(spline.color).toBe(0x00ff00);
+    for (const t of [0.2, 0.5, 0.9]) {
+      const point = sampleAt(spline, 0, t);
+      expect(Math.hypot(point.x, point.y)).toBeCloseTo(10, 1);
+    }
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities[0].type).toBe('arc');
+  });
+
+  it('leaves alone what no single curve can stand for', async () => {
+    const kit = setup();
+    const text = kit.doc.createText({ x: 0, y: 0 }, 'hello');
+    kit.doc.addEntity(text);
+
+    kit.manager.startCommand('TOSPLINE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, text);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities[0].type).toBe('text');
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('cannot be drawn as a single spline'));
+  });
+
+  it('redraws the rails a surface was lofted through, and rebuilds it', async () => {
+    const kit = setup();
+    // Two arcs, lofted — the reported case: the surface can be grip-dragged,
+    // but an arc rail among its own rails is as rigid there as in the drawing.
+    const lower = kit.doc.createArc({ x: 0, y: 0 }, 10, 0, Math.PI);
+    const upper = kit.doc.createArc({ x: 0, y: 20 }, 10, 0, Math.PI);
+    kit.doc.entities.push(lower, upper);
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 10, y: 0 }, lower);
+    await kit.manager.handleClick({ x: 10, y: 20 }, upper);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(1), { timeout: 30000 });
+    const surface = kit.doc.surfaces[0];
+    expect(surface.feature.kind).toBe('loft');
+    if (surface.feature.kind !== 'loft') return;
+    expect(surface.feature.profiles.map((profile) => profile.type)).toEqual(['arc', 'arc']);
+    const before = surface.mesh.positions.length;
+
+    kit.manager.startCommand('TOSPLINE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => {
+      const rails = kit.doc.surfaces[0].feature;
+      expect(rails.kind === 'loft' && rails.profiles.every((profile) => profile.type === 'bezier')).toBe(true);
+    }, { timeout: 30000 });
+
+    // Still a surface, still built, and undo puts the arcs back.
+    expect(kit.doc.surfaces).toHaveLength(1);
+    expect(kit.doc.surfaces[0].mesh.positions.length).toBeGreaterThan(0);
+    expect(before).toBeGreaterThan(0);
+    expect(kit.history.undo()).toBe(true);
+    const restored = kit.doc.surfaces[0].feature;
+    expect(restored.kind === 'loft' && restored.profiles.map((profile) => profile.type)).toEqual(['arc', 'arc']);
+  }, 90000);
+});

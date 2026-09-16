@@ -295,6 +295,7 @@ export function shellHtml(tools: ShellTools): string {
         <button data-entity-command="SCALE">Scale</button>
         <button data-entity-command="MIRROR">Mirror</button>
         <button data-entity-command="ERASE">Erase</button>
+        <button data-entity-command="TOSPLINE">To Spline</button>
       </div>
     </section>
     <section class="one-shot-snaps">
