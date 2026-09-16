@@ -19,6 +19,7 @@ import { convertToSpline } from './steps/toSpline';
 import { checkInterference } from './steps/interfere';
 import { measureObjectDistance } from './steps/measureDistance';
 import { sectionSolids } from './steps/section';
+import { projectGeometry } from './steps/project';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -537,6 +538,15 @@ export const COMMANDS = [
       active.stepIndex = 1;
       ctx.log(`${bodies.length} object(s) preselected. Specify the section plane.`);
     } },
+  // A mark laid onto a part: dropped along the body's own normals, so a
+  // straight line wraps round a cylinder instead of smearing across it.
+  { name: 'PROJECTGEOMETRY', aliases: ['PROJECTGEOMETRY', 'PROJ'], execute: projectGeometry, help: 'lay drawn curves onto a solid or surface, following its shape', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select curves to project, then press Enter:', multi: true },
+      { kind: 'entity', label: 'Select the object to project onto:', accepts: ['solid', 'surface'] },
+      { kind: 'done' },
+    ],
+    data: () => ({ entities: [] }) },
   { name: 'INTERFERE', aliases: ['INTERFERE', 'INF'], execute: checkInterference, help: 'report where solids overlap, without changing them', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select solids to check against each other, then press Enter:', multi: true },

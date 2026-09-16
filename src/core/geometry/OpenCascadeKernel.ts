@@ -5,6 +5,7 @@ import type {
   Convert_ParameterisationType,
   GeomAbs_JoinType,
   GeomAbs_Shape,
+  GeomAbs_CurveType,
   GeomFill_FillingStyle,
   gp_Ax2,
   gp_Pnt,
@@ -32,7 +33,7 @@ import type {
   SweepProfile3,
   TessellationOptions,
 } from './GeometryKernel';
-import { curveLength, type KernelCurve } from './KernelCurves';
+import { CURVE_TOLERANCE, curveLength, type KernelCurve } from './KernelCurves';
 import { interpolatingBeziers3 } from '../../math/bezierFit';
 
 const ZERO: Point3 = { x: 0, y: 0, z: 0 };
@@ -1672,6 +1673,34 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     return curves;
   }
 
+  /** `adaptor`'s curve as a B-spline of degree three, which is the only kind
+   *  the drawing can hold — its own if it already is one, an approximation
+   *  within CURVE_TOLERANCE otherwise, and null if neither can be had. */
+  private asCubicBSpline(
+    adaptor: InstanceType<typeof this.oc.BRepAdaptor_Curve_2>,
+    type: GeomAbs_CurveType,
+  ): Handle_Geom_BSplineCurve | null {
+    if (type === this.oc.GeomAbs_CurveType.GeomAbs_BSplineCurve) {
+      const spline = adaptor.BSpline();
+      if (spline.get().Degree() <= 3) return spline;
+    }
+    const approximation = new this.oc.GeomConvert_ApproxCurve_2(
+      adaptor.ShallowCopy(),
+      CURVE_TOLERANCE,
+      // C1, not C2: asked for C2 continuity OpenCascade answers with degree
+      // five whatever maximum it is given, and the drawing can only hold
+      // cubics. C1 is what a cubic spline can promise anyway.
+      this.oc.GeomAbs_Shape.GeomAbs_C1 as unknown as GeomAbs_Shape,
+      256,
+      3,
+    );
+    try {
+      return approximation.HasResult() ? approximation.Curve() : null;
+    } finally {
+      approximation.delete();
+    }
+  }
+
   /** One edge, or null for something with no length or no curve behind it. */
   private edgeCurve(edge: TopoDS_Edge): KernelCurve | null {
     const adaptor = new this.oc.BRepAdaptor_Curve_2(edge);
@@ -1740,29 +1769,33 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     const segments: Array<{ control1: Point3; control2: Point3; end: Point3 }> = [];
     let start: Point3 | null = null;
     const type = adaptor.GetType();
-    if (type === this.oc.GeomAbs_CurveType.GeomAbs_BSplineCurve || type === this.oc.GeomAbs_CurveType.GeomAbs_BezierCurve) {
-      const beziers: InstanceType<typeof this.oc.Geom_BezierCurve>[] = [];
-      if (type === this.oc.GeomAbs_CurveType.GeomAbs_BezierCurve) {
-        beziers.push(adaptor.Bezier().get());
-      } else {
-        const spline = adaptor.BSpline();
-        const converter = new this.oc.GeomConvert_BSplineCurveToBezierCurve_1(spline);
+    const beziers: InstanceType<typeof this.oc.Geom_BezierCurve>[] = [];
+    if (type === this.oc.GeomAbs_CurveType.GeomAbs_BezierCurve) {
+      beziers.push(adaptor.Bezier().get());
+    } else {
+      // Every other curve is first put into the only form the drawing can
+      // hold: a B-spline of degree three, within CURVE_TOLERANCE of the
+      // original. A curve that already is one comes through untouched; one
+      // that is not — a projection onto a cylinder arrives as degree seven —
+      // is approximated once here rather than being walked over in hundreds
+      // of little pieces afterwards.
+      const cubic = this.asCubicBSpline(adaptor, type);
+      if (cubic) {
+        const converter = new this.oc.GeomConvert_BSplineCurveToBezierCurve_1(cubic);
         for (let index = 1; index <= converter.NbArcs(); index++) beziers.push(converter.Arc(index).get());
       }
-      for (const bezier of beziers) {
-        if (bezier.Degree() < 3) bezier.Increase(3);
-        // Above cubic the drawing has nowhere to put the extra freedom, so
-        // those fall through to the sampled path below rather than silently
-        // dropping poles.
-        if (bezier.Degree() !== 3) { segments.length = 0; start = null; break; }
-        const poles = [1, 2, 3, 4].map((index) => point(bezier.Pole(index)));
-        if (!start) start = poles[0];
-        segments.push({ control1: poles[1], control2: poles[2], end: poles[3] });
-      }
-      if (start && segments.length > 0) return { kind: 'spline', start, segments };
     }
-    // Anything else — an ellipse, a hyperbola, a curve on a surface — is
-    // followed closely enough that the difference cannot be drawn.
+    for (const bezier of beziers) {
+      if (bezier.Degree() < 3) bezier.Increase(3);
+      if (bezier.Degree() !== 3) { segments.length = 0; start = null; break; }
+      const poles = [1, 2, 3, 4].map((index) => point(bezier.Pole(index)));
+      if (!start) start = poles[0];
+      segments.push({ control1: poles[1], control2: poles[2], end: poles[3] });
+    }
+    if (start && segments.length > 0) return { kind: 'spline', start, segments };
+
+    // Only if even that could not be done: follow the curve closely enough
+    // that the difference cannot be drawn.
     const steps = Math.max(8, Math.ceil(Math.abs(last - first) / 0.05));
     const sampled: Point3[] = [];
     for (let index = 0; index <= steps; index++) {
@@ -1808,6 +1841,43 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       ocPlane.delete();
       direction.delete();
       point.delete();
+    }
+  }
+
+  /**
+   * `curve` dropped onto `target` along the target's own normals, as the
+   * curves it becomes there.
+   *
+   * What it is for is marking a solid: a line drawn flat, laid onto a curved
+   * face so it can be engraved, milled, or used to split the face up. The
+   * projection is normal to the surface rather than along one fixed direction,
+   * which is what makes it follow a shape round instead of smearing it.
+   */
+  projectOnto(curve: OpenCascadeSolid, target: OpenCascadeSolid): KernelCurve[] {
+    const projector = new this.oc.BRepOffsetAPI_NormalProjection_1();
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      projector.Init(target.shape(this));
+      projector.Add(curve.shape(this));
+      // Asks the projection to stay within the boundaries of the faces it
+      // lands on. Left on as the safe setting, though no case in this
+      // drawing's own geometry was found where turning it off changed the
+      // answer — a line run well past both ends of a cylinder comes back
+      // clipped to its height either way.
+      projector.SetLimit(true);
+      projector.Build(progress);
+      if (!projector.IsDone()) throw new Error('OpenCascade failed to project the curve.');
+      const result = projector.Projection();
+      if (result.IsNull()) return [];
+      const wrapped = this.wrap(result);
+      try {
+        return this.edgeCurves(wrapped);
+      } finally {
+        wrapped.dispose();
+      }
+    } finally {
+      progress.delete();
+      projector.delete();
     }
   }
 

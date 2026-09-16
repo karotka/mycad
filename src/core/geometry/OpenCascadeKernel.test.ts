@@ -5,6 +5,7 @@ import {
 } from './OpenCascadeKernel';
 import { createNodeOpenCascadeKernel } from './OpenCascadeNode';
 import { solidDesignEdges, solidPlanarFaces } from '../solids/SolidTopology';
+import { CURVE_TOLERANCE, curveLength } from './KernelCurves';
 import { mirrorAffine, scaleAffine, translationAffine } from './ExactTransform';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 
@@ -1309,5 +1310,53 @@ describe('edges read back as curves', () => {
         expect(Number.isFinite(segment.control1.x + segment.control2.x + segment.end.x)).toBe(true);
       }
     }
+  });
+});
+
+describe('a curve laid onto a body', () => {
+  let kernel: OpenCascadeKernel;
+  const held: OpenCascadeSolid[] = [];
+  beforeAll(async () => { kernel = await createNodeOpenCascadeKernel(); });
+  afterAll(() => { held.forEach((solid) => solid.dispose()); });
+  const keep = (solid: OpenCascadeSolid): OpenCascadeSolid => { held.push(solid); return solid; };
+
+  it('wraps a straight line round a cylinder, closely and in few pieces', () => {
+    const cylinder = keep(kernel.makeCylinder(5, 20));
+    const line = keep(kernel.wireShape([{ kind: 'line', start: { x: -8, y: 12, z: 10 }, end: { x: 8, y: 12, z: 10 } }]));
+    const landed = kernel.projectOnto(line, cylinder);
+    expect(landed).toHaveLength(1);
+    const curve = landed[0];
+    expect(curve.kind).toBe('spline');
+    if (curve.kind !== 'spline') return;
+
+    // Few pieces: what OpenCascade hands back here is a spline of degree
+    // seven, and reading it by walking along instead of by converting it to
+    // cubics once gave three hundred and twenty spans for the same curve.
+    expect(curve.segments.length).toBeLessThan(10);
+
+    // And close: every point of it sits on the cylinder wall.
+    let worst = 0;
+    let previous = curve.start;
+    for (const segment of curve.segments) {
+      for (let step = 0; step <= 20; step++) {
+        const t = step / 20, u = 1 - t;
+        const weights = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+        const points = [previous, segment.control1, segment.control2, segment.end];
+        const x = points.reduce((sum, point, index) => sum + point.x * weights[index], 0);
+        const y = points.reduce((sum, point, index) => sum + point.y * weights[index], 0);
+        worst = Math.max(worst, Math.abs(Math.hypot(x, y) - 5));
+      }
+      previous = segment.end;
+    }
+    expect(worst).toBeLessThan(CURVE_TOLERANCE);
+  });
+
+  it('clips what runs past the ends of what it is laid on', () => {
+    const cylinder = keep(kernel.makeCylinder(5, 20));
+    // Far longer than the cylinder is tall.
+    const line = keep(kernel.wireShape([{ kind: 'line', start: { x: 0, y: 12, z: -30 }, end: { x: 0, y: 12, z: 50 } }]));
+    const landed = kernel.projectOnto(line, cylinder);
+    expect(landed).toHaveLength(1);
+    expect(curveLength(landed[0])).toBeCloseTo(20, 3);
   });
 });

@@ -171,7 +171,7 @@ describe('CommandManager history integration', () => {
   it('suggests ambiguous command prefixes and keeps destructive erase explicit', () => {
     const { manager } = setup();
     expect(manager.commandSuggestions('m')).toEqual(['MLINE', 'MTEXT', 'MEASURE', 'MOVE', 'MIRROR', 'MLCUT', 'MLWELD', 'MLCORNER', 'MASSPROP', 'MATCHPROP']);
-    expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL', 'PDFIMPORT', 'PLOT']);
+    expect(manager.commandSuggestions('p')).toEqual(['POLYLINE', 'POLYGON', 'PYRAMID', 'PRESSPULL', 'PROJECTGEOMETRY', 'PDFIMPORT', 'PLOT']);
     expect(manager.resolveAlias('pl')).toBe('POLYLINE');
     expect(manager.resolveAlias('p')).toBe('POLYGON');
     expect(manager.resolveAlias('mo')).toBe('MOVE');
@@ -7595,5 +7595,71 @@ describe('SECTION', () => {
     await kit.manager.handleClick({ x: 0, y: 10, z: 80 } as Vec2);
     await vi.waitFor(() => expect(logged(kit.log)).toContain('does not pass through'), { timeout: 30000 });
     expect(kit.doc.entities).toHaveLength(0);
+  }, 60000);
+});
+
+describe('PROJECTGEOMETRY', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  it('wraps a straight line round a cylinder, and leaves the line where it was', async () => {
+    const kit = setup();
+    kit.manager.startCommand('CYLINDER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('20');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+    const cylinder = kit.doc.solids[0];
+
+    // A line crossing over the cylinder, well clear of it in y.
+    const line = kit.doc.createLine({ x: -8, y: 12, z: 10 } as Vec2, { x: 8, y: 12, z: 10 } as Vec2);
+    kit.doc.addEntity(line);
+
+    kit.manager.startCommand('PROJECTGEOMETRY');
+    await kit.manager.handleClick({ x: 0, y: 12 }, line);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, cylinder.id);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Projected onto'), { timeout: 30000 });
+
+    // The line is still there, and what landed is a curve that follows the wall.
+    expect(kit.doc.entities.some((entity) => entity.id === line.id)).toBe(true);
+    const landed = kit.doc.entities.filter((entity) => entity.id !== line.id);
+    expect(landed.length).toBeGreaterThan(0);
+    const curve = landed[0];
+    expect(curve.type).toBe('bezier');
+    if (curve.type !== 'bezier') return;
+    const points = [curve.start, ...curve.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
+    // Its own ends sit on the cylinder wall, five from the axis.
+    for (const end of [curve.start, curve.segments.at(-1)!.end]) {
+      expect(Math.hypot(end.x, end.y)).toBeCloseTo(5, 2);
+    }
+    expect(points.length).toBeGreaterThan(3);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(1);
+  }, 60000);
+
+  it('says so when the curve lies beyond the edge of what it is aimed at', async () => {
+    const kit = setup();
+    // A flat sheet spanning y 0..10 at z = 0, lofted from two lines.
+    const a = kit.doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 10, y: 0, z: 0 } as Vec2);
+    const b = kit.doc.createLine({ x: 0, y: 10, z: 0 } as Vec2, { x: 10, y: 10, z: 0 } as Vec2);
+    kit.doc.entities.push(a, b);
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, a);
+    await kit.manager.handleClick({ x: 0, y: 0 }, b);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(1), { timeout: 30000 });
+
+    // A line well past the sheet's own edge. The projection is kept inside
+    // the faces it lands on, so there is nowhere for this to go.
+    const line = kit.doc.createLine({ x: 40, y: 2, z: 6 } as Vec2, { x: 50, y: 8, z: 6 } as Vec2);
+    kit.doc.addEntity(line);
+
+    kit.manager.startCommand('PROJECTGEOMETRY');
+    await kit.manager.handleClick({ x: 45, y: 5 }, line);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, kit.doc.surfaces[0].id);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Nothing landed'), { timeout: 30000 });
+    expect(kit.doc.entities).toHaveLength(1);
   }, 60000);
 });

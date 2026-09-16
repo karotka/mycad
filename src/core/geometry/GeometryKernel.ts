@@ -192,6 +192,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** Where a plane cuts through a shape, as the curves of the cut — the body
    *  itself is left alone, unlike splitByPlane. */
   sectionByPlane(shape: Solid, plane: Plane3): KernelCurve[];
+  /** A curve dropped onto a shape along that shape's own normals, as the
+   *  curves it becomes there. */
+  projectOnto(curve: Solid, target: Solid): KernelCurve[];
   /** The closest two shapes come, and the point on each where they do. Null
    *  when there is no answer at all. */
   closestPoints(first: Solid, second: Solid): { distance: number; onFirst: Point3; onSecond: Point3 } | null;
