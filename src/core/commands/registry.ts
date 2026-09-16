@@ -18,6 +18,7 @@ import { explodeObjects } from './steps/explode';
 import { convertToSpline } from './steps/toSpline';
 import { checkInterference } from './steps/interfere';
 import { measureObjectDistance } from './steps/measureDistance';
+import { sectionSolids } from './steps/section';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -518,6 +519,24 @@ export const COMMANDS = [
       { kind: 'entity', label: 'Select the second object:', accepts: ['entity', 'solid', 'surface'] },
       { kind: 'done' },
     ] },
+  // SLICE divides the body and keeps the pieces; SECTION leaves it alone and
+  // draws the cut itself — the outline you dimension or hatch.
+  { name: 'SECTION', aliases: ['SECTION', 'SEC'], execute: sectionSolids, help: 'draw the outline where a plane cuts through solids or surfaces', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'entity', label: 'Select objects to section, then press Enter:', multi: true, accepts: ['solid', 'surface'] },
+      { kind: 'plane', label: 'Select a planar face or specify first section-plane point:' },
+      { kind: 'point', label: 'Specify second section-plane point:', ignoresDirection: true },
+      { kind: 'point', label: 'Specify third section-plane point:', ignoresDirection: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [], surfaces: [] }),
+    onStart: (active, ctx) => {
+      const bodies = [...ctx.doc.getSelectedSolids(), ...ctx.doc.getSelectedSurfaces()];
+      if (bodies.length === 0) return;
+      active.data.bodies = bodies;
+      active.stepIndex = 1;
+      ctx.log(`${bodies.length} object(s) preselected. Specify the section plane.`);
+    } },
   { name: 'INTERFERE', aliases: ['INTERFERE', 'INF'], execute: checkInterference, help: 'report where solids overlap, without changing them', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select solids to check against each other, then press Enter:', multi: true },

@@ -6,7 +6,7 @@ import { exactResult, openExactShape, promoteSolidToExact, sliceExactSurface, sl
 import { openCascadeKernel } from '../../geometry/OpenCascadeRuntime';
 import type { CommandContext, CommandRun, StepOutcome } from '../types';
 
-interface CuttingPlane {
+export interface CuttingPlane {
   origin: Vec3;
   normal: Vec3;
 }
@@ -26,17 +26,17 @@ function sliceSourceMesh(source: Solid): { sourceMesh?: SerializedSolidMesh } {
   };
 }
 
-function isFaceSelection(value: unknown): value is SolidFaceSelection {
+export function isFaceSelection(value: unknown): value is SolidFaceSelection {
   return Boolean(value && typeof value === 'object' && 'solidId' in value && 'vertexIndices' in value && 'normal' in value);
 }
 
 /** Command points are local to the active UCS; their optional z is its height. */
-function pointInWorld(ctx: CommandContext, value: unknown): Vec3 {
+export function pointInWorld(ctx: CommandContext, value: unknown): Vec3 {
   const point = value as Vec2 & { z?: number };
   return localToWorld(ctx.doc.activeWorkPlane, point, point.z ?? 0);
 }
 
-function planeFromFace(ctx: CommandContext, face: SolidFaceSelection): CuttingPlane | null {
+export function planeFromFace(ctx: CommandContext, face: SolidFaceSelection): CuttingPlane | null {
   const solid = ctx.doc.getSolid(face.solidId);
   const vertex = face.vertexIndices.find((index) => index >= 0 && index * 3 + 2 < (solid?.mesh.positions.length ?? 0));
   if (!solid || vertex === undefined) return null;
@@ -51,7 +51,7 @@ function planeFromFace(ctx: CommandContext, face: SolidFaceSelection): CuttingPl
   };
 }
 
-function planeFromPoints(first: Vec3, second: Vec3, third: Vec3): CuttingPlane | null {
+export function planeFromPoints(first: Vec3, second: Vec3, third: Vec3): CuttingPlane | null {
   const a = { x: second.x - first.x, y: second.y - first.y, z: second.z - first.z };
   const b = { x: third.x - first.x, y: third.y - first.y, z: third.z - first.z };
   const normal = {

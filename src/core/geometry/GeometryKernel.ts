@@ -57,6 +57,8 @@ export type AffineTransform3 = readonly [
  * Kernel solids are intentionally opaque. Rendering meshes are derived data and
  * must never become the source geometry again.
  */
+import type { KernelCurve } from './KernelCurves';
+
 export interface KernelSolid {
   readonly kernel: string;
   dispose(): void;
@@ -184,6 +186,12 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** A drawn curve's edges as a wire in its own right, so it can be measured
    *  against a body without either being changed. */
   wireShape(edges: readonly SweepPathSegment3[]): Solid;
+  /** Every edge of a shape, said in the vocabulary the drawing uses — the one
+   *  direction this kernel had no way back along. */
+  edgeCurves(shape: Solid): KernelCurve[];
+  /** Where a plane cuts through a shape, as the curves of the cut — the body
+   *  itself is left alone, unlike splitByPlane. */
+  sectionByPlane(shape: Solid, plane: Plane3): KernelCurve[];
   /** The closest two shapes come, and the point on each where they do. Null
    *  when there is no answer at all. */
   closestPoints(first: Solid, second: Solid): { distance: number; onFirst: Point3; onSecond: Point3 } | null;

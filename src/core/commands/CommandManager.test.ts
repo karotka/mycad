@@ -7525,3 +7525,75 @@ describe('SWEEP with a taper', () => {
     expect(kit.doc.solids).toHaveLength(0);
   }, 60000);
 });
+
+describe('SECTION', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  it('draws the square where a plane crosses a box, and leaves the box alone', async () => {
+    const kit = setup();
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 10 });
+    await kit.manager.submitInput('10');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+    const box = kit.doc.solids[0];
+
+    kit.manager.startCommand('SECTION');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, box.id);
+    await kit.manager.submitInput('');
+    // A plane at z = 5, given by three points on it.
+    await kit.manager.submitInput('0,0');
+    await kit.manager.submitInput('10,0');
+    await kit.manager.submitInput('0,10');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Section complete'), { timeout: 30000 });
+
+    // Four sides of the square, and the box itself untouched.
+    const lines = kit.doc.entities.filter((entity) => entity.type === 'line');
+    expect(lines).toHaveLength(4);
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities.filter((entity) => entity.type === 'line')).toHaveLength(0);
+  }, 60000);
+
+  it('gives back a circle where it cuts a cylinder, not a heap of little chords', async () => {
+    const kit = setup();
+    kit.manager.startCommand('CYLINDER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('20');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+
+    kit.manager.startCommand('SECTION');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, kit.doc.solids[0].id);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('0,0');
+    await kit.manager.submitInput('10,0');
+    await kit.manager.submitInput('0,10');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Section complete'), { timeout: 30000 });
+
+    // The one fact worth having about a cut through a cylinder is its radius.
+    const circles = kit.doc.entities.filter((entity) => entity.type === 'circle');
+    expect(circles).toHaveLength(1);
+    expect(circles[0].type === 'circle' && circles[0].radius).toBeCloseTo(5, 6);
+  }, 60000);
+
+  it('says so when the plane misses everything', async () => {
+    const kit = setup();
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 10 });
+    await kit.manager.submitInput('10');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+
+    kit.manager.startCommand('SECTION');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, kit.doc.solids[0].id);
+    await kit.manager.submitInput('');
+    // A plane well above the box. Given by clicks rather than typed, because
+    // a typed point is read as x and y only — a third number is dropped.
+    await kit.manager.handleClick({ x: 0, y: 0, z: 80 } as Vec2);
+    await kit.manager.handleClick({ x: 10, y: 0, z: 80 } as Vec2);
+    await kit.manager.handleClick({ x: 0, y: 10, z: 80 } as Vec2);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('does not pass through'), { timeout: 30000 });
+    expect(kit.doc.entities).toHaveLength(0);
+  }, 60000);
+});

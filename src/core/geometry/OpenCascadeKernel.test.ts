@@ -1260,3 +1260,54 @@ describe('a sweep that tapers', () => {
     expect(() => kernel.sweep(circle, straight, -2)).toThrow(/greater than zero/);
   });
 });
+
+describe('edges read back as curves', () => {
+  let kernel: OpenCascadeKernel;
+  const held: OpenCascadeSolid[] = [];
+  beforeAll(async () => { kernel = await createNodeOpenCascadeKernel(); });
+  afterAll(() => { held.forEach((solid) => solid.dispose()); });
+  const keep = (solid: OpenCascadeSolid): OpenCascadeSolid => { held.push(solid); return solid; };
+
+  it('gives a box its twelve edges, each once', () => {
+    // Walking the tree meets every edge once per face it belongs to, so this
+    // is twenty-four unless the edges are held in a map instead.
+    const curves = kernel.edgeCurves(keep(kernel.makeBox({ x: 10, y: 6, z: 4 })));
+    expect(curves).toHaveLength(12);
+    expect(curves.every((curve) => curve.kind === 'line')).toBe(true);
+  });
+
+  it('reads a cylinder as two real circles and its seam, not as chords', () => {
+    const curves = kernel.edgeCurves(keep(kernel.makeCylinder(5, 12)));
+    const arcs = curves.filter((curve) => curve.kind === 'arc');
+    expect(curves).toHaveLength(3);
+    expect(arcs).toHaveLength(2);
+    for (const arc of arcs) {
+      if (arc.kind !== 'arc') continue;
+      expect(arc.radius).toBeCloseTo(5, 9);
+      expect(Math.abs(arc.sweepAngle)).toBeCloseTo(Math.PI * 2, 9);
+    }
+    // One at each end.
+    const heights = arcs.map((arc) => (arc.kind === 'arc' ? arc.center.z : NaN)).sort((a, b) => a - b);
+    expect(heights[0]).toBeCloseTo(0, 6);
+    expect(heights[1]).toBeCloseTo(12, 6);
+  });
+
+  it('turns a swept curve into the cubics that trace it', () => {
+    // A lofted surface's own boundary is a spline, and comes back as one.
+    const sheet = keep(kernel.loftGuidedSurface(
+      [{ kind: 'bezier' as const, poles: [{ x: 0, y: 0, z: 0 }, { x: 3, y: 2, z: 0 }, { x: 7, y: 2, z: 0 }, { x: 10, y: 0, z: 0 }] }],
+      [{ kind: 'bezier' as const, poles: [{ x: 0, y: 5, z: 0 }, { x: 3, y: 7, z: 0 }, { x: 7, y: 7, z: 0 }, { x: 10, y: 5, z: 0 }] }],
+      [],
+    ));
+    const splines = kernel.edgeCurves(sheet).filter((curve) => curve.kind === 'spline');
+    expect(splines.length).toBeGreaterThan(0);
+    for (const spline of splines) {
+      if (spline.kind !== 'spline') continue;
+      expect(spline.segments.length).toBeGreaterThan(0);
+      // Every span is a cubic: two controls and an end, nothing dropped.
+      for (const segment of spline.segments) {
+        expect(Number.isFinite(segment.control1.x + segment.control2.x + segment.end.x)).toBe(true);
+      }
+    }
+  });
+});

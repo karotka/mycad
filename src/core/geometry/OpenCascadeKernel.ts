@@ -32,6 +32,8 @@ import type {
   SweepProfile3,
   TessellationOptions,
 } from './GeometryKernel';
+import { curveLength, type KernelCurve } from './KernelCurves';
+import { interpolatingBeziers3 } from '../../math/bezierFit';
 
 const ZERO: Point3 = { x: 0, y: 0, z: 0 };
 
@@ -1638,6 +1640,174 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     } finally {
       progress.delete();
       extrema.delete();
+    }
+  }
+
+  /**
+   * Every edge of `shape`, said in the vocabulary the drawing uses.
+   *
+   * A line stays a line and a circle stays a circle, read straight off the
+   * edge's own definition rather than sampled — a section through a cylinder
+   * IS a circle, and coming back with two hundred little chords instead would
+   * throw away the one fact worth having. Everything else is converted into
+   * the chain of cubics that traces it, which is exact for a spline of degree
+   * three and a close fit above that.
+   */
+  edgeCurves(shape: OpenCascadeSolid): KernelCurve[] {
+    // Mapped rather than explored: exploring walks the tree and meets every
+    // edge once per face it belongs to, so a box's twelve edges come back as
+    // twenty-four and a cylinder's two circles as four. A map holds each one
+    // once, which is what "the edges of this shape" means.
+    const map = new this.oc.TopTools_IndexedMapOfShape_1();
+    const curves: KernelCurve[] = [];
+    try {
+      this.oc.TopExp.MapShapes_1(shape.shape(this), this.oc.TopAbs_ShapeEnum.TopAbs_EDGE as unknown as TopAbs_ShapeEnum, map);
+      for (let index = 1; index <= map.Extent(); index++) {
+        const curve = this.edgeCurve(this.oc.TopoDS.Edge_1(map.FindKey(index)));
+        if (curve && curveLength(curve) > 1e-9) curves.push(curve);
+      }
+    } finally {
+      map.delete();
+    }
+    return curves;
+  }
+
+  /** One edge, or null for something with no length or no curve behind it. */
+  private edgeCurve(edge: TopoDS_Edge): KernelCurve | null {
+    const adaptor = new this.oc.BRepAdaptor_Curve_2(edge);
+    try {
+      const first = adaptor.FirstParameter();
+      const last = adaptor.LastParameter();
+      if (!Number.isFinite(first) || !Number.isFinite(last) || Math.abs(last - first) < 1e-12) return null;
+      const point = (parameter: number): Point3 => {
+        const value = adaptor.Value(parameter);
+        const result = { x: value.X(), y: value.Y(), z: value.Z() };
+        value.delete();
+        return result;
+      };
+      const type = adaptor.GetType();
+      if (type === this.oc.GeomAbs_CurveType.GeomAbs_Line) {
+        return { kind: 'line', start: point(first), end: point(last) };
+      }
+      if (type === this.oc.GeomAbs_CurveType.GeomAbs_Circle) {
+        const circle = adaptor.Circle();
+        const position = circle.Position();
+        const centre = position.Location();
+        const axis = position.Direction();
+        const reference = position.XDirection();
+        const arc: KernelCurve = {
+          kind: 'arc',
+          center: { x: centre.X(), y: centre.Y(), z: centre.Z() },
+          normal: { x: axis.X(), y: axis.Y(), z: axis.Z() },
+          xAxis: { x: reference.X(), y: reference.Y(), z: reference.Z() },
+          radius: circle.Radius(),
+          // The adaptor's own parameters on a circle ARE the angles.
+          startAngle: first,
+          sweepAngle: last - first,
+        };
+        reference.delete();
+        axis.delete();
+        centre.delete();
+        position.delete();
+        circle.delete();
+        return arc;
+      }
+      return this.edgeAsSpline(adaptor, first, last);
+    } finally {
+      adaptor.delete();
+    }
+  }
+
+  /**
+   * An edge that is neither straight nor round, as a chain of cubics.
+   *
+   * A B-spline is split at its own knots into the Bezier arcs it is already
+   * made of, which is exact. One of degree other than three is raised or
+   * reduced to three first — a cubic is what the drawing can hold, and
+   * `Increase` on a lower degree is exact while a higher one is the only case
+   * that approximates.
+   */
+  private edgeAsSpline(
+    adaptor: InstanceType<typeof this.oc.BRepAdaptor_Curve_2>,
+    first: number,
+    last: number,
+  ): KernelCurve | null {
+    const point = (value: { X(): number; Y(): number; Z(): number; delete(): void }): Point3 => {
+      const result = { x: value.X(), y: value.Y(), z: value.Z() };
+      value.delete();
+      return result;
+    };
+    const segments: Array<{ control1: Point3; control2: Point3; end: Point3 }> = [];
+    let start: Point3 | null = null;
+    const type = adaptor.GetType();
+    if (type === this.oc.GeomAbs_CurveType.GeomAbs_BSplineCurve || type === this.oc.GeomAbs_CurveType.GeomAbs_BezierCurve) {
+      const beziers: InstanceType<typeof this.oc.Geom_BezierCurve>[] = [];
+      if (type === this.oc.GeomAbs_CurveType.GeomAbs_BezierCurve) {
+        beziers.push(adaptor.Bezier().get());
+      } else {
+        const spline = adaptor.BSpline();
+        const converter = new this.oc.GeomConvert_BSplineCurveToBezierCurve_1(spline);
+        for (let index = 1; index <= converter.NbArcs(); index++) beziers.push(converter.Arc(index).get());
+      }
+      for (const bezier of beziers) {
+        if (bezier.Degree() < 3) bezier.Increase(3);
+        // Above cubic the drawing has nowhere to put the extra freedom, so
+        // those fall through to the sampled path below rather than silently
+        // dropping poles.
+        if (bezier.Degree() !== 3) { segments.length = 0; start = null; break; }
+        const poles = [1, 2, 3, 4].map((index) => point(bezier.Pole(index)));
+        if (!start) start = poles[0];
+        segments.push({ control1: poles[1], control2: poles[2], end: poles[3] });
+      }
+      if (start && segments.length > 0) return { kind: 'spline', start, segments };
+    }
+    // Anything else — an ellipse, a hyperbola, a curve on a surface — is
+    // followed closely enough that the difference cannot be drawn.
+    const steps = Math.max(8, Math.ceil(Math.abs(last - first) / 0.05));
+    const sampled: Point3[] = [];
+    for (let index = 0; index <= steps; index++) {
+      sampled.push(point(adaptor.Value(first + (last - first) * (index / steps))));
+    }
+    const fitted = interpolatingBeziers3(sampled);
+    if (fitted.length === 0) return null;
+    return { kind: 'spline', start: fitted[0].start, segments: fitted.map((span) => ({ control1: span.control1, control2: span.control2, end: span.end })) };
+  }
+
+  /**
+   * Where a plane cuts through a shape, as the curves of the cut.
+   *
+   * SLICE divides the body in two; this leaves it alone and hands back the
+   * outline the plane sees — the section of a drawing, which is a different
+   * thing entirely and the one you dimension.
+   */
+  sectionByPlane(shape: OpenCascadeSolid, plane: Plane3): KernelCurve[] {
+    const normalLength = Math.hypot(plane.normal.x, plane.normal.y, plane.normal.z);
+    if (normalLength <= Number.EPSILON) throw new Error('Section plane normal must be non-zero.');
+    const point = new this.oc.gp_Pnt_3(plane.origin.x, plane.origin.y, plane.origin.z);
+    const direction = new this.oc.gp_Dir_4(
+      plane.normal.x / normalLength, plane.normal.y / normalLength, plane.normal.z / normalLength);
+    const ocPlane = new this.oc.gp_Pln_3(point, direction);
+    const section = new this.oc.BRepAlgoAPI_Section_5(shape.shape(this), ocPlane, false);
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      // Curves rather than polylines on the faces: the section of a cylinder
+      // is a circle, and it should come back as one.
+      section.Approximation(true);
+      section.Build(progress);
+      if (section.HasErrors()) throw new Error('OpenCascade failed to section the shape.');
+      const result = section.Shape();
+      const wrapped = this.wrap(result);
+      try {
+        return this.edgeCurves(wrapped);
+      } finally {
+        wrapped.dispose();
+      }
+    } finally {
+      progress.delete();
+      section.delete();
+      ocPlane.delete();
+      direction.delete();
+      point.delete();
     }
   }
 
