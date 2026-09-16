@@ -1881,6 +1881,95 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * A shape as it would be drawn on paper, seen from one direction: the edges
+   * that can be seen, and the edges that are behind something.
+   *
+   * This is what a projected view IS. Drawing every edge of a part and calling
+   * it a view — which is what the flat view here has always done — is a wire
+   * model: you see the back of the part through the front of it, and nothing
+   * says which is which. Hidden-line removal answers that, and the two sets
+   * come back separately so one can be drawn solid and the other dashed.
+   *
+   * `direction` is where the viewer stands; `up` fixes which way is up in the
+   * result. Everything comes back in the view's own plane, so what arrives is
+   * flat, two-dimensional, and ready to be drawn.
+   */
+  hiddenLineView(
+    shapes: readonly OpenCascadeSolid[],
+    direction: Point3,
+    up: Point3,
+  ): { visible: KernelCurve[]; hidden: KernelCurve[] } {
+    if (shapes.length === 0) return { visible: [], hidden: [] };
+    const length = Math.hypot(direction.x, direction.y, direction.z);
+    if (length <= Number.EPSILON) throw new Error('A view direction must be non-zero.');
+    const origin = new this.oc.gp_Pnt_3(0, 0, 0);
+    // The view's own frame. A gp_Ax2 is given its main direction (which
+    // becomes Z) and its X direction, and the result arrives in that frame —
+    // so X has to be the way RIGHT, not the way up, or the whole view comes
+    // out turned a quarter turn. Right is up crossed with the view direction:
+    // right, up and towards-the-viewer in that order make a right-handed set.
+    const towards = new this.oc.gp_Dir_4(direction.x / length, direction.y / length, direction.z / length);
+    const right = {
+      x: up.y * direction.z - up.z * direction.y,
+      y: up.z * direction.x - up.x * direction.z,
+      z: up.x * direction.y - up.y * direction.x,
+    };
+    const rightLength = Math.hypot(right.x, right.y, right.z);
+    if (rightLength <= Number.EPSILON) throw new Error('The up direction must not lie along the view direction.');
+    const xAxis = new this.oc.gp_Dir_4(right.x / rightLength, right.y / rightLength, right.z / rightLength);
+    const frame = new this.oc.gp_Ax2_2(origin, towards, xAxis);
+    const projector = new this.oc.HLRAlgo_Projector_2(frame);
+    const algorithm = new this.oc.HLRBRep_Algo_1();
+    try {
+      for (const shape of shapes) algorithm.Add_2(shape.shape(this), 0);
+      algorithm.Projector_1(projector);
+      algorithm.Update();
+      // Without this the algorithm has computed which edges are hidden but
+      // not which of them are sharp — the result comes back empty.
+      algorithm.Hide_1();
+      const extractor = new this.oc.HLRBRep_HLRToShape(new this.oc.Handle_HLRBRep_Algo_2(algorithm));
+      try {
+        return {
+          visible: this.hlrCurves(extractor.VCompound_1(), extractor.OutLineVCompound_1()),
+          hidden: this.hlrCurves(extractor.HCompound_1(), extractor.OutLineHCompound_1()),
+        };
+      } finally {
+        extractor.delete();
+      }
+    } finally {
+      // The algorithm and its projector are held by the extractor above while
+      // it reads them, and freed with it.
+      frame.delete();
+      xAxis.delete();
+      towards.delete();
+      origin.delete();
+    }
+  }
+
+  /**
+   * The sharp edges and the silhouettes of one half of a hidden-line result,
+   * together.
+   *
+   * A view needs both: the sharp edges are the part's own corners, and the
+   * outlines are where a curved surface turns away from the viewer — the two
+   * sides of a cylinder, which are not edges of the solid at all but are the
+   * lines anyone would draw.
+   */
+  private hlrCurves(sharp: TopoDS_Shape, outlines: TopoDS_Shape): KernelCurve[] {
+    const curves: KernelCurve[] = [];
+    for (const compound of [sharp, outlines]) {
+      if (compound.IsNull()) { compound.delete(); continue; }
+      const wrapped = this.wrap(compound);
+      try {
+        curves.push(...this.edgeCurves(wrapped));
+      } finally {
+        wrapped.dispose();
+      }
+    }
+    return curves;
+  }
+
   splitByPlane(solid: OpenCascadeSolid, plane: Plane3): OpenCascadeSolid[] {
     const normalLength = Math.hypot(plane.normal.x, plane.normal.y, plane.normal.z);
     if (normalLength <= Number.EPSILON) throw new Error('Slice plane normal must be non-zero.');

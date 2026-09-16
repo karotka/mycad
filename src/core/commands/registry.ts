@@ -20,6 +20,7 @@ import { checkInterference } from './steps/interfere';
 import { measureObjectDistance } from './steps/measureDistance';
 import { sectionSolids } from './steps/section';
 import { projectGeometry } from './steps/project';
+import { flatShot } from './steps/flatshot';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -547,6 +548,25 @@ export const COMMANDS = [
       { kind: 'done' },
     ],
     data: () => ({ entities: [] }) },
+  // A drawing, not a wire model: only the edges that can actually be seen are
+  // drawn solid, and the rest go dashed on their own layer.
+  { name: 'FLATSHOT', aliases: ['FLATSHOT', 'FLAT'], execute: flatShot, help: 'draw the 3D model flat, with hidden lines dashed', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select solids or surfaces to draw, then press Enter:', multi: true, accepts: ['solid', 'surface'] },
+      // Optional, because the prompt offers a default: without this Enter
+      // cancels the command instead of taking it, which makes the <Front> in
+      // the prompt a lie.
+      { kind: 'text', label: 'View from [Top/Bottom/Front/Back/Left/Right/Iso] <Front>:', optional: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [], surfaces: [] }),
+    onStart: (active, ctx) => {
+      const bodies = [...ctx.doc.getSelectedSolids(), ...ctx.doc.getSelectedSurfaces()];
+      if (bodies.length === 0) return;
+      active.data.bodies = bodies;
+      active.stepIndex = 1;
+      ctx.log(`${bodies.length} object(s) preselected. Name the view.`);
+    } },
   { name: 'INTERFERE', aliases: ['INTERFERE', 'INF'], execute: checkInterference, help: 'report where solids overlap, without changing them', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select solids to check against each other, then press Enter:', multi: true },

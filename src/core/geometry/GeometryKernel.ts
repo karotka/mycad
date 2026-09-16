@@ -195,6 +195,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** A curve dropped onto a shape along that shape's own normals, as the
    *  curves it becomes there. */
   projectOnto(curve: Solid, target: Solid): KernelCurve[];
+  /** A shape as it would be drawn on paper from one direction: the edges that
+   *  can be seen, and the edges that are behind something. */
+  hiddenLineView(shapes: readonly Solid[], direction: Point3, up: Point3): { visible: KernelCurve[]; hidden: KernelCurve[] };
   /** The closest two shapes come, and the point on each where they do. Null
    *  when there is no answer at all. */
   closestPoints(first: Solid, second: Solid): { distance: number; onFirst: Point3; onSecond: Point3 } | null;

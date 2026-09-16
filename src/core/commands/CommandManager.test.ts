@@ -7663,3 +7663,128 @@ describe('PROJECTGEOMETRY', () => {
     expect(kit.doc.entities).toHaveLength(1);
   }, 60000);
 });
+
+describe('FLATSHOT', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  async function box(kit: ReturnType<typeof setup>, width: number, depth: number, height: string) {
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: width, y: depth });
+    await kit.manager.submitInput(height);
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+    return kit.doc.solids[0];
+  }
+
+  it('draws a box from the front as the rectangle it looks like, with the back dashed behind it', async () => {
+    const kit = setup();
+    const solid = await box(kit, 10, 6, '4');
+
+    kit.manager.startCommand('FLATSHOT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('Front');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Flatshot drawn'), { timeout: 30000 });
+
+    const lines = kit.doc.entities.filter((entity) => entity.type === 'line');
+    const visible = lines.filter((entity) => entity.layer !== 'HIDDEN');
+    const hidden = lines.filter((entity) => entity.layer === 'HIDDEN');
+    // Four sides seen, four behind — a wire model would give all eight solid,
+    // with no way to tell which is which.
+    expect(visible).toHaveLength(4);
+    expect(hidden).toHaveLength(4);
+    // Ten wide and four tall, in the plane of the view.
+    let width = 0, height = 0;
+    for (const line of visible) {
+      if (line.type !== 'line') continue;
+      width = Math.max(width, Math.abs(line.start.x), Math.abs(line.end.x));
+      height = Math.max(height, Math.abs(line.start.y), Math.abs(line.end.y));
+    }
+    expect(width).toBeCloseTo(10, 6);
+    expect(height).toBeCloseTo(4, 6);
+    // The hidden layer is made with a dashed linetype, which is what a hidden
+    // line is drawn as.
+    expect(kit.doc.layerLinetype.HIDDEN).toBe('Hidden');
+    expect(kit.doc.solids).toHaveLength(1);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(0);
+  }, 60000);
+
+  it('draws the same box from the top as its own plan', async () => {
+    const kit = setup();
+    const solid = await box(kit, 10, 6, '4');
+
+    kit.manager.startCommand('FLATSHOT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('Top');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Flatshot drawn'), { timeout: 30000 });
+
+    let width = 0, depth = 0;
+    for (const line of kit.doc.entities) {
+      if (line.type !== 'line' || line.layer === 'HIDDEN') continue;
+      width = Math.max(width, Math.abs(line.start.x), Math.abs(line.end.x));
+      depth = Math.max(depth, Math.abs(line.start.y), Math.abs(line.end.y));
+    }
+    expect(width).toBeCloseTo(10, 6);
+    expect(depth).toBeCloseTo(6, 6);
+  }, 60000);
+
+  it('draws the outline of a cylinder, which is no edge of it at all', async () => {
+    const kit = setup();
+    kit.manager.startCommand('CYLINDER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('20');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
+
+    kit.manager.startCommand('FLATSHOT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, kit.doc.solids[0].id);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('Front');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Flatshot drawn'), { timeout: 30000 });
+
+    // The two sides of the cylinder: twenty long, ten apart. Neither is an
+    // edge of the solid — they are where the wall turns away from the viewer.
+    const sides = kit.doc.entities.filter((entity) =>
+      entity.type === 'line' && entity.layer !== 'HIDDEN'
+      && Math.abs(Math.hypot(entity.end.x - entity.start.x, entity.end.y - entity.start.y) - 20) < 1e-6);
+    expect(sides).toHaveLength(2);
+  }, 60000);
+
+  it('takes Front on Enter, as the prompt promises', async () => {
+    const kit = setup();
+    const solid = await box(kit, 10, 6, '4');
+
+    kit.manager.startCommand('FLATSHOT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await kit.manager.submitInput('');
+    // Enter at the view step. Without the step being optional this cancels
+    // the command outright — found in the running app, where the prompt's
+    // own <Front> turned out not to be taken.
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Flatshot drawn'), { timeout: 30000 });
+
+    let width = 0, height = 0;
+    for (const line of kit.doc.entities) {
+      if (line.type !== 'line' || line.layer === 'HIDDEN') continue;
+      width = Math.max(width, Math.abs(line.start.x), Math.abs(line.end.x));
+      height = Math.max(height, Math.abs(line.start.y), Math.abs(line.end.y));
+    }
+    expect(width).toBeCloseTo(10, 6);
+    expect(height).toBeCloseTo(4, 6);
+  }, 60000);
+
+  it('asks again rather than guessing when the view is not one it knows', async () => {
+    const kit = setup();
+    const solid = await box(kit, 10, 6, '4');
+
+    kit.manager.startCommand('FLATSHOT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await kit.manager.submitInput('');
+    // B alone is ambiguous: Back or Bottom.
+    await kit.manager.submitInput('B');
+    expect(logged(kit.log)).toContain('Name one view');
+    expect(kit.doc.entities).toHaveLength(0);
+  }, 60000);
+});
