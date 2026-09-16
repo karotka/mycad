@@ -602,7 +602,7 @@ function exactSweepShape(feature: SweepFeature, kernel: OpenCascadeKernel): Open
   };
   const profile = exactSweepProfile(profileCentredOnOrigin(feature.profile), crossPlane);
   const path = exactSweepPath(feature.path, pathPlane);
-  return profile && path ? kernel.sweep(profile, path) : null;
+  return profile && path ? kernel.sweep(profile, path, feature.scale ?? 1) : null;
 }
 
 /**

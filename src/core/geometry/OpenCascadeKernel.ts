@@ -1100,8 +1100,14 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     curve.SetPole_1(index, target);
   }
 
-  sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): OpenCascadeSolid {
+  sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[], scale = 1): OpenCascadeSolid {
     if (path.length === 0) throw new Error('Sweep path requires at least one segment.');
+    if (!Number.isFinite(scale) || scale <= 0) throw new Error('Sweep scale must be greater than zero.');
+    // A sweep that keeps its section the whole way is the common one and goes
+    // the way it always has, through MakePipe. Only a tapering one needs
+    // MakePipeShell, which takes a law for how the section grows but is a
+    // heavier machine — no reason to put every sweep through it.
+    if (Math.abs(scale - 1) > 1e-9) return this.sweptWithScale(profile, path, scale);
 
     const owned: Array<{ delete(): void }> = [];
     let spine: TopoDS_Wire | null = null;
@@ -1136,6 +1142,51 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
       profileWire?.delete();
       spine?.delete();
       for (let index = owned.length - 1; index >= 0; index--) owned[index].delete();
+    }
+  }
+
+  /**
+   * A sweep whose section grows (or shrinks) evenly from one end of the path
+   * to the other — AutoCAD SWEEP's Scale.
+   *
+   * MakePipeShell takes the growth as a law along the spine. The law has to
+   * arrive as a `Handle_Law_Function` exactly: measured, a `Handle_Law_Linear`
+   * is refused by the binding although it is one in C++, so the handle is
+   * built as the base kind around the linear law.
+   */
+  private sweptWithScale(profile: SweepProfile3, path: readonly SweepPathSegment3[], scale: number): OpenCascadeSolid {
+    const owned: Array<{ delete(): void }> = [];
+    let maker: InstanceType<typeof this.oc.BRepOffsetAPI_MakePipeShell> | null = null;
+    let progress: InstanceType<typeof this.oc.Message_ProgressRange_1> | null = null;
+    try {
+      const spine = this.buildWireFromEdges(path, owned, 'OpenCascade could not join the sweep path.');
+      const profileWire = this.makeSweepProfileWire(profile, owned);
+      maker = new this.oc.BRepOffsetAPI_MakePipeShell(spine);
+      const law = new this.oc.Law_Linear();
+      // Full size where the path starts, `scale` times that where it ends.
+      law.Set(0, 1, 1, scale);
+      maker.SetLaw_1(profileWire, new this.oc.Handle_Law_Function_2(law), false, false);
+      maker.SetMode_1(true);
+      progress = new this.oc.Message_ProgressRange_1();
+      maker.Build(progress);
+      if (!maker.IsDone()) throw new Error('OpenCascade failed to sweep the profile with a scale.');
+      maker.MakeSolid();
+      const shape = maker.Shape();
+      if (shape.IsNull() || !this.hasSolid(shape)) {
+        shape.delete();
+        throw new Error('The sweep did not produce a solid.');
+      }
+      return this.wrap(shape);
+    } finally {
+      progress?.delete();
+      maker?.delete();
+      // The same deliberate small leak as loftProfiles and loftGuidedSurface,
+      // and for the same reason: the spine, the profile wire and the growth
+      // law are all still referenced by the shape that was just built.
+      // Disposing them here is not a tidy-up but a use-after-free — measured,
+      // it crashes the WebAssembly heap outright ("memory access out of
+      // bounds") on the very next call.
+      void owned;
     }
   }
 

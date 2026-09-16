@@ -1222,3 +1222,41 @@ describe('what a solid weighs up to', () => {
     expect(surfaceArea).toBeCloseTo(40, 3);
   });
 });
+
+describe('a sweep that tapers', () => {
+  let kernel: OpenCascadeKernel;
+  const held: OpenCascadeSolid[] = [];
+  beforeAll(async () => { kernel = await createNodeOpenCascadeKernel(); });
+  afterAll(() => { held.forEach((solid) => solid.dispose()); });
+  const keep = (solid: OpenCascadeSolid): OpenCascadeSolid => { held.push(solid); return solid; };
+
+  const circle = { kind: 'circle' as const, center: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 }, xAxis: { x: 1, y: 0, z: 0 }, radius: 5 };
+  const straight = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: 40 } }];
+
+  it('grows the section to the scale asked for, by the volume of the frustum it becomes', () => {
+    const tapered = keep(kernel.sweep(circle, straight, 3));
+    const inspection = kernel.inspect(tapered);
+    // A cone frustum from r = 5 to r = 15 over 40: πh(R₁² + R₁R₂ + R₂²)/3.
+    expect(inspection.volume).toBeCloseTo(Math.PI * 40 * (25 + 75 + 225) / 3, 2);
+    expect(inspection.bounds.max.x).toBeCloseTo(15, 3);
+    expect(inspection.solidCount).toBe(1);
+    expect(inspection.valid).toBe(true);
+  });
+
+  it('shrinks it just as well', () => {
+    const tapered = keep(kernel.sweep(circle, straight, 0.2));
+    expect(kernel.inspect(tapered).volume).toBeCloseTo(Math.PI * 40 * (25 + 5 + 1) / 3, 2);
+  });
+
+  it('leaves a plain sweep exactly as it was', () => {
+    const plain = keep(kernel.sweep(circle, straight));
+    const asked = keep(kernel.sweep(circle, straight, 1));
+    expect(kernel.inspect(plain).volume).toBeCloseTo(Math.PI * 25 * 40, 6);
+    expect(kernel.inspect(asked).volume).toBeCloseTo(kernel.inspect(plain).volume, 9);
+  });
+
+  it('refuses a scale that is not a size', () => {
+    expect(() => kernel.sweep(circle, straight, 0)).toThrow(/greater than zero/);
+    expect(() => kernel.sweep(circle, straight, -2)).toThrow(/greater than zero/);
+  });
+});

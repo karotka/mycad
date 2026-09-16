@@ -611,6 +611,9 @@ export interface SweepFeature {
   profile: Entity;
   path: Entity;
   workPlane?: WorkPlane;
+  /** What the section is multiplied by at the far end of the path — a taper.
+   *  Absent, or 1, keeps it the same the whole way. */
+  scale?: number;
 }
 
 /**

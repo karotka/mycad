@@ -20,6 +20,7 @@ import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 import { bezierLineIntersections, cubicBezierLineParameters, evaluateCubicBezier, splitCubicBezier } from './steps/edit2d';
 import { worldPointsAreCoplanar } from './steps/draw';
 import { helixCurve } from '../../math/helix';
+import { featureParams, setFeatureParam } from '../solids/featureParams';
 import type { Vec2 } from '../../math/geometry';
 
 function setup() {
@@ -1706,6 +1707,7 @@ describe('CommandManager history integration', () => {
     manager.startCommand('SWEEP');
     await manager.handleClick({ x: 50, y: 50 }, profile);
     await manager.handleClick({ x: 54, y: 50 }, path);
+    await manager.submitInput('');
 
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
     expect(doc.solids).toHaveLength(1);
@@ -1723,6 +1725,7 @@ describe('CommandManager history integration', () => {
 
     await manager.handleClick({ x: 0, y: 0 }, profile);
     await manager.handleClick({ x: 4, y: 0 }, path);
+    await manager.submitInput('');
 
     expect(doc.solids).toHaveLength(1);
     expect(doc.solids[0].feature.kind).toBe('sweep');
@@ -6722,6 +6725,7 @@ describe('SWEEP along a path that climbs out of its own plane', () => {
     kit.manager.startCommand('SWEEP');
     await kit.manager.handleClick({ x: radius, y: 0 }, profile);
     await kit.manager.handleClick({ x: radius, y: 0 }, path);
+    await kit.manager.submitInput('');
     await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
     const kernel = await openCascadeKernel();
     const shape = await openExactShape(kit.doc.solids[0], kernel);
@@ -6809,6 +6813,7 @@ describe('HELIX', () => {
     kit.manager.startCommand('SWEEP');
     await kit.manager.handleClick({ x: radius, y: 0 }, profile);
     await kit.manager.handleClick({ x: radius, y: 0 }, helix);
+    await kit.manager.submitInput('');
     await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 20000 });
     const kernel = await openCascadeKernel();
     const shape = await openExactShape(kit.doc.solids[0], kernel);
@@ -7452,4 +7457,71 @@ describe('DISTOBJECTS', () => {
     await vi.waitFor(() => expect(logged(kit.log)).toContain('Distance from'), { timeout: 30000 });
     expect(logged(kit.log)).toContain(': 20');
   }, 90000);
+});
+
+describe('SWEEP with a taper', () => {
+  it('tapers the section to the scale asked for, and keeps it as a number that can be changed after', async () => {
+    const kit = setup();
+    const profile = kit.doc.createCircle({ x: 0, y: 0 }, 5);
+    const path = kit.doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 0, y: 0, z: 40 } as Vec2);
+    path.workPlane = cloneWorkPlane({ origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 } });
+    kit.doc.entities.push(profile, path);
+
+    kit.manager.startCommand('SWEEP');
+    await kit.manager.handleClick({ x: 5, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 }, path);
+    await kit.manager.submitInput('3');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 30000 });
+
+    const solid = kit.doc.solids[0];
+    expect(solid.feature.kind).toBe('sweep');
+    if (solid.feature.kind !== 'sweep') return;
+    expect(solid.feature.scale).toBe(3);
+    // And the solid really is tapered, not merely labelled so: a circle of 5
+    // grown three times reaches 15 from the axis at the far end. Measured
+    // across the path, not along it — this one runs down y, so the length of
+    // the sweep would swamp any radius asked about.
+    let widest = 0;
+    for (let index = 0; index + 2 < solid.mesh.positions.length; index += 3) {
+      widest = Math.max(widest, Math.hypot(solid.mesh.positions[index], solid.mesh.positions[index + 2]));
+    }
+    expect(widest).toBeGreaterThan(14.5);
+    // The taper is a number the model tree can offer, not a choice frozen at
+    // the moment the command ran.
+    expect(featureParams(solid.feature)).toContainEqual(expect.objectContaining({ key: 'scale', value: 3 }));
+    expect(setFeatureParam(solid.feature, 'scale', 2)).toBe(true);
+    expect(solid.feature.scale).toBe(2);
+    expect(setFeatureParam(solid.feature, 'scale', 0)).toBe(false);
+  }, 60000);
+
+  it('leaves the sweep untapered when the step is just answered with Enter', async () => {
+    const kit = setup();
+    const profile = kit.doc.createCircle({ x: 0, y: 0 }, 5);
+    const path = kit.doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 0, y: 0, z: 40 } as Vec2);
+    path.workPlane = cloneWorkPlane({ origin: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 } });
+    kit.doc.entities.push(profile, path);
+
+    kit.manager.startCommand('SWEEP');
+    await kit.manager.handleClick({ x: 5, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 }, path);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(1), { timeout: 30000 });
+
+    const feature = kit.doc.solids[0].feature;
+    expect(feature.kind === 'sweep' && feature.scale).toBeUndefined();
+  }, 60000);
+
+  it('refuses a scale that is not a size', async () => {
+    const kit = setup();
+    const profile = kit.doc.createCircle({ x: 0, y: 0 }, 5);
+    const path = kit.doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 0, y: 0, z: 40 } as Vec2);
+    kit.doc.entities.push(profile, path);
+
+    kit.manager.startCommand('SWEEP');
+    await kit.manager.handleClick({ x: 5, y: 0 }, profile);
+    await kit.manager.handleClick({ x: 0, y: 0 }, path);
+    await kit.manager.submitInput('-1');
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('greater than zero'));
+    expect(kit.doc.solids).toHaveLength(0);
+  }, 60000);
 });

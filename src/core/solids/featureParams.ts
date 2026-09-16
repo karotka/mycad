@@ -42,6 +42,10 @@ export function featureParams(feature: SolidFeature): FeatureParam[] {
   // the copy sits on, so typing a negative number here is SURFOFFSET's own
   // "Flip direction" after the fact.
   if (feature.kind === 'surface-offset') return [{ key: 'distance', label: 'Distance', value: feature.distance, min: -Infinity }];
+  // A sweep's profile and path are shapes, but its taper is a number — what
+  // the section is multiplied by at the far end, so it can be changed after
+  // the fact rather than only answered while the command is running.
+  if (feature.kind === 'sweep') return [{ key: 'scale', label: 'End scale', value: feature.scale ?? 1, min: 1e-6 }];
   // A loft's profiles (and guides) are shapes, not numbers — same reasoning
   // as sweep above. A loft between two open rails has no thickness of its
   // own to expose here any more — it builds a Surface now, and THICKEN's own
@@ -75,6 +79,10 @@ export function setFeatureParam(feature: SolidFeature, key: string, value: numbe
   }
   if (feature.kind === 'surface-offset' && key === 'distance' && Number.isFinite(value) && Math.abs(value) >= 1e-6) {
     feature.distance = value;
+    return true;
+  }
+  if (feature.kind === 'sweep' && key === 'scale' && Number.isFinite(value) && value >= 1e-6) {
+    feature.scale = value;
     return true;
   }
   return false;

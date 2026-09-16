@@ -349,9 +349,9 @@ async function completePathExtrude(run: CommandRun, profiles: Entity[], path: En
 
 export async function sweepProfileStep(run: CommandRun): Promise<StepOutcome> {
   const { active, data, value, step, ctx } = run;
-  if (step.kind !== 'entity' || !value) return 'advance';
 
   if (active.stepIndex === 0) {
+    if (step.kind !== 'entity' || !value) return 'advance';
     const entity = value as Entity;
     if (!isSweepProfileEntity(entity)) {
       ctx.log('Sweep profile must be a closed 2D object.');
@@ -362,19 +362,39 @@ export async function sweepProfileStep(run: CommandRun): Promise<StepOutcome> {
     return 'advance';
   }
 
+  if (active.stepIndex === 1) {
+    if (step.kind !== 'entity' || !value) return 'advance';
+    const candidate = value as Entity;
+    if (!isSweepPath(candidate)) {
+      ctx.log('Sweep path must be a line, arc, bezier, polyline or circle.');
+      return 'stay';
+    }
+    data.path = candidate;
+    return 'advance';
+  }
+
+  // The taper: what the section is multiplied by at the far end. Enter leaves
+  // it alone, which is the sweep everyone means by default.
+  const scale = value === null || value === undefined ? 1 : Number(value);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    ctx.log('The scale must be greater than zero. Enter 1 for no taper.');
+    return 'stay';
+  }
   const profile = data.profile as Entity | undefined;
-  const path = value as Entity;
-  if (!profile) {
+  const path = data.path as Entity | undefined;
+  if (!profile || !path) {
     ctx.log('No profile selected.');
     return 'advance';
   }
-  if (!isSweepPath(path)) {
-    ctx.log('Sweep path must be a line, arc, bezier, polyline or circle.');
-    return 'stay';
-  }
   ctx.log('Sweeping…');
   const plane = profile.workPlane ?? path.workPlane ?? WORLD_WORK_PLANE;
-  const feature = { kind: 'sweep' as const, profile: cloneEntity(profile), path: cloneEntity(path), workPlane: cloneWorkPlane(plane) };
+  const feature = {
+    kind: 'sweep' as const,
+    profile: cloneEntity(profile),
+    path: cloneEntity(path),
+    workPlane: cloneWorkPlane(plane),
+    ...(Math.abs(scale - 1) > 1e-9 ? { scale } : {}),
+  };
   const exact = await buildExactFeature(feature).catch(() => null);
   if (!exact) {
     const reason = tooFatForItsPath(profile, path);
@@ -389,7 +409,8 @@ export async function sweepProfileStep(run: CommandRun): Promise<StepOutcome> {
   ctx.doc.clearSelection();
   ctx.doc.selectSolid(solid.id);
   ctx.doc.viewMode = '3d';
-  ctx.log(`Sweep complete (${profile.id} along ${path.id}).`);
+  ctx.log(`Sweep complete (${profile.id} along ${path.id})`
+    + (Math.abs(scale - 1) > 1e-9 ? `, tapering to ${scale}x` : '') + '.');
   return 'advance';
 }
 

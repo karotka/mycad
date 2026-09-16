@@ -426,7 +426,12 @@ export const COMMANDS = [
       }
     } },
   { name: 'SWEEP', aliases: ['SW', 'SWEEP'], execute: sweepProfileStep, help: 'sweep profile along path', suggest: true,
-    steps: [{ kind: 'entity', label: 'Select closed 2D profile:' }, { kind: 'entity', label: 'Select path:' }, { kind: 'done' }],
+    steps: [
+      { kind: 'entity', label: 'Select closed 2D profile:' },
+      { kind: 'entity', label: 'Select path:' },
+      { kind: 'number', label: 'Scale of the section at the far end (Enter for 1, no taper):', optional: true },
+      { kind: 'done' },
+    ],
     data: () => ({ profile: undefined }),
     onStart: preselectOne('profile', isSweepProfileEntity, 'Profile preselected. Select sweep path.') },
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a planar face region', suggest: true, steps: [{ kind: 'solid', label: 'Select planar face or bounded region:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },

@@ -151,7 +151,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
     rail2: readonly SweepPathSegment3[],
     guides: readonly (readonly SweepPathSegment3[])[],
   ): Solid;
-  sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[]): Solid;
+  /** `scale` is what the section is multiplied by at the far end of the path;
+   *  1 keeps it the same the whole way. */
+  sweep(profile: SweepProfile3, path: readonly SweepPathSegment3[], scale?: number): Solid;
   fillet(solid: Solid, edge: EdgeReference3, radius: number): Solid;
   chamfer(solid: Solid, edge: EdgeReference3, distance1: number, distance2: number): Solid;
   deleteFaces(solid: Solid, faceIds: readonly number[]): Solid;
