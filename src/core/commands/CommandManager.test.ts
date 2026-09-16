@@ -7049,3 +7049,73 @@ describe('JOIN of objects that do not lie in one plane', () => {
     expect(kit.doc.entities).toHaveLength(3);
   });
 });
+
+describe('LOFT between two rails that do not meet', () => {
+  /** Four curves round a four-sided patch: two rails, and a guide across each
+   *  end joining them — the shape a pair of spiral flanks makes. */
+  function loop(doc: Document) {
+    const rail1 = doc.createBezier(
+      { x: 0, y: 0, z: 0 } as Vec2, { x: 4, y: 1, z: 2 } as Vec2,
+      { x: 8, y: 1, z: 4 } as Vec2, { x: 12, y: 0, z: 6 } as Vec2,
+    );
+    const rail2 = doc.createBezier(
+      { x: 0, y: 10, z: 0 } as Vec2, { x: 4, y: 11, z: 2 } as Vec2,
+      { x: 8, y: 11, z: 4 } as Vec2, { x: 12, y: 10, z: 6 } as Vec2,
+    );
+    const nearEnd = doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 0, y: 10, z: 0 } as Vec2);
+    const farEnd = doc.createLine({ x: 12, y: 0, z: 6 } as Vec2, { x: 12, y: 10, z: 6 } as Vec2);
+    doc.entities.push(rail1, rail2, nearEnd, farEnd);
+    return { rail1, rail2, nearEnd, farEnd };
+  }
+
+  it('walls between them, with the guides closing each end', async () => {
+    const kit = setup();
+    const { rail1, rail2, nearEnd, farEnd } = loop(kit.doc);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, rail1);
+    await kit.manager.handleClick({ x: 0, y: 0 }, rail2);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 0 }, nearEnd);
+    await kit.manager.handleClick({ x: 0, y: 0 }, farEnd);
+    await kit.manager.submitInput('');
+
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(1), { timeout: 30000 });
+    // The patch spans the whole loop: the rails' own reach in x and z, and
+    // the full gap between them in y.
+    const positions = kit.doc.surfaces[0].mesh.positions;
+    const axis = (offset: number) => {
+      let lo = Infinity, hi = -Infinity;
+      for (let index = offset; index < positions.length; index += 3) { lo = Math.min(lo, positions[index]); hi = Math.max(hi, positions[index]); }
+      return [lo, hi];
+    };
+    // The rails bow outwards to 0.75 short of their ends and 10.75 past
+    // them, so those are the patch's own limits, not the end points — read
+    // off the curves themselves rather than guessed from where they finish.
+    expect(axis(0)[0]).toBeCloseTo(0, 3);
+    expect(axis(0)[1]).toBeCloseTo(12, 3);
+    expect(axis(1)[0]).toBeCloseTo(0, 3);
+    expect(axis(1)[1]).toBeGreaterThan(10.7);
+    expect(axis(1)[1]).toBeLessThan(10.76);
+    expect(axis(2)[1]).toBeCloseTo(6, 3);
+    // All four curves went into it, and undo puts them back.
+    expect(kit.doc.entities).toHaveLength(0);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(4);
+    expect(kit.doc.surfaces).toHaveLength(0);
+  }, 60000);
+
+  it('walls between them with no guides at all, which the prompt offers', async () => {
+    const kit = setup();
+    const { rail1, rail2 } = loop(kit.doc);
+
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, rail1);
+    await kit.manager.handleClick({ x: 0, y: 0 }, rail2);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('');
+
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(1), { timeout: 30000 });
+    expect(kit.doc.surfaces[0].mesh.positions.length).toBeGreaterThan(0);
+  }, 60000);
+});

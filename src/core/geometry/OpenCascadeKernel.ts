@@ -677,19 +677,21 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         guide: Handle_Geom_BSplineCurve | null;
       };
 
-      const sameDirection = distance(c1Start, c2Start) <= CORNER_TOLERANCE && distance(c1End, c2End) <= CORNER_TOLERANCE;
-      const crossDirection = distance(c1Start, c2End) <= CORNER_TOLERANCE && distance(c1End, c2Start) <= CORNER_TOLERANCE;
-      if (!sameDirection && !crossDirection) {
-        throw new Error('Loft with guides requires two rails that share both their own endpoints (e.g. one curve mirrored into the other).');
-      }
+      // Which end of rail2 answers which end of rail1 — whichever pairing is
+      // the shorter, since a rail can have been drawn either way round. The
+      // rails used to have to MEET at both ends (a curve mirrored into
+      // another, which is how the first use of this — a spoon's outline —
+      // was built), and anything else was refused outright. Two rails that
+      // never touch is the ordinary case though: a four-sided patch, where
+      // the ends are closed by the guides or by nothing at all.
+      const sameDirection = distance(c1Start, c2Start) + distance(c1End, c2End)
+        <= distance(c1Start, c2End) + distance(c1End, c2Start);
       const u2AtRailStart = sameDirection ? c2Curve.FirstParameter() : c2Curve.LastParameter();
       const u2AtRailEnd = sameDirection ? c2Curve.LastParameter() : c2Curve.FirstParameter();
+      const c2AtRailStart = sameDirection ? c2Start : c2End;
+      const c2AtRailEnd = sameDirection ? c2End : c2Start;
 
-      let boundaries: Boundary[] = [
-        { u1: c1Curve.FirstParameter(), u2: u2AtRailStart, snap1: c1Start, snap2: c1Start, guide: null },
-        { u1: c1Curve.LastParameter(), u2: u2AtRailEnd, snap1: c1End, snap2: c1End, guide: null },
-      ];
-
+      const guideBoundaries: Boundary[] = [];
       for (const guideEdges of guides) {
         if (guideEdges.length === 0) continue;
         const guideWire = this.buildWireFromEdges(guideEdges, owned, 'OpenCascade could not join a loft guide curve.');
@@ -718,9 +720,38 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
         const u1 = this.projectPointParam(c1, rail1Point);
         const u2 = this.projectPointParam(c2, rail2Point);
         const orientedGuide = this.trimBSplineBetween(guideComposite, guideCurve.FirstParameter(), guideCurve.LastParameter(), startNearRail1);
-        boundaries.push({ u1, u2, snap1: rail1Point, snap2: rail2Point, guide: orientedGuide });
+        guideBoundaries.push({ u1, u2, snap1: rail1Point, snap2: rail2Point, guide: orientedGuide });
       }
-      boundaries.sort((a, b) => a.u1 - b.u1);
+
+      // What closes each end of the patch. A guide the user drew right across
+      // the rails' own ends IS that end — taking it as an ordinary in-between
+      // guide as well would leave a strip of no width beside it. Where there
+      // is no such guide, the ends either meet (nothing to close, the case
+      // this was first built for) or they do not, and a straight chord closes
+      // them — which is the flat wall the prompt offers when no guides are
+      // picked at all.
+      const used = new Set<Boundary>();
+      const endBoundary = (u1: number, u2: number, railPoint: gp_Pnt, otherPoint: gp_Pnt): Boundary => {
+        const supplied = guideBoundaries.find((boundary) => !used.has(boundary)
+          && distance(boundary.snap1, railPoint) <= CORNER_TOLERANCE
+          && distance(boundary.snap2, otherPoint) <= CORNER_TOLERANCE);
+        if (supplied) { used.add(supplied); return supplied; }
+        const meet = distance(railPoint, otherPoint) <= CORNER_TOLERANCE;
+        return {
+          u1, u2, snap1: railPoint,
+          // The same point on purpose when they meet: the strip's poles are
+          // snapped onto these, and a corner has to be exactly one point.
+          snap2: meet ? railPoint : otherPoint,
+          guide: meet ? null : this.straightBSpline(railPoint, otherPoint, owned),
+        };
+      };
+      const startBoundary = endBoundary(c1Curve.FirstParameter(), u2AtRailStart, c1Start, c2AtRailStart);
+      const finishBoundary = endBoundary(c1Curve.LastParameter(), u2AtRailEnd, c1End, c2AtRailEnd);
+      let boundaries: Boundary[] = [
+        startBoundary,
+        ...guideBoundaries.filter((boundary) => !used.has(boundary)).sort((a, b) => a.u1 - b.u1),
+        finishBoundary,
+      ];
 
       // Each patch above is filled independently, with no shared tangent
       // enforced across the guide it meets its neighbour at (C0, not C1) —
@@ -961,21 +992,82 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     return composite.BSplineCurve();
   }
 
+  /**
+   * The nearest point on `curveHandle` to `point`, as a parameter and a
+   * distance.
+   *
+   * OCCT's projector looks for feet of perpendiculars, and a point beyond
+   * either end of the curve has none — so for a point sitting exactly on a
+   * rail's own end it finds nothing at all and raises rather than answering
+   * "the end, distance nothing". That is not a corner case here but the
+   * common one: a guide drawn across where two rails end touches each of them
+   * precisely there, and the whole loft failed on it. The ends are checked
+   * alongside whatever the projector finds, so the answer is the nearest of
+   * all of them.
+   */
+  private projectPointOnCurve(curveHandle: Handle_Geom_BSplineCurve, point: gp_Pnt): { parameter: number; distance: number } {
+    const curve = curveHandle.get();
+    const asCurve = new this.oc.Handle_Geom_Curve_2(curve);
+    const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
+    const at = (parameter: number) => {
+      const on = curve.Value(parameter);
+      const distance = Math.hypot(on.X() - point.X(), on.Y() - point.Y(), on.Z() - point.Z());
+      on.delete();
+      return { parameter, distance };
+    };
+    let best = at(curve.FirstParameter());
+    const last = at(curve.LastParameter());
+    if (last.distance < best.distance) best = last;
+    if (projector.NbPoints() > 0) {
+      const found = { parameter: projector.LowerDistanceParameter(), distance: projector.LowerDistance() };
+      if (found.distance < best.distance) best = found;
+    }
+    return best;
+  }
+
   /** The parameter on `curveHandle` nearest `point` — used to find where a
    *  guide curve actually touches a rail. */
   private projectPointParam(curveHandle: Handle_Geom_BSplineCurve, point: gp_Pnt): number {
-    const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
-    const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
-    return projector.LowerDistanceParameter();
+    return this.projectPointOnCurve(curveHandle, point).parameter;
   }
 
   /** How far `point` actually sits from `curveHandle` — nearest point on the
    *  whole curve, not just its two corners. See `loftGuidedSurface`'s own
    *  use of this for why the corners alone are the wrong proxy. */
   private projectPointDistance(curveHandle: Handle_Geom_BSplineCurve, point: gp_Pnt): number {
-    const asCurve = new this.oc.Handle_Geom_Curve_2(curveHandle.get());
-    const projector = new this.oc.GeomAPI_ProjectPointOnCurve_2(point, asCurve);
-    return projector.LowerDistance();
+    return this.projectPointOnCurve(curveHandle, point).distance;
+  }
+
+  /**
+   * A straight Geom_BSplineCurve from one point to the other — what closes an
+   * end of a guided loft where the two rails simply do not meet and no guide
+   * was drawn across there. Four collinear points fitted at degree three give
+   * back the chord itself, and the ends are set exactly so the strip's poles
+   * snap onto them without drift.
+   */
+  private straightBSpline(from: gp_Pnt, to: gp_Pnt, owned: Array<{ delete(): void }>): Handle_Geom_BSplineCurve {
+    const points = new this.oc.TColgp_Array1OfPnt_2(1, 4);
+    owned.push(points);
+    for (let index = 0; index < 4; index++) {
+      const s = index / 3;
+      const point = new this.oc.gp_Pnt_3(
+        from.X() + (to.X() - from.X()) * s,
+        from.Y() + (to.Y() - from.Y()) * s,
+        from.Z() + (to.Z() - from.Z()) * s,
+      );
+      points.SetValue(index + 1, point);
+      owned.push(point);
+    }
+    points.SetValue(1, from);
+    points.SetValue(4, to);
+    const fitter = new this.oc.GeomAPI_PointsToBSpline_2(
+      points, 3, 8,
+      this.oc.GeomAbs_Shape.GeomAbs_C2 as unknown as GeomAbs_Shape,
+      1e-6,
+    );
+    owned.push(fitter);
+    if (!fitter.IsDone()) throw new Error('OpenCascade could not fit the straight edge closing a guided loft.');
+    return fitter.Curve();
   }
 
   /** `curveHandle` trimmed to [u1, u2] (u1 <= u2) and re-expressed as its own

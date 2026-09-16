@@ -680,7 +680,7 @@ async function finishRailsLoft(run: CommandRun, profiles: Entity[], guides: Enti
   const feature: LoftFeature = { kind: 'loft', profiles, guides };
   const exact = await buildExactFeature(feature, 0, /* allowOpenShell */ true);
   if (!exact) {
-    ctx.log('Loft failed — check that the two rails share both their own endpoints and each guide touches both rails.');
+    ctx.log('Loft failed — check that each guide runs across from one rail to the other.');
     return 'advance';
   }
   const consumed = [...profiles, ...guides];

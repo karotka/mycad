@@ -687,10 +687,61 @@ describe('OpenCascade exact-kernel spike', () => {
     expect(ratio).toBeLessThan(3);
   });
 
-  it('rejects a guided loft whose two rails do not share both their own endpoints', () => {
+  /** The area of a tessellated shell, for checking a patch covers what it should. */
+  function meshArea(shape: OpenCascadeSolid): number {
+    const { positions, indices } = kernel.tessellate(shape);
+    const at = (index: number) => ({ x: positions[index * 3], y: positions[index * 3 + 1], z: positions[index * 3 + 2] });
+    let total = 0;
+    for (let i = 0; i + 2 < indices.length; i += 3) {
+      const a = at(indices[i]), b = at(indices[i + 1]), c = at(indices[i + 2]);
+      const u = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+      const v = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+      total += Math.hypot(u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x) / 2;
+    }
+    return total;
+  }
+
+  it('walls two rails that never meet, which is a four-sided patch rather than a pointed one', () => {
+    // The first use of this was a spoon outline: one curve mirrored into
+    // another, meeting at the tip and at the handle, so both ends of the
+    // patch were a single point. Two rails that simply run alongside each
+    // other were refused outright — yet that is the ordinary case, and the
+    // straight ends close the patch just as well as a point does.
     const rail1 = [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }];
     const rail2 = [{ kind: 'line' as const, start: { x: 0, y: 5, z: 0 }, end: { x: 10, y: 5, z: 0 } }];
-    expect(() => kernel.loftGuidedSurface(rail1, rail2, [])).toThrow(/share both their own endpoints/);
+    const wall = keep(kernel.loftGuidedSurface(rail1, rail2, []));
+    expect(meshArea(wall)).toBeCloseTo(50, 3);
+    const inspection = kernel.inspect(wall);
+    expect(inspection.bounds.min.y).toBeCloseTo(0, 6);
+    expect(inspection.bounds.max.y).toBeCloseTo(5, 6);
+    expect(inspection.bounds.max.x).toBeCloseTo(10, 6);
+  });
+
+  it('takes a guide drawn right across the rails\' ends as that end of the patch', () => {
+    // A guide touching the rails exactly where they end is the end of the
+    // patch, not one more cross-section inside it — counted twice it would
+    // leave a strip of no width beside itself. The bowed guide here is what
+    // the far end looks like, so the patch has to reach past the rails' own
+    // straight chord to follow it.
+    // Curved rails, not straight ones: finding where a guide touches a rail
+    // is a projection, and a projection onto a straight line happens to
+    // answer for a point at its own end while one onto a curve does not.
+    const rail1 = [{ kind: 'bezier' as const, poles: [{ x: 0, y: 0, z: 0 }, { x: 3, y: -1, z: 0 }, { x: 7, y: -1, z: 0 }, { x: 10, y: 0, z: 0 }] }];
+    const rail2 = [{ kind: 'bezier' as const, poles: [{ x: 0, y: 5, z: 0 }, { x: 3, y: 6, z: 0 }, { x: 7, y: 6, z: 0 }, { x: 10, y: 5, z: 0 }] }];
+    const bowed = [{
+      kind: 'bezier' as const,
+      poles: [
+        { x: 10, y: 0, z: 0 },
+        { x: 13, y: 1.67, z: 0 },
+        { x: 13, y: 3.33, z: 0 },
+        { x: 10, y: 5, z: 0 },
+      ],
+    }];
+    const patch = keep(kernel.loftGuidedSurface(rail1, rail2, [bowed]));
+    const inspection = kernel.inspect(patch);
+    // The bow reaches x = 12.25 at its widest; the straight end would stop at 10.
+    expect(inspection.bounds.max.x).toBeGreaterThan(11.5);
+    expect(meshArea(patch)).toBeGreaterThan(50);
   });
 
   it('extrudes a wire profile of mixed line and arc edges into a real curved solid, not a facetted one', () => {
