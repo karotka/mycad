@@ -56,23 +56,27 @@ export function createToolActions(ctx: ToolActionsContext) {
   } = ctx;
 
   function deleteSelectedObjects(): boolean {
-    if (doc.selectedEntityIds.size === 0 && doc.selectedSolidIds.size === 0) return false;
+    if (doc.selectedEntityIds.size === 0 && doc.selectedSolidIds.size === 0 && doc.selectedSurfaceIds.size === 0) return false;
     gripInteraction.cancel();
     const entities = doc.getSelectedEntities().map(cloneEntity);
     const solids = doc.getSelectedSolids().map(cloneSolid);
-    history.execute(new ReplaceObjectsEdit('Delete selected objects', entities, solids, [], []));
+    // A surface is deleted the same way and by the same key. Leaving it out
+    // meant Delete simply did nothing to one — reported after SLICE, with the
+    // off-cut selected and no way to be rid of it.
+    const surfaces = [...doc.getSelectedSurfaces()];
+    history.execute(new ReplaceObjectsEdit('Delete selected objects', entities, solids, [], [], surfaces, []));
     gripController.mode = null;
     gripController.hoveredGrip = -1;
     previewController.clearPreview();
-    log(`Deleted objects: ${entities.length + solids.length}`);
+    log(`Deleted objects: ${entities.length + solids.length + surfaces.length}`);
     redraw();
     return true;
   }
 
   /** Cmd/Ctrl+C: hold the selected objects for a later paste. */
   function copySelectedObjects(): boolean {
-    if (doc.selectedEntityIds.size === 0 && doc.selectedSolidIds.size === 0) return false;
-    const count = setClipboard(doc.getSelectedEntities(), doc.getSelectedSolids());
+    if (doc.selectedEntityIds.size === 0 && doc.selectedSolidIds.size === 0 && doc.selectedSurfaceIds.size === 0) return false;
+    const count = setClipboard(doc.getSelectedEntities(), doc.getSelectedSolids(), doc.getSelectedSurfaces());
     log(`Copied objects: ${count}`);
     return true;
   }
@@ -85,18 +89,19 @@ export function createToolActions(ctx: ToolActionsContext) {
    */
   function pasteClipboard(): boolean {
     if (clipboardSize() === 0) { log('Clipboard is empty.'); return false; }
-    const wasEmpty = doc.entities.length === 0 && doc.solids.length === 0;
-    const { entities, solids } = readClipboard();
-    history.execute(new ReplaceObjectsEdit('Paste', [], [], entities, solids));
+    const wasEmpty = doc.entities.length === 0 && doc.solids.length === 0 && doc.surfaces.length === 0;
+    const { entities, solids, surfaces } = readClipboard();
+    history.execute(new ReplaceObjectsEdit('Paste', [], [], entities, solids, [], surfaces));
     doc.clearSelection();
     entities.forEach((entity, index) => doc.selectEntity(entity.id, index > 0));
     solids.forEach((solid) => doc.selectSolid(solid.id, true));
+    surfaces.forEach((surface) => doc.selectSurface(surface.id, true));
     if (wasEmpty) {
       const { width, height } = ctx.size();
       if (doc.viewMode === '2d') renderer2d.zoomExtents(doc, width, height);
       else renderer3d.frameContent(doc.entities, doc.solids);
     }
-    log(`Pasted objects: ${entities.length + solids.length}`);
+    log(`Pasted objects: ${entities.length + solids.length + surfaces.length}`);
     redraw();
     return true;
   }

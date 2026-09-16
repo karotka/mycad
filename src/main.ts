@@ -468,7 +468,8 @@ function drawFrame(): void {
   renderer3d.syncCutAreaFrame(cadDocument.gcode);
   if (!is2d) framePrimitiveBaseForHeight();
   const activeStepKind = commands.active?.steps[commands.active.stepIndex]?.kind;
-  const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'edge' || activeStepKind === 'plane';
+  const isObjectPick = activeStepKind === 'entity' || activeStepKind === 'solid' || activeStepKind === 'surface'
+    || activeStepKind === 'edge' || activeStepKind === 'plane';
   canvas2d.style.display = is2d ? 'block' : 'none';
   viewport3dHost.style.display = is2d ? 'none' : 'block';
   // The native cursor is hidden over the viewport, so the software CAD cursor

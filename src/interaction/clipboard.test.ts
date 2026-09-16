@@ -7,7 +7,7 @@ describe('object clipboard', () => {
 
   it('starts empty', () => {
     expect(clipboardSize()).toBe(0);
-    expect(readClipboard()).toEqual({ entities: [], solids: [] });
+    expect(readClipboard()).toEqual({ entities: [], solids: [], surfaces: [] });
   });
 
   it('holds clones and pastes fresh, deselected ids each read', () => {

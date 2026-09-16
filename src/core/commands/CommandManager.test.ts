@@ -7199,3 +7199,27 @@ describe('SLICE on a surface', () => {
     expect(kit.doc.surfaces).toHaveLength(3);
   }, 90000);
 });
+
+describe('ERASE reaches surfaces too', () => {
+  it('deletes a selected surface and is offered by autocomplete', () => {
+    expect(searchCommands('erase').map((command) => command.name)).toContain('ERASE');
+    expect(searchCommands('del').map((command) => command.name)).toContain('ERASE');
+  });
+
+  it('erases one picked in the viewport', async () => {
+    const kit = setup();
+    const surface = kit.doc.createSurface(
+      { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) },
+      'Surface', [], undefined, { kind: 'mesh' },
+    );
+    kit.doc.addSurface(surface);
+
+    kit.manager.startCommand('ERASE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, surface.id);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.surfaces).toHaveLength(0);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.surfaces).toHaveLength(1);
+  });
+});

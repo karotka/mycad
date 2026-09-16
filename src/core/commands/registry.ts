@@ -639,7 +639,7 @@ export const COMMANDS = [
   { name: 'PRINTAREA', aliases: ['PRINTAREA'], pointInput: true, execute: selectPrintArea, help: 'pick a window to print to PDF',
     steps: [{ kind: 'point', label: 'Specify first corner of print area:' }, { kind: 'point', label: 'Specify opposite corner:', ignoresDirection: true }, { kind: 'done' }] },
   { name: 'OCTAGON', aliases: ['OCT', 'OCTAGON'], help: 'draw a regular octagon', sticky: true, pointInput: true, execute: drawOctagon, steps: [{ kind: 'point', label: 'Specify octagon center:' }, { kind: 'point', label: 'Specify radius (point on circumference):' }, { kind: 'done' }] },
-  { name: 'ERASE', aliases: ['ERASE'], execute: eraseObjects, help: 'delete object', steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'done' }],
+  { name: 'ERASE', aliases: ['ERASE', 'DEL'], execute: eraseObjects, help: 'delete the selected objects', suggest: true, steps: [{ kind: 'entity', label: 'Select objects to delete, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected.`, { skipStep: false }) },
   { name: 'OPTIMIZEPATHS', aliases: ['OP', 'OPTIMIZEPATHS'], help: 'refit and join curves using a geometric tolerance', suggest: true, execute: optimizeDrawingPathsCommand,

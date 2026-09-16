@@ -70,7 +70,11 @@ describe('command registry', () => {
   it('suggests only registered commands and keeps the declared order', () => {
     const order = COMMAND_LIST.filter((command) => command.suggest).map((command) => command.name);
     expect(SUGGESTED_COMMANDS).toEqual(order);
-    expect(SUGGESTED_COMMANDS).not.toContain('ERASE');
+    // An example of a command that deliberately stays out of autocomplete;
+    // ERASE used to stand here, until not being able to find it was the whole
+    // problem — "ani jsem nenasel prikaz na smazani".
+    expect(SUGGESTED_COMMANDS).not.toContain('PURGEBLOCKS');
+    expect(SUGGESTED_COMMANDS).toContain('ERASE');
     expect(SUGGESTED_COMMANDS).toContain('TORUS');
   });
 
