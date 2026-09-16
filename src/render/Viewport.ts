@@ -768,18 +768,28 @@ export class Canvas2DRenderer {
   }
 
   zoomExtents(doc: Document, w: number, h: number): void {
-    let minX = -10, minY = -10, maxX = 10, maxY = 10;
-    const visibleEntities = doc.entities.filter((entity) => !doc.hiddenLayers.has(entity.layer) && !doc.hiddenObjects.has(entity.id));
-    if (visibleEntities.length > 0) {
-      minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
-      for (const e of visibleEntities) {
-        const b = entityBounds(e);
-        minX = Math.min(minX, b.min.x);
-        minY = Math.min(minY, b.min.y);
-        maxX = Math.max(maxX, b.max.x);
-        maxY = Math.max(maxY, b.max.y);
-      }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const visible = (item: { layer: string; id: string }) =>
+      !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id);
+    const cover = (x: number, y: number) => {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    };
+    for (const entity of doc.entities.filter(visible)) {
+      const bounds = entityBounds(entity);
+      cover(bounds.min.x, bounds.min.y);
+      cover(bounds.max.x, bounds.max.y);
     }
+    // Solids and surfaces are drawn here as projected outlines, so they are
+    // part of what "everything" means. Leaving them out aimed the view at the
+    // default box around the origin instead — reported as a surface not
+    // showing in the 2D view at all, and measured: the view went to (0, 0)
+    // while the surface sat between x 16 and 27.
+    for (const body of [...doc.solids.filter(visible), ...doc.surfaces.filter(visible)]) {
+      const positions = body.mesh.positions;
+      for (let index = 0; index + 2 < positions.length; index += 3) cover(positions[index], positions[index + 1]);
+    }
+    if (minX > maxX) { minX = -10; minY = -10; maxX = 10; maxY = 10; }
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     const span = Math.max(maxX - minX, maxY - minY, 1);
