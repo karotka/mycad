@@ -7317,3 +7317,81 @@ describe('TOSPLINE', () => {
     expect(restored.kind === 'loft' && restored.profiles.map((profile) => profile.type)).toEqual(['arc', 'arc']);
   }, 90000);
 });
+
+describe('INTERFERE', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  /** A box at a given corner, through the BOX command so it carries a real
+   *  feature and exact geometry. */
+  async function box(kit: ReturnType<typeof setup>, x: number, y: number, size: number, height: string) {
+    const before = kit.doc.solids.length;
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x, y });
+    await kit.manager.handleClick({ x: x + size, y: y + size });
+    await kit.manager.submitInput(height);
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(before + 1), { timeout: 20000 });
+    return kit.doc.solids.at(-1)!;
+  }
+
+  it('reports how much two solids overlap, and changes nothing', async () => {
+    const kit = setup();
+    const first = await box(kit, 0, 0, 10, '10');
+    const second = await box(kit, 6, 0, 10, '10');   // 4 x 10 x 10 of shared space
+
+    kit.manager.startCommand('INTERFERE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Interference found'), { timeout: 30000 });
+    await kit.manager.submitInput('');
+
+    expect(logged(kit.log)).toContain('overlap by 400');
+    // Nothing was consumed and nothing was made: that is the whole point of
+    // asking this rather than running INTERSECT.
+    expect(kit.doc.solids).toHaveLength(2);
+    expect(kit.doc.solids.map((solid) => solid.id)).toEqual([first.id, second.id]);
+  }, 90000);
+
+  it('says plainly when nothing overlaps, touching included', async () => {
+    const kit = setup();
+    const first = await box(kit, 0, 0, 10, '10');
+    // Sharing a whole face is not sharing space: measured, the boolean
+    // refuses this exactly as it refuses two solids far apart.
+    const touching = await box(kit, 10, 0, 10, '10');
+    const second = await box(kit, 40, 40, 10, '10');
+
+    kit.manager.startCommand('INTERFERE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, touching.id);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('No interference'), { timeout: 30000 });
+    expect(kit.doc.solids).toHaveLength(3);
+
+    kit.manager.startCommand('INTERFERE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('No interference'), { timeout: 30000 });
+    expect(kit.doc.solids).toHaveLength(3);
+  }, 90000);
+
+  it('keeps a solid of the overlap when asked, and undo takes it away', async () => {
+    const kit = setup();
+    const first = await box(kit, 0, 0, 10, '10');
+    const second = await box(kit, 6, 0, 10, '10');
+
+    kit.manager.startCommand('INTERFERE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Interference found'), { timeout: 30000 });
+    await kit.manager.submitInput('Yes');
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(3), { timeout: 30000 });
+
+    // The two originals are still there; the third is the overlap itself.
+    expect(kit.doc.solids.slice(0, 2).map((solid) => solid.id)).toEqual([first.id, second.id]);
+    expect(kit.doc.solids[2].name).toContain('Interference');
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.solids).toHaveLength(2);
+  }, 90000);
+});

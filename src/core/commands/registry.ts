@@ -16,6 +16,7 @@ import { copyObjects, eraseObjects, mirrorObjects, moveObjects, rotateObjects, s
 import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPlane } from './steps/dimensions';
 import { explodeObjects } from './steps/explode';
 import { convertToSpline } from './steps/toSpline';
+import { checkInterference } from './steps/interfere';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -501,6 +502,21 @@ export const COMMANDS = [
   // the same command in AutoCAD (its cutting object has a Surface option) and
   // the same question here — what is being cut decides what does the cutting,
   // so sliceSolids rewrites the steps after the first.
+  // The question INTERSECT answers destructively, asked without touching the
+  // drawing: do these share any space, and how much?
+  { name: 'INTERFERE', aliases: ['INTERFERE', 'INF'], execute: checkInterference, help: 'report where solids overlap, without changing them', suggest: true,
+    steps: [
+      { kind: 'solid', label: 'Select solids to check against each other, then press Enter:', multi: true },
+      { kind: 'text', label: 'Create a solid from each overlap? [Yes/No] <No>:', optional: true },
+      { kind: 'done' },
+    ],
+    data: () => ({ solids: [] }),
+    onStart: (active, ctx) => {
+      const solids = ctx.doc.getSelectedSolids();
+      if (solids.length < 2) return;
+      active.data.solids = [...solids];
+      ctx.log(`${solids.length} solid(s) preselected — press Enter to check them.`);
+    } },
   { name: 'SLICE', aliases: ['SL', 'SLICE'], execute: sliceSolids, help: 'split solids with a plane, or surfaces with another surface', suggest: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select solid(s) or surface(s) to slice, then press Enter:', multi: true, accepts: ['solid', 'surface'] },
