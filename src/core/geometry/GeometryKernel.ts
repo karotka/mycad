@@ -165,6 +165,9 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];
+  /** One surface cut by another, as the separate pieces it falls into — a
+   *  single piece back means the cut never went through. */
+  splitShellByShape(target: Solid, tool: Solid): Solid[];
   union(solids: readonly Solid[]): Solid;
   subtract(base: Solid, tools: readonly Solid[]): Solid;
   intersect(solids: readonly Solid[]): Solid;

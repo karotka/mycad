@@ -496,9 +496,13 @@ export const COMMANDS = [
       { kind: 'text', label: 'Thread size, e.g. M6 (Enter = suggested):', optional: true },
       { kind: 'done' },
     ] },
-  { name: 'SLICE', aliases: ['SL', 'SLICE'], execute: sliceSolids, help: 'split solids with a plane', suggest: true, pointInput: true,
+  // A solid is cut by a plane; a surface is cut by another surface, which is
+  // the same command in AutoCAD (its cutting object has a Surface option) and
+  // the same question here — what is being cut decides what does the cutting,
+  // so sliceSolids rewrites the steps after the first.
+  { name: 'SLICE', aliases: ['SL', 'SLICE'], execute: sliceSolids, help: 'split solids with a plane, or surfaces with another surface', suggest: true, pointInput: true,
     steps: [
-      { kind: 'solid', label: 'Select solid(s) to slice, then press Enter:', multi: true },
+      { kind: 'entity', label: 'Select solid(s) or surface(s) to slice, then press Enter:', multi: true, accepts: ['solid', 'surface'] },
       { kind: 'plane', label: 'Select a planar face or specify first slice-plane point:' },
       { kind: 'point', label: 'Specify second slice-plane point:', ignoresDirection: true },
       { kind: 'point', label: 'Specify third slice-plane point:', ignoresDirection: true },
@@ -507,10 +511,18 @@ export const COMMANDS = [
     data: () => ({ solids: [] }),
     onStart: (active, ctx) => {
       const solids = ctx.doc.getSelectedSolids();
-      if (solids.length === 0) return;
+      const surfaces = ctx.doc.getSelectedSurfaces();
+      if (solids.length + surfaces.length === 0) return;
       active.data.solids = [...solids];
+      active.data.surfaces = [...surfaces];
       active.stepIndex = 1;
-      ctx.log(`${solids.length} solid(s) preselected. Specify the slice plane.`);
+      if (surfaces.length > 0) {
+        active.steps[1] = { kind: 'surface', label: 'Select the surface to cut with:' };
+        active.steps[2] = { kind: 'done' };
+        ctx.log(`${surfaces.length} surface(s) preselected. Select the surface to cut with.`);
+      } else {
+        ctx.log(`${solids.length} solid(s) preselected. Specify the slice plane.`);
+      }
     } },
   { name: 'UCS', aliases: ['UCS'], execute: setWorkPlane, help: 'set the drawing plane — the user coordinate system', suggest: true, steps: [{ kind: 'point', label: 'Select UCS origin vertex:' }, { kind: 'point', label: 'Select a point on the positive X axis:' }, { kind: 'point', label: 'Select a point on the positive Y axis:' }, { kind: 'done' }] },
 

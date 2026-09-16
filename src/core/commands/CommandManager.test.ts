@@ -7119,3 +7119,83 @@ describe('LOFT between two rails that do not meet', () => {
     expect(kit.doc.surfaces[0].mesh.positions.length).toBeGreaterThan(0);
   }, 60000);
 });
+
+describe('SLICE on a surface', () => {
+  /** A flat sheet spanning y 0..10 in the plane z = 0, and a blade standing
+   *  up through it at y = 5 — the simplest "cut one surface with another". */
+  async function sheetAndBlade(kit: ReturnType<typeof setup>) {
+    const loft = async (y: number, z1: number, z2: number) => {
+      const before = kit.doc.surfaces.length;
+      const a = kit.doc.createLine({ x: 0, y, z: z1 } as Vec2, { x: 10, y, z: z1 } as Vec2);
+      const b = kit.doc.createLine({ x: 0, y: y + (z1 === z2 ? 10 : 0), z: z2 } as Vec2,
+        { x: 10, y: y + (z1 === z2 ? 10 : 0), z: z2 } as Vec2);
+      kit.doc.entities.push(a, b);
+      kit.manager.startCommand('LOFT');
+      await kit.manager.handleClick({ x: 0, y: 0 }, a);
+      await kit.manager.handleClick({ x: 0, y: 0 }, b);
+      await kit.manager.submitInput('');
+      await kit.manager.submitInput('');
+      await vi.waitFor(() => expect(kit.doc.surfaces.length).toBe(before + 1), { timeout: 30000 });
+      return kit.doc.surfaces.at(-1)!;
+    };
+    const sheet = await loft(0, 0, 0);          // y 0..10 at z = 0
+    const blade = await loft(5, -5, 5);         // standing at y = 5
+    return { sheet, blade };
+  }
+
+  const span = (surface: { mesh: { positions: Float32Array } }) => {
+    let lo = Infinity, hi = -Infinity;
+    for (let index = 1; index < surface.mesh.positions.length; index += 3) {
+      lo = Math.min(lo, surface.mesh.positions[index]);
+      hi = Math.max(hi, surface.mesh.positions[index]);
+    }
+    return [lo, hi];
+  };
+
+  it('cuts one surface with another, keeping both pieces', async () => {
+    const kit = setup();
+    const { sheet, blade } = await sheetAndBlade(kit);
+
+    kit.manager.startCommand('SLICE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, sheet.id);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, blade.id);
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(3), { timeout: 30000 });
+
+    // The blade stays; the sheet is gone, replaced by its two halves.
+    expect(kit.doc.surfaces.some((surface) => surface.id === blade.id)).toBe(true);
+    expect(kit.doc.surfaces.some((surface) => surface.id === sheet.id)).toBe(false);
+    const halves = kit.doc.surfaces.filter((surface) => surface.id !== blade.id).map(span).sort((a, b) => a[0] - b[0]);
+    expect(halves[0][0]).toBeCloseTo(0, 3);
+    expect(halves[0][1]).toBeCloseTo(5, 3);
+    expect(halves[1][0]).toBeCloseTo(5, 3);
+    expect(halves[1][1]).toBeCloseTo(10, 3);
+
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.surfaces).toHaveLength(2);
+    expect(kit.doc.surfaces.some((surface) => surface.id === sheet.id)).toBe(true);
+  }, 90000);
+
+  it('says so rather than replacing a surface the knife misses', async () => {
+    const kit = setup();
+    const { sheet } = await sheetAndBlade(kit);
+    // A second sheet well clear of the first.
+    const far = kit.doc.createLine({ x: 0, y: 40, z: 0 } as Vec2, { x: 10, y: 40, z: 0 } as Vec2);
+    const farther = kit.doc.createLine({ x: 0, y: 50, z: 0 } as Vec2, { x: 10, y: 50, z: 0 } as Vec2);
+    kit.doc.entities.push(far, farther);
+    kit.manager.startCommand('LOFT');
+    await kit.manager.handleClick({ x: 0, y: 0 }, far);
+    await kit.manager.handleClick({ x: 0, y: 0 }, farther);
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('');
+    await vi.waitFor(() => expect(kit.doc.surfaces).toHaveLength(3), { timeout: 30000 });
+    const elsewhere = kit.doc.surfaces.at(-1)!;
+
+    kit.manager.startCommand('SLICE');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, sheet.id);
+    await kit.manager.submitInput('');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, undefined, undefined, undefined, elsewhere.id);
+    await vi.waitFor(() => expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('does not pass through')), { timeout: 30000 });
+    expect(kit.doc.surfaces).toHaveLength(3);
+  }, 90000);
+});

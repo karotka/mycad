@@ -1472,6 +1472,78 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * `target` cut by `tool`, as the separate pieces it falls into.
+   *
+   * Splitting a solid by a plane gives back solids, because a solid's inside
+   * is what gets divided. A surface has no inside: the splitter cuts its faces
+   * but hands them all back in one shell, still joined along the cut. So the
+   * pieces are worked out here, by walking from face to face across every
+   * shared edge EXCEPT the ones the cut itself created — the splitter names
+   * those — and sewing each group that comes out of that into a shell of its
+   * own. One piece back means the tool never went through.
+   */
+  splitShellByShape(target: OpenCascadeSolid, tool: OpenCascadeSolid): OpenCascadeSolid[] {
+    const argumentsList = new this.oc.TopTools_ListOfShape_1();
+    const toolsList = new this.oc.TopTools_ListOfShape_1();
+    argumentsList.Append_1(target.shape(this));
+    toolsList.Append_1(tool.shape(this));
+    const splitter = new this.oc.BRepAlgoAPI_Splitter_1();
+    splitter.SetArguments(argumentsList);
+    splitter.SetTools(toolsList);
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      splitter.Build(progress);
+      if (splitter.HasErrors()) throw new Error('OpenCascade failed to cut the surface.');
+      const result = splitter.Shape();
+      // Read the cut's own edges before anything else touches the splitter:
+      // the list comes back by reference and is emptied to read it.
+      const sectionList = splitter.SectionEdges();
+      const sectionEdges: TopoDS_Shape[] = [];
+      while (sectionList.Size() > 0) {
+        sectionEdges.push(sectionList.First_1());
+        sectionList.RemoveFirst();
+      }
+      const faces = this.subShapes(result, this.oc.TopAbs_ShapeEnum.TopAbs_FACE);
+      const joins = faces.map((face) => this.subShapes(face, this.oc.TopAbs_ShapeEnum.TopAbs_EDGE)
+        .filter((edge) => !sectionEdges.some((section) => section.IsSame(edge))));
+      const group = faces.map((_, index) => index);
+      const rootOf = (index: number): number => (group[index] === index ? index : (group[index] = rootOf(group[index])));
+      for (let a = 0; a < faces.length; a++) {
+        for (let b = a + 1; b < faces.length; b++) {
+          if (joins[a].some((one) => joins[b].some((other) => one.IsSame(other)))) group[rootOf(a)] = rootOf(b);
+        }
+      }
+      const grouped = new Map<number, TopoDS_Shape[]>();
+      faces.forEach((face, index) => {
+        const root = rootOf(index);
+        grouped.set(root, [...(grouped.get(root) ?? []), face]);
+      });
+      const pieces: OpenCascadeSolid[] = [];
+      for (const members of grouped.values()) {
+        const sewing = new this.oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+        const sewProgress = new this.oc.Message_ProgressRange_1();
+        try {
+          for (const face of members) sewing.Add(face);
+          sewing.Perform(sewProgress);
+          const sewn = sewing.SewedShape();
+          if (sewn.IsNull()) { sewn.delete(); throw new Error('OpenCascade could not stitch a cut surface piece together.'); }
+          pieces.push(this.wrap(sewn));
+        } finally {
+          sewProgress.delete();
+          sewing.delete();
+        }
+      }
+      result.delete();
+      return pieces;
+    } finally {
+      progress.delete();
+      splitter.delete();
+      toolsList.delete();
+      argumentsList.delete();
+    }
+  }
+
   splitByPlane(solid: OpenCascadeSolid, plane: Plane3): OpenCascadeSolid[] {
     const normalLength = Math.hypot(plane.normal.x, plane.normal.y, plane.normal.z);
     if (normalLength <= Number.EPSILON) throw new Error('Slice plane normal must be non-zero.');

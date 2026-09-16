@@ -387,6 +387,40 @@ export async function thickenExactSurface(surface: ExactBody, thickness: number,
 }
 
 /**
+ * SLICE on a surface: `surface` cut by `tool`, as the pieces it falls into.
+ *
+ * Both are opened as open shells — the whole point of a surface — so the
+ * result is checked that way too. A single piece back means the tool passed
+ * the surface by without cutting it, which the caller reports rather than
+ * replacing the surface with a copy of itself.
+ */
+export async function sliceExactSurface(
+  surface: ExactBody,
+  tool: ExactBody,
+  revision: number,
+): Promise<ExactSolidResult[] | null> {
+  if (!await promoteSolidToExact(surface, true)) return null;
+  if (!await promoteSolidToExact(tool, true)) return null;
+  const kernel = await openCascadeKernel();
+  const source = await openExactShape(surface, kernel);
+  if (!source) return null;
+  const knife = await openExactShape(tool, kernel);
+  if (!knife) { source.dispose(); return null; }
+  let pieces: OpenCascadeSolid[] = [];
+  try {
+    pieces = kernel.splitShellByShape(source, knife);
+    if (pieces.length < 2) return null;
+    return pieces.map((piece) => exactResult(kernel, piece, revision, /* allowOpenShell */ true));
+  } catch {
+    return null;
+  } finally {
+    for (const piece of pieces) piece.dispose();
+    knife.dispose();
+    source.dispose();
+  }
+}
+
+/**
  * SURFOFFSET: a parallel copy of a surface, `distance` along its own normals.
  *
  * Unlike thickenExactSurface above this keeps the result open, so

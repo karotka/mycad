@@ -701,6 +701,51 @@ describe('OpenCascade exact-kernel spike', () => {
     return total;
   }
 
+  it('cuts one surface with another, into the pieces it falls into', () => {
+    // A flat sheet in z = 0 spanning y 0..10, and a blade standing through it
+    // at y = 5. Splitting a SOLID by something gives solids back because its
+    // inside is what gets divided; a surface has no inside, so the splitter
+    // hands every piece back in one shell, still joined along the cut.
+    const sheet = keep(kernel.loftGuidedSurface(
+      [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }],
+      [{ kind: 'line' as const, start: { x: 0, y: 10, z: 0 }, end: { x: 10, y: 10, z: 0 } }],
+      [],
+    ));
+    const blade = keep(kernel.loftGuidedSurface(
+      [{ kind: 'line' as const, start: { x: -2, y: 5, z: -5 }, end: { x: 12, y: 5, z: -5 } }],
+      [{ kind: 'line' as const, start: { x: -2, y: 5, z: 5 }, end: { x: 12, y: 5, z: 5 } }],
+      [],
+    ));
+    const pieces = kernel.splitShellByShape(sheet, blade).map(keep);
+    expect(pieces).toHaveLength(2);
+    const spans = pieces
+      .map((piece) => {
+        const bounds = kernel.inspect(piece).bounds;
+        return [bounds.min.y, bounds.max.y];
+      })
+      .sort((a, b) => a[0] - b[0]);
+    expect(spans[0][0]).toBeCloseTo(0, 3);
+    expect(spans[0][1]).toBeCloseTo(5, 3);
+    expect(spans[1][0]).toBeCloseTo(5, 3);
+    expect(spans[1][1]).toBeCloseTo(10, 3);
+    // Nothing is lost in the cut: the two halves still add up to the sheet.
+    expect(pieces.reduce((sum, piece) => sum + meshArea(piece), 0)).toBeCloseTo(meshArea(sheet), 2);
+  });
+
+  it('leaves a surface whole when the other one misses it', () => {
+    const sheet = keep(kernel.loftGuidedSurface(
+      [{ kind: 'line' as const, start: { x: 0, y: 0, z: 0 }, end: { x: 10, y: 0, z: 0 } }],
+      [{ kind: 'line' as const, start: { x: 0, y: 10, z: 0 }, end: { x: 10, y: 10, z: 0 } }],
+      [],
+    ));
+    const elsewhere = keep(kernel.loftGuidedSurface(
+      [{ kind: 'line' as const, start: { x: -2, y: 40, z: -5 }, end: { x: 12, y: 40, z: -5 } }],
+      [{ kind: 'line' as const, start: { x: -2, y: 40, z: 5 }, end: { x: 12, y: 40, z: 5 } }],
+      [],
+    ));
+    expect(kernel.splitShellByShape(sheet, elsewhere).map(keep)).toHaveLength(1);
+  });
+
   it('walls two rails that never meet, which is a four-sided patch rather than a pointed one', () => {
     // The first use of this was a spoon outline: one curve mirrored into
     // another, meeting at the tip and at the handle, so both ends of the

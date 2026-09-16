@@ -1,8 +1,8 @@
 import type { Vec2, Vec3 } from '../../../math/geometry';
 import { localToWorld } from '../../../math/workplane';
-import type { SerializedSolidMesh, Solid, SolidFaceSelection, SolidFeature, SolidMesh } from '../../entities/types';
+import type { SerializedSolidMesh, Solid, SolidFaceSelection, SolidFeature, SolidMesh, Surface } from '../../entities/types';
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { exactResult, openExactShape, promoteSolidToExact, slicePieceSide } from '../../geometry/ExactSolid';
+import { exactResult, openExactShape, promoteSolidToExact, sliceExactSurface, slicePieceSide } from '../../geometry/ExactSolid';
 import { openCascadeKernel } from '../../geometry/OpenCascadeRuntime';
 import type { CommandContext, CommandRun, StepOutcome } from '../types';
 
@@ -149,11 +149,70 @@ async function applySlice(ctx: CommandContext, sources: readonly Solid[], plane:
   return true;
 }
 
+/**
+ * The surface half of SLICE: each selected surface cut by the one picked as
+ * the knife, into however many pieces it falls into.
+ *
+ * The pieces are baked rather than kept as a recipe, the same as THICKEN and
+ * SURFSCULPT — a piece of a cut has no name of its own to rebuild from the way
+ * "the half this side of that plane" does, and a surface can fall into more
+ * than two.
+ */
+async function applySurfaceSlice(ctx: CommandContext, targets: readonly Surface[], tool: Surface): Promise<boolean> {
+  ctx.log(`Cutting ${targets.length} surface(s)…`);
+  const removed: Surface[] = [];
+  const pieces: Surface[] = [];
+  for (const target of targets) {
+    const current = ctx.doc.getSurface(target.id);
+    if (!current || current.id === tool.id) continue;
+    const cut = await sliceExactSurface(current, tool, 0);
+    if (!cut) continue;
+    removed.push(current);
+    cut.forEach((piece, index) => {
+      const surface = ctx.doc.createSurface(piece.mesh, `${current.name}_${index + 1}`, [current.id], undefined, { kind: 'mesh' });
+      surface.layer = current.layer;
+      surface.aci = current.aci;
+      surface.color = current.color;
+      surface.exact = piece.exact;
+      pieces.push(surface);
+    });
+  }
+  if (removed.length === 0) {
+    ctx.log('The cutting surface does not pass through any selected surface. Select another.');
+    return false;
+  }
+  ctx.history.execute(new ReplaceObjectsEdit('Slice', [], [], [], [], removed, pieces));
+  ctx.doc.clearSelection();
+  for (const piece of pieces) ctx.doc.selectSurface(piece.id, true);
+  ctx.log(`Slice complete: ${removed.length} surface(s) became ${pieces.length} surface(s).`);
+  return true;
+}
+
 export async function sliceSolids(run: CommandRun): Promise<StepOutcome> {
   const { active, ctx, data, step, value } = run;
-  if (step.kind === 'solid') {
+  if (active.stepIndex === 0) {
     if (run.gather(value)) return 'stay';
-    return ((data.solids as Solid[] | undefined)?.length ?? 0) > 0 ? 'advance' : 'stay';
+    const solids = (data.solids as Solid[] | undefined) ?? [];
+    const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
+    if (solids.length + surfaces.length === 0) return 'stay';
+    // What is being cut decides what does the cutting. A surface has no inside
+    // for a plane to divide usefully, so it is cut by another surface, which
+    // is a different question and so a different next step.
+    if (surfaces.length > 0) {
+      if (solids.length > 0) ctx.log(`Slicing the ${surfaces.length} selected surface(s); ${solids.length} solid(s) ignored.`);
+      active.steps[1] = { kind: 'surface', label: 'Select the surface to cut with:' };
+      active.steps[2] = { kind: 'done' };
+    }
+    return 'advance';
+  }
+
+  if (step.kind === 'surface') {
+    // A surface step answers with the id — that is all the viewport can name
+    // it by — so it has to be looked up, not used as the object itself.
+    const tool = ctx.doc.getSurface(value as string);
+    if (!tool) { ctx.log('Select the surface to cut with.'); return 'stay'; }
+    if (!await applySurfaceSlice(ctx, (data.surfaces as Surface[] | undefined) ?? [], tool)) return 'stay';
+    return 'advance';
   }
 
   const sources = (data.solids as Solid[] | undefined) ?? [];
