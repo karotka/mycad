@@ -1544,6 +1544,52 @@ export class OpenCascadeKernel implements GeometryKernel<OpenCascadeSolid> {
     }
   }
 
+  /**
+   * A wire built from `edges`, as a shape in its own right.
+   *
+   * Everything else here turns a drawn curve into edges on the way to making
+   * something solid out of it. This stops one step earlier and hands the wire
+   * back, so a curve can be measured against a body without either being
+   * changed — the only thing a distance needs is two shapes.
+   */
+  wireShape(edges: readonly SweepPathSegment3[]): OpenCascadeSolid {
+    if (edges.length === 0) throw new Error('A wire needs at least one edge.');
+    const owned: Array<{ delete(): void }> = [];
+    const wire = this.buildWireFromEdges(edges, owned, 'OpenCascade could not join the curve into one wire.');
+    return this.wrap(wire);
+  }
+
+  /**
+   * The closest the two shapes come, and where.
+   *
+   * Works on anything: solid to solid, curve to face, point to part. A zero
+   * distance means they touch or overlap — `BRepExtrema` reports the crossing
+   * itself rather than a negative depth, so "how far apart" and "how far
+   * into each other" are two different questions and this answers the first.
+   */
+  closestPoints(first: OpenCascadeSolid, second: OpenCascadeSolid): { distance: number; onFirst: Point3; onSecond: Point3 } | null {
+    const extrema = new this.oc.BRepExtrema_DistShapeShape_1();
+    const progress = new this.oc.Message_ProgressRange_1();
+    try {
+      extrema.LoadS1(first.shape(this));
+      extrema.LoadS2(second.shape(this));
+      if (!extrema.Perform(progress) || !extrema.IsDone() || extrema.NbSolution() < 1) return null;
+      const readPoint = (point: { X(): number; Y(): number; Z(): number; delete(): void }): Point3 => {
+        const value = { x: point.X(), y: point.Y(), z: point.Z() };
+        point.delete();
+        return value;
+      };
+      return {
+        distance: extrema.Value(),
+        onFirst: readPoint(extrema.PointOnShape1(1)),
+        onSecond: readPoint(extrema.PointOnShape2(1)),
+      };
+    } finally {
+      progress.delete();
+      extrema.delete();
+    }
+  }
+
   splitByPlane(solid: OpenCascadeSolid, plane: Plane3): OpenCascadeSolid[] {
     const normalLength = Math.hypot(plane.normal.x, plane.normal.y, plane.normal.z);
     if (normalLength <= Number.EPSILON) throw new Error('Slice plane normal must be non-zero.');

@@ -7395,3 +7395,61 @@ describe('INTERFERE', () => {
     expect(kit.doc.solids).toHaveLength(2);
   }, 90000);
 });
+
+describe('DISTOBJECTS', () => {
+  const logged = (log: ReturnType<typeof vi.fn>) => log.mock.calls.flat().join('\n');
+
+  async function box(kit: ReturnType<typeof setup>, x: number, size: number, height: string) {
+    const before = kit.doc.solids.length;
+    kit.manager.startCommand('BOX');
+    await kit.manager.handleClick({ x, y: 0 });
+    await kit.manager.handleClick({ x: x + size, y: size });
+    await kit.manager.submitInput(height);
+    await vi.waitFor(() => expect(kit.doc.solids).toHaveLength(before + 1), { timeout: 20000 });
+    return kit.doc.solids.at(-1)!;
+  }
+
+  it('measures the gap between two solids and says where it is', async () => {
+    const kit = setup();
+    const first = await box(kit, 0, 10, '10');     // x 0..10
+    const second = await box(kit, 25, 10, '10');   // x 25..35, so a 15 gap
+
+    kit.manager.startCommand('DISTOBJECTS');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Distance from'), { timeout: 30000 });
+
+    const text = logged(kit.log);
+    expect(text).toContain(': 15');
+    // The nearest place is on the facing walls, not at a corner or a centre.
+    expect(text).toMatch(/Nearest points: \(10, /);
+    expect(text).toContain('Delta X = 15');
+    expect(kit.doc.solids).toHaveLength(2);
+  }, 90000);
+
+  it('reports nothing between two solids that touch', async () => {
+    const kit = setup();
+    const first = await box(kit, 0, 10, '10');
+    const second = await box(kit, 10, 10, '10');
+
+    kit.manager.startCommand('DISTOBJECTS');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, first.id);
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, second.id);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Distance from'), { timeout: 30000 });
+    expect(logged(kit.log)).toContain('they touch or overlap');
+  }, 90000);
+
+  it('measures a drawn curve against a solid', async () => {
+    const kit = setup();
+    const solid = await box(kit, 0, 10, '10');     // x 0..10, y 0..10, z 0..10
+    // A line running parallel at x = 30, so the nearest approach is 20.
+    const line = kit.doc.createLine({ x: 30, y: 0, z: 5 } as Vec2, { x: 30, y: 10, z: 5 } as Vec2);
+    kit.doc.addEntity(line);
+
+    kit.manager.startCommand('DISTOBJECTS');
+    await kit.manager.handleClick({ x: 0, y: 0 }, undefined, solid.id);
+    await kit.manager.handleClick({ x: 30, y: 5 }, line);
+    await vi.waitFor(() => expect(logged(kit.log)).toContain('Distance from'), { timeout: 30000 });
+    expect(logged(kit.log)).toContain(': 20');
+  }, 90000);
+});

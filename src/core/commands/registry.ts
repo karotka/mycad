@@ -17,6 +17,7 @@ import { measureAngle, measureDistance, measureRadius, quickDimension, setWorkPl
 import { explodeObjects } from './steps/explode';
 import { convertToSpline } from './steps/toSpline';
 import { checkInterference } from './steps/interfere';
+import { measureObjectDistance } from './steps/measureDistance';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -504,6 +505,14 @@ export const COMMANDS = [
   // so sliceSolids rewrites the steps after the first.
   // The question INTERSECT answers destructively, asked without touching the
   // drawing: do these share any space, and how much?
+  // DIST measures between two points you name; this measures between two whole
+  // objects and finds the nearest place itself.
+  { name: 'DISTOBJECTS', aliases: ['DISTOBJECTS', 'DISTOBJ'], execute: measureObjectDistance, help: 'shortest distance between two objects, and where', suggest: true,
+    steps: [
+      { kind: 'entity', label: 'Select the first object:', accepts: ['entity', 'solid', 'surface'] },
+      { kind: 'entity', label: 'Select the second object:', accepts: ['entity', 'solid', 'surface'] },
+      { kind: 'done' },
+    ] },
   { name: 'INTERFERE', aliases: ['INTERFERE', 'INF'], execute: checkInterference, help: 'report where solids overlap, without changing them', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select solids to check against each other, then press Enter:', multi: true },

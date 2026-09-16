@@ -179,6 +179,12 @@ export interface GeometryKernel<Solid extends KernelSolid = KernelSolid> {
   /** Pull direction is always the neutral plane's own normal. */
   draft(solid: Solid, faceIds: readonly number[], neutralPlane: Plane3, angleRadians: number): Solid;
   splitByPlane(solid: Solid, plane: Plane3): Solid[];
+  /** A drawn curve's edges as a wire in its own right, so it can be measured
+   *  against a body without either being changed. */
+  wireShape(edges: readonly SweepPathSegment3[]): Solid;
+  /** The closest two shapes come, and the point on each where they do. Null
+   *  when there is no answer at all. */
+  closestPoints(first: Solid, second: Solid): { distance: number; onFirst: Point3; onSecond: Point3 } | null;
   /** One surface cut by another, as the separate pieces it falls into — a
    *  single piece back means the cut never went through. */
   splitShellByShape(target: Solid, tool: Solid): Solid[];
