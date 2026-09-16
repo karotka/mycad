@@ -478,14 +478,18 @@ export class CommandManager {
             if (sagitta !== null) { await this.advanceStep(sagittaPoint(start, end, sagitta)); return; }
           }
         }
-        if ((this.active?.name === 'CIRCLE' || this.active?.name === 'CIRCLE_DIAMETER') && this.active.stepIndex === 1) {
+        // A point step that names what it measures from is asking for a
+        // distance as much as for a point, so a typed number answers it: the
+        // step gets a point that far away, and what the distance means is the
+        // command's business (a radius for CIRCLE, a diameter for
+        // CIRCLE_DIAMETER, a base radius for HELIX). Reported on HELIX, which
+        // did not have a special case of its own and so ignored a typed 5
+        // entirely until something was clicked.
+        if (step.kind === 'point' && step.rememberDistanceFrom && this.active) {
           const entered = Number(input);
-          const center = this.active.data.center as Vec2 | undefined;
-          if (center && Number.isFinite(entered) && entered > 0) {
-            // The step reads a point, so hand it one the entered distance away.
-            // What that distance means is the command's business: a radius for
-            // CIRCLE, a diameter for CIRCLE_DIAMETER.
-            await this.advanceStep({ x: center.x + entered, y: center.y });
+          const base = this.active.data[step.rememberDistanceFrom] as Vec2 | undefined;
+          if (base && Number.isFinite(entered) && entered > 0) {
+            await this.advanceStep({ x: base.x + entered, y: base.y });
             return;
           }
         }
@@ -535,8 +539,8 @@ export class CommandManager {
             return;
           }
         }
-        this.ctx.log(this.active?.name === 'CIRCLE' && this.active.stepIndex === 1
-          ? 'Invalid radius or point. Enter a positive number or point x,y.'
+        this.ctx.log(step.kind === 'point' && step.rememberDistanceFrom
+          ? 'Invalid distance or point. Enter a positive number or point x,y.'
           : 'Invalid point. Use x,y, @x,y, or @distance<angle.');
         break;
       }

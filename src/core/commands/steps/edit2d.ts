@@ -1703,8 +1703,17 @@ export function joinObjects(run: CommandRun): StepOutcome {
     normal = cross3(axis, up);
   }
   const normalLength = len3(normal) || 1;
-  if (vertices.some((point) => Math.abs(dot3(sub3(point, origin), normal!)) / normalLength > JOIN_TOLERANCE)) {
-    ctx.log('JOIN requires all objects to lie in one plane.');
+  const planar = !vertices.some((point) => Math.abs(dot3(sub3(point, origin), normal!)) / normalLength > JOIN_TOLERANCE);
+  // Lines and arcs go into a polyline, which has one plane and no way to hold
+  // a point above it — so those still have to lie flat together. A spline
+  // does not: it carries an elevation per point, so a chain containing one
+  // can wander through space and still come out as a single curve. That is
+  // AutoCAD's own rule, and it is what a helix needs — a helix is never
+  // planar, so this refused to join one to anything at all, including another
+  // helix and the line closing its ends.
+  const bezierPieces = orderedPieces.some(({ entity }) => entity.type === 'bezier');
+  if (!planar && !bezierPieces) {
+    ctx.log('JOIN requires all objects to lie in one plane, unless one of them is a spline.');
     return 'stay';
   }
   // A chain that already lies flat and parallel to the world XY plane — by far
@@ -1717,7 +1726,11 @@ export function joinObjects(run: CommandRun): StepOutcome {
   // above yet would get a plane rotated to match that leg, and every grip on
   // it would then sit and drag in the wrong place, though the outline itself
   // still draws correctly (that one goes through the transform).
-  const flat = Math.abs(normal.x) < 1e-6 * normalLength && Math.abs(normal.y) < 1e-6 * normalLength;
+  // A chain that is not planar at all has no plane to be given, so it keeps
+  // world coordinates for the same reason: the elevation per point is the
+  // shape, and flattening it onto any one plane would lose it.
+  const flat = !planar
+    || (Math.abs(normal.x) < 1e-6 * normalLength && Math.abs(normal.y) < 1e-6 * normalLength);
   const fittedPlane = flat ? null : workPlaneFromXAxis(origin, { x: origin.x + axis.x, y: origin.y + axis.y, z: origin.z + axis.z }, normal);
   const toLocal2d = (point: Vec3): Vec2 => {
     if (!fittedPlane) {
@@ -1733,7 +1746,6 @@ export function joinObjects(run: CommandRun): StepOutcome {
   // exactly. Approximating them as Beziers (which is what a mixed chain used
   // to become) reads back as "some curve" — the radius that says a slot end is
   // a 1.75 mm cap, and that a cylinder can be cut from it, was gone for good.
-  const bezierPieces = orderedPieces.some(({ entity }) => entity.type === 'bezier');
   const arcPieces = orderedPieces.some(({ entity }) => entity.type === 'arc');
   if (!bezierPieces && arcPieces) {
     const built = polylineFromLineAndArcPieces(orderedPieces, closed, toLocal2d);

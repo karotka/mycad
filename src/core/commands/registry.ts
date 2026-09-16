@@ -201,7 +201,7 @@ export const COMMANDS = [
       { kind: 'point', label: 'Specify center point of base:' },
       { kind: 'point', label: 'Specify base radius or a point at that distance:', rememberDistanceFrom: 'center' },
       { kind: 'number', label: 'Specify top radius (Enter for the same as the base):', optional: true },
-      { kind: 'number', label: 'Enter number of turns:' },
+      { kind: 'number', label: 'Enter number of turns (fractions allowed):' },
       { kind: 'number', label: 'Specify helix height:' },
       { kind: 'done' },
     ] },

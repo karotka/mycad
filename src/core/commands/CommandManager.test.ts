@@ -19,6 +19,7 @@ import { buildExactFeature, exactResult, openExactShape } from '../geometry/Exac
 import { openCascadeKernel } from '../geometry/OpenCascadeRuntime';
 import { bezierLineIntersections, cubicBezierLineParameters, evaluateCubicBezier, splitCubicBezier } from './steps/edit2d';
 import { worldPointsAreCoplanar } from './steps/draw';
+import { helixCurve } from '../../math/helix';
 import type { Vec2 } from '../../math/geometry';
 
 function setup() {
@@ -6923,5 +6924,128 @@ describe('TRIM on a curve bent through 3D', () => {
     expect(z(trimmed.segments.at(-1)!.end)).toBeCloseTo(20, 6);
     expect(z(trimmed.start)).toBeCloseTo(0, 9);
     expect(z(trimmed.segments[0].control1)).toBeCloseTo(20 / 3, 6);
+  });
+});
+
+describe('HELIX answered from the command line', () => {
+  it('takes a typed base radius instead of insisting on a click', async () => {
+    const kit = setup();
+    kit.manager.startCommand('HELIX');
+    await kit.manager.handleClick({ x: 4, y: 7 });
+    await kit.manager.submitInput('5');
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('2');
+    await kit.manager.submitInput('10');
+
+    const helix = kit.doc.entities.at(-1)!;
+    expect(helix.type).toBe('bezier');
+    if (helix.type !== 'bezier') return;
+    expect(helix.start).toMatchObject({ x: 9, y: 7 });
+    expect(Math.hypot(helix.segments.at(-1)!.end.x - 4, helix.segments.at(-1)!.end.y - 7)).toBeCloseTo(5, 6);
+  });
+
+  it('still takes one for CIRCLE, which asks the same way', async () => {
+    const kit = setup();
+    kit.manager.startCommand('CIRCLE');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('12');
+    expect(kit.doc.entities.at(-1)).toMatchObject({ type: 'circle', radius: 12 });
+  });
+
+  it('takes a fraction of a turn', async () => {
+    const kit = setup();
+    kit.manager.startCommand('HELIX');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.submitInput('10');
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('2.5');
+    await kit.manager.submitInput('25');
+
+    const helix = kit.doc.entities.at(-1)!;
+    expect(helix.type).toBe('bezier');
+    if (helix.type !== 'bezier') return;
+    // Two and a half turns: ten quarter-turn spans, ending half a turn round
+    // from where it started rather than back above it.
+    expect(helix.segments).toHaveLength(10);
+    const end = helix.segments.at(-1)!.end;
+    expect(end.x).toBeCloseTo(-10, 6);
+    expect(end.y).toBeCloseTo(0, 6);
+    expect((end as { z?: number }).z).toBeCloseTo(25, 6);
+  });
+});
+
+describe('JOIN of objects that do not lie in one plane', () => {
+  /** A helix as HELIX itself would draw it, starting at a given height. */
+  function helix(doc: Document, turns: number, baseHeight: number) {
+    const curve = helixCurve({ center: { x: 0, y: 0 }, baseRadius: 10, topRadius: 10, height: 20, turns })!;
+    const lift = <T extends { x: number; y: number; z: number }>(point: T) => ({ ...point, z: point.z + baseHeight });
+    const entity = doc.createSpline(lift(curve.start), curve.segments.map((segment) => ({
+      control1: lift(segment.control1), control2: lift(segment.control2), end: lift(segment.end),
+    })));
+    doc.addEntity(entity);
+    return entity;
+  }
+  const elevations = (entity: Entity): number[] => entity.type === 'bezier'
+    ? [entity.start, ...entity.segments.flatMap((s) => [s.control1, s.control2, s.end])]
+      .map((point) => (point as { z?: number }).z ?? 0)
+    : [];
+
+  it('joins two helixes into one spring', async () => {
+    const kit = setup();
+    const lower = helix(kit.doc, 2, 0);
+    const upper = helix(kit.doc, 2, 20);
+
+    kit.manager.startCommand('JOIN');
+    await kit.manager.handleClick({ x: 10, y: 0 }, lower);
+    await kit.manager.handleClick({ x: 10, y: 0 }, upper);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities).toHaveLength(1);
+    const joined = kit.doc.entities[0];
+    expect(joined.type).toBe('bezier');
+    if (joined.type !== 'bezier') return;
+    expect(joined.segments).toHaveLength(16);
+    // The whole climb survives: flattened onto any one plane it would not.
+    const climb = elevations(joined);
+    expect(Math.min(...climb)).toBeCloseTo(0, 6);
+    expect(Math.max(...climb)).toBeCloseTo(40, 6);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(2);
+  });
+
+  it('closes a spiral off with a line at its own end', async () => {
+    const kit = setup();
+    const spiral = helix(kit.doc, 2, 0);
+    const top = spiral.type === 'bezier' ? spiral.segments.at(-1)!.end : { x: 0, y: 0 };
+    const line = kit.doc.createLine(
+      { ...top } as Vec2,
+      { x: 0, y: 0, z: (top as { z?: number }).z } as unknown as Vec2,
+    );
+    kit.doc.addEntity(line);
+
+    kit.manager.startCommand('JOIN');
+    await kit.manager.handleClick({ x: 10, y: 0 }, spiral);
+    await kit.manager.handleClick({ x: 5, y: 0 }, line);
+    await kit.manager.submitInput('');
+
+    expect(kit.doc.entities).toHaveLength(1);
+    const joined = kit.doc.entities[0];
+    expect(joined.type).toBe('bezier');
+    expect(Math.max(...elevations(joined))).toBeCloseTo(20, 6);
+  });
+
+  it('still refuses lines and arcs that do not lie flat together', async () => {
+    const kit = setup();
+    const a = kit.doc.createLine({ x: 0, y: 0, z: 0 } as Vec2, { x: 10, y: 0, z: 0 } as Vec2);
+    const b = kit.doc.createLine({ x: 10, y: 0, z: 0 } as Vec2, { x: 10, y: 10, z: 5 } as Vec2);
+    const c = kit.doc.createLine({ x: 10, y: 10, z: 5 } as Vec2, { x: 0, y: 10, z: 0 } as Vec2);
+    kit.doc.entities.push(a, b, c);
+
+    kit.manager.startCommand('JOIN');
+    for (const entity of [a, b, c]) await kit.manager.handleClick({ x: 0, y: 0 }, entity);
+    await kit.manager.submitInput('');
+
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('one plane'));
+    expect(kit.doc.entities).toHaveLength(3);
   });
 });
