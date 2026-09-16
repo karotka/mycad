@@ -157,8 +157,16 @@ export class Canvas2DRenderer {
     this.linetypeScale = doc.drafting.linetypeScale;
     this.pruneHatchCache(doc.entities);
 
-    for (const solid of doc.solids.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
+    const visible = (item: { layer: string; id: string }) =>
+      !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id);
+    for (const solid of doc.solids.filter(visible)) {
       this.drawSolidProjection(solid, w, h);
+    }
+    // Surfaces project the same way solids do. Leaving them out meant a
+    // drawing that had one simply did not show it here at all — reported
+    // directly: "kdyz jsem ve 2d, tak se plochy vubec nezobrazi".
+    for (const surface of doc.surfaces.filter(visible)) {
+      this.drawSolidProjection(surface, w, h);
     }
 
     for (const entity of doc.entities.filter((item) => !doc.hiddenLayers.has(item.layer) && !doc.hiddenObjects.has(item.id))) {
@@ -213,7 +221,7 @@ export class Canvas2DRenderer {
     this.ctx.restore();
   }
 
-  private drawSolidProjection(solid: Solid, w: number, h: number): void {
+  private drawSolidProjection(solid: Pick<Solid, 'mesh' | 'selected'>, w: number, h: number): void {
     // Draw the outlines of the reconstructed faces, not triangle creases: this
     // keeps only the part's real edges (outline, hole and fillet rims) and drops
     // internal triangulation, boolean T-junctions, and curved-wall facets that
@@ -1247,6 +1255,13 @@ export class Viewport3D {
     material.wireframe = false;
     material.visible = !wire;
     material.color.setHex(selected ? 0x65c7ff : (mesh.userData.baseColor as number ?? 0xffffff));
+    // Colour alone says nothing where no light falls, and a surface is
+    // routinely looked at from its unlit back — measured on a lofted one, the
+    // selected and unselected faces came out the same brightness (56,58,62
+    // against 40,62,80), a hint of blue and nothing more. An emissive tint is
+    // added to the shading rather than multiplied by it, so a selection reads
+    // the same from either side and at any angle.
+    material.emissive.setHex(selected ? 0x3399ff : 0x000000);
     material.shininess = 18;
     material.transparent = xray;
     material.opacity = xray ? (selected ? 0.42 : 0.28) : 1;
