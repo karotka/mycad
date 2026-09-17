@@ -29,6 +29,9 @@ export interface CommandContext {
   exportPdf?: (win: { min: Vec2; max: Vec2 }) => void | Promise<void>;
   /** Replaces and selects the command-line text, used by in-place text editing. */
   prefillCommandInput?: (value: string) => void;
+  /** What stands typed at the command line, not yet entered. A click can then
+   *  stand in for Enter where a step is able to take a number that way. */
+  typedCommandInput?: () => string;
   /**
    * The file operations, which the application owns — opening dialogs, talking
    * to the shell, deciding what "the current file" is. They live behind the

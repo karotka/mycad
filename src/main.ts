@@ -665,6 +665,7 @@ const commands = new CommandManager({
     input.focus({ preventScroll: true });
     input.select();
   },
+  typedCommandInput: () => input.value,
 });
 const dynamicRectangleInput = createDynamicRectangleInput({
   widthInput: dynDimWidthInput,

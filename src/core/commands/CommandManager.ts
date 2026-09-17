@@ -318,6 +318,26 @@ export class CommandManager {
     if (!this.active) return;
     const step = this.active.steps[this.active.stepIndex];
 
+    // A distance step that remembers, with a point step waiting behind it: one
+    // click answers both — the distance as it stands (typed here, or carried
+    // over from last time) and the side it was aimed at. That is OFFSET as
+    // AutoCAD does it, where pressing Enter between the two was the only part
+    // that had to be explained.
+    if ((step.kind === 'number' || step.kind === 'number-or-option') && step.remember
+      && this.active.steps[this.active.stepIndex + 1]?.kind === 'point') {
+      const typed = this.ctx.typedCommandInput?.().trim() ?? '';
+      const parsed = parseFloat(typed);
+      const distance = typed !== '' && !isNaN(parsed) ? parsed : this.rememberedAnswer(step);
+      if (typeof distance === 'number') {
+        this.ctx.prefillCommandInput?.('');
+        await this.advanceStep(distance);
+        // The command may have refused the distance, or gone somewhere else
+        // entirely; the click is only the side when the side is what is asked.
+        if (this.active?.steps[this.active.stepIndex].kind === 'point') await this.advanceStep(world);
+        return;
+      }
+    }
+
     if (step.kind === 'point') {
       await this.advanceStep(world);
     } else if (step.kind === 'plane') {

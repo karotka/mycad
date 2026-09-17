@@ -1114,6 +1114,53 @@ describe('CommandManager history integration', () => {
     expect(doc.entities[1]).toMatchObject({ type: 'line', start: { x: 0, y: 2 }, end: { x: 10, y: 2 } });
   });
 
+  /**
+   * The second offset in a row is one click, not a click and an Enter: the
+   * distance from last time stands, and where you click says which side.
+   */
+  it('offsets again at the remembered distance from the click alone', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const second = doc.createLine({ x: 0, y: 20 }, { x: 10, y: 20 });
+    doc.entities.push(first, second);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 0 }, first);
+    await manager.submitInput('2');
+    await manager.handleClick({ x: 4, y: 5 });
+
+    doc.clearSelection(); // as Escape does, so nothing is preselected
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 20 }, second);
+    await manager.handleClick({ x: 4, y: 25 }); // no Enter on the distance
+    expect(doc.entities).toHaveLength(4);
+    expect(doc.entities[3]).toMatchObject({ type: 'line', start: { x: 0, y: 22 }, end: { x: 10, y: 22 } });
+  });
+
+  it('takes a distance typed but not entered when the click arrives', async () => {
+    const { doc, manager } = setup();
+    let typed = '';
+    (manager as unknown as { ctx: { typedCommandInput: () => string } }).ctx.typedCommandInput = () => typed;
+    const source = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(source);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 0 }, source);
+    typed = '3';
+    await manager.handleClick({ x: 4, y: 5 });
+    expect(doc.entities[1]).toMatchObject({ type: 'line', start: { x: 0, y: 3 }, end: { x: 10, y: 3 } });
+  });
+
+  it('keeps asking for a distance when there is none to be had', async () => {
+    const { doc, log, manager } = setup();
+    const source = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(source);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 0 }, source);
+    await manager.handleClick({ x: 4, y: 5 }); // nothing remembered, nothing typed
+    expect(doc.entities).toHaveLength(1);
+    expect(manager.active?.steps[manager.active.stepIndex].kind).toBe('number');
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Invalid number'));
+  });
+
   it('offsets a circle outward or inward according to the picked side', async () => {
     const { doc, manager } = setup();
     const circle = doc.createCircle({ x: 0, y: 0 }, 10);
