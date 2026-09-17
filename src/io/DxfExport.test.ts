@@ -3,6 +3,8 @@ import { Document } from '../core/Document';
 import { exportAsciiDxf } from './DxfExport';
 import { importAsciiDxf } from './DxfImport';
 import { polylineArcPieces } from '../core/entities/polylineArcs';
+import { readFileSync } from 'node:fs';
+import { loadProject } from './ProjectIO';
 import { ellipsePoints, type Entity } from '../core/entities/types';
 
 /** Export `source`, read it straight back into a fresh document, return the entities. */
@@ -480,5 +482,39 @@ describe('a dimension style in another unit', () => {
     expect(back.precision).toBe(3);
     // And the measured points came in on the same ruler.
     expect(back.end.x).toBeCloseTo(2 * 25.4, 9);
+  });
+});
+
+describe('a whole drawing full of dimensions', () => {
+  it('round-trips every one of them, as dimensions', () => {
+    // examples/2d/house.mycad is a real drawing, not a fixture: a hundred and
+    // forty dimensions among twelve hundred objects. Before this they all came
+    // back as loose lines and text.
+    const doc = new Document();
+    loadProject(doc, readFileSync(new URL('../../examples/2d/house.mycad', import.meta.url), 'utf8'));
+    const before = doc.entities.filter((entity) => entity.type === 'dimension');
+    expect(before.length).toBeGreaterThan(100);
+
+    const result = exportAsciiDxf(doc);
+    expect(result.dimensionsNative).toBe(before.length);
+
+    const after = importAsciiDxf(new Document(), result.dxf)
+      .entities.filter((entity) => entity.type === 'dimension');
+    expect(after).toHaveLength(before.length);
+
+    // And each measures the same thing it did: what drifts is the last digit
+    // of the decimal text the file is written in, nothing more.
+    let worst = 0;
+    before.forEach((entity, index) => {
+      const other = after[index];
+      if (entity.type !== 'dimension' || other?.type !== 'dimension') return;
+      expect(other.dimensionKind).toBe(entity.dimensionKind);
+      worst = Math.max(
+        worst,
+        Math.hypot(entity.start.x - other.start.x, entity.start.y - other.start.y),
+        Math.hypot(entity.end.x - other.end.x, entity.end.y - other.end.y),
+      );
+    });
+    expect(worst).toBeLessThan(1e-6);
   });
 });
