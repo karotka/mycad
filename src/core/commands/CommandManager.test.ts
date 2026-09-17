@@ -583,6 +583,46 @@ describe('CommandManager history integration', () => {
   });
 
   /**
+   * Two lines laid across each other, trimmed down to the corner they make —
+   * the everyday AutoCAD gesture. Both are selected as cutting edges, and then
+   * each is clicked on the stub to drop off. It used to answer "Select a
+   * different object to trim" for both of them, because being a cutting edge
+   * disqualified an object from being cut at all.
+   */
+  it('trims two crossing lines into a corner, each cutting the other', async () => {
+    const { doc, manager, history } = setup();
+    const across = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const down = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    doc.entities.push(across, down);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 0 }, across);
+    await manager.handleClick({ x: 5, y: 0 }, down);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 8, y: 0 }, across);  // the tail past the crossing
+    await manager.handleClick({ x: 5, y: -3 }, down);   // and the one below it
+
+    expect(doc.getEntity(across.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
+    expect(doc.getEntity(down.id)).toMatchObject({ type: 'line', start: { x: 5, y: 0 }, end: { x: 5, y: 5 } });
+
+    history.undo();
+    history.undo();
+    expect(doc.getEntity(across.id)).toMatchObject({ end: { x: 10, y: 0 } });
+    expect(doc.getEntity(down.id)).toMatchObject({ start: { x: 5, y: -5 } });
+  });
+
+  it('still refuses an object that is the only cutting edge there is', async () => {
+    const { doc, log, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(line);
+    manager.startCommand('TRIM');
+    await manager.handleClick({ x: 5, y: 0 }, line);
+    await manager.submitInput('');
+    await manager.handleClick({ x: 8, y: 0 }, line);
+    expect(doc.getEntity(line.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 10, y: 0 } });
+    expect(log).toHaveBeenCalledWith('Nothing to trim against: an object cannot be its own cutting edge.');
+  });
+
+  /**
    * The bug: with two parallel cutting edges selected, clicking the line
    * segment *between* them removed everything from that crossing to whichever
    * end the click happened to be nearer, using only the one edge closest to
@@ -1020,6 +1060,45 @@ describe('CommandManager history integration', () => {
     if (arc?.type === 'arc') {
       expect(arc.center.x).toBeCloseTo(2, 6);
       expect(arc.center.y).toBeCloseTo(2, 6);
+    }
+  });
+
+  /**
+   * FILLET with a radius of zero is how AutoCAD makes a corner out of two
+   * lines laid across each other: both are cut back to where they meet, and
+   * nothing is drawn in between. The code for it was already here and could
+   * never run — a zero radius was refused one step earlier.
+   */
+  it('closes two crossing lines into a bare corner at radius zero', async () => {
+    const { doc, manager, history } = setup();
+    const across = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const down = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    doc.entities.push(across, down);
+    manager.startCommand('FILLET');
+    await manager.handleClick({ x: 2, y: 0 }, across);  // the side of each that stays
+    await manager.handleClick({ x: 5, y: 3 }, down);
+    await manager.submitInput('0');
+
+    expect(doc.getEntity(across.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
+    expect(doc.getEntity(down.id)).toMatchObject({ type: 'line', start: { x: 5, y: 0 }, end: { x: 5, y: 5 } });
+    expect(doc.entities.some((entity) => entity.type === 'arc')).toBe(false);
+
+    history.undo();
+    expect(doc.getEntity(across.id)).toMatchObject({ end: { x: 10, y: 0 } });
+  });
+
+  it('leaves a polyline corner alone at radius zero, rather than stacking points on it', async () => {
+    const { doc, manager } = setup();
+    const corner = doc.createPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], false);
+    doc.entities.push(corner);
+    manager.startCommand('FILLET');
+    await manager.handleClick({ x: 5, y: 0 }, corner);
+    await manager.handleClick({ x: 10, y: 5 }, corner);
+    await manager.submitInput('0');
+    const updated = doc.getEntity(corner.id);
+    expect(updated).toMatchObject({ type: 'polyline' });
+    if (updated?.type === 'polyline') {
+      expect(updated.vertices).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]);
     }
   });
 

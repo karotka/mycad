@@ -989,10 +989,15 @@ function cutOrStretch(run: CommandRun, mode: 'Trim' | 'Extend'): StepOutcome {
   // active for every object until then, so a whole run of trims is one gesture.
   if (!value) return 'advance';
 
-  const boundaries = (data.entities as Entity[] | undefined) ?? [];
   const target = value as Entity;
-  if (boundaries.some((boundary) => boundary.id === target.id)) {
-    ctx.log(`Select a different object to ${mode.toLowerCase()}.`);
+  // An object that is also a cutting edge may still be cut — by the *others*.
+  // That is how two crossing lines become a corner: select both edges, then
+  // click the stub to drop off each. Only itself is excluded, because a line
+  // crosses itself everywhere and nowhere.
+  const boundaries = ((data.entities as Entity[] | undefined) ?? [])
+    .filter((boundary) => boundary.id !== target.id);
+  if (boundaries.length === 0) {
+    ctx.log(`Nothing to ${mode.toLowerCase()} against: an object cannot be its own ${trimming ? 'cutting edge' : 'boundary'}.`);
     return 'stay';
   }
   // Only coplanar cutting edges can cross the target. Each is reprojected into
@@ -1119,7 +1124,11 @@ export const extendEntity = (run: CommandRun): StepOutcome => cutOrStretch(run, 
 function readCornerSize(value: unknown, rounded: boolean, ctx: CommandRun['ctx']): { radius: number; d1: number; d2: number } | null {
   if (rounded) {
     const radius = Math.abs(value as number);
-    if (!Number.isFinite(radius) || radius < 1e-9) { ctx.log('Enter a fillet radius greater than zero.'); return null; }
+    // Zero is a radius like any other, and a useful one: R0 on two lines laid
+    // across each other cuts both back to where they meet, which is how a
+    // corner gets made without drawing it. Only a number that is not a number
+    // is refused.
+    if (!Number.isFinite(radius)) { ctx.log('Enter a fillet radius.'); return null; }
     return { radius, d1: 0, d2: 0 };
   }
   const pair = (value as [number, number]).map(Math.abs) as [number, number];
@@ -1159,6 +1168,10 @@ function cornerReplacement(V: Vec2, prev: Vec2, next: Vec2, size: { radius: numb
   const theta = Math.acos(Math.max(-1, Math.min(1, dot(uP, uN))));
   if (theta < 1e-4 || theta > Math.PI - 1e-4) { ctx.log(`${rounded ? 'FILLET' : 'CHAMFER'} failed: this corner is a straight line.`); return null; }
   if (rounded) {
+    // R0 at a corner a polyline already turns leaves it exactly as it is —
+    // there is nothing to round away. (On two separate lines the same radius
+    // does real work; that is the other path.)
+    if (size.radius < 1e-9) return [V];
     const half = theta / 2;
     const tangent = size.radius / Math.tan(half);
     if (tangent > lenP - 1e-9 || tangent > lenN - 1e-9) { ctx.log('FILLET failed: the radius is too large for this corner.'); return null; }
