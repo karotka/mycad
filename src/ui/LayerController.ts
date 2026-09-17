@@ -34,6 +34,18 @@ export class LayerController {
   /** The layer being dragged, or null. Rows are rebuilt on render, the list is not. */
   private dragging: string | null = null;
 
+  /**
+   * The layer whose colour is being picked right now, or null.
+   *
+   * The colour input opens the browser's own picker, and that picker is
+   * anchored to the input element. Choosing a colour in it fires `input`,
+   * which changes the drawing, which tells everything watching to redraw —
+   * this panel among them. Rebuilding the rows takes the input out of the page
+   * and the picker goes with it, reported as the dialog shutting the moment a
+   * number was clicked in it. So while one is open the rows are left alone.
+   */
+  private pickingColour: string | null = null;
+
   get isOpen(): boolean { return !this.panel.hidden; }
 
   toggle(): void {
@@ -44,6 +56,10 @@ export class LayerController {
   close(): void { this.panel.hidden = true; }
 
   render(): void {
+    // Not while a colour picker is open on one of these rows — see
+    // `pickingColour`. Nothing else about the panel can change meanwhile, and
+    // the row being picked already shows the colour as it is chosen.
+    if (this.pickingColour !== null) return;
     this.currentLabel.textContent = this.doc.currentLayer;
     const selectedLayers = new Set([
       ...this.doc.getSelectedEntities().map((entity) => entity.layer),
@@ -229,7 +245,17 @@ export class LayerController {
   private bindColorInput(row: HTMLElement, name: string): void {
     const input = row.querySelector<HTMLInputElement>('.layer-color')!;
     input.addEventListener('click', (event) => event.stopPropagation());
+    // The picker is open from here until it is dismissed, whether that ends in
+    // a colour (`change`) or in nothing at all (clicking away, which blurs).
+    const done = (): void => {
+      if (this.pickingColour !== name) return;
+      this.pickingColour = null;
+      this.render();
+    };
+    input.addEventListener('change', done);
+    input.addEventListener('blur', done);
     input.addEventListener('input', () => {
+      this.pickingColour = name;
       // The picker is RGB; the layer stores an index. The colour snaps to the
       // nearest palette entry, and everything BYLAYER on it follows through
       // recolour — no need to touch the objects one by one.
