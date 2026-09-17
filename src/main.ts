@@ -1584,6 +1584,22 @@ commandForm.addEventListener('submit', async (event) => {
   redraw();
 });
 
+/**
+ * Tab, while a line's Length/Angle boxes are showing, puts the cursor in the
+ * Length box — and from there the boxes' own Tab cycles on to Angle.
+ *
+ * RECTANGLE's boxes take focus by themselves the moment they appear. These
+ * cannot: a line is usually placed with the mouse, and grabbing the keyboard
+ * would swallow the next typed command. So Tab is what asks for them, rather
+ * than whatever the page's own tab order happens to reach.
+ */
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab' || event.shiftKey) return;
+  const focused = document.activeElement;
+  if (focused === dynDimLengthInput || focused === dynDimAngleInput) return;
+  if (dynamicLengthInput.focusLength()) event.preventDefault();
+}, true);
+
 input.addEventListener('keydown', (event) => {
   if (!commands.active && currentSuggestions.length > 0 && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
     event.preventDefault();

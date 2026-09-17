@@ -232,5 +232,21 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   lengthInput.addEventListener('input', () => { lengthOverridden = lengthInput.value.trim() !== ''; });
   angleInput.addEventListener('input', () => { angleOverridden = angleInput.value.trim() !== ''; });
 
-  return { update, updateDiameter, hide, sync };
+  /**
+   * Puts the cursor in the Length box, if the boxes are showing at all.
+   *
+   * RECTANGLE's boxes take focus by themselves the moment they appear, so Tab
+   * there already cycles between them. These wait for the user, because a line
+   * is usually placed with the mouse and stealing the keyboard would take the
+   * next typed command with it — so something has to ask, and Tab is what
+   * asks. Answers whether it took focus, so the caller knows to swallow the
+   * keystroke rather than let it wander off down the page.
+   */
+  function focusLength(): boolean {
+    if (lengthInput.hidden) return false;
+    lengthInput.focus();
+    return true;
+  }
+
+  return { update, updateDiameter, hide, sync, focusLength };
 }

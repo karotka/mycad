@@ -282,3 +282,33 @@ describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step
     expect(lengthInput.focus).toHaveBeenCalledTimes(1); // only the initial auto-focus
   });
 });
+
+describe('reaching the boxes with Tab', () => {
+  it('puts the cursor in the Length box while they are showing', () => {
+    const { lengthInput, angleInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+
+    expect(controller.focusLength()).toBe(true);
+    expect(lengthInput.focus).toHaveBeenCalled();
+    // And from there the boxes' own Tab carries on to the angle, as before.
+    fire(lengthInput, 'keydown', { key: 'Tab', preventDefault: () => undefined });
+    expect(angleInput.focus).toHaveBeenCalled();
+  });
+
+  it('does nothing at all when there are no boxes to reach', () => {
+    const { lengthInput, controller } = setup();
+    // Never shown: a Tab here belongs to whatever else is on the page.
+    expect(controller.focusLength()).toBe(false);
+    expect(lengthInput.focus).not.toHaveBeenCalled();
+  });
+
+  it('does nothing once they have been hidden again', () => {
+    const { lengthInput, controller } = setup();
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+    controller.hide();
+    (lengthInput.focus as ReturnType<typeof vi.fn>).mockClear();
+
+    expect(controller.focusLength()).toBe(false);
+    expect(lengthInput.focus).not.toHaveBeenCalled();
+  });
+});

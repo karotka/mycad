@@ -7,9 +7,11 @@ import type { SolidMesh } from '../core/entities/types';
 function recordingCanvas() {
   const moves: Array<{ x: number; y: number }> = [];
   const lines: Array<{ x: number; y: number }> = [];
+  const texts: string[] = [];
   const base = {
     moveTo: (x: number, y: number) => { moves.push({ x, y }); },
     lineTo: (x: number, y: number) => { lines.push({ x, y }); },
+    fillText: (text: string) => { texts.push(text); },
     canvas: { width: 800, height: 600 },
     getLineDash: () => [] as number[],
     measureText: () => ({ width: 0 }),
@@ -21,7 +23,7 @@ function recordingCanvas() {
     set: () => true,
   });
   const canvas = { getContext: () => context, width: 800, height: 600, style: {} } as unknown as HTMLCanvasElement;
-  return { canvas, moves, lines };
+  return { canvas, moves, lines, texts };
 }
 
 /** One triangle standing up in x/y, so its projection has a known outline. */
@@ -112,5 +114,40 @@ describe('zoom extents in the 2D view', () => {
     const { pan, zoom } = view(() => undefined);
     expect(pan).toEqual({ x: 0, y: 0 });
     expect(zoom).toBeGreaterThan(0);
+  });
+});
+
+describe('what a rubber-band preview writes on the canvas', () => {
+  function preview(type: string, data: unknown): string[] {
+    const { canvas, texts } = recordingCanvas();
+    const renderer = new Canvas2DRenderer(canvas);
+    const doc = new Document();
+    doc.gridVisible = false;
+    renderer.render(doc, 800, 600, { type, data });
+    return texts;
+  }
+
+  it('says nothing beside a line: the Length and Angle boxes sit on it already', () => {
+    // Reported directly — "L = 7300.80 mm" printed next to the cursor while
+    // the boxes on the same segment read 7300.80 and its angle.
+    expect(preview('line', { start: { x: 0, y: 0 }, end: { x: 30, y: 40 } })).toEqual([]);
+  });
+
+  it("says nothing beside a polyline's pending segment either", () => {
+    expect(preview('polyline', { vertices: [{ x: 0, y: 0 }], cursor: { x: 30, y: 40 } })).toEqual([]);
+  });
+
+  it('still says it beside a multiline, which has no boxes of its own', () => {
+    const written = preview('mline', {
+      vertices: [{ x: 0, y: 0 }],
+      cursor: { x: 30, y: 40 },
+      elements: [{ offset: 0.5, aci: 256, linetype: 'Continuous' }],
+    });
+    expect(written.join(' ')).toContain('50.00');
+  });
+
+  it('still says the size beside a rectangle, which says width by height', () => {
+    const written = preview('rectangle', { start: { x: 0, y: 0 }, end: { x: 30, y: 40 } });
+    expect(written.join(' ')).toContain('30.00 × 40.00');
   });
 });

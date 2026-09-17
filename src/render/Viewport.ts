@@ -615,8 +615,9 @@ export class Canvas2DRenderer {
       this.ctx.moveTo(a.x, a.y);
       this.ctx.lineTo(b.x, b.y);
       this.ctx.stroke();
-      label = `L = ${Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y).toFixed(2)} mm`;
-      labelPoint = d.end;
+      // No on-canvas label: the Length and Angle boxes sit on this very
+      // segment and say the same thing, so one here printed the length twice —
+      // the same reasoning CIRCLE's own dropped label carries below.
     } else if (preview.type === 'move' && d.start && d.end) {
       const moveData = preview.data as { start: Vec2; end: Vec2; entities?: Entity[] };
       if (moveData.entities?.length) {
@@ -665,8 +666,7 @@ export class Canvas2DRenderer {
         this.ctx.restore();
       }
       this.ctx.stroke();
-      label = `L = ${Math.hypot(chain.cursor.x - last.x, chain.cursor.y - last.y).toFixed(2)} mm`;
-      labelPoint = chain.cursor;
+      // As for a line above: the boxes on the pending segment already say it.
     } else if (preview.type === 'mline') {
       const chain = preview.data as unknown as { vertices: Vec2[]; cursor: Vec2; elements: { offset: number; aci: number; linetype: string }[] };
       const centerline = [...chain.vertices, chain.cursor];
