@@ -128,6 +128,29 @@ Status: **completed and verified; grip phase closed**.
 No further grip refactoring is planned before user-facing grip behaviour changes.
 The next independent phase is canonical paths/bounds and picking.
 
+### 2026-09-14 — canonical line/polyline paths and bounds
+
+Status: **completed and verified; first path/bounds migration complete**.
+
+- Added `src/core/entities/EntityGeometry.ts` as the UI-independent owner of
+  canonical display paths and path-derived bounds for lines and polylines.
+- Canvas drawing, Three.js entity construction, projected viewport picking,
+  window selection, command hit testing and the export-oriented `entityToPaths()`
+  API now consume the same line/polyline path instead of rebuilding it locally.
+- Polyline bulge segments are expanded once through `polylineOutline()`, so
+  drawing, picking, exporting and bounds all see the same curved outline and
+  the same closed/open semantics.
+- Exact solid/kernel conversion remains analytic and deliberately does not use
+  these sampled display paths.
+- Added direct regression coverage for lines, closed polylines, bulged-polyline
+  extents and finite empty-polyline bounds.
+- Verification: TypeScript check passed; the full suite passed with 105 test
+  files and 1410 tests.
+
+Next in the path/bounds phase: migrate circles and ellipses while retaining
+their analytic rendering and hit tests. Arcs and Beziers follow only with an
+explicit shared quality/tolerance policy.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

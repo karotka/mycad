@@ -17,7 +17,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, DEFAULT_LINETYPE_SCALE, lineTypeDashArray, linetypeScaleFor, lineWeightToPixels } from '../core/lineStyles';
-import { polylineOutline } from '../core/entities/polylineArcs';
+import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 import { hatchPatternSegments } from '../io/DxfHatch';
 import { aciToRgb } from '../io/DxfAci';
@@ -312,8 +312,9 @@ export class Canvas2DRenderer {
         break;
       }
       case 'line': {
-        const a = toScreen(entity.start);
-        const b = toScreen(entity.end);
+        const path = canonicalEntityPaths(entity)[0];
+        const a = toScreen(path.points[0]);
+        const b = toScreen(path.points[1]);
         this.ctx.beginPath();
         this.ctx.moveTo(a.x, a.y);
         this.ctx.lineTo(b.x, b.y);
@@ -370,7 +371,8 @@ export class Canvas2DRenderer {
       case 'octagon':
       case 'polyline': {
         // A polyline's arc segments are drawn out here; an octagon has none.
-        const verts = entity.type === 'octagon' ? entity.vertices : polylineOutline(entity);
+        const path = entity.type === 'polyline' ? canonicalEntityPaths(entity)[0] : undefined;
+        const verts = entity.type === 'octagon' ? entity.vertices : path?.points ?? [];
         if (verts.length < 2) break;
         this.ctx.beginPath();
         const first = toScreen(verts[0]);
@@ -379,7 +381,7 @@ export class Canvas2DRenderer {
           const p = toScreen(verts[i]);
           this.ctx.lineTo(p.x, p.y);
         }
-        if (entity.type === 'octagon' || (entity.type === 'polyline' && entity.closed)) {
+        if (entity.type === 'octagon' || path?.closed) {
           this.ctx.closePath();
         }
         this.ctx.stroke();
@@ -2164,7 +2166,12 @@ export class Viewport3D {
       let closed = false;
       switch (entity.type) {
         case 'point': points = [entity.position]; break;
-        case 'line': points = [entity.start, entity.end]; break;
+        case 'line': {
+          const path = canonicalEntityPaths(entity)[0];
+          points = path.points;
+          closed = path.closed;
+          break;
+        }
         case 'circle':
           for (let index = 0; index < 72; index++) {
             const angle = index * Math.PI * 2 / 72;
@@ -2178,7 +2185,12 @@ export class Viewport3D {
           break;
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
         case 'octagon': points = entity.vertices; closed = true; break;
-        case 'polyline': points = polylineOutline(entity); closed = entity.closed; break;
+        case 'polyline': {
+          const path = canonicalEntityPaths(entity)[0];
+          points = path?.points ?? [];
+          closed = path?.closed ?? false;
+          break;
+        }
         // v1 picks the mline by its centerline only, same as PickingService's 2D pick.
         case 'mline': points = entity.vertices; closed = entity.closed; break;
         case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
@@ -2369,7 +2381,7 @@ export class Viewport3D {
     let loop = false;
     switch (entity.type) {
       case 'line':
-        points.push(entity.start, entity.end);
+        points.push(...canonicalEntityPaths(entity)[0].points);
         break;
       case 'circle': {
         const segments = 96;
@@ -2402,8 +2414,13 @@ export class Viewport3D {
         loop = true;
         break;
       case 'polyline':
-        points.push(...polylineOutline(entity));
-        loop = entity.closed;
+        {
+          const path = canonicalEntityPaths(entity)[0];
+          if (path) {
+            points.push(...path.points);
+            loop = path.closed;
+          }
+        }
         break;
       case 'arc': points.push(...curvePoints(entity)); break;
       case 'bezier': points.push(...curvePoints(entity)); break;

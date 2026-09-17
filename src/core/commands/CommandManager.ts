@@ -13,7 +13,7 @@ import type { Vec2, Vec3 } from '../../math/geometry';
 import { closePolyline, dist2, rotatePoint } from '../../math/geometry';
 import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldPointInPlane, worldToLocal } from '../../math/workplane';
-import { polylineOutline } from '../entities/polylineArcs';
+import { canonicalEntityPaths } from '../entities/EntityGeometry';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
 import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, leaderGeometry, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
@@ -833,7 +833,8 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         break;
       }
       case 'line': {
-        if (distanceToSegment(point, e.start, e.end) <= tolerance) return e;
+        const path = canonicalEntityPaths(e)[0];
+        if (hitsChain(point, path.points, tolerance)) return e;
         break;
       }
       case 'circle': {
@@ -849,13 +850,15 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         if (hitsChain(point, closePolyline(corners), tolerance)) return e;
         break;
       }
-      case 'octagon':
+      case 'octagon': {
+        // Test the closed strokes, not only the stored corners.
+        if (hitsChain(point, closePolyline(e.vertices), tolerance)) return e;
+        break;
+      }
       case 'polyline': {
-        // Test the strokes, the way the renderer draws them. Testing only the
-        // vertices made a polyline pickable at its corners and nowhere else.
-        const closed = e.type === 'octagon' || e.closed;
-        const outline = e.type === 'octagon' ? e.vertices : polylineOutline(e);
-        if (hitsChain(point, closed ? closePolyline(outline) : outline, tolerance)) return e;
+        // The canonical path includes sampled bulge arcs, exactly as drawn.
+        const path = canonicalEntityPaths(e)[0];
+        if (path && hitsChain(point, path.closed ? closePolyline(path.points) : path.points, tolerance)) return e;
         break;
       }
       case 'arc':

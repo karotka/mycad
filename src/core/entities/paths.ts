@@ -12,13 +12,9 @@ import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 import { hatchPatternSegments } from '../../io/DxfHatch';
 import { mlineOffsetLines } from './mline';
-import { polylineOutline } from './polylineArcs';
+import { canonicalEntityPaths, type EntityPath } from './EntityGeometry';
 
-export interface EntityPath {
-  points: Vec2[];
-  /** The last point joins back to the first; the caller decides how to say so. */
-  closed: boolean;
-}
+export type { EntityPath } from './EntityGeometry';
 
 /**
  * Empty for an entity that has no outline a tool could follow. TEXT is the one
@@ -40,11 +36,9 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
         ...(leaderGeometry(entity).arrow.length > 0 ? [{ points: leaderGeometry(entity).arrow, closed: true }] : []),
       ];
     case 'line':
-      return [{ points: [entity.start, entity.end], closed: false }];
+      return canonicalEntityPaths(entity);
     case 'polyline':
-      return entity.vertices.length >= 2
-        ? [{ points: [...polylineOutline(entity)], closed: entity.closed }]
-        : [];
+      return canonicalEntityPaths(entity);
     case 'rectangle':
       return [{
         points: [
