@@ -582,3 +582,50 @@ describe('Centre snap is aimed at the curve, not at the centre', () => {
     expect(target!.mode).toBe('center');
   });
 });
+
+/**
+ * Reported while lining one dimension up with another: with Intersection on,
+ * running the cursor over the dimension already placed offered nothing at all.
+ * It was not a matter of which mode — a dimension was absent from every snap
+ * there is, because nothing ever asked what strokes it is drawn with.
+ */
+describe('a dimension is something to snap to', () => {
+  /** A dimension across the bottom of a wall, its line 20 below the points. */
+  const placed = (doc: Document, fromX: number, toX: number) =>
+    doc.createDimension({ x: fromX, y: 0 }, { x: toX, y: 0 }, { x: (fromX + toX) / 2, y: -20 }, 'linear', 0);
+
+  it('offers the ends of its dimension line, which is what the next one meets', () => {
+    const doc = new Document();
+    doc.addEntity(placed(doc, 0, 100));
+    const ends = objectSnapCandidates(doc, 'end', null).map((candidate) => candidate.world);
+    expect(ends).toContainEqual({ x: 0, y: -20, z: 0 });
+    expect(ends).toContainEqual({ x: 100, y: -20, z: 0 });
+  });
+
+  it('crosses other geometry, so Intersection finds the corner where they meet', () => {
+    const doc = new Document();
+    doc.addEntity(placed(doc, 0, 100));
+    // The wall the next dimension runs up to, drawn through the dimension line.
+    doc.addEntity(doc.createLine({ x: 100, y: 10 }, { x: 100, y: -40 }));
+    const crossings = objectSnapCandidates(doc, 'intersection', null).map((candidate) => candidate.world);
+    expect(crossings).toContainEqual({ x: 100, y: -20, z: 0 });
+  });
+
+  it('leaves the dimension being dragged out of its own candidates', () => {
+    const doc = new Document();
+    const dimension = placed(doc, 0, 100);
+    doc.addEntity(dimension);
+    expect(objectSnapCandidates(doc, 'end', dimension.id)).toEqual([]);
+  });
+
+  it('gives a leader its own strokes too, shelf and all', () => {
+    const doc = new Document();
+    const leader = doc.createLeader([{ x: 0, y: 0 }, { x: 10, y: 10 }], 'note');
+    doc.addEntity(leader);
+    const ends = objectSnapCandidates(doc, 'end', null).map((candidate) => candidate.world);
+    expect(ends).toContainEqual({ x: 0, y: 0, z: 0 });
+    expect(ends).toContainEqual({ x: 10, y: 10, z: 0 });
+    // The shelf runs on from the last point, level with it.
+    expect(ends.some((point) => point.x > 10 && Math.abs(point.y - 10) < 1e-9)).toBe(true);
+  });
+});

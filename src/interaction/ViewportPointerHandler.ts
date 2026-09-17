@@ -415,6 +415,20 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
     return locked ? null : hovered;
   }
 
+  /**
+   * The snap a grip drag is going by: the one-shot override if one was picked
+   * from the menu, otherwise whatever the running snaps find.
+   *
+   * One answer for the whole gesture, because the click that ends the drag has
+   * to land on the point the move was showing. It used to ask only for the
+   * override, so a running snap latched on under the cursor all the way in and
+   * was then thrown away by the very click meant to take it — reported twice,
+   * as a line that would not join and a dimension that would not line up.
+   */
+  function gripDragSnap(event: Pick<PointerEvent, 'clientX' | 'clientY'>) {
+    return gripInteraction.targetSnapMode ? nearestGripTargetSnap(event) : nearestPersistentSnap(event);
+  }
+
   /** Whether a hot grip is waiting for an axis to be picked — its cross is up,
    *  nothing is locked yet, so the point must not move at all. */
   function awaitingGripAxis(): boolean {
@@ -594,9 +608,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         snapMarker.hidden = true;
       }
     }
-    const gripSnap = gripController.isDragging
-      ? (gripInteraction.targetSnapMode ? nearestGripTargetSnap(event) : nearestPersistentSnap(event))
-      : null;
+    const gripSnap = gripController.isDragging ? gripDragSnap(event) : null;
     const endpointAnchor = endpointAnchorFromSnap(gripSnap)
       ?? (gripController.isDragging && cadDocument.viewMode === '2d'
         ? gripController.polylineEndpointAnchor(rawWorldPoint(event), 8 / renderer2d.zoom)
@@ -728,7 +740,11 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         const height = worldToLocal(cadDocument.activeWorkPlane, extrudeSnap).z;
         showDimension(`Height ${height.toFixed(2)} mm`, sx, sy);
       }
-    } else if (!gripController.isDragging || !gripInteraction.targetSnapMode) {
+    } else if (!gripSnap) {
+      // Nothing to show — but a grip drag that found its own snap has already
+      // drawn the marker above, and this used to hide it again unless the snap
+      // came from the override menu. The running snaps were being marked and
+      // unmarked within the same frame.
       snapMarker.hidden = true;
     }
     if (active?.name === 'MEASURE' || active?.name === 'DIMALIGNED') {
@@ -898,7 +914,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
       // leaves the grip exactly where it was, rather than dropping it under
       // the cursor — nothing was ever aimed, so nothing should move.
       if (!awaitingGripAxis()) {
-        const snap = nearestGripTargetSnap(event);
+        const snap = gripDragSnap(event);
         const point = gripEditingPoint(event, snap);
         if (point) gripController.update(point);
       }

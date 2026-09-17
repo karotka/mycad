@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import { bulgeArc, hasPolylineArcs, polylineArcPieces, polylineOutline, polylineSegments } from '../core/entities/polylineArcs';
-import { curvePoints, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, type Entity, type Solid, type SolidMesh } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, ellipseAxisPoints, ellipsePoints, expandedInsertEntities, expandedInsertSolids, getEntityPoints, leaderGeometry, type DimensionEntity, type Entity, type LeaderEntity, type Solid, type SolidMesh } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
 import { solidBounds } from './PickingService';
@@ -291,8 +291,39 @@ export function nearestEdgeLocalPoint(
   return bestWorld;
 }
 
+/** A chain of points as the segments between them. */
+function chainSegments(points: readonly Vec2[]): Array<[Vec2, Vec2]> {
+  const segments: Array<[Vec2, Vec2]> = [];
+  for (let index = 0; index < points.length - 1; index++) segments.push([points[index], points[index + 1]]);
+  return segments;
+}
+
+/**
+ * The strokes a dimension is drawn with: its two extension lines and the
+ * dimension line between them (sampled along the arc, for an angular one).
+ *
+ * Not a decoration to be skipped — lining a new dimension up with one already
+ * placed means meeting the line the other one drew, and until these existed a
+ * dimension was invisible to every object snap there is.
+ */
+function dimensionStrokes(entity: DimensionEntity): Array<[Vec2, Vec2]> {
+  const geometry = dimensionGeometry(entity);
+  return [
+    [geometry.extensionStart[0], geometry.extensionStart[1]],
+    [geometry.extensionEnd[0], geometry.extensionEnd[1]],
+    ...chainSegments(geometry.dimensionLine),
+  ];
+}
+
+/** The strokes a leader is drawn with: the run of points and its own shelf. */
+function leaderStrokes(entity: LeaderEntity): Array<[Vec2, Vec2]> {
+  return chainSegments(leaderGeometry(entity).path);
+}
+
 function entitySegments(entity: Entity): Array<[Vec2, Vec2]> {
   if (entity.type === 'insert') return expandedInsertEntities(entity).flatMap(entitySegments);
+  if (entity.type === 'dimension') return dimensionStrokes(entity);
+  if (entity.type === 'leader') return leaderStrokes(entity);
   let points: Vec2[] = [];
   let closed = false;
   if (entity.type === 'line') points = [entity.start, entity.end];
@@ -595,6 +626,14 @@ function addEntityEnds(entity: Entity, add: (entity: Entity, point: Vec2) => voi
   } else if (entity.type === 'bezier') bezierEnds(entity).forEach((point) => add(entity, point));
   else if (entity.type === 'ellipse') ellipseAxisPoints(entity).forEach((point) => add(entity, point));
   else if (entity.type === 'text') add(entity, entity.position);
+  else if (entity.type === 'dimension' || entity.type === 'leader') {
+    // Where each stroke of a dimension or a leader ends — the ends of the
+    // dimension line above all, which is what a second dimension is lined up
+    // against. Both points of each stroke, because which one matters depends
+    // on which side the next dimension is coming from.
+    const strokes = entity.type === 'dimension' ? dimensionStrokes(entity) : leaderStrokes(entity);
+    for (const [from, to] of strokes) { add(entity, from); add(entity, to); }
+  }
 }
 
 /**
