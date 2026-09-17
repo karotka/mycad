@@ -1,6 +1,7 @@
 import type { Document } from '../core/Document';
 import type { BlockDefinition, DimensionEntity, Entity, InsertEntity } from '../core/entities/types';
 import type { Vec2 } from '../math/geometry';
+import type { DimensionStyle } from '../core/settings';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { normalizedBulges } from '../core/entities/polylineArcs';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
@@ -150,6 +151,60 @@ interface LayerTable {
  * every imported layer fell back to white, however the drawing was authored.
  * Colour (62), line type (6) and line weight (370, in 1/100 mm) all live here.
  */
+/**
+ * The dimension styles the file defines, by name.
+ *
+ * A dimension carries its own look in this drawing — text height, arrowheads,
+ * how far the extension lines run — and until now an imported one was given
+ * the open drawing's look instead. The numbers were right and the drawing
+ * looked like someone else's.
+ *
+ * Only what this program can actually draw is read; the rest of a DIMSTYLE is
+ * a hundred variables about things it has no notion of.
+ */
+function readDimensionStyles(pairs: Pair[], scale: number): Map<string, Partial<DimensionStyle>> {
+  const styles = new Map<string, Partial<DimensionStyle>>();
+  const start = sectionStart(pairs, 'TABLES');
+  if (start < 0) return styles;
+  for (let index = start; index < pairs.length; index++) {
+    if (pairs[index].code === 0 && pairs[index].value.toUpperCase() === 'ENDSEC') break;
+    if (pairs[index].code !== 0 || pairs[index].value.toUpperCase() !== 'DIMSTYLE') continue;
+    let end = index + 1;
+    while (end < pairs.length && pairs[end].code !== 0) end++;
+    const fields = pairs.slice(index + 1, end);
+    const name = fields.find((pair) => pair.code === 2)?.value;
+    if (!name) continue;
+    const at = (code: number): number | undefined => {
+      const found = fields.find((pair) => pair.code === code);
+      if (!found) return undefined;
+      const value = Number(found.value);
+      return Number.isFinite(value) ? value : undefined;
+    };
+    // Lengths are in the file's own units; counts and factors are not.
+    const length = (code: number): number | undefined => {
+      const value = at(code);
+      return value === undefined ? undefined : value * scale;
+    };
+    const style: Partial<DimensionStyle> = {};
+    const set = <K extends keyof DimensionStyle>(key: K, value: DimensionStyle[K] | undefined) => {
+      if (value !== undefined) style[key] = value;
+    };
+    set('arrowSize', length(41));
+    set('textHeight', length(140));
+    set('extensionOffset', length(42));
+    set('extensionBeyond', length(44));
+    set('textOffset', length(147));
+    set('precision', at(271));
+    set('angularPrecision', at(179));
+    set('scale', at(40));
+    // DIMTSZ: a non-zero tick size means ticks are drawn in place of arrows.
+    const tick = at(173) ?? at(142);
+    if (tick !== undefined) set('arrowType', tick > 0 ? 'tick' : 'closed');
+    styles.set(name.toUpperCase(), style);
+  }
+  return styles;
+}
+
 function readLayerTable(pairs: Pair[]): LayerTable {
   const table: LayerTable = { aci: {}, lineweight: {}, linetype: {} };
   const start = sectionStart(pairs, 'TABLES');
@@ -229,6 +284,7 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   const unitCode = insertionUnitCode(pairs);
   const rawBlocks = readRawBlocks(pairs, scale);
   const layerTable = readLayerTable(pairs);
+  const dimensionStyles = readDimensionStyles(pairs, scale);
   const layerAci = layerTable.aci;
   const section = sectionStart(pairs, 'ENTITIES');
   if (section < 0) throw new Error('DXF ENTITIES section was not found. Binary DXF is not supported.');
@@ -465,10 +521,18 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       const point = (xCode: number, yCode: number) => ({ x: number(fields, xCode) * scale, y: number(fields, yCode) * scale });
       const textPoint = point(11, 21);
       const override = fields.find((pair) => pair.code === 1)?.value ?? '';
+      // The style the file says this dimension is drawn to. Named by code 3;
+      // where a file names none, the only style it defines is the one it meant.
+      const styleName = fields.find((pair) => pair.code === 3)?.value?.toUpperCase();
+      const style = (styleName && dimensionStyles.get(styleName))
+        ?? (dimensionStyles.size === 1 ? [...dimensionStyles.values()][0] : undefined);
       const preserveOverride = <T extends ReturnType<Document['createDimension']>>(dimension: T): T => {
         // DXF uses <> as its measured-value placeholder too, so both exact text
         // and decorations such as "<> TYP" now round-trip without approximation.
         if (override && override !== '<>') dimension.textOverride = override;
+        // The look travels with it, rather than the open drawing's own being
+        // painted over what arrived.
+        if (style) Object.assign(dimension, style);
         return dimension;
       };
 

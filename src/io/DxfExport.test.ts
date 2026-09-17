@@ -410,3 +410,75 @@ describe('angular dimensions through DXF', () => {
     expect(dimension.offset).toMatchObject({ x: 0, y: 10 });
   });
 });
+
+describe('dimension style through DXF', () => {
+  it('carries the style the dimension is drawn to, not the one the reader happens to have', () => {
+    const doc = new Document();
+    doc.dimensionStyle.textHeight = 7;
+    doc.dimensionStyle.arrowSize = 4;
+    doc.dimensionStyle.precision = 3;
+    doc.dimensionStyle.arrowType = 'tick';
+    doc.dimensionStyle.extensionBeyond = 2;
+    doc.addEntity(doc.createDimension({ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 25, y: 10 }, 'linear', 0));
+
+    // Read back into a drawing whose own style is nothing like it.
+    const reader = new Document();
+    reader.dimensionStyle.textHeight = 1;
+    reader.dimensionStyle.arrowSize = 1;
+    const back = importAsciiDxf(reader, exportAsciiDxf(doc).dxf)
+      .entities.find((entity) => entity.type === 'dimension');
+
+    expect(back).toBeDefined();
+    if (back?.type !== 'dimension') return;
+    expect(back.textHeight).toBe(7);
+    expect(back.arrowSize).toBe(4);
+    expect(back.precision).toBe(3);
+    expect(back.arrowType).toBe('tick');
+    expect(back.extensionBeyond).toBe(2);
+  });
+
+  it('leaves the reader its own style where the file defines none', () => {
+    const dxf = [
+      '0', 'SECTION', '2', 'ENTITIES',
+      '0', 'DIMENSION', '8', '0', '70', '0',
+      '13', '0', '23', '0', '14', '50', '24', '0', '10', '25', '20', '10',
+      '11', '25', '21', '10',
+      '0', 'ENDSEC', '0', 'EOF',
+    ].join('\n');
+    const reader = new Document();
+    reader.dimensionStyle.textHeight = 9;
+    const back = importAsciiDxf(reader, dxf).entities.find((entity) => entity.type === 'dimension');
+    expect(back?.type === 'dimension' && back.textHeight).toBe(9);
+  });
+});
+
+describe('a dimension style in another unit', () => {
+  it('converts its lengths but not its counts', () => {
+    // $INSUNITS 1 is inches, so every length in the file is multiplied by 25.4
+    // on the way in — but a count of decimal places is a count either way.
+    const dxf = [
+      '0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '1', '0', 'ENDSEC',
+      '0', 'SECTION', '2', 'TABLES',
+      '0', 'TABLE', '2', 'DIMSTYLE', '70', '1',
+      '0', 'DIMSTYLE', '2', 'IMPERIAL',
+      '140', '0.125',   // text height, an eighth of an inch
+      '41', '0.1',      // arrowhead
+      '271', '3',       // decimal places
+      '0', 'ENDTAB', '0', 'ENDSEC',
+      '0', 'SECTION', '2', 'ENTITIES',
+      '0', 'DIMENSION', '8', '0', '70', '0', '3', 'IMPERIAL',
+      '13', '0', '23', '0', '14', '2', '24', '0', '10', '1', '20', '1',
+      '11', '1', '21', '1',
+      '0', 'ENDSEC', '0', 'EOF',
+    ].join('\n');
+
+    const back = importAsciiDxf(new Document(), dxf).entities.find((entity) => entity.type === 'dimension');
+    expect(back).toBeDefined();
+    if (back?.type !== 'dimension') return;
+    expect(back.textHeight).toBeCloseTo(0.125 * 25.4, 9);
+    expect(back.arrowSize).toBeCloseTo(0.1 * 25.4, 9);
+    expect(back.precision).toBe(3);
+    // And the measured points came in on the same ruler.
+    expect(back.end.x).toBeCloseTo(2 * 25.4, 9);
+  });
+});
