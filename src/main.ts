@@ -293,7 +293,7 @@ const hoverState: { ucsHoverPoint: { x: number; y: number; z: number } | null } 
 let menuOnStillRelease = false;
 let zoomWindowMode = false;
 let currentSuggestions: CommandName[] = [];
-const pointerState: PointResolverState = { activeTracking: [], trackingAnchors: [] };
+const pointerState: PointResolverState = { activeTracking: [], trackingAnchors: [], trackedPoint: null };
 
 function enter3dForOrbit(): void {
   if (cadDocument.viewMode === '3d') return;

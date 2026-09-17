@@ -741,11 +741,21 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         showDimension(`Height ${height.toFixed(2)} mm`, sx, sy);
       }
     } else if (!gripSnap) {
-      // Nothing to show — but a grip drag that found its own snap has already
-      // drawn the marker above, and this used to hide it again unless the snap
-      // came from the override menu. The running snaps were being marked and
-      // unmarked within the same frame.
-      snapMarker.hidden = true;
+      // A point caught by an acquired point's alignment path gets the crossing
+      // mark, as AutoCAD puts one where a tracking path meets what it is aimed
+      // at. It is the only thing there: the dotted path runs to open space and
+      // the drawing holds nothing at the answer, so without a mark the catch
+      // is invisible and there is no telling a click will land on it.
+      const tracked = pointerState.trackedPoint;
+      if (tracked) {
+        positionSnapMarker(localToWorld(cadDocument.activeWorkPlane, tracked), sx, sy, 'intersection');
+      } else {
+        // Nothing to show — but a grip drag that found its own snap has already
+        // drawn the marker above, and this used to hide it again unless the snap
+        // came from the override menu. The running snaps were being marked and
+        // unmarked within the same frame.
+        snapMarker.hidden = true;
+      }
     }
     if (active?.name === 'MEASURE' || active?.name === 'DIMALIGNED') {
       const snap = nearestMeasurementPoint(event);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Document } from '../core/Document';
-import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate , rimAimedCenterCandidates } from './SnapService';
+import { measurementCandidates, nearestCandidate2d, nearestCandidateProjected, nearestEdgeLocalPoint, nearestEdgeWorldPoint, objectSnapCandidates, tangentDragCandidates, type ObjectSnapMode, type SnapCandidate , rimAimedCenterCandidates, trackingPathCandidates } from './SnapService';
 import type { Document as CadDocument } from '../core/Document';
 import { createBoxMesh, createCylinderMesh } from '../core/geometry/PrimitiveMesh';
 import { WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
@@ -627,5 +627,68 @@ describe('a dimension is something to snap to', () => {
     expect(ends).toContainEqual({ x: 10, y: 10, z: 0 });
     // The shelf runs on from the last point, level with it.
     expect(ends.some((point) => point.x > 10 && Math.abs(point.y - 10) < 1e-9)).toBe(true);
+  });
+});
+
+/**
+ * Where an acquired point's alignment path meets what is drawn. Reported with
+ * a screenshot of a slanted line: running a horizontal path across it, the
+ * place the two meet is what is being aimed at, and it is a point no single
+ * snap of either object could name.
+ */
+describe('a tracking path crossing what is drawn', () => {
+  const horizontalAndVertical = [0, 90];
+
+  it('catches where the path meets a slanted line', () => {
+    const doc = new Document();
+    // Rising 100 over 80, so at y = 30 it stands at x = 16.
+    doc.addEntity(doc.createLine({ x: -40, y: -40 }, { x: 40, y: 60 }));
+    const found = trackingPathCandidates(doc, [{ x: 60, y: 30 }], horizontalAndVertical, WORLD_WORK_PLANE);
+    const worlds = found.map((candidate) => candidate.world);
+    expect(worlds).toContainEqual({ x: 16, y: 30, z: 0 });
+    expect(found.every((candidate) => candidate.mode === 'intersection')).toBe(true);
+  });
+
+  it('crosses on both sides of the acquired point, as the path is drawn', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: -40, y: -40 }, { x: 40, y: 60 }));
+    // Acquired to the *left* of the line: the crossing is still found, because
+    // an alignment path is a line and not a ray.
+    const worlds = trackingPathCandidates(doc, [{ x: -90, y: 30 }], horizontalAndVertical, WORLD_WORK_PLANE)
+      .map((candidate) => candidate.world);
+    expect(worlds).toContainEqual({ x: 16, y: 30, z: 0 });
+  });
+
+  it('stops at the line\'s own ends rather than running past them', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: -40, y: -40 }, { x: 40, y: 60 }));
+    // y = 500 is way above the line's top end: the infinite path meets the
+    // infinite line there, but nothing is drawn that far up.
+    expect(trackingPathCandidates(doc, [{ x: 60, y: 500 }], horizontalAndVertical, WORLD_WORK_PLANE)).toEqual([]);
+  });
+
+  it('does not re-offer the acquired point itself as a crossing', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    doc.addEntity(line);
+    // Acquired on the line: its own horizontal runs along the line and its
+    // vertical meets it right there. Offering that back took the marker off
+    // the endpoint the cursor was actually resting on.
+    const worlds = trackingPathCandidates(doc, [{ x: 100, y: 0 }], horizontalAndVertical, WORLD_WORK_PLANE)
+      .map((candidate) => candidate.world);
+    expect(worlds).not.toContainEqual({ x: 100, y: 0, z: 0 });
+  });
+
+  it('has nothing to say with no point acquired', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: -40, y: -40 }, { x: 40, y: 60 }));
+    expect(trackingPathCandidates(doc, [], horizontalAndVertical, WORLD_WORK_PLANE)).toEqual([]);
+  });
+
+  it('leaves the dragged object out, so it cannot track against itself', () => {
+    const doc = new Document();
+    const line = doc.createLine({ x: -40, y: -40 }, { x: 40, y: 60 });
+    doc.addEntity(line);
+    expect(trackingPathCandidates(doc, [{ x: 60, y: 30 }], horizontalAndVertical, WORLD_WORK_PLANE, line.id)).toEqual([]);
   });
 });

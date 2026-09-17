@@ -813,3 +813,77 @@ export function nearestCandidateProjected(
   const local = worldToLocal(plane, result.world);
   return { point: { x: local.x, y: local.y }, world: result.world, mode: result.mode };
 }
+
+/**
+ * Where an acquired point's alignment paths cross what is actually drawn —
+ * AutoCAD's tracking running up to an object and stopping on it.
+ *
+ * The crossing is a point the drawing has no vertex for and no single object
+ * snap could name: it takes the path the user laid *and* the line it meets.
+ * Aiming a horizontal path at a slanted line is exactly that, and is the case
+ * this was asked for. Each path is a full line, not a ray, because that is how
+ * it is drawn — a point can be tracked from either side of the one acquired.
+ */
+export function trackingPathCandidates(
+  doc: Document,
+  anchors: readonly Vec2[],
+  angles: readonly number[],
+  plane: WorkPlane,
+  excludedId?: string | null,
+): SnapCandidate[] {
+  if (anchors.length === 0 || angles.length === 0) return [];
+  const directions = angles.map((angle) => ({
+    x: Math.cos(angle * Math.PI / 180),
+    y: Math.sin(angle * Math.PI / 180),
+  }));
+  const candidates: SnapCandidate[] = [];
+  const consider = (a: Vec3, b: Vec3): void => {
+    // The crossing is worked out in the plane the paths live in, then read back
+    // off the edge itself at the same parameter — so an edge that is not on the
+    // active plane keeps its own depth instead of being flattened onto it.
+    const localA = worldToLocal(plane, a);
+    const localB = worldToLocal(plane, b);
+    for (const anchor of anchors) {
+      for (const direction of directions) {
+        const u = crossingParameterOnSegment(anchor, direction, localA, localB);
+        if (u === null) continue;
+        const local = { x: localA.x + (localB.x - localA.x) * u, y: localA.y + (localB.y - localA.y) * u };
+        // A path laid through a point on an object crosses that object at the
+        // point itself. Offering it again as a crossing says nothing new, and
+        // it took the marker off the snap that was actually being rested on —
+        // an endpoint read "intersection" while the cursor sat on it.
+        if (Math.hypot(local.x - anchor.x, local.y - anchor.y) < 1e-6) continue;
+        candidates.push({
+          world: { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u },
+          mode: 'intersection',
+        });
+      }
+    }
+  };
+  for (const { solid } of visibleSnapSolids(doc, excludedId)) {
+    for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);
+  }
+  for (const entity of doc.entities) {
+    if (entity.id === excludedId || doc.hiddenLayers.has(entity.layer)) continue;
+    const entityPlane = entity.workPlane ?? WORLD_WORK_PLANE;
+    const offset = entityPlaneOffset(entity);
+    for (const [a, b] of entitySegments(entity)) {
+      consider(
+        localToWorld(entityPlane, a, localPointZ(a) ?? offset),
+        localToWorld(entityPlane, b, localPointZ(b) ?? offset),
+      );
+    }
+  }
+  return candidates;
+}
+
+/** How far along [a,b] the infinite line through `origin` in `direction`
+ *  crosses it, or null when they are parallel or miss the segment. */
+function crossingParameterOnSegment(origin: Vec2, direction: Vec2, a: Vec2, b: Vec2): number | null {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const denominator = direction.x * aby - direction.y * abx;
+  if (Math.abs(denominator) < 1e-12) return null;
+  const wx = a.x - origin.x, wy = a.y - origin.y;
+  const u = (wx * direction.y - wy * direction.x) / denominator;
+  return u >= -1e-9 && u <= 1 + 1e-9 ? Math.max(0, Math.min(1, u)) : null;
+}

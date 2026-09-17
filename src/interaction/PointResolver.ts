@@ -6,7 +6,7 @@ import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
 import type { CommandManager } from '../core/commands/CommandManager';
 import { takesPointInput, transformsObjects } from '../core/commands/registry';
-import { resolveDraftingPoint } from './DraftingService';
+import { resolveDraftingPoint, trackingAngles } from './DraftingService';
 import { DYNAMIC_UCS_PER_POINT_COMMANDS } from './DynamicUcsCoordinator';
 import {
   measurementCandidates,
@@ -17,6 +17,7 @@ import {
   objectSnapCandidates,
   rimAimedCenterCandidates,
   tangentDragCandidates,
+  trackingPathCandidates,
   type ObjectSnapMode,
   type SnapTarget,
 } from './SnapService';
@@ -44,6 +45,12 @@ export interface PointResolverState {
    * reaches a shape's centre through the midpoints of two of its sides.
    */
   trackingAnchors: Vec2[];
+  /**
+   * Where an acquired point's path caught the cursor this frame, if it did.
+   * Nothing is drawn at such a point — the dotted path arrives at empty space
+   * — so the marker is the only thing that says it was caught.
+   */
+  trackedPoint: Vec2 | null;
 }
 
 /** How many acquired points are kept. Two paths are all a crossing takes, and
@@ -351,6 +358,7 @@ export function createPointResolver(ctx: PointResolverContext) {
       captureDistance: 8 / renderer2d.zoom,
     });
     state.activeTracking = resolved.guides.map((guide) => ({ base: guide.start, point: guide.end, angle: guide.angle }));
+    state.trackedPoint = resolved.anchored ? { ...resolved.point } : null;
     return resolved.point;
   }
 
@@ -566,6 +574,19 @@ export function createPointResolver(ctx: PointResolverContext) {
     if (modes.includes('tangent')) candidates.push(...tangentCircleDragCandidates(event));
     // Aiming at a circle catches its centre — see rimAimedCenterCandidates.
     if (modes.includes('center')) candidates.push(...rimAimedCenterCandidates(doc, cursorWorldPoint(event), gripController.draggingObjectId));
+    // Where an acquired point's path meets what is drawn. Not one of the modes:
+    // it belongs to tracking, and it is the point being asked for whenever a
+    // path is run up to a line that does not lie along it — a slanted one, say,
+    // which no single snap of the two objects could have named.
+    if (doc.drafting.objectSnapTrackingEnabled && state.trackingAnchors.length > 0) {
+      candidates.push(...trackingPathCandidates(
+        doc,
+        state.trackingAnchors,
+        trackingAngles(doc.drafting),
+        doc.activeWorkPlane,
+        gripController.draggingObjectId,
+      ));
+    }
     const rect = viewport.getBoundingClientRect();
     const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const discrete = doc.viewMode === '3d'
@@ -589,8 +610,12 @@ export function createPointResolver(ctx: PointResolverContext) {
     // above, which only ever match a point to the cursor — and why it comes
     // after them, so an endpoint under the cursor still wins, and before
     // Nearest, whose plain edge point it beats.
+    // The full aperture, not Nearest's narrowed one: the narrowing is there so
+    // a nearby endpoint clearly wins, and by here the discrete snaps have
+    // already been asked at full reach and found nothing. Six pixels of wall
+    // to aim at is a harder shot than it should be.
     if (modes.includes('perpendicular') && reference) {
-      const foot = edgeUnderCursor(event, pixelTolerance * 0.6, reference);
+      const foot = edgeUnderCursor(event, pixelTolerance, reference);
       if (foot) return snapTargetAt(foot, 'perpendicular');
     }
     if (!modes.includes('nearest')) return null;

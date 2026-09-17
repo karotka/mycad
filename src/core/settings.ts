@@ -160,7 +160,11 @@ export function defaultDraftingSettings(): DraftingSettings {
     polarEnabled: false,
     polarAngles: [30, 45, 90],
     objectSnapEnabled: true,
-    objectSnapTrackingEnabled: false,
+    // On, as AutoCAD ships it. Resting on a point acquires it either way; this
+    // is only whether the acquired point then lays the dotted path that lets
+    // the cursor line up with it from across the drawing. Without it the
+    // acquiring was quietly going nowhere.
+    objectSnapTrackingEnabled: true,
     // 'intersection' is O(entity pairs × segment pairs) with the segments
     // recomputed on every pair instead of once — on a few thousand entities it
     // does not finish inside a pointer move at all. 'middle'/'center'/'node'

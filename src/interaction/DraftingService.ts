@@ -19,6 +19,13 @@ export interface ResolvedPoint {
   /** The dotted paths to draw — none, one, or the pair whose crossing caught
    *  the point. */
   guides: AlignmentGuide[];
+  /**
+   * Whether an acquired point's path is what put the point here, rather than
+   * the cursor or a plain Ortho direction. Worth telling apart because it is
+   * the one case with nothing drawn at the answer: the marker is all there is
+   * to say the point was caught at all.
+   */
+  anchored?: boolean;
 }
 
 export interface PointRequest {
@@ -74,6 +81,7 @@ export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
       if (crossing) {
         return {
           point: crossing,
+          anchored: true,
           guides: [{ start: { ...anchor }, end: crossing, angle: directionDegrees(anchor, crossing) }],
         };
       }
@@ -87,7 +95,7 @@ export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
   }
 
   const path = anchor ? alignmentPath(cursor, anchor, captureDistance) : null;
-  if (path) return { point: path.end, guides: [path] };
+  if (path) return { point: path.end, anchored: true, guides: [path] };
   return { point: cursor, guides: [] };
 }
 
@@ -99,7 +107,7 @@ export function resolveDraftingPoint(request: PointRequest): ResolvedPoint {
  * Each is a line rather than a ray: an alignment path shows on both sides of
  * the point it comes from, as AutoCAD draws it.
  */
-function trackingAngles(settings: DraftingSettings): number[] {
+export function trackingAngles(settings: DraftingSettings): number[] {
   const angles = [0, 90];
   if (settings.polarEnabled) {
     for (const angle of settings.polarAngles) {
@@ -136,6 +144,7 @@ function crossingOfTwoAnchors(
           bestDistance = distance;
           best = {
             point,
+            anchored: true,
             guides: [
               { start: { ...anchors[a] }, end: point, angle: angleA },
               { start: { ...anchors[b] }, end: point, angle: angleB },

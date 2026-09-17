@@ -36,7 +36,7 @@ function makeCtx(overrides: {
     trackingLineB: { style: {} } as unknown as HTMLElement,
     trackingLineC: { style: {} } as unknown as HTMLElement,
     size: () => ({ width: 800, height: 600 }),
-    state: { activeTracking: [], trackingAnchors: [] },
+    state: { activeTracking: [], trackingAnchors: [], trackedPoint: null },
   };
 }
 
@@ -317,5 +317,48 @@ describe('acquiredAnchors', () => {
     const a = { x: 1, y: 1 };
     expect(acquiredAnchors([a], { ...a })).toEqual([a]);
     expect(acquiredAnchors([{ x: 5, y: 5 }, a], { ...a })).toEqual([a, { x: 5, y: 5 }]);
+  });
+});
+
+/**
+ * The marker drawn where an acquired point's path catches the cursor needs to
+ * know it happened at all: nothing is drawn at such a point, so without this
+ * there is no mark and no sign the click will land on anything particular.
+ */
+describe('publishing the point an alignment path caught', () => {
+  it('names the caught point, so a mark can be put there', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    const ctx = makeCtx({ doc });
+    const resolver = createPointResolver(ctx);
+
+    // Cursor a shade off the horizontal through an acquired point at (5, 40).
+    const point = resolver.resolvePoint({ x: 20, y: 40.05 }, { x: 0, y: 0 }, [{ x: 5, y: 40 }], null);
+
+    expect(point.y).toBeCloseTo(40, 9);
+    expect(ctx.state.trackedPoint).not.toBeNull();
+    expect(ctx.state.trackedPoint!.y).toBeCloseTo(40, 9);
+  });
+
+  it('names nothing when the cursor was left where it was', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    const ctx = makeCtx({ doc });
+    const resolver = createPointResolver(ctx);
+
+    resolver.resolvePoint({ x: 20, y: 5 }, { x: 0, y: 0 }, [{ x: 5, y: 40 }], null);
+
+    expect(ctx.state.trackedPoint).toBeNull();
+  });
+
+  it('names nothing for an object snap, which brings its own mark', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    const ctx = makeCtx({ doc });
+    const resolver = createPointResolver(ctx);
+
+    resolver.resolvePoint({ x: 20, y: 40.05 }, { x: 0, y: 0 }, [{ x: 5, y: 40 }], { x: 1, y: 2 });
+
+    expect(ctx.state.trackedPoint).toBeNull();
   });
 });

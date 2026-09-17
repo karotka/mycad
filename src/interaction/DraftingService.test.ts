@@ -23,7 +23,7 @@ describe('DraftingService', () => {
 });
 
 describe('resolveDraftingPoint', () => {
-  // Object snap tracking is off by default now; these anchor-path cases opt in.
+  // These cases name the setting outright rather than lean on the default.
   const tracked = (settings: ReturnType<typeof defaultDraftingSettings>) => { settings.objectSnapTrackingEnabled = true; return settings; };
   const ortho = () => tracked((() => { const s = defaultDraftingSettings(); s.orthoEnabled = true; return s; })());
   const free = () => tracked(defaultDraftingSettings());
@@ -108,8 +108,17 @@ describe('object snap tracking can be switched off (F11)', () => {
     return settings;
   };
 
+  it('lays an acquired point\'s path out of the box, as AutoCAD ships it', () => {
+    // Off by default, acquiring a point did nothing at all — which is how the
+    // whole feature came to look missing rather than merely switched off.
+    expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(true);
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 40.3 }, base, anchors: [anchor], snap: null, settings: defaultDraftingSettings(), captureDistance: 1,
+    });
+    expect(resolved.point.y).toBeCloseTo(anchor.y);
+  });
+
   it('lays an acquired point\'s path when tracking is turned on', () => {
-    expect(defaultDraftingSettings().objectSnapTrackingEnabled).toBe(false);
     const resolved = resolveDraftingPoint({
       cursor: { x: 20, y: 40.3 }, base, anchors: [anchor], snap: null, settings: withTracking(true), captureDistance: 1,
     });
@@ -231,5 +240,64 @@ describe('two acquired points, caught where their paths cross', () => {
 
     expect(resolved.point.x).toBeCloseTo(50, 9);
     expect(resolved.point.y).toBeCloseTo(50, 9);
+  });
+});
+
+/**
+ * A point the cursor was caught at by an acquired point's path has nothing
+ * drawn at it — the dotted path runs on into open space. So the resolution has
+ * to say it happened, or there is no mark to put there and no way to tell a
+ * click will land on anything in particular.
+ */
+describe('saying when an acquired path is what caught the point', () => {
+  const settings = () => defaultDraftingSettings();
+  const base = { x: 0, y: 0 };
+  const anchor = { x: 5, y: 40 };
+
+  it('says so when the cursor slid onto the path', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 40.3 }, base, anchors: [anchor], snap: null, settings: settings(), captureDistance: 1,
+    });
+    expect(resolved.anchored).toBe(true);
+  });
+
+  it('says so when the Ortho ray met the path', () => {
+    const withOrtho = settings();
+    withOrtho.orthoEnabled = true;
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 3, y: 40.4 }, base, anchors: [anchor], snap: null, settings: withOrtho, captureDistance: 1,
+    });
+    // Ortho holds the vertical from the base; the catch is where that ray
+    // meets the anchor's own horizontal.
+    expect(resolved.point.x).toBeCloseTo(0, 9);
+    expect(resolved.point.y).toBeCloseTo(anchor.y, 9);
+    expect(resolved.anchored).toBe(true);
+  });
+
+  it('says so at the crossing of two acquired paths', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 5.2, y: 9.8 }, base, anchors: [{ x: 5, y: 40 }, { x: 60, y: 10 }],
+      snap: null, settings: settings(), captureDistance: 1,
+    });
+    expect(resolved.point.x).toBeCloseTo(5, 9);
+    expect(resolved.point.y).toBeCloseTo(10, 9);
+    expect(resolved.anchored).toBe(true);
+  });
+
+  it('does not say so for a plain Ortho direction, which draws its own guide', () => {
+    const withOrtho = settings();
+    withOrtho.orthoEnabled = true;
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 3 }, base, anchors: [], snap: null, settings: withOrtho, captureDistance: 1,
+    });
+    expect(resolved.guides).toHaveLength(1);
+    expect(resolved.anchored).toBeFalsy();
+  });
+
+  it('does not say so for an object snap, which has its own mark already', () => {
+    const resolved = resolveDraftingPoint({
+      cursor: { x: 20, y: 40.3 }, base, anchors: [anchor], snap: { x: 3, y: 3 }, settings: settings(), captureDistance: 1,
+    });
+    expect(resolved.anchored).toBeFalsy();
   });
 });
