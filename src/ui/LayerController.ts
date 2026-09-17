@@ -25,6 +25,14 @@ export class LayerController {
     close: HTMLElement,
     private readonly callbacks: LayerControllerCallbacks,
   ) {
+    // Anything pressed that is not the swatch means the picker is done with,
+    // whenever that happened — the only signal that does not arrive while it
+    // is still open.
+    document.addEventListener('pointerdown', (event) => {
+      if (!this.picking || event.target === this.picking) return;
+      this.picking = null;
+      if (this.isOpen) this.render();
+    }, true);
     toggle.addEventListener('click', () => this.toggle());
     close.addEventListener('click', () => this.close());
     add.addEventListener('click', () => this.addLayer());
@@ -35,16 +43,20 @@ export class LayerController {
   private dragging: string | null = null;
 
   /**
-   * The layer whose colour is being picked right now, or null.
+   * The colour input whose picker is open, or null.
    *
-   * The colour input opens the browser's own picker, and that picker is
-   * anchored to the input element. Choosing a colour in it fires `input`,
-   * which changes the drawing, which tells everything watching to redraw —
-   * this panel among them. Rebuilding the rows takes the input out of the page
-   * and the picker goes with it, reported as the dialog shutting the moment a
-   * number was clicked in it. So while one is open the rows are left alone.
+   * The picker is the browser's own and is anchored to the input element that
+   * opened it. Every render rebuilds the rows, which takes that element out of
+   * the page — and the picker goes with it. So while one is open the rows are
+   * left alone entirely: not rebuilt and put back, which detaches the element
+   * just the same, but not touched.
+   *
+   * What ends it is deliberately not `change` or `blur`. Both arrive while the
+   * picker is still open and being used, and rebuilding on either shuts it —
+   * reported as being unable to change the values at all. The only signal that
+   * cannot arrive from inside the picker is a press somewhere else in the page.
    */
-  private pickingColour: string | null = null;
+  private picking: HTMLInputElement | null = null;
 
   get isOpen(): boolean { return !this.panel.hidden; }
 
@@ -56,10 +68,10 @@ export class LayerController {
   close(): void { this.panel.hidden = true; }
 
   render(): void {
-    // Not while a colour picker is open on one of these rows — see
-    // `pickingColour`. Nothing else about the panel can change meanwhile, and
-    // the row being picked already shows the colour as it is chosen.
-    if (this.pickingColour !== null) return;
+    // Not while a colour picker is open on one of these rows — see `picking`.
+    // Nothing else about the panel can change meanwhile, and the row being
+    // picked already shows the colour as it is chosen.
+    if (this.picking) return;
     this.currentLabel.textContent = this.doc.currentLayer;
     const selectedLayers = new Set([
       ...this.doc.getSelectedEntities().map((entity) => entity.layer),
@@ -244,18 +256,14 @@ export class LayerController {
 
   private bindColorInput(row: HTMLElement, name: string): void {
     const input = row.querySelector<HTMLInputElement>('.layer-color')!;
-    input.addEventListener('click', (event) => event.stopPropagation());
-    // The picker is open from here until it is dismissed, whether that ends in
-    // a colour (`change`) or in nothing at all (clicking away, which blurs).
-    const done = (): void => {
-      if (this.pickingColour !== name) return;
-      this.pickingColour = null;
-      this.render();
-    };
-    input.addEventListener('change', done);
-    input.addEventListener('blur', done);
+    input.addEventListener('click', (event) => {
+      event.stopPropagation();
+      // A click on the swatch is what opens the picker, so from here the rows
+      // are left alone until the user presses something else.
+      this.picking = input;
+    });
     input.addEventListener('input', () => {
-      this.pickingColour = name;
+      this.picking = input;
       // The picker is RGB; the layer stores an index. The colour snaps to the
       // nearest palette entry, and everything BYLAYER on it follows through
       // recolour — no need to touch the objects one by one.

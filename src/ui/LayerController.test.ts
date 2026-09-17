@@ -24,42 +24,52 @@ function setup() {
 const colourInput = (list: HTMLElement) => list.querySelector<HTMLInputElement>('.layer-color')!;
 
 describe('the layer panel while a colour is being picked', () => {
-  it('leaves the colour input in place, so the picker it opened stays open', () => {
-    const { doc, controller, list } = setup();
+  /** Opening the picker is a click on the swatch. */
+  function openPicker(list: HTMLElement) {
     const input = colourInput(list);
-    input.focus();
+    input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    input.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return input;
+  }
 
-    // What the browser sends while the colour panel is open and being used.
-    input.value = '#ff0000';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    // And what the document does about it: everything watching redraws, the
-    // panel among them.
-    controller.render();
-
-    // The very same element, not a replacement. Rebuilding the row takes the
-    // input out of the page, and the picker anchored to it closes — reported
-    // as the dialog shutting the moment a number was clicked in it.
-    expect(colourInput(list)).toBe(input);
-    expect(document.activeElement).toBe(input);
-  });
-
-  it('applies the colour it was given all the same', () => {
-    const { doc, list } = setup();
-    const input = colourInput(list);
-    input.focus();
-    input.value = '#ff0000';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-
-    expect(doc.layerColors['0']).toBe(0xff0000);
-  });
-
-  it('rebuilds the row once the picking is over', () => {
+  it('leaves the colour input alone, so the picker anchored to it stays open', () => {
     const { controller, list } = setup();
-    const input = colourInput(list);
-    input.focus();
-    input.value = '#00ff00';
+    const input = openPicker(list);
+
+    // What the browser sends while the picker is open and being used. Chromium
+    // sends `change` here too, not only when the picker closes — acting on it
+    // is what shut the picker on the first attempt at this.
+    input.value = '#ff0000';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('blur', { bubbles: true }));
+    controller.render();
+
+    // The very same element, never taken out of the page: rebuilding the row
+    // and putting the element back detaches it just as surely, and the picker
+    // goes with it either way.
+    expect(colourInput(list)).toBe(input);
+  });
+
+  it('applies each colour it is given while the picker is open', () => {
+    const { doc, list } = setup();
+    const input = openPicker(list);
+    for (const [hex, value] of [['#ff0000', 0xff0000], ['#00ff00', 0x00ff00]] as const) {
+      input.value = hex;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(doc.layerColors['0']).toBe(value);
+    }
+  });
+
+  it('takes a press somewhere else as the picker being done with', () => {
+    const { controller, list } = setup();
+    const input = openPicker(list);
+    input.value = '#00ff00';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // A press anywhere but the swatch: the one signal that cannot come from
+    // inside the picker itself.
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 
     controller.render();
     expect(colourInput(list)).not.toBe(input);
