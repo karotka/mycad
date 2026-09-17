@@ -390,7 +390,10 @@ export function loadProject(doc: Document, content: string): ProjectViewState | 
   return view;
 }
 
-const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'node', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular', 'nearest']);
+/** Every mode `ObjectSnapMode` names — a saved drawing that turned one on gets
+ *  it back. 'tangent' was missing here, so of all of them it alone was dropped
+ *  on load, silently and only for people who had turned it on. */
+const OBJECT_SNAP_MODES = new Set<ObjectSnapMode>(['end', 'center', 'middle', 'node', 'mid2p', 'intersection', 'apparent-intersection', 'perpendicular', 'tangent', 'nearest']);
 
 function validWorkPlane(value: unknown): value is WorkPlane {
   if (!value || typeof value !== 'object') return false;

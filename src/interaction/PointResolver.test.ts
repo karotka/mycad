@@ -92,6 +92,56 @@ describe('nearestPersistentSnap', () => {
     expect(result!.mode).toBe('nearest');
     expect(result!.world).toEqual({ x: 5, y: 0, z: 0 });
   });
+
+  /**
+   * Reported with a screenshot: a line dragged from the right toward the wall
+   * opposite, run up to where it should meet it squarely, and nothing latched.
+   * Two causes, both fixed — Perpendicular was not on, and even on, it was
+   * matched as a point near the cursor rather than as the object aimed at.
+   */
+  it('meets a wall squarely from wherever along it the cursor is', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.addEntity(doc.createLine({ x: 0, y: -200 }, { x: 0, y: 200 }));
+    // The line being drawn started out at (120, 20); the cursor is on the wall
+    // but thirty millimetres above the foot of the perpendicular — too far for
+    // the foot to be matched as a point near the cursor.
+    const ctx = makeCtx({ doc, screenToWorld: () => ({ x: 0, y: 50 }) });
+    ctx.commands = { active: { name: 'LINE', data: { start: { x: 120, y: 20 } } } } as unknown as PointResolverContext['commands'];
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.nearestPersistentSnap({ clientX: 100, clientY: 100 });
+
+    expect(result).not.toBeNull();
+    expect(result!.mode).toBe('perpendicular');
+    expect(result!.world.x).toBeCloseTo(0, 9);
+    expect(result!.world.y).toBeCloseTo(20, 9);
+  });
+
+  it('lets an endpoint under the cursor win over the perpendicular foot', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.addEntity(doc.createLine({ x: 0, y: -200 }, { x: 0, y: 200 }));
+    // Sitting on the wall's own top end: AutoCAD's order puts Endpoint first.
+    const ctx = makeCtx({ doc, screenToWorld: () => ({ x: 0, y: 200 }) });
+    ctx.commands = { active: { name: 'LINE', data: { start: { x: 120, y: 20 } } } } as unknown as PointResolverContext['commands'];
+    const resolver = createPointResolver(ctx);
+
+    const result = resolver.nearestPersistentSnap({ clientX: 100, clientY: 100 });
+
+    expect(result!.mode).toBe('end');
+    expect(result!.world).toEqual({ x: 0, y: 200, z: 0 });
+  });
+
+  it('offers nothing perpendicular before there is a point to be perpendicular from', () => {
+    const doc = new Document();
+    doc.viewMode = '2d';
+    doc.addEntity(doc.createLine({ x: 0, y: -200 }, { x: 0, y: 200 }));
+    const ctx = makeCtx({ doc, screenToWorld: () => ({ x: 0, y: 50 }) });
+    const resolver = createPointResolver(ctx);
+
+    expect(resolver.nearestPersistentSnap({ clientX: 100, clientY: 100 })).toBeNull();
+  });
 });
 
 describe('nearestGripTargetSnap (forced one-shot override)', () => {

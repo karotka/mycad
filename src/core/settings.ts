@@ -164,9 +164,12 @@ export function defaultDraftingSettings(): DraftingSettings {
     // 'intersection' is O(entity pairs × segment pairs) with the segments
     // recomputed on every pair instead of once — on a few thousand entities it
     // does not finish inside a pointer move at all. 'middle'/'center'/'node'
-    // are comparatively cheap but add up; keep only the cheapest, most-used
-    // mode on by default until the intersection algorithm itself is fixed.
-    objectSnapModes: ['end'],
+    // are comparatively cheap but add up; keep the list to the cheapest,
+    // most-used modes until the intersection algorithm itself is fixed.
+    // 'perpendicular' is one walk of the segments, same cost class as 'end',
+    // and without it meeting a wall squarely — the ordinary way one line is
+    // joined to another — has no snap at all.
+    objectSnapModes: ['end', 'perpendicular'],
     linetypeScale: DEFAULT_LINETYPE_SCALE,
   };
 }

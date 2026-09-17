@@ -456,6 +456,48 @@ export function createPointResolver(ctx: PointResolverContext) {
     return tangentDragCandidates(doc, draggedRadius, cursor, gripController.draggingObjectId);
   }
 
+  /**
+   * The snap that aims at a whole object rather than at one computed point on
+   * it: the edge under the cursor. That is Nearest as it stands, and — with
+   * `perpendicularFrom` — Perpendicular, whose foot may sit far up the line
+   * from where the cursor actually is. Both views resolve it the same way they
+   * resolve everything else: a ray through the scene in 3D, plain plane
+   * distance in 2D.
+   */
+  function edgeUnderCursor(
+    event: Pick<PointerEvent, 'clientX' | 'clientY'>,
+    pixelTolerance: number,
+    perpendicularFrom: Vec3 | null = null,
+  ): Vec3 | null {
+    if (doc.viewMode !== '3d') {
+      return nearestEdgeLocalPoint(
+        doc,
+        rawWorldPoint(event),
+        doc.activeWorkPlane,
+        pixelTolerance / renderer2d.zoom,
+        gripController.draggingObjectId,
+        perpendicularFrom,
+      );
+    }
+    const rect = viewport.getBoundingClientRect();
+    return nearestEdgeWorldPoint(
+      doc,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
+      (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
+      pixelTolerance,
+      gripController.draggingObjectId,
+      perpendicularFrom,
+    );
+  }
+
+  /** A world point as the snap target the callers expect, in the active plane's
+   *  own local frame — the world position is kept, so nothing is flattened. */
+  function snapTargetAt(world: Vec3, mode: ObjectSnapMode): GripSnapTarget {
+    const local = worldToLocal(doc.activeWorkPlane, world);
+    return { point: { x: local.x, y: local.y }, world, mode };
+  }
+
   function nearestGripTargetSnap(
     event: Pick<PointerEvent, 'clientX' | 'clientY'>,
     mode: ObjectSnapMode | null = gripInteraction.targetSnapMode,
@@ -468,23 +510,18 @@ export function createPointResolver(ctx: PointResolverContext) {
     // filling in when no discrete snap wins. Forcing this one explicitly is
     // the point of the override menu: no more losing to a nearby Endpoint.
     if (mode === 'nearest') {
-      const rect = viewport.getBoundingClientRect();
-      const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-      const world = doc.viewMode === '3d'
-        ? nearestEdgeWorldPoint(
-          doc,
-          cursor,
-          renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
-          (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-          pixelTolerance,
-          gripController.draggingObjectId,
-        )
-        : nearestEdgeLocalPoint(doc, rawWorldPoint(event), doc.activeWorkPlane, pixelTolerance / renderer2d.zoom, gripController.draggingObjectId);
-      if (!world) return null;
-      const local = worldToLocal(doc.activeWorkPlane, world);
-      return { point: { x: local.x, y: local.y }, world, mode: 'nearest' };
+      const world = edgeUnderCursor(event, pixelTolerance);
+      return world ? snapTargetAt(world, 'nearest') : null;
     }
     const reference = commandOrDragReferencePoint();
+    // Picking Perpendicular from the override menu means "that object", so the
+    // object under the cursor answers first. Only if the cursor is over nothing
+    // does the older point-matching below get its turn — it can still find a
+    // foot the cursor happens to be sitting on.
+    if (mode === 'perpendicular' && reference) {
+      const world = edgeUnderCursor(event, pixelTolerance, reference);
+      if (world) return snapTargetAt(world, 'perpendicular');
+    }
     const candidates = objectSnapCandidates(doc, mode, gripController.draggingObjectId, reference);
     if (mode === 'tangent') candidates.push(...tangentCircleDragCandidates(event));
     if (mode === 'center') candidates.push(...rimAimedCenterCandidates(doc, cursorWorldPoint(event), gripController.draggingObjectId));
@@ -544,26 +581,21 @@ export function createPointResolver(ctx: PointResolverContext) {
     // in when none of them is under the cursor, so ending a line on an edge keeps
     // the edge's true 3D point rather than dropping onto the UCS/WCS plane. It
     // takes a tighter aperture so a nearby endpoint or midpoint clearly wins.
-    if (discrete || !modes.includes('nearest')) return discrete;
-    const world = doc.viewMode === '3d'
-      ? nearestEdgeWorldPoint(
-        doc,
-        cursor,
-        renderer3d.pointerRay(renderer3d.renderer.domElement, event.clientX, event.clientY),
-        (point) => renderer3d.projectCadPoint(renderer3d.renderer.domElement, point),
-        pixelTolerance * 0.6,
-        gripController.draggingObjectId,
-      )
-      : nearestEdgeLocalPoint(
-        doc,
-        rawWorldPoint(event),
-        doc.activeWorkPlane,
-        pixelTolerance * 0.6 / renderer2d.zoom,
-        gripController.draggingObjectId,
-      );
-    if (!world) return null;
-    const local = worldToLocal(doc.activeWorkPlane, world);
-    return { point: { x: local.x, y: local.y }, world, mode: 'nearest' };
+    if (discrete) return discrete;
+    // Perpendicular aims at the object, not at a point on it: run the cursor
+    // along the wall you want to meet squarely and the foot of the
+    // perpendicular from where you started is what you get, however far up the
+    // wall it lies. That is why it cannot ride with the discrete candidates
+    // above, which only ever match a point to the cursor — and why it comes
+    // after them, so an endpoint under the cursor still wins, and before
+    // Nearest, whose plain edge point it beats.
+    if (modes.includes('perpendicular') && reference) {
+      const foot = edgeUnderCursor(event, pixelTolerance * 0.6, reference);
+      if (foot) return snapTargetAt(foot, 'perpendicular');
+    }
+    if (!modes.includes('nearest')) return null;
+    const world = edgeUnderCursor(event, pixelTolerance * 0.6);
+    return world ? snapTargetAt(world, 'nearest') : null;
   }
 
   return {

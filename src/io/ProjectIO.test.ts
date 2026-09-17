@@ -5,6 +5,7 @@ import { resetIdCounter, type EdgeModificationFeature, type ExtrusionFeature, ty
 import { primitivePreviewMesh as primitiveMesh } from '../core/geometry/PrimitiveMesh';
 import { exportAsciiStl, loadProject, serializeProject } from './ProjectIO';
 import { solidPlanarFaces } from '../core/solids/SolidTopology';
+import { defaultDraftingSettings } from '../core/settings';
 
 describe('ProjectIO', () => {
   it('round-trips block definitions and INSERT transforms', () => {
@@ -639,7 +640,7 @@ describe('ProjectIO', () => {
     loadProject(target, JSON.stringify(saved));
 
     expect(target.drafting.orthoEnabled).toBe(false);
-    expect(target.drafting.objectSnapModes).toEqual(['end']);
+    expect(target.drafting.objectSnapModes).toEqual(defaultDraftingSettings().objectSnapModes);
     expect(target.dimensionStyle.precision).toBe(2);
   });
 

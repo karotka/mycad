@@ -171,9 +171,16 @@ const previewController = new PreviewController(
   measureOrigin,
   measureTarget,
   snapMarker,
-  (point) => cadDocument.viewMode === '3d'
-    ? renderer3d.projectCadPoint(renderer3d.renderer.domElement, point)
-    : null,
+  // Where a snapped world point lands on screen. The 2D view used to answer
+  // null here and let the marker fall back to the cursor, which looked right
+  // only because every snap it had was a point already under the cursor.
+  // Perpendicular is not: its foot can sit far up the line being aimed at,
+  // and the marker belongs there, not under the hand.
+  (point) => {
+    if (cadDocument.viewMode === '3d') return renderer3d.projectCadPoint(renderer3d.renderer.domElement, point);
+    const local = worldToLocal(cadDocument.activeWorkPlane, point);
+    return worldToScreen({ x: local.x, y: local.y }, width, height, renderer2d.pan, renderer2d.zoom);
+  },
   (delta) => cadDocument.viewMode === '3d' ? ucsPlaneWorldDelta(cadDocument.activeWorkPlane, delta) : undefined,
   drawingPlaneMarker,
   () => cadDocument.viewMode === '3d' ? cadDocument.activeWorkPlane : null,

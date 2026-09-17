@@ -154,6 +154,21 @@ export function objectSnapCandidates(doc: Document, mode: ObjectSnapMode, exclud
   return tag(candidates);
 }
 
+/**
+ * How far along `a`→`b` the perpendicular dropped from `from` lands, clamped
+ * to the segment's own ends — the parameter behind AutoCAD's Perpendicular
+ * snap, shared by the 2D and 3D edge resolutions below so both answer with
+ * the same point.
+ */
+function perpendicularFootParameter(a: Vec3, b: Vec3, from: Vec3): number {
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+  const lengthSquared = dx * dx + dy * dy + dz * dz;
+  if (lengthSquared < 1e-12) return 0;
+  return Math.max(0, Math.min(1, (
+    (from.x - a.x) * dx + (from.y - a.y) * dy + (from.z - a.z) * dz
+  ) / lengthSquared));
+}
+
 /** Closest point on segment [a,b] to the infinite ray (origin, direction). */
 function closestPointOnSegmentToRay(a: Vec3, b: Vec3, origin: Vec3, direction: Vec3): Vec3 {
   const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
@@ -176,6 +191,11 @@ function closestPointOnSegmentToRay(a: Vec3, b: Vec3, origin: Vec3, direction: V
  * the UCS/WCS plane. The point is the closest one on the edge to the cursor ray
  * (not a screen interpolation, which perspective would throw off), accepted only
  * when its projection lands within the aperture of the cursor.
+ *
+ * `perpendicularFrom` keeps the same "which edge is under the cursor" answer
+ * but moves the point along it to the foot of the perpendicular dropped from
+ * that reference — AutoCAD's Perpendicular, where the whole object is the
+ * target and the foot may sit far from where the cursor actually is.
  */
 export function nearestEdgeWorldPoint(
   doc: Document,
@@ -184,6 +204,7 @@ export function nearestEdgeWorldPoint(
   project: (point: Vec3) => Vec2 | null,
   pixelTolerance: number,
   excludedId?: string | null,
+  perpendicularFrom?: Vec3 | null,
 ): Vec3 | null {
   let bestWorld: Vec3 | null = null;
   let bestDistance = Infinity;
@@ -194,7 +215,9 @@ export function nearestEdgeWorldPoint(
     const distance = Math.hypot(projected.x - cursor.x, projected.y - cursor.y);
     if (distance > pixelTolerance || distance >= bestDistance) return;
     bestDistance = distance;
-    bestWorld = point;
+    if (!perpendicularFrom) { bestWorld = point; return; }
+    const t = perpendicularFootParameter(a, b, perpendicularFrom);
+    bestWorld = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
   };
   for (const { solid } of visibleSnapSolids(doc, excludedId)) {
     for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);
@@ -222,6 +245,10 @@ export function nearestEdgeWorldPoint(
  * the edge's real endpoints at the same parameter the local-space closest
  * point landed on), so an entity that is not actually on the active plane
  * does not get flattened onto it.
+ *
+ * `perpendicularFrom` means the same here as it does there: the edge is still
+ * the one under the cursor, but the point on it becomes the foot of the
+ * perpendicular from that reference.
  */
 export function nearestEdgeLocalPoint(
   doc: Document,
@@ -229,6 +256,7 @@ export function nearestEdgeLocalPoint(
   plane: WorkPlane,
   tolerance: number,
   excludedId?: string | null,
+  perpendicularFrom?: Vec3 | null,
 ): Vec3 | null {
   let bestWorld: Vec3 | null = null;
   let bestDistance = Infinity;
@@ -243,7 +271,8 @@ export function nearestEdgeLocalPoint(
     const distance = Math.hypot(localA.x + ux * t - cursor.x, localA.y + uy * t - cursor.y);
     if (distance > tolerance || distance >= bestDistance) return;
     bestDistance = distance;
-    bestWorld = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+    const at = perpendicularFrom ? perpendicularFootParameter(a, b, perpendicularFrom) : t;
+    bestWorld = { x: a.x + (b.x - a.x) * at, y: a.y + (b.y - a.y) * at, z: a.z + (b.z - a.z) * at };
   };
   for (const { solid } of visibleSnapSolids(doc, excludedId)) {
     for (const edge of solidFeatureEdges(solid.mesh)) consider(edge.start, edge.end);

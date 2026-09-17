@@ -286,6 +286,62 @@ describe('SnapService', () => {
   });
 });
 
+/**
+ * Perpendicular aims at the object, not at the one point on it the foot
+ * happens to be: run the cursor anywhere along the wall you want to meet
+ * squarely and the foot from where you started is the answer. Before this,
+ * the foot was offered as a plain candidate that had to be within ten pixels
+ * of the cursor — measured in the running app, hovering the wall fourteen
+ * millimetres above the foot found nothing at all.
+ */
+describe('Perpendicular aimed at the whole edge', () => {
+  it('drops the foot from the reference, wherever along the edge the cursor is', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: -60 }, { x: 0, y: 60 })); // the wall
+    const reference = { x: 120, y: 20, z: 0 };
+    // Cursor far up the wall from the foot, but on the wall.
+    const world = nearestEdgeLocalPoint(doc, { x: 0, y: 50 }, WORLD_WORK_PLANE, 5, null, reference);
+    expect(world).toEqual({ x: 0, y: 20, z: 0 });
+  });
+
+  it('still needs the cursor to be over the edge itself', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: -60 }, { x: 0, y: 60 }));
+    expect(nearestEdgeLocalPoint(doc, { x: 40, y: 50 }, WORLD_WORK_PLANE, 5, null, { x: 120, y: 20, z: 0 })).toBeNull();
+  });
+
+  it('clamps to the edge it was aimed at, rather than running off its end', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: 0 }, { x: 0, y: 10 }));
+    // The reference sits well below the wall's lower end: the foot would be at
+    // y = -40, which is not on this wall at all.
+    const world = nearestEdgeLocalPoint(doc, { x: 0, y: 5 }, WORLD_WORK_PLANE, 5, null, { x: 120, y: -40, z: 0 });
+    expect(world).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('answers the same in the 3D view, where the aiming is a ray', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: -60 }, { x: 0, y: 60 }));
+    // A camera looking straight down: the projection is x/y, the ray points -z.
+    const world = nearestEdgeWorldPoint(
+      doc,
+      { x: 0, y: 50 },
+      { origin: { x: 0, y: 50, z: 100 }, direction: { x: 0, y: 0, z: -1 } },
+      (point) => ({ x: point.x, y: point.y }),
+      5,
+      null,
+      { x: 120, y: 20, z: 0 },
+    );
+    expect(world).toEqual({ x: 0, y: 20, z: 0 });
+  });
+
+  it('leaves Nearest exactly as it was when no reference is given', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLine({ x: 0, y: -60 }, { x: 0, y: 60 }));
+    expect(nearestEdgeLocalPoint(doc, { x: 0, y: 50 }, WORLD_WORK_PLANE, 5)).toEqual({ x: 0, y: 50, z: 0 });
+  });
+});
+
 describe('snap candidates carry the snap that found them', () => {
   // The marker draws a different symbol per mode, so the mode has to survive
   // the trip from the candidate to the snap target.
