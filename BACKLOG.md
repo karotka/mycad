@@ -108,8 +108,11 @@ IMPORTEXCELLON, PDFIMPORT, PLOT), then DIST, LIST, MASSPROP, MATCHPROP,
 
 - **XLINE / RAY** — infinite construction lines, the scaffolding a layout is
   set out with.
-- **MLEADER / LEADER** — a leader with text on it. Callouts in a real drawing
-  (examples/2d/house.mycad is full of them) are hand-drawn lines plus TEXT.
+- **MLEADER** — several leader lines meeting one note, and a block instead of
+  text as what the leader carries. LEADER exists: one arrow, as many corners as
+  it needs, a shelf and the text, with every corner a grip. What is not there
+  is more than one arrow on the same note, and the callouts already drawn in
+  examples/2d/house.mycad are still hand-drawn lines plus TEXT.
 - **REVCLOUD**, **DONUT**, **WIPEOUT**, **TABLE**.
 
 ### Whole subsystems, not single commands
