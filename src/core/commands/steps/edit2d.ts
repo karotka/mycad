@@ -1448,7 +1448,12 @@ export function offsetEntity({ active, data, value, ctx }: CommandRun): StepOutc
   }
   parallel.workPlane = cloneEntity(entity).workPlane;
   ctx.history.execute(new AddEntityEdit('Offset', parallel));
-  ctx.doc.selectEntity(parallel.id);
+  // Nothing stays selected. OFFSET is one of the few commands that takes an
+  // object chosen beforehand, so leaving its own copy selected fed it straight
+  // back in: the next run skipped the pick and offset the copy, and the
+  // distance looked as though it were adding up — 2, then 4, then 6. The
+  // object to offset is the one picked for it, every time.
+  ctx.doc.clearSelection();
   ctx.log(`Offset object created at ${distance.toFixed(3)} mm.`);
   return 'advance';
 }

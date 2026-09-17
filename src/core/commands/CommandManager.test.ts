@@ -1128,12 +1128,35 @@ describe('CommandManager history integration', () => {
     await manager.submitInput('2');
     await manager.handleClick({ x: 4, y: 5 });
 
-    doc.clearSelection(); // as Escape does, so nothing is preselected
     manager.startCommand('OFFSET');
     await manager.handleClick({ x: 4, y: 20 }, second);
     await manager.handleClick({ x: 4, y: 25 }); // no Enter on the distance
     expect(doc.entities).toHaveLength(4);
     expect(doc.entities[3]).toMatchObject({ type: 'line', start: { x: 0, y: 22 }, end: { x: 10, y: 22 } });
+  });
+
+  /**
+   * Reported as "the number adds up": offset by 2 and you get 2, then 4, then
+   * 6. Nothing was adding — each run was offsetting the copy the last one made,
+   * because that copy was left selected and OFFSET takes a preselected object.
+   */
+  it('leaves nothing selected, so the next offset asks which object again', async () => {
+    const { doc, manager } = setup();
+    const source = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(source);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 0 }, source);
+    await manager.submitInput('2');
+    await manager.handleClick({ x: 4, y: 5 });
+    expect(doc.selectedEntityIds.size).toBe(0);
+
+    manager.startCommand('OFFSET');
+    expect(manager.active?.steps[manager.active.stepIndex].kind).toBe('entity');
+    await manager.handleClick({ x: 4, y: 0 }, source); // the same object, the other side
+    await manager.handleClick({ x: 4, y: -5 });
+    const levels = doc.entities.filter((entity) => entity.type === 'line')
+      .map((entity) => (entity as { start: { y: number } }).start.y).sort((a, b) => a - b);
+    expect(levels).toEqual([-2, 0, 2]);
   });
 
   it('takes a distance typed but not entered when the click arrives', async () => {
