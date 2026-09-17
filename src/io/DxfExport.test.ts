@@ -249,19 +249,45 @@ describe('exportAsciiDxf entities round-trip through the importer', () => {
 });
 
 describe('exportAsciiDxf dimensions', () => {
-  it('explodes a dimension into plain lines and text', () => {
+  it('writes a dimension as a real DIMENSION, not as loose lines and text', () => {
     const doc = new Document();
     doc.addEntity(doc.createDimension({ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 25, y: 10 }, 'linear', 0));
     const result = exportAsciiDxf(doc);
-    expect(result.dimensionsDecomposed).toBe(1);
+    expect(result.dimensionsNative).toBe(1);
+    expect(result.dimensionsDecomposed).toBe(0);
+    expect(result.dxf).toContain('\nDIMENSION\n');
+    // Its picture goes in an anonymous block, which is how DXF holds one.
+    expect(result.dxf).toContain('\n*D1\n');
+    // And the style it is drawn to is in the file, or a reader rebuilds it
+    // with its own text height and arrows — the numbers right, everything
+    // else wrong. DIMTXT is the text height and DIMASZ the arrowhead.
+    expect(result.dxf).toContain('\nDIMSTYLE\n');
+    expect(result.dxf).toContain('\nMYCAD\n');
+    expect(codeValue(result.dxf, 140, 'MYCAD')).toBe(String(doc.dimensionStyle.textHeight));
+    expect(codeValue(result.dxf, 41, 'MYCAD')).toBe(String(doc.dimensionStyle.arrowSize));
+    expect(codeValue(result.dxf, 271, 'MYCAD')).toBe(String(doc.dimensionStyle.precision));
 
+    // It comes back a dimension, measuring the same thing.
     const entities = roundTrip(doc);
-    // No live dimension survives; it is lines, an arrowhead outline, and the text.
-    expect(entities.some((entity) => entity.type === 'dimension')).toBe(false);
-    expect(entities.some((entity) => entity.type === 'line')).toBe(true);
-    const text = entities.find((entity) => entity.type === 'text');
-    expect(text).toBeDefined();
-    if (text && text.type === 'text') expect(text.text).toContain('50');
+    const dimension = entities.find((entity) => entity.type === 'dimension');
+    expect(dimension).toBeDefined();
+    if (dimension?.type !== 'dimension') return;
+    expect(dimension.dimensionKind).toBe('linear');
+    expect(dimension.start).toMatchObject({ x: 0, y: 0 });
+    expect(dimension.end).toMatchObject({ x: 50, y: 0 });
+  });
+
+  it('round-trips every kind it can draw', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createDimension({ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 25, y: 10 }, 'aligned'));
+    doc.addEntity(doc.createDimension({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 14, y: 6 }, 'radius'));
+    doc.addEntity(doc.createDimension({ x: 40, y: 0 }, { x: 50, y: 0 }, { x: 54, y: 6 }, 'diameter'));
+
+    const kinds = roundTrip(doc)
+      .filter((entity) => entity.type === 'dimension')
+      .map((entity) => entity.type === 'dimension' && entity.dimensionKind)
+      .sort();
+    expect(kinds).toEqual(['aligned', 'diameter', 'radius']);
   });
 });
 
@@ -327,6 +353,60 @@ describe('polyline arc segments through DXF', () => {
     const dxf = exportAsciiDxf(doc).dxf;
 
     expect(dxf).toContain('LWPOLYLINE');
-    expect(dxf).not.toMatch(/\n42\n/);
+    // Only the entities: 42 means a bulge there, but it means the extension
+    // line offset in the dimension style table, which every file carries.
+    expect(dxf.slice(dxf.indexOf('\nENTITIES\n'))).not.toMatch(/\n42\n/);
+  });
+});
+
+describe('angular dimensions through DXF', () => {
+  it('round-trips a three-point angular dimension, arc and all', () => {
+    const doc = new Document();
+    // A right angle at the origin, measured on an arc four out.
+    const angular = doc.createDimension({ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 0, y: 20 }, 'angular');
+    angular.arcPoint = { x: 8, y: 8 };
+    doc.addEntity(angular);
+
+    const dxf = exportAsciiDxf(doc).dxf;
+    expect(dxf).toContain('\nDIMENSION\n');
+
+    const back = roundTrip(doc).find((entity) => entity.type === 'dimension');
+    expect(back).toBeDefined();
+    if (back?.type !== 'dimension') return;
+    expect(back.dimensionKind).toBe('angular');
+    expect(back.start).toMatchObject({ x: 0, y: 0 });
+    expect(back.end).toMatchObject({ x: 20, y: 0 });
+    expect(back.offset).toMatchObject({ x: 0, y: 20 });
+    // Without the arc point the dimension has no radius and picks the wrong
+    // one of the four sectors between the rays.
+    expect(back.arcPoint?.x).toBeCloseTo(8, 6);
+    expect(back.arcPoint?.y).toBeCloseTo(8, 6);
+  });
+
+  it('reads the two-line kind another CAD tool may have written', () => {
+    // AutoCAD's other angular form: two whole lines rather than a vertex and
+    // two rays. The vertex is where they cross.
+    const dxf = [
+      '0', 'SECTION', '2', 'ENTITIES',
+      '0', 'DIMENSION', '8', '0', '70', '2',
+      '13', '10', '23', '0',    // first line, from (10,0)
+      '14', '0', '24', '0',     //            to (0,0)
+      '15', '0', '25', '0',     // second line, from (0,0)
+      '10', '0', '20', '10',    //             to (0,10)
+      '16', '3', '26', '3',     // a point on the dimension arc
+      '11', '5', '21', '5',
+      '0', 'ENDSEC', '0', 'EOF',
+    ].join('\n');
+
+    const dimension = importAsciiDxf(new Document(), dxf)
+      .entities.find((entity) => entity.type === 'dimension');
+    expect(dimension).toBeDefined();
+    if (dimension?.type !== 'dimension') return;
+    expect(dimension.dimensionKind).toBe('angular');
+    expect(dimension.start.x).toBeCloseTo(0, 6);
+    expect(dimension.start.y).toBeCloseTo(0, 6);
+    // The far end of each line is the ray, so the angle read is the right one.
+    expect(dimension.end).toMatchObject({ x: 10, y: 0 });
+    expect(dimension.offset).toMatchObject({ x: 0, y: 10 });
   });
 });

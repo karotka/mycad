@@ -336,8 +336,8 @@ export class ProjectController {
       return;
     }
     const result = exportAsciiDxf(this.doc);
-    const note = result.dimensionsDecomposed > 0
-      ? ` (${result.dimensionsDecomposed} dimension(s) exploded to lines and text)`
+    const note = result.dimensionsNative > 0
+      ? ` (${result.dimensionsNative} dimension(s) written as real dimensions)`
       : '';
     this.callbacks.log(`DXF: ${result.entityCount} object(s)${note}.`);
     if (result.blockSolidsOmitted > 0) {

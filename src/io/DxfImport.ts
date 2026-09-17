@@ -1,5 +1,6 @@
 import type { Document } from '../core/Document';
-import type { BlockDefinition, Entity, InsertEntity } from '../core/entities/types';
+import type { BlockDefinition, DimensionEntity, Entity, InsertEntity } from '../core/entities/types';
+import type { Vec2 } from '../math/geometry';
 import { ACI_BYLAYER, ACI_WHITE, aciToRgb, resolveAci } from './DxfAci';
 import { normalizedBulges } from '../core/entities/polylineArcs';
 import { isSingleCubic, sampleSpline, type SplineData } from './DxfSpline';
@@ -491,7 +492,24 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
       } else if (kind === 4) {
         // Radius: 15 is the centre, 10 the point on the arc carrying the arrow.
         finish(preserveOverride(doc.createDimension(point(15, 25), point(10, 20), textPoint, 'radius')), fields, layer);
-      } else skip(type); // angular and ordinate have no counterpart
+      } else if (kind === 5) {
+        // Three-point angular, which is the shape this drawing stores: 15 is
+        // the vertex, 13 and 14 a point on each ray, 10 a point the dimension
+        // arc passes through.
+        finish(angularDimension(doc, preserveOverride, point(15, 25), point(13, 23), point(14, 24), point(10, 20)), fields, layer);
+      } else if (kind === 2) {
+        // Two-line angular: two whole lines rather than a vertex and two rays.
+        // The vertex is where the lines cross, and the far end of each line is
+        // the ray — the same angle, said the other way round.
+        const firstStart = point(13, 23), firstEnd = point(14, 24);
+        const secondStart = point(15, 25), secondEnd = point(10, 20);
+        const vertex = linesCross(firstStart, firstEnd, secondStart, secondEnd);
+        if (!vertex) skip(type);
+        else {
+          const away = (a: Vec2, b: Vec2) => (Math.hypot(a.x - vertex.x, a.y - vertex.y) >= Math.hypot(b.x - vertex.x, b.y - vertex.y) ? a : b);
+          finish(angularDimension(doc, preserveOverride, vertex, away(firstStart, firstEnd), away(secondStart, secondEnd), point(16, 26)), fields, layer);
+        }
+      } else skip(type); // ordinate has no counterpart yet
     } else if (type === 'SPLINE') {
       noteFlattened(fields, 30);
       const spline: SplineData = {
@@ -558,4 +576,38 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
   doc.layerAci = layerAciBefore;
   doc.layerColors = layerColorsBefore;
   return { entities, blockDefinitions: [...definitions.values()], layers: [...layers], layerAci, layerLineweight: layerTable.lineweight, layerLinetype: layerTable.linetype, ignored, ignoredTypes, approximated, unitScale: scale, linetypeScale: headerLinetypeScale(pairs) };
+}
+
+/**
+ * An angular dimension as this drawing stores one: the vertex, a point on each
+ * ray, and a point the arc passes through.
+ *
+ * `createDimension` takes the vertex as start, the first ray as end and the
+ * second as the offset — the arc point is its own field, and without it the
+ * dimension has no radius and picks the wrong one of the four sectors.
+ */
+function angularDimension(
+  doc: Document,
+  preserve: <T extends DimensionEntity>(dimension: T) => T,
+  vertex: Vec2,
+  firstRay: Vec2,
+  secondRay: Vec2,
+  arcPoint: Vec2,
+): DimensionEntity {
+  const dimension = preserve(doc.createDimension(vertex, firstRay, secondRay, 'angular'));
+  dimension.arcPoint = arcPoint;
+  return dimension;
+}
+
+/**
+ * Where two lines cross, or null when they run parallel — what turns DXF's
+ * two-line angular dimension into the vertex-and-rays one this drawing keeps.
+ */
+function linesCross(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): Vec2 | null {
+  const ax = a2.x - a1.x, ay = a2.y - a1.y;
+  const bx = b2.x - b1.x, by = b2.y - b1.y;
+  const denominator = ax * by - ay * bx;
+  if (Math.abs(denominator) < 1e-12) return null;
+  const t = ((b1.x - a1.x) * by - (b1.y - a1.y) * bx) / denominator;
+  return { x: a1.x + ax * t, y: a1.y + ay * t };
 }
