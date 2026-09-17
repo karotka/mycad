@@ -16,6 +16,7 @@ export function entityTypeLabel(entity: Entity): string {
     case 'polyline': return entity.closed ? 'Closed polyline' : 'Polyline';
     case 'octagon': return 'Octagon';
     case 'dimension': return 'Dimension';
+    case 'leader': return 'Leader';
     case 'hatch': return 'Hatch';
     case 'point': return 'Point';
     case 'line': return 'Line';

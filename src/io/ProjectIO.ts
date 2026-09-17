@@ -266,6 +266,20 @@ function loadEntityValue(value: unknown, resolveDefinition: DefinitionResolver):
       definition: resolveDefinition(raw.definition),
     };
   }
+  if (raw.type === 'leader') {
+    const defaults = defaultDimensionStyle();
+    const points = Array.isArray(raw.points) ? (raw.points as Array<{ x: number; y: number }>).filter((point) => point && typeof point.x === 'number' && typeof point.y === 'number') : [];
+    result = {
+      ...result,
+      points: points.length >= 2 ? points : [{ x: 0, y: 0 }, { x: 10, y: 10 }],
+      text: typeof raw.text === 'string' ? raw.text : '',
+      textHeight: typeof raw.textHeight === 'number' ? raw.textHeight : defaults.textHeight,
+      arrowSize: typeof raw.arrowSize === 'number' ? raw.arrowSize : defaults.arrowSize,
+      arrowType: raw.arrowType === 'open' || raw.arrowType === 'tick' || raw.arrowType === 'none' ? raw.arrowType : 'closed',
+      landing: typeof raw.landing === 'number' ? raw.landing : defaults.textHeight * 2,
+      scale: typeof raw.scale === 'number' && raw.scale > 0 ? raw.scale : defaults.scale,
+    };
+  }
   if (raw.type === 'dimension') {
     const defaults = defaultDimensionStyle();
     const kind = raw.dimensionKind;

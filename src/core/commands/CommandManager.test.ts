@@ -7788,3 +7788,68 @@ describe('FLATSHOT', () => {
     expect(kit.doc.entities).toHaveLength(0);
   }, 60000);
 });
+
+describe('LEADER', () => {
+  it('draws a note with a line pointing at what it is about', async () => {
+    const kit = setup();
+    kit.manager.startCommand('LEADER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 20, y: 15 });
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('2 HOLES Ø6');
+
+    expect(kit.doc.entities).toHaveLength(1);
+    const leader = kit.doc.entities[0];
+    expect(leader.type).toBe('leader');
+    if (leader.type !== 'leader') return;
+    expect(leader.text).toBe('2 HOLES Ø6');
+    expect(leader.points).toEqual([{ x: 0, y: 0 }, { x: 20, y: 15 }]);
+    expect(kit.history.undo()).toBe(true);
+    expect(kit.doc.entities).toHaveLength(0);
+  });
+
+  it('takes as many corners as it is given, to get round what is in the way', async () => {
+    const kit = setup();
+    kit.manager.startCommand('LEADER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 10, y: 10 });
+    await kit.manager.handleClick({ x: 10, y: 30 });
+    await kit.manager.handleClick({ x: 25, y: 30 });
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('ROUND THE BACK');
+
+    const leader = kit.doc.entities[0];
+    expect(leader.type === 'leader' && leader.points).toHaveLength(4);
+  });
+
+  it('needs a corner to point from, not only the point itself', async () => {
+    const kit = setup();
+    kit.manager.startCommand('LEADER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    // Enter straight away: there is nowhere for the note to go yet.
+    await kit.manager.submitInput('');
+    expect(kit.log).toHaveBeenCalledWith(expect.stringContaining('somewhere to point from'));
+    expect(kit.doc.entities).toHaveLength(0);
+  });
+
+  it('is one object: mirroring it takes the arrow and the note together', async () => {
+    const kit = setup();
+    kit.manager.startCommand('LEADER');
+    await kit.manager.handleClick({ x: 0, y: 0 });
+    await kit.manager.handleClick({ x: 20, y: 15 });
+    await kit.manager.submitInput('');
+    await kit.manager.submitInput('WELD ALL ROUND');
+    // The new leader is left selected, so MIRROR's first click is the axis.
+    kit.manager.startCommand('MIRROR');
+    await kit.manager.handleClick({ x: 0, y: -10 });
+    await kit.manager.handleClick({ x: 40, y: -10 });
+    await kit.manager.submitInput('');
+
+    const copy = kit.doc.entities.at(-1)!;
+    expect(copy.type).toBe('leader');
+    if (copy.type !== 'leader') return;
+    // Both ends came across, and the note came with them.
+    expect(copy.points).toEqual([{ x: 0, y: -20 }, { x: 20, y: -35 }]);
+    expect(copy.text).toBe('WELD ALL ROUND');
+  });
+});

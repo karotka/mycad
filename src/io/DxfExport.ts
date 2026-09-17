@@ -5,6 +5,7 @@ import { ACI_BYLAYER } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, LINE_TYPES } from '../core/lineStyles';
 import { mlineOffsetLines } from '../core/entities/mline';
 import type { DimensionStyle } from '../core/settings';
+import { leaderGeometry, type LeaderEntity } from '../core/entities/types';
 
 export interface DxfExportResult {
   dxf: string;
@@ -309,6 +310,9 @@ function writeEntity(pair: Pair, entity: Entity): void {
       pair(1, entity.text);
       if (entity.rotation) pair(50, num(degrees(entity.rotation)));
       break;
+    case 'leader':
+      writeLeader(pair, entity);
+      break;
     case 'dimension':
       // Handled by the caller, which alone knows the picture block's name.
       break;
@@ -474,6 +478,43 @@ function writeDimension(pair: Pair, entity: DimensionEntity, blockName: string):
       point(pair, 10, 20, entity.arcPoint ?? geometry.textPoint);
       break;
   }
+}
+
+/**
+ * A leader as DXF holds one: a LEADER record giving the line's corners, and
+ * the note as a separate TEXT the record points at.
+ *
+ * DXF has no place inside a LEADER for the words — it carries an association
+ * to an annotation entity instead, which is why the text is written alongside.
+ * The line is what makes it a leader on the other side; the text is what it
+ * says.
+ */
+function writeLeader(pair: Pair, entity: LeaderEntity): void {
+  const geometry = leaderGeometry(entity);
+  start(pair, 'LEADER', entity);
+  pair(3, DIMENSION_STYLE_NAME);
+  // 71 says the leader has an arrowhead, 72 that its line is straight rather
+  // than a spline, 73 that what it carries is text.
+  pair(71, entity.arrowType === 'none' ? 0 : 1);
+  pair(72, 0);
+  pair(73, 0);
+  pair(76, geometry.path.length);
+  // Every corner repeats the same triple of codes, which is how DXF lists the
+  // vertices of a leader.
+  for (const corner of geometry.path) { pair(10, num(corner.x)); pair(20, num(corner.y)); pair(30, 0); }
+  // The height and the shelf, so a reader redraws it at the size it was drawn.
+  pair(40, num(entity.textHeight * entity.scale));
+  pair(41, num(entity.landing * entity.scale));
+
+  const height = entity.textHeight * entity.scale;
+  start(pair, 'TEXT', entity);
+  point(pair, 10, 20, { x: geometry.textPoint.x, y: geometry.textPoint.y });
+  pair(40, num(height));
+  pair(1, entity.text.split('\n')[0]);
+  // 72 is the horizontal placing: the note reads away from the arrow, so a
+  // leader coming in from the right ends its text at the shelf.
+  pair(72, geometry.textAnchor === 'start' ? 0 : 2);
+  point(pair, 11, 21, { x: geometry.textPoint.x, y: geometry.textPoint.y });
 }
 
 /** How each kind is named in a DIMENSION record's own type field. */

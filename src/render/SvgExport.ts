@@ -1,6 +1,6 @@
 import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
-import { curvePoints, dimensionGeometry, expandedInsertEntities } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, expandedInsertEntities, leaderGeometry } from '../core/entities/types';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, linetypeScaleFor } from '../core/lineStyles';
 import { polylineOutline } from '../core/entities/polylineArcs';
 import { hatchPatternSegments } from '../io/DxfHatch';
@@ -189,6 +189,29 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         entity.text.split('\n').forEach((line, index) => {
           const y = p.y + index * lineStepMm;
           parts.push(`<text x="${fmt(p.x)}" y="${fmt(y)}" transform="rotate(${fmt(deg)} ${fmt(p.x)} ${fmt(p.y)})" ${fontAttrs}>${esc(line)}</text>`);
+        });
+        break;
+      }
+      case 'leader': {
+        const geometry = leaderGeometry(entity);
+        drawPolyline(entity, geometry.path, false);
+        if (geometry.arrow.length === 3) {
+          const points = geometry.arrow.map(toPage);
+          if (entity.arrowType === 'tick') {
+            parts.push(`<path d="M${fmt(points[1].x)},${fmt(points[1].y)} L${fmt(points[2].x)},${fmt(points[2].y)}" ${strokeAttrs(entity)}/>`);
+          } else if (entity.arrowType === 'closed') {
+            const d = `M${fmt(points[0].x)},${fmt(points[0].y)} L${fmt(points[1].x)},${fmt(points[1].y)} L${fmt(points[2].x)},${fmt(points[2].y)} Z`;
+            parts.push(`<path d="${d}" fill="${printColorHex(entity.color, style.colorMode)}" stroke="none"/>`);
+          } else {
+            const d = `M${fmt(points[1].x)},${fmt(points[1].y)} L${fmt(points[0].x)},${fmt(points[0].y)} L${fmt(points[2].x)},${fmt(points[2].y)}`;
+            parts.push(`<path d="${d}" ${strokeAttrs(entity)}/>`);
+          }
+        }
+        const anchor = toPage(geometry.textPoint);
+        const height = Math.max(0.1, entity.textHeight * entity.scale * scale);
+        entity.text.split('\n').forEach((line, index) => {
+          const y = anchor.y + index * height * 1.25;
+          parts.push(`<text x="${fmt(anchor.x)}" y="${fmt(y)}" text-anchor="${geometry.textAnchor === 'start' ? 'start' : 'end'}" font-family="Arial" font-size="${fmt(height)}" fill="${printColorHex(entity.color, style.colorMode)}">${esc(line)}</text>`);
         });
         break;
       }

@@ -189,6 +189,8 @@ export class PropertiesController {
           ...arcs,
         ];
       }
+      case 'leader':
+        return [...common, { key: '_vertices', label: 'Corners', value: object.points.length, kind: 'readonly' }];
       default: return [...common, { key: '_vertices', label: 'Vertices', value: object.type === 'bezier' ? 1 + object.segments.length * 3 : object.vertices.length, kind: 'readonly' }];
     }
   }

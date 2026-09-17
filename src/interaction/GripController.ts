@@ -341,6 +341,9 @@ export class GripController {
       if (entity?.type === 'dimension') {
         return `Dimension: ${dimensionGeometry(entity).text}`;
       }
+      if (entity?.type === 'leader') {
+        return `Leader: ${entity.text.split('\n')[0]}`;
+      }
       if (entity?.type === 'ellipse') {
         return `RX ${entity.radiusX.toFixed(2)} mm · RY ${entity.radiusY.toFixed(2)} mm`;
       }
@@ -455,6 +458,12 @@ export class GripController {
       return [...basic, { point: z === undefined ? flat : { ...flat, z }, index: 3, shape: 'edge' }];
     }
     if (entity?.type === 'text' && !this.mode) return [{point:entity.position,index:0,shape:'square'}];
+    // Every corner of a leader, the arrow point included: what a callout needs
+    // is to be re-aimed and its note moved out of the way, and both are just
+    // corners of the same line.
+    if (entity?.type === 'leader' && !this.mode) {
+      return entity.points.map((point, index) => ({ point, index, shape: 'square' as const }));
+    }
     if (entity?.type === 'dimension' && !this.mode) {
       const geometry = dimensionGeometry(entity);
       if (entity.dimensionKind === 'angular') {
@@ -824,6 +833,12 @@ export class GripController {
         if(arc){entity.center=arc.center;entity.radius=arc.radius;entity.startAngle=arc.startAngle;entity.sweepAngle=arc.sweepAngle;}
       }
     } else if(entity.type==='text'&&original.type==='text')entity.position={...cursor};
+    else if (entity.type === 'leader' && original.type === 'leader') {
+      const index = this.drag.gripIndex;
+      if (index >= 0 && index < entity.points.length) {
+        entity.points = original.points.map((point, at) => (at === index ? { ...cursor } : { ...point }));
+      }
+    }
     else if (entity.type === 'dimension' && original.type === 'dimension') {
       const gripIndex = this.drag.gripIndex;
       const movesGeometry = gripIndex <= 2 || (entity.dimensionKind === 'angular' && gripIndex === 3);

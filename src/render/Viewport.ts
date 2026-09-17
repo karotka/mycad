@@ -7,7 +7,7 @@ import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, S
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import type { UcsHandleName } from '../math/ucsAxisRotation';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
-import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids } from '../core/entities/types';
+import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, leaderGeometry } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -466,6 +466,39 @@ export class Canvas2DRenderer {
         this.ctx.font=`${Math.max(0.5,entity.height*this.zoom)}px ${JSON.stringify(entity.font ?? 'Arial')}`;
         const lineHeightPx = entity.height * DEFAULT_LINE_SPACING * this.zoom;
         entity.text.split('\n').forEach((line, index) => this.ctx.fillText(line, 0, index * lineHeightPx));
+        this.ctx.restore();
+        break;
+      }
+      case 'leader': {
+        const geometry = leaderGeometry(entity);
+        const screen = geometry.path.map((point) => toScreen(point));
+        if (screen.length >= 2) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(screen[0].x, screen[0].y);
+          for (const point of screen.slice(1)) this.ctx.lineTo(point.x, point.y);
+          this.ctx.stroke();
+        }
+        if (geometry.arrow.length === 3) {
+          const head = geometry.arrow.map((point) => toScreen(point));
+          this.ctx.beginPath();
+          if (entity.arrowType === 'tick') {
+            this.ctx.moveTo(head[1].x, head[1].y); this.ctx.lineTo(head[2].x, head[2].y); this.ctx.stroke();
+          } else {
+            this.ctx.moveTo(head[0].x, head[0].y); this.ctx.lineTo(head[1].x, head[1].y);
+            this.ctx.lineTo(head[2].x, head[2].y);
+            if (entity.arrowType === 'closed') { this.ctx.closePath(); this.ctx.fill(); } else this.ctx.stroke();
+          }
+        }
+        const anchor = toScreen(geometry.textPoint);
+        this.ctx.save();
+        this.ctx.font = `${Math.max(0.5, entity.textHeight * entity.scale * this.zoom)}px Arial`;
+        // Read away from the arrow: a leader coming in from the right puts its
+        // note on the left, and the text has to end at the shelf, not start.
+        this.ctx.textAlign = geometry.textAnchor === 'start' ? 'left' : 'right';
+        this.ctx.textBaseline = 'bottom';
+        entity.text.split('\n').forEach((line, index) => {
+          this.ctx.fillText(line, anchor.x, anchor.y + index * entity.textHeight * entity.scale * this.zoom * 1.25);
+        });
         this.ctx.restore();
         break;
       }
@@ -2157,6 +2190,10 @@ export class Viewport3D {
           closed = true;
           break;
         }
+        case 'leader': {
+          points = leaderGeometry(entity).path;
+          break;
+        }
         case 'dimension': {
           const geometry = dimensionGeometry(entity);
           points = [geometry.extensionStart[0], geometry.extensionStart[1], geometry.dimensionLine[0], geometry.dimensionLine[1], geometry.extensionEnd[0], geometry.extensionEnd[1]];
@@ -2228,6 +2265,33 @@ export class Viewport3D {
         entity.position, entity.text, entity.height, entity.font ?? 'Arial',
         entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, entity.rotation ?? 0,
       );
+    }
+    if (entity.type === 'leader') {
+      const geometry = leaderGeometry(entity);
+      const group = new THREE.Group();
+      const material = new THREE.LineBasicMaterial({ color: entity.selected ? 0x65c7ff : entity.color });
+      const addLine = (points: Vec2[], loop = false): void => {
+        const vertices = points.map((point) => {
+          const world = localToWorld(entity.workPlane ?? WORLD_WORK_PLANE, point, 0.015);
+          return new THREE.Vector3(world.x, world.z, -world.y);
+        });
+        group.add(loop
+          ? new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(vertices), material)
+          : new THREE.Line(new THREE.BufferGeometry().setFromPoints(vertices), material));
+      };
+      addLine(geometry.path);
+      if (geometry.arrow.length === 3) {
+        if (entity.arrowType === 'tick') addLine([geometry.arrow[1], geometry.arrow[2]]);
+        else addLine([geometry.arrow[1], geometry.arrow[0], geometry.arrow[2]], entity.arrowType === 'closed');
+      }
+      // The text hangs from the shelf rather than sitting centred on it, so it
+      // is placed half a line up from where the 2D view draws its baseline.
+      const height = entity.textHeight * entity.scale;
+      const from = geometry.textPoint;
+      const width = entity.text.length * height * 0.6;
+      const centre = { x: from.x + (geometry.textAnchor === 'start' ? width / 2 : -width / 2), y: from.y + height / 2 };
+      group.add(this.textToObject(centre, entity.text, height, 'Arial', entity.workPlane ?? WORLD_WORK_PLANE, entity.selected ? 0x65c7ff : entity.color, 1, 0, true));
+      return group;
     }
     if (entity.type === 'dimension') {
       const geometry = dimensionGeometry(entity);

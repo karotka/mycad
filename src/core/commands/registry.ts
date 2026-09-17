@@ -21,6 +21,7 @@ import { measureObjectDistance } from './steps/measureDistance';
 import { sectionSolids } from './steps/section';
 import { projectGeometry } from './steps/project';
 import { flatShot } from './steps/flatshot';
+import { drawLeader } from './steps/leader';
 import { deleteFaceStep, draftStep, extrudeProfileStep, loftStep, modifyEdgeStep, pressPullStep, shellStep, surfaceOffsetStep, surfaceSculptStep, sweepProfileStep, thickenSurfaceStep, revolveProfileStep } from './steps/solidOps';
 import { extendEntity, joinObjects, offsetEntity, simplifyEntity, trimEntity } from './steps/edit2d';
 import { mlineCorner, mlineCut, mlineWeld } from './steps/mlineEdit';
@@ -266,6 +267,16 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select circle, arc, or circular solid edge for diameter dimension:', accepts: ['entity', 'edge'] }, { kind: 'point', label: 'Specify dimension text location:', ignoresDirection: true }, { kind: 'done' }],
     data: (ctx) => ({ entity: undefined, dimensionStyle: { ...ctx.doc.dimensionStyle } }),
     onStart: preselectOne('entity', (entity) => entity.type === 'circle' || entity.type === 'arc', '') },
+  // A callout: the arrow lands on what is being talked about, the corners take
+  // the note clear of the drawing, and the text goes on the shelf.
+  { name: 'LEADER', aliases: ['LE', 'LEADER', 'MLEADER'], execute: drawLeader, help: 'draw a note with a line pointing at what it is about', suggest: true, pointInput: true,
+    steps: [
+      { kind: 'point', label: 'Specify the point to point at:' },
+      { kind: 'point', label: 'Specify the next corner, or press Enter when the line is where you want it:', optional: true },
+      { kind: 'text', label: 'Enter the note:' },
+      { kind: 'done' },
+    ],
+    data: () => ({ points: [] }) },
   { name: 'QDIM', aliases: ['QD', 'QDIM'], execute: quickDimension, help: 'dimension a whole selection at once, in one continuous chain', suggest: true, sticky: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select geometry to dimension, then press Enter:', multi: true, accepts: ['entity'] },

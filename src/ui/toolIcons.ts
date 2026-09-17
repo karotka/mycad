@@ -18,6 +18,7 @@ export function toolIcon(command: ToolbarIcon): string {
     ARC_SER: '<path d="M5 18A10 10 0 0119 6"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="6" r="1.5"/><path d="M12 12L16 8" stroke-dasharray="2 2"/>',
     BEZIER: '<path d="M3 18C8 3 16 21 21 6"/><path d="M3 18L8 6M21 6l-5 10" stroke-dasharray="2 2"/>',
     HELIX: '<path d="M6 19c0-2 12-2 12-4S6 13 6 11s12-2 12-4S6 7 6 5"/>',
+    LEADER: '<path d="M3 20l7-7"/><path d="M3 20l1-4M3 20l4-1"/><path d="M10 13h4"/><path d="M14 9h7v8h-7z" opacity="0.6"/>',
     SPLINE: '<path d="M3 17c3-10 7-10 9-4s6 6 9-4"/><circle cx="3" cy="17" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="21" cy="9" r="1.5"/>',
     // Two shapes overlapping, with the outline round the pair picked out:
     // what BOUNDARY hands back from a click in the middle.

@@ -518,3 +518,48 @@ describe('a whole drawing full of dimensions', () => {
     expect(worst).toBeLessThan(1e-6);
   });
 });
+
+describe('leaders through DXF', () => {
+  it('writes a leader as a LEADER with its note beside it', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLeader([{ x: 0, y: 0 }, { x: 20, y: 15 }], '2 HOLES'));
+
+    const dxf = exportAsciiDxf(doc).dxf;
+    expect(dxf).toContain('\nLEADER\n');
+    expect(dxf).toContain('2 HOLES');
+  });
+
+  it('reads one back as a leader, shelf and all', () => {
+    const doc = new Document();
+    const source = doc.createLeader([{ x: 0, y: 0 }, { x: 20, y: 15 }], 'BREAK EDGES');
+    doc.addEntity(source);
+
+    const back = roundTrip(doc).find((entity) => entity.type === 'leader');
+    expect(back).toBeDefined();
+    if (back?.type !== 'leader') return;
+    // The corners are the ones drawn, not the drawn ones plus the shelf: the
+    // shelf is grown from the last corner here, and reading it as a corner
+    // would draw it twice.
+    expect(back.points).toHaveLength(2);
+    expect(back.points[0]).toMatchObject({ x: 0, y: 0 });
+    expect(back.points[1]).toMatchObject({ x: 20, y: 15 });
+    expect(back.landing).toBeCloseTo(source.landing, 6);
+    expect(back.textHeight).toBeCloseTo(source.textHeight, 6);
+  });
+
+  it('keeps a leader that bends round something', () => {
+    const doc = new Document();
+    doc.addEntity(doc.createLeader([{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 10, y: 30 }], 'ROUND THE BACK'));
+    const back = roundTrip(doc).find((entity) => entity.type === 'leader');
+    expect(back?.type === 'leader' && back.points).toHaveLength(3);
+  });
+
+  it('keeps a leader drawn with no arrowhead', () => {
+    const doc = new Document();
+    const plain = doc.createLeader([{ x: 0, y: 0 }, { x: 20, y: 15 }], 'NO HEAD');
+    plain.arrowType = 'none';
+    doc.addEntity(plain);
+    const back = roundTrip(doc).find((entity) => entity.type === 'leader');
+    expect(back?.type === 'leader' && back.arrowType).toBe('none');
+  });
+});

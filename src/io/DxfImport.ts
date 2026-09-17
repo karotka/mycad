@@ -574,6 +574,34 @@ export function importAsciiDxf(doc: Document, text: string): DxfImportResult {
           finish(angularDimension(doc, preserveOverride, vertex, away(firstStart, firstEnd), away(secondStart, secondEnd), point(16, 26)), fields, layer);
         }
       } else skip(type); // ordinate has no counterpart yet
+    } else if (type === 'LEADER') {
+      noteFlattened(fields, 30);
+      // Every corner repeats the same triple of codes. The words are not in
+      // here at all — DXF keeps a leader's note as a separate annotation the
+      // record points at — so the line is read and the text arrives on its own
+      // as the TEXT it is written as.
+      const corners = repeatedPoints(fields, 10, 20).map((corner) => ({ x: corner.x * scale, y: corner.y * scale }));
+      if (corners.length < 2) skip(type);
+      else {
+        const leader = doc.createLeader(corners, '');
+        const height = number(fields, 40, 0) * scale;
+        if (height > 0) leader.textHeight = height;
+        const landing = number(fields, 41, 0) * scale;
+        if (landing > 0) leader.landing = landing;
+        // A leader written with no arrowhead keeps none.
+        if (number(fields, 71, 1) === 0) leader.arrowType = 'none';
+        // The shelf is the last stroke of the line as DXF lists it, and this
+        // drawing grows its own from the corner before it — so the shelf's
+        // length is taken from that stroke and the corner dropped, or the
+        // leader comes back with the shelf drawn twice.
+        const last = corners[corners.length - 1];
+        const before = corners[corners.length - 2];
+        if (corners.length > 2 && Math.abs(last.y - before.y) < 1e-9) {
+          leader.landing = Math.abs(last.x - before.x);
+          leader.points = corners.slice(0, -1);
+        }
+        finish(leader, fields, layer);
+      }
     } else if (type === 'SPLINE') {
       noteFlattened(fields, 30);
       const spline: SplineData = {

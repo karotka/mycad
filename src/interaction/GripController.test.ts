@@ -1136,3 +1136,46 @@ describe('gripsInWorld', () => {
 });
 
 
+
+describe('leader grips', () => {
+  function leaderAndGrips() {
+    const doc = new Document();
+    const history = new CommandHistory(doc);
+    const grips = new GripController(doc, history);
+    const leader = doc.createLeader([{ x: 0, y: 0 }, { x: 20, y: 15 }, { x: 40, y: 15 }], '2 HOLES');
+    doc.addEntity(leader);
+    doc.selectEntity(leader.id);
+    return { doc, history, grips, leader };
+  }
+
+  it('offers one grip per corner, the arrow point included', () => {
+    const { grips, leader } = leaderAndGrips();
+    const found = grips.activeGrips();
+    expect(found.map((grip) => grip.point)).toEqual(leader.points);
+  });
+
+  it('re-aims the arrow without moving the rest of the line', () => {
+    const { grips, leader } = leaderAndGrips();
+    grips.begin(leader, undefined, 0, { x: 0, y: 0 });
+    grips.update({ x: -5, y: -8 });
+    grips.commit();
+
+    expect(leader.points[0]).toMatchObject({ x: -5, y: -8 });
+    expect(leader.points[1]).toMatchObject({ x: 20, y: 15 });
+    expect(leader.points[2]).toMatchObject({ x: 40, y: 15 });
+  });
+
+  it('moves the note out of the way by its own last corner, and undo puts it back', () => {
+    const { doc, history, grips, leader } = leaderAndGrips();
+    grips.begin(leader, undefined, 2, { x: 40, y: 15 });
+    grips.update({ x: 60, y: 40 });
+    grips.commit();
+    expect(leader.points[2]).toMatchObject({ x: 60, y: 40 });
+
+    // Undo puts a fresh copy in the document, so it is read back from there
+    // rather than from the object the drag was handed.
+    expect(history.undo()).toBe(true);
+    const restored = doc.getEntity(leader.id);
+    expect(restored?.type === 'leader' && restored.points[2]).toMatchObject({ x: 40, y: 15 });
+  });
+});

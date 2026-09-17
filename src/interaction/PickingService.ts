@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
+import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, leaderGeometry, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
@@ -101,6 +101,7 @@ function polygonIntersectsBox(polygon: readonly Vec2[], box: WindowBounds, close
 function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
   switch (entity.type) {
     case 'point': return { points: [entity.position], closed: false };
+    case 'leader': return { points: leaderGeometry(entity).path, closed: false };
     case 'line': return { points: [entity.start, entity.end], closed: false };
     case 'circle': {
       // The centre may sit off the work plane (drawn in another UCS); its Z has

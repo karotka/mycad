@@ -15,7 +15,7 @@ import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldPointInPlane, worldToLocal } from '../../math/workplane';
 import { polylineOutline } from '../entities/polylineArcs';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
+import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, leaderGeometry, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
@@ -859,6 +859,19 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
       }
       case 'dimension': {
         if (hitsDimension(point, e, tolerance)) return e;
+        break;
+      }
+      case 'leader': {
+        // The line and the arrowhead are what you point at; the note itself
+        // has a box round it, the same way a dimension's text does.
+        const geometry = leaderGeometry(e);
+        if (hitsChain(point, geometry.path, tolerance)) return e;
+        if (geometry.arrow.length === 3 && hitsChain(point, closePolyline(geometry.arrow), tolerance)) return e;
+        const height = e.textHeight * e.scale;
+        const width = e.text.length * height * 0.6;
+        const left = geometry.textAnchor === 'start' ? geometry.textPoint.x : geometry.textPoint.x - width;
+        if (point.x >= left - tolerance && point.x <= left + width + tolerance
+          && point.y >= geometry.textPoint.y - tolerance && point.y <= geometry.textPoint.y + height + tolerance) return e;
         break;
       }
     }

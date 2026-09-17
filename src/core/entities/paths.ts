@@ -7,7 +7,7 @@
  * complete, because a missing case here is geometry silently left out of a cut
  * file rather than something that merely looks wrong on screen.
  */
-import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, type Entity } from './types';
+import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, leaderGeometry, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 import { hatchPatternSegments } from '../../io/DxfHatch';
@@ -32,6 +32,13 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
       return expandedInsertEntities(entity).flatMap((child) => entityToPaths(child, segments));
     case 'point':
       return [];
+    case 'leader':
+      // The line and the arrowhead can be cut or plotted; the note itself is
+      // text, and text has no single stroke through it — see TEXT below.
+      return [
+        { points: leaderGeometry(entity).path, closed: false },
+        ...(leaderGeometry(entity).arrow.length > 0 ? [{ points: leaderGeometry(entity).arrow, closed: true }] : []),
+      ];
     case 'line':
       return [{ points: [entity.start, entity.end], closed: false }];
     case 'polyline':

@@ -5,7 +5,7 @@ import type { AffineTransform3, SerializedKernelSolid } from '../geometry/Geomet
 import { hasPolylineArcs, polylineOutline } from './polylineArcs';
 import { canonicalEntityBounds } from './EntityGeometry';
 
-export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'insert' | 'mline';
+export type EntityType = 'point' | 'line' | 'circle' | 'ellipse' | 'rectangle' | 'octagon' | 'polyline' | 'arc' | 'bezier' | 'hatch' | 'text' | 'dimension' | 'leader' | 'insert' | 'mline';
 
 export interface EntityBase {
   id: string;
@@ -212,7 +212,98 @@ export interface InsertEntity extends EntityBase {
   definition: BlockDefinition;
 }
 
-export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | HatchEntity | TextEntity | DimensionEntity | InsertEntity | MlineEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | EllipseEntity | RectangleEntity | OctagonEntity | PolylineEntity | ArcEntity | BezierEntity | HatchEntity | TextEntity | DimensionEntity | LeaderEntity | InsertEntity | MlineEntity;
+
+/**
+ * A note with a line drawn from it to the thing it is about: an arrow on the
+ * part, a stroke or two out to clear space, a short shelf, and the text on the
+ * shelf. Every callout on a real drawing is one of these — "2 HOLES Ø6",
+ * "BREAK SHARP EDGES", "WELD ALL ROUND".
+ *
+ * Kept as its own entity rather than as a line and a piece of text put near
+ * each other, because it is one thing: move the part and the arrow follows,
+ * move the note and the line stretches to it.
+ */
+export interface LeaderEntity extends EntityBase {
+  type: 'leader';
+  /**
+   * The arrow point first, then every corner of the line out to the text. Two
+   * points is the ordinary leader; more bends it round something in the way.
+   */
+  points: Vec2[];
+  text: string;
+  textHeight: number;
+  arrowSize: number;
+  /** `none` is the plain stroke a note sometimes ends in, with no head at all. */
+  arrowType: 'closed' | 'open' | 'tick' | 'none';
+  /** The shelf the text sits on, measured from the last corner. Zero for none. */
+  landing: number;
+  scale: number;
+}
+
+/** What a leader is drawn from — the same shape `dimensionGeometry` has, for
+ *  the same reason: one place works it out, and everything else reads it. */
+export interface LeaderGeometry {
+  /** Arrow point, every corner, and the end of the shelf. */
+  path: Vec2[];
+  /** The three corners of the arrowhead, or empty where there is none. */
+  arrow: Vec2[];
+  /** Where the text starts, and which end of it that is. */
+  textPoint: Vec2;
+  textAnchor: 'start' | 'end';
+}
+
+/**
+ * Where a leader's line, arrow and text actually go.
+ *
+ * The shelf runs on in whatever direction the last stroke arrived from — level
+ * if that stroke was level, and otherwise carrying on the way it was going,
+ * which is what keeps a leader looking drawn rather than assembled. The text
+ * sits at the far end of the shelf, reading away from the arrow.
+ */
+export function leaderGeometry(entity: LeaderEntity): LeaderGeometry {
+  const points = entity.points;
+  if (points.length < 2) {
+    const only = points[0] ?? { x: 0, y: 0 };
+    return { path: [only], arrow: [], textPoint: only, textAnchor: 'start' };
+  }
+  const last = points[points.length - 1];
+  const previous = points[points.length - 2];
+  // The shelf runs away from the arrow, level, on whichever side the line
+  // came in from — a leader arriving from the left carries on to the right.
+  const towardsRight = last.x >= previous.x;
+  const landing = Math.max(0, entity.landing) * entity.scale;
+  const shelfEnd = { x: last.x + (towardsRight ? landing : -landing), y: last.y };
+  const path = landing > 0 ? [...points, shelfEnd] : [...points];
+
+  const size = entity.arrowSize * entity.scale;
+  let arrow: Vec2[] = [];
+  if (entity.arrowType !== 'none' && size > 0) {
+    const tip = points[0];
+    const next = points[1];
+    const dx = next.x - tip.x, dy = next.y - tip.y;
+    const length = Math.hypot(dx, dy);
+    if (length > 1e-9) {
+      const ux = dx / length, uy = dy / length;
+      const base = { x: tip.x + ux * size, y: tip.y + uy * size };
+      const half = size * (entity.arrowType === 'tick' ? 0.5 : 0.18);
+      arrow = [
+        tip,
+        { x: base.x - uy * half, y: base.y + ux * half },
+        { x: base.x + uy * half, y: base.y - ux * half },
+      ];
+    }
+  }
+
+  // Clear of the shelf by the same gap a dimension leaves round its own text.
+  const gap = entity.textHeight * entity.scale * 0.25;
+  return {
+    path,
+    arrow,
+    textPoint: { x: shelfEnd.x + (towardsRight ? gap : -gap), y: shelfEnd.y - entity.textHeight * entity.scale / 2 },
+    textAnchor: towardsRight ? 'start' : 'end',
+  };
+}
 
 export interface DimensionGeometry {
   extensionStart: [Vec2, Vec2];
@@ -1027,6 +1118,11 @@ function computeExpandedInsertEntities(insert: InsertEntity): Entity[] {
         };
         break;
       }
+      case 'leader': {
+        const scale = Math.max(Math.abs(insert.scaleX), Math.abs(insert.scaleY));
+        entity = { ...cloneEntity(source), points: source.points.map(at), scale: source.scale * scale };
+        break;
+      }
       case 'dimension': {
         const scale = Math.max(Math.abs(insert.scaleX), Math.abs(insert.scaleY));
         entity = {
@@ -1272,6 +1368,16 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       const points = [e.start, e.end, geometry.textPoint, ...geometry.dimensionLine, ...geometry.arrows.flat()];
       return { min: { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) }, max: { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) } };
     }
+    case 'leader': {
+      const geometry = leaderGeometry(e);
+      // The text runs on past its own start, so the room it takes is counted
+      // in — otherwise a leader's box stops at the shelf and the note hangs
+      // outside everything that reads the bounds.
+      const width = e.text.length * e.textHeight * e.scale * 0.6;
+      const textEnd = { x: geometry.textPoint.x + (geometry.textAnchor === 'start' ? width : -width), y: geometry.textPoint.y + e.textHeight * e.scale };
+      const points = [...geometry.path, ...geometry.arrow, geometry.textPoint, textEnd];
+      return { min: { x: Math.min(...points.map(p => p.x)), y: Math.min(...points.map(p => p.y)) }, max: { x: Math.max(...points.map(p => p.x)), y: Math.max(...points.map(p => p.y)) } };
+    }
   }
 }
 
@@ -1362,6 +1468,7 @@ export function getEntityPoints(e: Entity): Vec2[] {
     case 'bezier': return [e.start, ...e.segments.flatMap((segment) => [segment.control1, segment.control2, segment.end])];
     case 'text': return [e.position];
     case 'dimension': return [e.start, e.end, e.offset, ...(e.arcPoint ? [e.arcPoint] : []), ...(e.textPosition ? [e.textPosition] : [])];
+    case 'leader': return e.points;
   }
 }
 
@@ -1428,6 +1535,7 @@ export function transformEntityPoints(e: Entity, transform: (p: Vec2) => Vec2): 
     // A dragged text is an absolute point like the rest, so it has to travel
     // with them — left behind, it would drift off its own dimension on a move.
     case 'dimension': copy.start = fn(copy.start); copy.end = fn(copy.end); copy.offset = fn(copy.offset); if (copy.arcPoint) copy.arcPoint = fn(copy.arcPoint); if (copy.textPosition) copy.textPosition = fn(copy.textPosition); break;
+    case 'leader': copy.points = copy.points.map(fn); break;
   }
   return copy;
 }
