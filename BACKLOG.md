@@ -73,8 +73,10 @@ LOFT, THICKEN, SURFOFFSET and SURFSCULPT all exist now. Left open:
   inserting a control point at that parameter, or reshaping the curve so it
   passes through the dragged point.
 
-SECTION remains deferred until drawing views exist. It is a non-destructive view
-cut with caps and section edges, not a modelling operation like SLICE.
+SECTION now exists: it draws the curves where a plane crosses a solid or a
+surface and leaves the body alone, unlike SLICE which divides it. What it does
+not yet do is cap the cut — a sectioned view is normally hatched across the
+material, and the outline is drawn but the region it encloses is not filled.
 
 ---
 
@@ -113,11 +115,16 @@ IMPORTEXCELLON, PDFIMPORT, PLOT), then DIST, LIST, MASSPROP, MATCHPROP,
 ### Whole subsystems, not single commands
 
 - **Paper space and layouts** — viewports, a sheet with a frame, a scale per
-  viewport. Printing goes straight from model space today.
+  viewport. Printing goes straight from model space today. This is now the
+  single largest gap between what the program can draw and what it can issue:
+  FLATSHOT produces a proper projected view, but there is no sheet to put
+  several of them on at a stated scale.
 - **Block attributes** — ATTDEF/ATTEDIT. Blocks exist; attributes are read on
   DXF import and turned into plain text, which is where they stop.
-- **SECTIONPLANE / FLATSHOT** — a section through a solid, and a 2D projection
-  of one. SLICE cuts a solid in two but draws no section.
+- **SECTIONPLANE** — a live section plane object that can be moved through the
+  model, with the cut hatched. SECTION draws the outline of one cut; FLATSHOT
+  draws a whole projected view with hidden lines dashed; neither leaves a plane
+  behind that can be dragged afterwards.
 
 ## 3. Entity extensibility and drafting workflow
 
