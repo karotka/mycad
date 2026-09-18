@@ -146,8 +146,12 @@ describe('what a rubber-band preview writes on the canvas', () => {
     expect(written.join(' ')).toContain('50.00');
   });
 
-  it('still says the size beside a rectangle, which says width by height', () => {
-    const written = preview('rectangle', { start: { x: 0, y: 0 }, end: { x: 30, y: 40 } });
-    expect(written.join(' ')).toContain('30.00 × 40.00');
+  it('says nothing beside a rectangle either: its Width and Height boxes do', () => {
+    expect(preview('rectangle', { start: { x: 0, y: 0 }, end: { x: 30, y: 40 } })).toEqual([]);
+  });
+
+  it("says nothing beside a circle drawn by its diameter, where the D box sits", () => {
+    // It used to print right on the cursor placing the point.
+    expect(preview('circleDiameter', { center: { x: 0, y: 0 }, cursor: { x: 30, y: 40 } })).toEqual([]);
   });
 });

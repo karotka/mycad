@@ -1,5 +1,5 @@
 import type { Vec2 } from '../math/geometry';
-import { dynamicLengthMidpoint, dynamicLengthPoint, type DynamicLengthFields } from './DynamicLengthInput';
+import { dynamicLengthPoint, type DynamicLengthFields, type RadialQuantity } from './DynamicLengthInput';
 
 /** How far right of the length box, in screen pixels, the angle box sits —
  *  a fixed on-screen offset rather than a world-space one, since a world
@@ -12,12 +12,15 @@ const ANGLE_OFFSET_PX = 84;
 const SEPARATOR_OFFSET_PX = ANGLE_OFFSET_PX / 2;
 /** Where the "°" after the angle box sits, relative to the angle box itself. */
 const DEGREE_OFFSET_PX = 40;
-/** How far past the circle's own boundary, in screen pixels, the diameter
- *  box sits — outside the circle rather than at its (world-space) half-
- *  radius midpoint, which used to bury it inside the shape. A fixed screen
- *  offset for the same reason the other offsets above are: it stays a
- *  steady visual gap regardless of zoom. */
-const DIAMETER_BOX_OUTSET_PX = 14;
+/** How far below the line's own start point, in screen pixels, its boxes
+ *  sit. Anchored on the start rather than the segment's midpoint: the
+ *  midpoint walks along with the cursor, so a short segment put the boxes
+ *  under the very end being placed and hid what was being aimed at. The
+ *  start point does not move, so the boxes stay put while the line is
+ *  drawn. Below rather than on it, so the point itself stays visible. */
+const LENGTH_BOX_BELOW_START_PX = 26;
+/** Where the R/D label sits, to the left of the box it names. */
+const RADIAL_PREFIX_OFFSET_PX = -22;
 
 /** A minimal element surface — real `HTMLInputElement` in the app, a plain
  *  stub in tests — so this stays testable without a DOM. */
@@ -38,6 +41,12 @@ export interface DynamicLengthLabelElement {
   style: { left: string; top: string };
 }
 
+/** The same, for a label whose text changes: the R/D in front of a radial
+ *  box, which says which quantity the number in it is. */
+export interface DynamicLengthTextLabelElement extends DynamicLengthLabelElement {
+  textContent: string | null;
+}
+
 export interface DynamicLengthInputContext {
   lengthInput: DynamicLengthInputElement;
   angleInput: DynamicLengthInputElement;
@@ -45,6 +54,9 @@ export interface DynamicLengthInputContext {
    *  AutoCAD's own polar-coordinate notation (e.g. "5<30"). */
   separatorLabel: DynamicLengthLabelElement;
   degreeLabel: DynamicLengthLabelElement;
+  /** The "R"/"D" in front of a radial box; hidden for a line's own boxes,
+   *  which are named by the "<" and "°" between them instead. */
+  radialPrefixLabel: DynamicLengthTextLabelElement;
   /** Local-plane point to screen pixels, the same frame the start/cursor
    *  points passed to `update()` arrive in. */
   project: (point: Vec2) => { x: number; y: number };
@@ -69,13 +81,15 @@ export interface DynamicLengthInputContext {
  * for when it auto-focuses versus waits for a click.
  */
 export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
-  const { lengthInput, angleInput, separatorLabel, degreeLabel, project, isActive, onCommit, onEmptyCommit } = ctx;
+  const { lengthInput, angleInput, separatorLabel, degreeLabel, radialPrefixLabel, project, isActive, onCommit, onEmptyCommit } = ctx;
   let lengthOverridden = false;
   let angleOverridden = false;
   let lastStart: Vec2 | null = null;
   let lastCursor: Vec2 | null = null;
   let lastEmptyFinishes = false;
-  let lastDiameterMode = false;
+  /** Which quantity the box is showing, or null while it is a line's own
+   *  Length/Angle pair rather than a radial one. */
+  let lastRadial: RadialQuantity | null = null;
 
   function currentFields(): DynamicLengthFields {
     return {
@@ -84,13 +98,13 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     };
   }
 
-  /** `updateDiameter`'s own fields: the box shows and edits the diameter,
-   *  but `dynamicLengthPoint`'s "length" is the radius-equivalent distance
-   *  from centre to the circumference point — half of whatever was typed.
-   *  Dividing unparsable text by 2 still fails to parse, so it falls back
-   *  to the live distance exactly the same way an empty box would. */
-  function radiusFieldsFromDiameterBox(): DynamicLengthFields {
-    return { length: lengthOverridden ? String(Number(lengthInput.value) / 2) : '', angle: '' };
+  /** A radial box's own fields: the number in it is the centre-to-point
+   *  distance, which is exactly `dynamicLengthPoint`'s "length" — each
+   *  command decides what that distance means (see `RadialQuantity`), and
+   *  neither needs it converted. There is no angle: a circle looks the same
+   *  whichever way round its boundary point sits. */
+  function radialFields(): DynamicLengthFields {
+    return { length: lengthOverridden ? lengthInput.value : '', angle: '' };
   }
 
   function position(element: DynamicLengthInputElement | DynamicLengthLabelElement, screen: { x: number; y: number }): void {
@@ -107,13 +121,14 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     angleInput.hidden = true;
     separatorLabel.hidden = true;
     degreeLabel.hidden = true;
+    radialPrefixLabel.hidden = true;
     lengthInput.value = '';
     angleInput.value = '';
     lengthOverridden = false;
     angleOverridden = false;
     lastStart = null;
     lastCursor = null;
-    lastDiameterMode = false;
+    lastRadial = null;
   }
 
   function commit(): void {
@@ -126,7 +141,7 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
       onEmptyCommit();
       return;
     }
-    const fields = lastDiameterMode ? radiusFieldsFromDiameterBox() : currentFields();
+    const fields = lastRadial ? radialFields() : currentFields();
     const point = dynamicLengthPoint(lastStart, lastCursor, fields);
     hide();
     onCommit(point);
@@ -153,12 +168,14 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     lastStart = start;
     lastCursor = cursor;
     lastEmptyFinishes = options.emptyFinishes;
-    lastDiameterMode = false;
+    lastRadial = null;
     const point = dynamicLengthPoint(start, cursor, currentFields());
     if (!lengthOverridden) lengthInput.value = Math.hypot(point.x - start.x, point.y - start.y).toFixed(2);
     if (!angleOverridden) angleInput.value = ((Math.atan2(point.y - start.y, point.x - start.x) * 180) / Math.PI).toFixed(2);
-    const screen = project(dynamicLengthMidpoint(start, point));
+    const startScreen = project(start);
+    const screen = { x: startScreen.x, y: startScreen.y + LENGTH_BOX_BELOW_START_PX };
     position(lengthInput, screen);
+    radialPrefixLabel.hidden = true;
     position(separatorLabel, { x: screen.x + SEPARATOR_OFFSET_PX, y: screen.y });
     position(angleInput, { x: screen.x + ANGLE_OFFSET_PX, y: screen.y });
     position(degreeLabel, { x: screen.x + ANGLE_OFFSET_PX + DEGREE_OFFSET_PX, y: screen.y });
@@ -167,39 +184,35 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
   }
 
   /**
-   * The single-axis counterpart for CIRCLE's own radius step (and, with
-   * `autoFocus`, for dragging an existing circle's radius grip): shows and
-   * edits the *diameter* (what the user asked to see) even though the
-   * underlying geometry is radius-based — a circle looks the same
-   * regardless of which way around it the boundary point sits, so there is
-   * no angle to fix and the angle box stays hidden along with its labels.
+   * The single-axis counterpart for a circle's own size step (and, with
+   * `autoFocus`, for dragging an existing circle's radius grip): one box at
+   * the centre, labelled R or D for the quantity the command is asking
+   * for — CIRCLE is drawn by a point on the circumference, CIRCLE_DIAMETER
+   * by a point a diameter away, and a radius grip moves the circumference.
+   * No angle box: a circle looks the same whichever way round its boundary
+   * point sits, so there is nothing for one to fix.
+   *
+   * At the centre rather than out past the boundary, where it used to sit
+   * on top of the very cursor placing the point. The centre is already
+   * fixed by this step, so the box stays still while the circle is sized.
+   *
    * `autoFocus` follows the same reasoning as `update()`'s own option:
    * grip-editing keeps the pointer captured for the whole click-move-click
    * gesture, so a click could never reach the box otherwise; drawing a new
    * circle never captures the pointer, so that caller leaves it false.
    */
-  function updateDiameter(center: Vec2, cursor: Vec2, autoFocus = false): Vec2 {
+  function updateRadial(center: Vec2, cursor: Vec2, quantity: RadialQuantity, autoFocus = false): Vec2 {
     const firstFrame = lengthInput.hidden;
     lastStart = center;
     lastCursor = cursor;
     lastEmptyFinishes = false;
-    lastDiameterMode = true;
-    const point = dynamicLengthPoint(center, cursor, radiusFieldsFromDiameterBox());
-    if (!lengthOverridden) lengthInput.value = (Math.hypot(point.x - center.x, point.y - center.y) * 2).toFixed(2);
-    // Just past the circle's own edge, not the world-space half-radius
-    // midpoint (which buried the box inside the shape) — the outward
-    // direction is worked out in screen space, since a projected circle
-    // is an ellipse under perspective and the world-space radial direction
-    // doesn't generally point the same way on screen.
-    const centerScreen = project(center);
-    const pointScreen = project(point);
-    const dx = pointScreen.x - centerScreen.x, dy = pointScreen.y - centerScreen.y;
-    const outward = Math.hypot(dx, dy) || 1;
-    const screen = {
-      x: pointScreen.x + (dx / outward) * DIAMETER_BOX_OUTSET_PX,
-      y: pointScreen.y + (dy / outward) * DIAMETER_BOX_OUTSET_PX,
-    };
+    lastRadial = quantity;
+    const point = dynamicLengthPoint(center, cursor, radialFields());
+    if (!lengthOverridden) lengthInput.value = Math.hypot(point.x - center.x, point.y - center.y).toFixed(2);
+    const screen = project(center);
     position(lengthInput, screen);
+    radialPrefixLabel.textContent = quantity === 'diameter' ? 'D' : 'R';
+    position(radialPrefixLabel, { x: screen.x + RADIAL_PREFIX_OFFSET_PX, y: screen.y });
     angleInput.hidden = true;
     separatorLabel.hidden = true;
     degreeLabel.hidden = true;
@@ -248,5 +261,5 @@ export function createDynamicLengthInput(ctx: DynamicLengthInputContext) {
     return true;
   }
 
-  return { update, updateDiameter, hide, sync, focusLength };
+  return { update, updateRadial, hide, sync, focusLength };
 }

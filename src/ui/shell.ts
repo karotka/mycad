@@ -76,6 +76,7 @@ export function shellHtml(tools: ShellTools): string {
       <div class="dimension-toast" id="dimension-toast" hidden></div>
       <input class="dyn-dim-input" id="dyn-dim-width" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle width" hidden />
       <input class="dyn-dim-input" id="dyn-dim-height" type="text" inputmode="decimal" autocomplete="off" aria-label="Rectangle height" hidden />
+      <span class="dyn-dim-label" id="dyn-dim-radial-prefix" aria-hidden="true" hidden>R</span>
       <input class="dyn-dim-input" id="dyn-dim-length" type="text" inputmode="decimal" autocomplete="off" aria-label="Length" hidden />
       <span class="dyn-dim-label" id="dyn-dim-length-angle-separator" aria-hidden="true" hidden>&lt;</span>
       <input class="dyn-dim-input" id="dyn-dim-angle" type="text" inputmode="decimal" autocomplete="off" aria-label="Angle" hidden />

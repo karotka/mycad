@@ -47,6 +47,7 @@ import { createDynamicUcsCoordinator, type DynamicUcsState } from './interaction
 import { createToolActions } from './interaction/ToolActions';
 import { createDynamicRectangleInput } from './interaction/DynamicRectangleInputController';
 import { createDynamicLengthInput } from './interaction/DynamicLengthInputController';
+import type { RadialQuantity } from './interaction/DynamicLengthInput';
 import { createDynamicCoordinateInput } from './interaction/DynamicCoordinateInputController';
 import { createDynamicArcInput } from './interaction/DynamicArcInputController';
 import { attachViewportPointerHandlers } from './interaction/ViewportPointerHandler';
@@ -135,6 +136,7 @@ const dynDimWidthInput = get<HTMLInputElement>('dyn-dim-width');
 const dynDimHeightInput = get<HTMLInputElement>('dyn-dim-height');
 const dynDimLengthInput = get<HTMLInputElement>('dyn-dim-length');
 const dynDimAngleInput = get<HTMLInputElement>('dyn-dim-angle');
+const dynDimRadialPrefixLabel = get<HTMLElement>('dyn-dim-radial-prefix');
 const dynDimSeparatorLabel = get<HTMLElement>('dyn-dim-length-angle-separator');
 const dynDimDegreeLabel = get<HTMLElement>('dyn-dim-angle-degree');
 const dynDimXInput = get<HTMLInputElement>('dyn-dim-x');
@@ -704,6 +706,7 @@ const dynamicLengthInput = createDynamicLengthInput({
   angleInput: dynDimAngleInput,
   separatorLabel: dynDimSeparatorLabel,
   degreeLabel: dynDimDegreeLabel,
+  radialPrefixLabel: dynDimRadialPrefixLabel,
   project: projectDrawingPoint,
   isActive: () => {
     const active = commands.active;
@@ -714,13 +717,13 @@ const dynamicLengthInput = createDynamicLengthInput({
     // its 3D toast for now: only these two were asked for, and each command
     // needs its own call site wired up (see the pointer handler).
     if (active && (active.name === 'LINE' || active.name === 'POLYLINE') && active.stepIndex === 1) return true;
-    if (active?.name === 'CIRCLE' && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
+    if ((active?.name === 'CIRCLE' || active?.name === 'CIRCLE_DIAMETER') && active.stepIndex === 1 && cadDocument.viewMode === '2d') return true;
     if (cadDocument.viewMode !== '2d') return false;
     return gripController.draggingLineFixedEnd() !== null || gripController.draggingCircleFixedCenter() !== null;
   },
   onCommit: (point) => {
     const active = commands.active;
-    if (active?.name === 'LINE' || active?.name === 'POLYLINE' || active?.name === 'CIRCLE') void commands.handleClick(point);
+    if (active?.name === 'LINE' || active?.name === 'POLYLINE' || active?.name === 'CIRCLE' || active?.name === 'CIRCLE_DIAMETER') void commands.handleClick(point);
     else gripInteraction.commitTypedPoint(point);
     redraw();
     input.focus({ preventScroll: true });
@@ -1299,8 +1302,8 @@ function updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFin
   return dynamicLengthInput.update(start, cursor, options);
 }
 
-function updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus = false): Vec2 {
-  return dynamicLengthInput.updateDiameter(center, cursor, autoFocus);
+function updateDynamicRadialInput(center: Vec2, cursor: Vec2, quantity: RadialQuantity, autoFocus = false): Vec2 {
+  return dynamicLengthInput.updateRadial(center, cursor, quantity, autoFocus);
 }
 
 function updateDynamicCoordinateInput(cursor: Vec2): Vec2 {
@@ -1441,7 +1444,7 @@ const viewportHandlers = attachViewportPointerHandlers({
     updateDynamicRectangleInput,
     updateDynamicRectangleEdge,
     updateDynamicLengthInput,
-    updateDynamicDiameterInput,
+    updateDynamicRadialInput,
     updateDynamicCoordinateInput,
     updateDynamicArcInput,
     positionMeasureMarker,

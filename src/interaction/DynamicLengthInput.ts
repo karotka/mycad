@@ -42,9 +42,12 @@ export function dynamicLengthPoint(start: Vec2, cursor: Vec2, fields: DynamicLen
   return { x: start.x + Math.cos(angle) * distance, y: start.y + Math.sin(angle) * distance };
 }
 
-/** Where both boxes anchor: the segment's own midpoint. The angle box then
- *  sits right beside the length box, offset in screen pixels rather than
- *  world space — see the controller's own `ANGLE_OFFSET_PX`. */
-export function dynamicLengthMidpoint(start: Vec2, point: Vec2): Vec2 {
-  return { x: (start.x + point.x) / 2, y: (start.y + point.y) / 2 };
-}
+/**
+ * Which quantity a circle's box is showing. Both commands answer with a
+ * distance from the centre, and each means a different thing by it: CIRCLE
+ * takes a point on the circumference, so the distance is the radius;
+ * CIRCLE_DIAMETER takes a point a diameter away, so the distance is the
+ * diameter. The number in the box is that distance either way — the R or D
+ * in front of it is what says which, which is the whole reason to label it.
+ */
+export type RadialQuantity = 'radius' | 'diameter';

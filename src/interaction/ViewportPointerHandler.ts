@@ -1,4 +1,5 @@
 import type { Vec2, Vec3 } from '../math/geometry';
+import type { RadialQuantity } from './DynamicLengthInput';
 import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../math/workplane';
 import type { Document } from '../core/Document';
 import type { Entity, Solid, SolidFaceSelection, Surface } from '../core/entities/types';
@@ -38,7 +39,7 @@ export interface ViewportPointerHelpers {
   updateDynamicRectangleInput(start: Vec2, cursor: Vec2): Vec2;
   updateDynamicRectangleEdge(axis: 'x' | 'y', fixed: number, perpendicular: [number, number], cursor: Vec2): Vec2;
   updateDynamicLengthInput(start: Vec2, cursor: Vec2, options: { emptyFinishes: boolean; autoFocus?: boolean }): Vec2;
-  updateDynamicDiameterInput(center: Vec2, cursor: Vec2, autoFocus?: boolean): Vec2;
+  updateDynamicRadialInput(center: Vec2, cursor: Vec2, quantity: RadialQuantity, autoFocus?: boolean): Vec2;
   updateDynamicCoordinateInput(cursor: Vec2): Vec2;
   updateDynamicArcInput(start: Vec2, end: Vec2, cursor: Vec2): Vec2;
   positionMeasureMarker(marker: HTMLElement, x: number, y: number): void;
@@ -168,7 +169,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
   const { openContextMenu, openUcsAxisMenu } = ctx.toolActions;
   const {
     gripEditingPoint, updatePreview, showDimension, showPreviewLabel,
-    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicDiameterInput, updateDynamicCoordinateInput, updateDynamicArcInput,
+    updateDynamicRectangleInput, updateDynamicRectangleEdge, updateDynamicLengthInput, updateDynamicRadialInput, updateDynamicCoordinateInput, updateDynamicArcInput,
     positionMeasureMarker, positionSnapMarker, selectedEntity, selectedSolid, selectedSurface,
     profileContainingPoint, solidSelectionExclusions, surfaceSelectionExclusions, activeGripsInWorld,
   } = ctx.helpers;
@@ -657,7 +658,7 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
         // Same shape as CIRCLE's own draw step, in place of the plain
         // "R … mm · Ø … mm" toast — auto-focused for the same reason as the
         // line-endpoint case above.
-        gripController.update(updateDynamicDiameterInput(circleFixedCenter, p, true));
+        gripController.update(updateDynamicRadialInput(circleFixedCenter, p, 'radius', true));
       } else if (movingCircleCenter) {
         gripController.update(updateDynamicCoordinateInput(p));
       } else {
@@ -796,10 +797,14 @@ export function attachViewportPointerHandlers(ctx: ViewportPointerContext): View
           updatePreview(corner);
         }
         else showPreviewLabel(`${Math.abs(p.x - start.x).toFixed(2)} × ${Math.abs(p.y - start.y).toFixed(2)} mm`, sx, sy);
-      } else if (active.name === 'CIRCLE' && active.data.center) {
+      } else if ((active.name === 'CIRCLE' || active.name === 'CIRCLE_DIAMETER') && active.data.center) {
+        // Each says the quantity its own step asks for: CIRCLE takes a point
+        // on the circumference, CIRCLE_DIAMETER one a diameter away. The box
+        // is labelled R or D to match, so the number is never ambiguous.
         const center = active.data.center as Vec2;
+        const quantity: RadialQuantity = active.name === 'CIRCLE_DIAMETER' ? 'diameter' : 'radius';
         if (cadDocument.viewMode === '2d') {
-          const point = updateDynamicDiameterInput(center, p);
+          const point = updateDynamicRadialInput(center, p, quantity);
           updatePreview(point);
         } else {
           const radius = Math.hypot(p.x - center.x, p.y - center.y);

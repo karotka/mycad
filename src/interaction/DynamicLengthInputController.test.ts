@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDynamicLengthInput, type DynamicLengthInputElement, type DynamicLengthLabelElement } from './DynamicLengthInputController';
+import { createDynamicLengthInput, type DynamicLengthInputElement, type DynamicLengthLabelElement, type DynamicLengthTextLabelElement } from './DynamicLengthInputController';
 
 function fakeInput(): DynamicLengthInputElement & { listeners: Record<string, Array<(event: never) => void>> } {
   const listeners: Record<string, Array<(event: never) => void>> = {};
@@ -19,6 +19,10 @@ function fakeLabel(): DynamicLengthLabelElement {
   return { hidden: true, style: { left: '', top: '' } };
 }
 
+function fakeTextLabel(): DynamicLengthTextLabelElement {
+  return { hidden: true, style: { left: '', top: '' }, textContent: null };
+}
+
 function fire(input: ReturnType<typeof fakeInput>, type: string, event: object = {}): void {
   for (const listener of input.listeners[type] ?? []) listener(event as never);
 }
@@ -28,17 +32,18 @@ function setup() {
   const angleInput = fakeInput();
   const separatorLabel = fakeLabel();
   const degreeLabel = fakeLabel();
+  const radialPrefixLabel = fakeTextLabel();
   const onCommit = vi.fn();
   const onEmptyCommit = vi.fn();
   let active = true;
   const controller = createDynamicLengthInput({
-    lengthInput, angleInput, separatorLabel, degreeLabel,
+    lengthInput, angleInput, separatorLabel, degreeLabel, radialPrefixLabel,
     project: (point) => ({ x: point.x * 10, y: point.y * 10 }),
     isActive: () => active,
     onCommit,
     onEmptyCommit,
   });
-  return { lengthInput, angleInput, separatorLabel, degreeLabel, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
+  return { lengthInput, angleInput, separatorLabel, degreeLabel, radialPrefixLabel, onCommit, onEmptyCommit, controller, setActive: (value: boolean) => { active = value; } };
 }
 
 describe('createDynamicLengthInput', () => {
@@ -52,10 +57,13 @@ describe('createDynamicLengthInput', () => {
     expect(angleInput.hidden).toBe(false);
     const angleDeg = Number(angleInput.value);
     expect(angleDeg).toBeCloseTo((Math.atan2(8, 6) * 180) / Math.PI, 1);
-    expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(30, 6); // midpoint (3,4), projected *10
+    // Anchored on the start point (0,0), projected *10, and set down below it
+    // — not on the segment's midpoint, which walks along with the cursor.
+    expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(0, 6);
+    expect(Number.parseFloat(lengthInput.style.top)).toBeGreaterThan(0);
     // The angle box sits a fixed screen-pixel offset to the right of the
     // length box, at the same height — not at the (world-space) start point.
-    expect(Number.parseFloat(angleInput.style.left)).toBeCloseTo(30 + 84, 6);
+    expect(Number.parseFloat(angleInput.style.left)).toBeCloseTo(84, 6);
     expect(angleInput.style.top).toBe(lengthInput.style.top);
   });
 
@@ -212,56 +220,89 @@ describe('createDynamicLengthInput', () => {
   });
 });
 
-describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step)', () => {
-  it('shows only the length box, displaying the diameter — twice the centre-to-cursor distance', () => {
+describe('createDynamicLengthInput — updateRadial (a circle\'s own size step)', () => {
+  it('shows only the length box, holding the distance the command asks for', () => {
     const { lengthInput, angleInput, separatorLabel, degreeLabel, controller } = setup();
-    // Centre-to-cursor distance is 5 (3-4-5 triangle); diameter is 10.
-    const point = controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    // CIRCLE_DIAMETER's own point is a diameter away from the centre, so the
+    // 3-4-5 distance of 5 IS the diameter — it is not doubled again.
+    const point = controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
     expect(point.x).toBeCloseTo(3, 6);
     expect(point.y).toBeCloseTo(4, 6);
     expect(lengthInput.hidden).toBe(false);
-    expect(lengthInput.value).toBe('10.00');
+    expect(lengthInput.value).toBe('5.00');
     expect(angleInput.hidden).toBe(true);
     expect(separatorLabel.hidden).toBe(true);
     expect(degreeLabel.hidden).toBe(true);
   });
 
-  it('sits just outside the circle\'s own boundary point, not at the (inside) centre-to-point midpoint', () => {
+  it('sits at the centre, out from under the cursor placing the point', () => {
     const { lengthInput, controller } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
-    // project() is (x,y) -> (x*10, y*10): boundary point (3,4) projects to
-    // (30,40), 50px from the projected centre (0,0). The box must sit
-    // farther out than that — never at the (15,20) inside midpoint.
-    const boxX = Number.parseFloat(lengthInput.style.left);
-    const boxY = Number.parseFloat(lengthInput.style.top);
-    const distanceFromCentre = Math.hypot(boxX, boxY);
-    expect(distanceFromCentre).toBeGreaterThan(50);
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
+    // project() is (x,y) -> (x*10, y*10): the boundary point (3,4) projects
+    // to (30,40), which is where the cursor is. The box belongs at the
+    // projected centre (0,0) instead, which this step has already fixed.
+    expect(Number.parseFloat(lengthInput.style.left)).toBeCloseTo(0, 6);
+    expect(Number.parseFloat(lengthInput.style.top)).toBeCloseTo(0, 6);
   });
 
-  it('fixes the point at half the typed diameter — the radius-equivalent distance', () => {
+  it('names the quantity in front of the box, R or D', () => {
+    const { lengthInput, radialPrefixLabel, controller } = setup();
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'radius');
+    expect(lengthInput.value).toBe('5.00');
+    expect(radialPrefixLabel.hidden).toBe(false);
+    expect(radialPrefixLabel.textContent).toBe('R');
+    // To the left of the box it names.
+    expect(Number.parseFloat(radialPrefixLabel.style.left)).toBeLessThan(Number.parseFloat(lengthInput.style.left));
+
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
+    // The same distance, named differently — which is the point of the label.
+    expect(lengthInput.value).toBe('5.00');
+    expect(radialPrefixLabel.textContent).toBe('D');
+  });
+
+  it('fixes the point at the typed radius when that is what is on show', () => {
     const { lengthInput, controller } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
-    lengthInput.value = '20'; // diameter 20 → radius 10
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'radius');
+    lengthInput.value = '10';
     fire(lengthInput, 'input');
-    const point = controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    const point = controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'radius');
+    expect(Math.hypot(point.x, point.y)).toBeCloseTo(10, 6);
+  });
+
+  it('leaves the R/D label behind when a line\'s own boxes take over', () => {
+    const { radialPrefixLabel, controller } = setup();
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'radius');
+    expect(radialPrefixLabel.hidden).toBe(false);
+    controller.update({ x: 0, y: 0 }, { x: 6, y: 8 }, { emptyFinishes: false });
+    expect(radialPrefixLabel.hidden).toBe(true);
+  });
+
+  it('fixes the point at the typed distance', () => {
+    const { lengthInput, controller } = setup();
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
+    lengthInput.value = '10';
+    fire(lengthInput, 'input');
+    const point = controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
     expect(point.x).toBeCloseTo(6, 6); // 10 * (3/5)
     expect(point.y).toBeCloseTo(8, 6); // 10 * (4/5)
   });
 
-  it('commits through onCommit on Enter, converting the typed diameter to the underlying radius point', () => {
+  it('commits through onCommit on Enter, at the typed distance in the cursor\'s direction', () => {
     const { lengthInput, controller, onCommit } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
     lengthInput.value = '20';
     fire(lengthInput, 'input');
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     const [point] = onCommit.mock.calls[0];
-    expect(point.x).toBeCloseTo(6, 6);
-    expect(point.y).toBeCloseTo(8, 6);
+    // The 3-4-5 direction, out at 20: the command halves it into a radius
+    // itself, which is not this box's business.
+    expect(point.x).toBeCloseTo(12, 6);
+    expect(point.y).toBeCloseTo(16, 6);
   });
 
   it('hides and clears after a commit, same as the polar (length/angle) mode', () => {
     const { lengthInput, angleInput, controller } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
     fire(lengthInput, 'keydown', { key: 'Enter', preventDefault: () => {} });
     expect(lengthInput.hidden).toBe(true);
     expect(angleInput.hidden).toBe(true);
@@ -270,15 +311,15 @@ describe('createDynamicLengthInput — updateDiameter (CIRCLE\'s own radius step
 
   it('does not auto-focus by default (drawing a new circle never captures the pointer)', () => {
     const { lengthInput, controller } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 });
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter');
     expect(lengthInput.focus).not.toHaveBeenCalled();
   });
 
   it('auto-focuses on first appearance when asked — grip-editing an existing circle keeps the pointer captured', () => {
     const { lengthInput, controller } = setup();
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 3, y: 4 }, true);
+    controller.updateRadial({ x: 0, y: 0 }, { x: 3, y: 4 }, 'diameter', true);
     expect(lengthInput.focus).toHaveBeenCalledTimes(1);
-    controller.updateDiameter({ x: 0, y: 0 }, { x: 5, y: 5 }, true);
+    controller.updateRadial({ x: 0, y: 0 }, { x: 5, y: 5 }, 'diameter', true);
     expect(lengthInput.focus).toHaveBeenCalledTimes(1); // only the initial auto-focus
   });
 });

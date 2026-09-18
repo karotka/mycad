@@ -689,8 +689,9 @@ export class Canvas2DRenderer {
       this.ctx.beginPath();
       this.ctx.arc(c.x, c.y, (diameter / 2) * this.zoom, 0, Math.PI * 2);
       this.ctx.stroke();
-      label = `\u00d8 = ${diameter.toFixed(2)} mm`;
-      labelPoint = d.cursor;
+      // No on-canvas label: the D box at the centre already says this, and
+      // this one drew on top of the cursor placing the point — the same
+      // reasoning as CIRCLE's own dropped label below.
     } else if (preview.type === 'ellipse' && d.center && d.axisPoint && d.cursor) {
       const radiusX = Math.hypot(d.axisPoint.x - d.center.x, d.axisPoint.y - d.center.y);
       const rotation = Math.atan2(d.axisPoint.y - d.center.y, d.axisPoint.x - d.center.x);
@@ -714,8 +715,8 @@ export class Canvas2DRenderer {
       const first = worldToScreen(d.start, w, h, this.pan, this.zoom);
       const opposite = worldToScreen(d.end, w, h, this.pan, this.zoom);
       this.ctx.strokeRect(first.x, first.y, opposite.x - first.x, opposite.y - first.y);
-      label = `${Math.abs(d.end.x - d.start.x).toFixed(2)} × ${Math.abs(d.end.y - d.start.y).toFixed(2)} mm`;
-      labelPoint = d.end;
+      // No on-canvas label: the Width and Height boxes already say both
+      // numbers, so this printed the size a second time.
     } else if (preview.type === 'octagon' && d.center && d.cursor) {
       const r = Math.hypot(d.cursor.x - d.center.x, d.cursor.y - d.center.y);
       const center = worldToScreen(d.center, w, h, this.pan, this.zoom);
