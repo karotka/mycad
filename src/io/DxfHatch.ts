@@ -4,6 +4,8 @@
  * call the generator only when they need clipped line segments.
  */
 import type { Vec2 } from '../math/geometry';
+import { hatchPatternSegments } from '../core/entities/hatch';
+export { hatchPatternSegments } from '../core/entities/hatch';
 
 export interface DxfPair { code: number; value: string }
 
@@ -169,80 +171,6 @@ function readPatternLines(fields: DxfPair[], scale: number): PatternLine[] {
     lines.push({ angle, base: { x: bx, y: by }, offset: { x: ox, y: oy } });
   }
   return lines;
-}
-
-const bbox = (loops: Vec2[][]): { min: Vec2; max: Vec2 } => {
-  const min = { x: Infinity, y: Infinity }, max = { x: -Infinity, y: -Infinity };
-  for (const loop of loops) for (const p of loop) {
-    min.x = Math.min(min.x, p.x); min.y = Math.min(min.y, p.y);
-    max.x = Math.max(max.x, p.x); max.y = Math.max(max.y, p.y);
-  }
-  return { min, max };
-};
-
-/** The t values (along a line through `p` with direction `d`) where it crosses the loops. */
-function crossings(loops: Vec2[][], p: Vec2, d: Vec2): number[] {
-  const ts: number[] = [];
-  for (const loop of loops) {
-    for (let k = 0; k < loop.length; k++) {
-      const a = loop[k], b = loop[(k + 1) % loop.length];
-      const ex = b.x - a.x, ey = b.y - a.y;
-      const denom = d.x * ey - d.y * ex;
-      if (Math.abs(denom) < 1e-12) continue; // parallel
-      // Solve p + t d = a + s e, for t (along line) and s in [0,1) on the edge.
-      const rx = a.x - p.x, ry = a.y - p.y;
-      const s = (rx * d.y - ry * d.x) / denom;
-      if (s < 0 || s >= 1) continue;
-      const t = (rx * ey - ry * ex) / denom;
-      ts.push(t);
-    }
-  }
-  return ts.sort((m, n) => m - n);
-}
-
-/** Generate the hatch lines for one pattern-line family, clipped to the boundary. */
-function familyLines(loops: Vec2[][], line: PatternLine, box: { min: Vec2; max: Vec2 }): Array<[Vec2, Vec2]> {
-  const out: Array<[Vec2, Vec2]> = [];
-  const d = { x: Math.cos(line.angle), y: Math.sin(line.angle) };
-  const n = { x: -d.y, y: d.x }; // unit normal to the line direction
-  // Codes 45/46 are the world offset from one pattern line to the next parallel
-  // one. Only its component across the line (offPerp) separates the lines — the
-  // along-line component just staggers dashes — so the family index k must be
-  // measured by perpendicular position, not by the full offset vector, or a
-  // pattern whose offset leans along the line lands its lines off the region.
-  const off = line.offset;
-  const offPerp = off.x * n.x + off.y * n.y;
-  if (Math.hypot(off.x, off.y) < 1e-9 || Math.abs(offPerp) < 1e-6) return out;
-  // Range of family index k that reaches the bounding box, by perpendicular position.
-  const corners = [box.min, { x: box.max.x, y: box.min.y }, box.max, { x: box.min.x, y: box.max.y }];
-  let kMin = Infinity, kMax = -Infinity;
-  for (const c of corners) {
-    const k = ((c.x - line.base.x) * n.x + (c.y - line.base.y) * n.y) / offPerp;
-    kMin = Math.min(kMin, k); kMax = Math.max(kMax, k);
-  }
-  const guard = 100000; // never loop unboundedly on a degenerate pattern
-  const total = Math.ceil(kMax) - Math.floor(kMin);
-  if (total > guard || total < 0) return out;
-  for (let k = Math.floor(kMin) - 1; k <= Math.ceil(kMax) + 1; k++) {
-    const p = { x: line.base.x + k * off.x, y: line.base.y + k * off.y };
-    const ts = crossings(loops, p, d);
-    for (let m = 0; m + 1 < ts.length; m += 2) {
-      const t0 = ts[m], t1 = ts[m + 1];
-      if (t1 - t0 < 1e-6) continue;
-      out.push([
-        { x: p.x + d.x * t0, y: p.y + d.y * t0 },
-        { x: p.x + d.x * t1, y: p.y + d.y * t1 },
-      ]);
-    }
-  }
-  return out;
-}
-
-/** Generate clipped strokes without creating drawing entities. */
-export function hatchPatternSegments(loops: Vec2[][], families: PatternLine[]): Array<[Vec2, Vec2]> {
-  if (loops.length === 0 || families.length === 0) return [];
-  const box = bbox(loops);
-  return families.flatMap((family) => familyLines(loops, family, box));
 }
 
 /** Turn one HATCH entity's fields into loops (always) and hatch lines (patterns only). */

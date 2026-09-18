@@ -17,7 +17,7 @@ import type { Document } from '../../Document';
 import { dist2, type Vec2 } from '../../../math/geometry';
 import { cloneWorkPlane, WORLD_WORK_PLANE } from '../../../math/workplane';
 import type { CommandRun, StepOutcome } from '../types';
-import { hatchPatternSegments } from '../../../io/DxfHatch';
+import { hatchPatternSegments } from '../../entities/hatch';
 import { isStrokeFont, strokeText } from '../../text/strokeFont';
 
 function explodeEntity(entity: Entity, doc: Document): Entity[] {

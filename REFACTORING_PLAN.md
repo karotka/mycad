@@ -203,6 +203,53 @@ where they duplicate geometry, then remove obsolete helpers/switch bodies.
 Snap-specific endpoint/intersection logic must remain definition-based rather
 than being replaced by display samples.
 
+### 2026-09-18 — canonical rectangle/octagon paths and bounds
+
+Status: **completed and verified**.
+
+- Added rectangle and octagon paths to `EntityGeometry.ts`. Rectangle corners
+  now carry their plane offset consistently; octagons reuse their defining
+  vertices without rebuilding them.
+- Canvas, Three.js construction, projected selection, command hit testing,
+  path export, SVG export and entity bounds consume the shared paths.
+- Empty octagons now have finite deterministic bounds instead of infinities.
+- Removed duplicated corner/vertex construction from seven consumer areas.
+  Dispatch `case` labels remain because each consumer still owns a distinct
+  rendering, selection or export action.
+- Added direct coverage for reversed rectangle corners, optional elevation,
+  octagon bounds and empty geometry.
+- Verification: TypeScript check passed; the full suite passed with 113 test
+  files and 1664 tests.
+
+Next specialised migration: MLINE and HATCH. They require multiple paths and
+region semantics respectively, so the canonical contract must preserve those
+differences instead of forcing both into one outline.
+
+### 2026-09-18 — canonical MLINE/HATCH paths, regions and bounds
+
+Status: **completed and verified**.
+
+- MLINE now exposes one canonical path per visible style element, retaining
+  element order for individual colour/linetype rendering. Closed offsets use
+  the path's `closed` flag without a duplicate terminal point.
+- HATCH exposes generated strokes separately from canonical boundary regions,
+  so outer loops and holes are not collapsed into one outline.
+- Moved renderer-independent hatch clipping from `io/DxfHatch.ts` into
+  `core/entities/hatch.ts`; the DXF module remains responsible only for parsing
+  and reexports the generator for compatibility.
+- Bounds, Canvas/Three.js rendering, 2D and projected picking, SVG/DXF/path
+  export, EXPLODE and command hit testing now consume the shared geometry.
+- MLINE point picking now follows the visible offset elements instead of its
+  invisible stored centerline.
+- Added direct coverage for MLINE element paths/exact bounds, HATCH holes versus
+  pattern strokes, and picking both visible MLINE elements.
+- Verification: TypeScript check passed; the full suite passed with 113 test
+  files and 1667 tests.
+
+Next specialised migration: text, dimensions, leaders and inserts. Their
+display geometry must distinguish real strokes from selection-only bounds and
+expanded child geometry.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

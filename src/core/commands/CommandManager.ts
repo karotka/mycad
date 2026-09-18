@@ -21,7 +21,6 @@ import {
 } from '../history/edits';
 import { translatedFeature } from '../solids/featureTransform';
 import { rotateSolidAroundPlane } from './steps/transform';
-import { hatchPatternSegments } from '../../io/DxfHatch';
 
 
 // Commands are declared in ./registry; re-exported here so existing importers
@@ -846,13 +845,13 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         break;
       }
       case 'rectangle': {
-        const corners = [e.first, { x: e.opposite.x, y: e.first.y }, e.opposite, { x: e.first.x, y: e.opposite.y }];
-        if (hitsChain(point, closePolyline(corners), tolerance)) return e;
+        const path = canonicalEntityPaths(e)[0];
+        if (hitsChain(point, closePolyline(path.points), tolerance)) return e;
         break;
       }
       case 'octagon': {
-        // Test the closed strokes, not only the stored corners.
-        if (hitsChain(point, closePolyline(e.vertices), tolerance)) return e;
+        const path = canonicalEntityPaths(e)[0];
+        if (path && hitsChain(point, closePolyline(path.points), tolerance)) return e;
         break;
       }
       case 'polyline': {
@@ -869,9 +868,13 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
       }
       case 'hatch': {
         const hitsBoundary = e.loops.some((loop) => hitsChain(point, closePolyline(loop), tolerance));
-        const hitsPattern = e.pattern !== 'solid' && hatchPatternSegments(e.loops, e.patternLines)
-          .some(([start, end]) => distanceToSegment(point, start, end) <= tolerance);
+        const hitsPattern = e.pattern !== 'solid' && canonicalEntityPaths(e)
+          .some((path) => hitsChain(point, path.points, tolerance));
         if (hitsBoundary || hitsPattern) return e;
+        break;
+      }
+      case 'mline': {
+        if (canonicalEntityPaths(e).some((path) => hitsChain(point, path.closed ? closePolyline(path.points) : path.points, tolerance))) return e;
         break;
       }
       // A text block's bounding box is roughly where its ink is, so it stands

@@ -19,9 +19,8 @@ import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, DEFAULT_LINETYPE_SCALE, lineTypeDashArray, linetypeScaleFor, lineWeightToPixels } from '../core/lineStyles';
 import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
-import { hatchPatternSegments } from '../io/DxfHatch';
+import { hatchPatternSegments } from '../core/entities/hatch';
 import { aciToRgb } from '../io/DxfAci';
-import { mlineOffsetLines } from '../core/entities/mline';
 import { offsetOpenPolyline } from '../core/commands/steps/edit2d';
 
 const localPointZ = (point: Vec2): number | undefined => (point as Vec2 & { z?: number }).z;
@@ -362,17 +361,11 @@ export class Canvas2DRenderer {
         this.ctx.stroke();
         break;
       }
-      case 'rectangle': {
-        const first = toScreen(entity.first);
-        const opposite = toScreen(entity.opposite);
-        this.ctx.strokeRect(first.x, first.y, opposite.x - first.x, opposite.y - first.y);
-        break;
-      }
+      case 'rectangle':
       case 'octagon':
       case 'polyline': {
-        // A polyline's arc segments are drawn out here; an octagon has none.
-        const path = entity.type === 'polyline' ? canonicalEntityPaths(entity)[0] : undefined;
-        const verts = entity.type === 'octagon' ? entity.vertices : path?.points ?? [];
+        const path = canonicalEntityPaths(entity)[0];
+        const verts = path?.points ?? [];
         if (verts.length < 2) break;
         this.ctx.beginPath();
         const first = toScreen(verts[0]);
@@ -381,9 +374,7 @@ export class Canvas2DRenderer {
           const p = toScreen(verts[i]);
           this.ctx.lineTo(p.x, p.y);
         }
-        if (entity.type === 'octagon' || path?.closed) {
-          this.ctx.closePath();
-        }
+        if (path.closed) this.ctx.closePath();
         this.ctx.stroke();
         break;
       }
@@ -392,8 +383,9 @@ export class Canvas2DRenderer {
         // colour/linetype — the one strokeStyle/dash set up before this switch
         // (for the entity as a whole) is only a starting point each element
         // overrides for its own stroke, then restores after.
-        const lines = mlineOffsetLines(entity);
-        lines.forEach((points, index) => {
+        const paths = canonicalEntityPaths(entity);
+        paths.forEach((path, index) => {
+          const points = path.points;
           if (points.length < 2) return;
           const element = entity.elements[index];
           this.ctx.save();
@@ -406,17 +398,19 @@ export class Canvas2DRenderer {
             const p = toScreen(points[i]);
             this.ctx.lineTo(p.x, p.y);
           }
+          if (path.closed) this.ctx.closePath();
           this.ctx.stroke();
           this.ctx.restore();
         });
-        if (!entity.closed && lines.length > 1) {
+        if (!entity.closed && paths.length > 1) {
           const capLine = (atStart: boolean, capStyle: 'none' | 'line'): void => {
             if (capStyle !== 'line') return;
             this.ctx.save();
             this.ctx.strokeStyle = this.colorHex(entity.color, selected);
             this.ctx.setLineDash([]);
             this.ctx.beginPath();
-            lines.forEach((points, index) => {
+            paths.forEach((path, index) => {
+              const points = path.points;
               if (points.length === 0) return;
               const p = toScreen(atStart ? points[0] : points.at(-1)!);
               if (index === 0) this.ctx.moveTo(p.x, p.y); else this.ctx.lineTo(p.x, p.y);
@@ -2155,6 +2149,29 @@ export class Viewport3D {
     let edgeResult: Entity | null = null;
     let bestInsideArea = Number.POSITIVE_INFINITY;
     let insideResult: Entity | null = null;
+    const testPath = (entity: Entity, owner: Entity, points: Vec2[], closed: boolean): void => {
+      const projected = points.map((point) => project(entity, point));
+      if (projected.length === 1 && projected[0]) {
+        const distance = Math.hypot(cursor.x - projected[0].x, cursor.y - projected[0].y);
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
+        return;
+      }
+      const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
+      if (closed && projectedPolygon.length === projected.length && polygonContains(cursor, projectedPolygon)) {
+        const area = polygonArea(projectedPolygon);
+        if (area < bestInsideArea) {
+          bestInsideArea = area;
+          insideResult = owner;
+        }
+      }
+      const segmentCount = closed ? projected.length : projected.length - 1;
+      for (let index = 0; index < segmentCount; index++) {
+        const start = projected[index], end = projected[(index + 1) % projected.length];
+        if (!start || !end) continue;
+        const distance = distanceToSegment(cursor, start, end);
+        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
+      }
+    };
     const candidates: Array<{ entity: Entity; owner: Entity }> = [];
     for (const owner of entities) {
       if (owner.type === 'insert') expandedInsertEntities(owner).forEach((entity) => candidates.push({ entity, owner }));
@@ -2162,6 +2179,16 @@ export class Viewport3D {
     }
     for (let entityIndex = candidates.length - 1; entityIndex >= 0; entityIndex--) {
       const { entity, owner } = candidates[entityIndex];
+      if (entity.type === 'mline') {
+        canonicalEntityPaths(entity).forEach((path) => testPath(entity, owner, path.points, path.closed));
+        continue;
+      }
+      if (entity.type === 'hatch') {
+        const paths = entity.loops.map((points) => ({ points, closed: true }));
+        if (entity.pattern !== 'solid') paths.push(...canonicalEntityPaths(entity));
+        paths.forEach((path) => testPath(entity, owner, path.points, path.closed));
+        continue;
+      }
       let points: Vec2[] = [];
       let closed = false;
       switch (entity.type) {
@@ -2179,17 +2206,19 @@ export class Viewport3D {
           closed = path.closed;
           break;
         }
-        case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
-        case 'octagon': points = entity.vertices; closed = true; break;
+        case 'rectangle':
+        case 'octagon': {
+          const path = canonicalEntityPaths(entity)[0];
+          points = path?.points ?? [];
+          closed = path?.closed ?? false;
+          break;
+        }
         case 'polyline': {
           const path = canonicalEntityPaths(entity)[0];
           points = path?.points ?? [];
           closed = path?.closed ?? false;
           break;
         }
-        // v1 picks the mline by its centerline only, same as PickingService's 2D pick.
-        case 'mline': points = entity.vertices; closed = entity.closed; break;
-        case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
         case 'arc':
         case 'bezier': points = canonicalEntityPaths(entity)[0]?.points ?? []; break;
         case 'text': {
@@ -2213,27 +2242,7 @@ export class Viewport3D {
           break;
         }
       }
-      const projected = points.map((point) => project(entity, point));
-      if (projected.length === 1 && projected[0]) {
-        const distance = Math.hypot(cursor.x - projected[0].x, cursor.y - projected[0].y);
-        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
-        continue;
-      }
-      const projectedPolygon = projected.filter((point): point is Vec2 => Boolean(point));
-      if (closed && projectedPolygon.length === projected.length && polygonContains(cursor, projectedPolygon)) {
-        const area = polygonArea(projectedPolygon);
-        if (area < bestInsideArea) {
-          bestInsideArea = area;
-          insideResult = owner;
-        }
-      }
-      const segmentCount = closed ? projected.length : projected.length - 1;
-      for (let index = 0; index < segmentCount; index++) {
-        const start = projected[index], end = projected[(index + 1) % projected.length];
-        if (!start || !end) continue;
-        const distance = distanceToSegment(cursor, start, end);
-        if (distance <= bestEdgeDistance) { bestEdgeDistance = distance; edgeResult = owner; }
-      }
+      testPath(entity, owner, points, closed);
     }
     return edgeResult ?? insideResult;
   }
@@ -2345,9 +2354,7 @@ export class Viewport3D {
           side: THREE.DoubleSide, depthWrite: false,
         })));
       }
-      const paths = entity.pattern === 'solid'
-        ? entity.loops.map((loop) => ({ points: loop, loop: true }))
-        : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], loop: false }));
+      const paths = canonicalEntityPaths(entity).map((path) => ({ points: path.points, loop: path.closed }));
       for (const path of paths) {
         const geometry = new THREE.BufferGeometry().setFromPoints(path.points.map((point) => {
           const world = localToWorld(plane, point, 0.015);
@@ -2360,7 +2367,8 @@ export class Viewport3D {
     if (entity.type === 'mline') {
       const group = new THREE.Group();
       const plane = entity.workPlane ?? WORLD_WORK_PLANE;
-      mlineOffsetLines(entity).forEach((line, index) => {
+      canonicalEntityPaths(entity).forEach((path, index) => {
+        const line = path.points;
         if (line.length < 2) return;
         const element = entity.elements[index];
         const color = entity.selected ? 0x65c7ff : element.aci === 256 ? entity.color : (aciToRgb(element.aci) ?? entity.color);
@@ -2368,7 +2376,8 @@ export class Viewport3D {
           const world = localToWorld(plane, point, (localPointZ(point) ?? entityPlaneOffset(entity)) + 0.015);
           return new THREE.Vector3(world.x, world.z, -world.y);
         }));
-        group.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, depthTest: false })));
+        const material = new THREE.LineBasicMaterial({ color, depthTest: false });
+        group.add(path.closed ? new THREE.LineLoop(geometry, material) : new THREE.Line(geometry, material));
       });
       group.renderOrder = 10;
       return group;
@@ -2387,18 +2396,14 @@ export class Viewport3D {
         break;
       }
       case 'rectangle':
-        points.push(
-          entity.first,
-          { x: entity.opposite.x, y: entity.first.y },
-          entity.opposite,
-          { x: entity.first.x, y: entity.opposite.y },
-        );
-        loop = true;
+      case 'octagon': {
+        const path = canonicalEntityPaths(entity)[0];
+        if (path) {
+          points.push(...path.points);
+          loop = path.closed;
+        }
         break;
-      case 'octagon':
-        points.push(...entity.vertices);
-        loop = true;
-        break;
+      }
       case 'polyline':
         {
           const path = canonicalEntityPaths(entity)[0];

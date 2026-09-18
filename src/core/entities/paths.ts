@@ -10,8 +10,6 @@
 import { dimensionGeometry, expandedInsertEntities, leaderGeometry, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
-import { hatchPatternSegments } from '../../io/DxfHatch';
-import { mlineOffsetLines } from './mline';
 import { canonicalEntityPaths, type EntityPath } from './EntityGeometry';
 
 export type { EntityPath } from './EntityGeometry';
@@ -40,21 +38,11 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
     case 'polyline':
       return canonicalEntityPaths(entity);
     case 'rectangle':
-      return [{
-        points: [
-          entity.first,
-          { x: entity.opposite.x, y: entity.first.y },
-          entity.opposite,
-          { x: entity.first.x, y: entity.opposite.y },
-        ],
-        closed: true,
-      }];
+      return canonicalEntityPaths(entity);
     case 'octagon':
-      return [{ points: [...entity.vertices], closed: true }];
+      return canonicalEntityPaths(entity);
     case 'mline':
-      return mlineOffsetLines(entity)
-        .filter((points) => points.length >= 2)
-        .map((points) => ({ points, closed: entity.closed }));
+      return canonicalEntityPaths(entity);
     case 'circle': {
       return canonicalEntityPaths(entity, segments);
     }
@@ -64,9 +52,7 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
     case 'bezier':
       return canonicalEntityPaths(entity, segments);
     case 'hatch':
-      return entity.pattern === 'solid'
-        ? entity.loops.filter((loop) => loop.length >= 2).map((points) => ({ points: [...points], closed: true }))
-        : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], closed: false }));
+      return canonicalEntityPaths(entity);
     case 'dimension': {
       // Drawn, not cut — but a plotter putting a drawing on paper wants it, and
       // it is made of lines like everything else. The arrowheads are outlines.

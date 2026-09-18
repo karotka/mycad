@@ -3,11 +3,9 @@ import type { Entity } from '../core/entities/types';
 import { dimensionGeometry, expandedInsertEntities, leaderGeometry } from '../core/entities/types';
 import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, linetypeScaleFor } from '../core/lineStyles';
-import { hatchPatternSegments } from '../io/DxfHatch';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import type { Vec2 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
-import { mlineOffsetLines } from '../core/entities/mline';
 import { aciToRgb } from '../io/DxfAci';
 
 export interface PrintWindow { min: Vec2; max: Vec2 }
@@ -112,9 +110,9 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
           const d = entity.loops.map((loop) => pathFromPoints(loop, true)).filter(Boolean).join(' ');
           if (d) parts.push(`<path d="${d}" fill="${printColorHex(entity.color, style.colorMode)}" fill-opacity="0.3" fill-rule="evenodd" stroke="none"/>`);
         } else {
-          const segments = hatchPatternSegments(entity.loops, entity.patternLines);
-          if (segments.length) {
-            const d = segments.map(([a, b]) => `M${fmt(toPage(a).x)},${fmt(toPage(a).y)} L${fmt(toPage(b).x)},${fmt(toPage(b).y)}`).join(' ');
+          const paths = canonicalEntityPaths(entity);
+          if (paths.length) {
+            const d = paths.map((path) => pathFromPoints(path.points, path.closed)).filter(Boolean).join(' ');
             parts.push(`<path d="${d}" ${strokeAttrs(entity)}/>`);
           }
         }
@@ -133,23 +131,19 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         break;
       }
       case 'rectangle': {
-        // first/opposite are page-space already; drawPolyline would re-project
-        // them, so build the path directly from these four page corners.
-        const a = toPage(entity.first), b = toPage(entity.opposite);
-        const d = `M${fmt(a.x)},${fmt(a.y)} L${fmt(b.x)},${fmt(a.y)} L${fmt(b.x)},${fmt(b.y)} L${fmt(a.x)},${fmt(b.y)} Z`;
-        parts.push(`<path d="${d}" ${strokeAttrs(entity)}/>`);
+        drawPolyline(entity, canonicalEntityPaths(entity)[0].points, true);
         break;
       }
       case 'octagon':
-        drawPolyline(entity, entity.vertices, true);
+        drawPolyline(entity, canonicalEntityPaths(entity)[0]?.points ?? [], true);
         break;
       case 'polyline':
         drawPolyline(entity, canonicalEntityPaths(entity)[0]?.points ?? [], entity.closed);
         break;
       case 'mline': {
-        mlineOffsetLines(entity).forEach((points, index) => {
+        canonicalEntityPaths(entity).forEach((path, index) => {
           const element = entity.elements[index];
-          const d = pathFromPoints(points, false); // mlineOffsetLines already closes a closed mline's own loop
+          const d = pathFromPoints(path.points, path.closed);
           if (!d) return;
           const weightMm = style.keepLineweights ? (doc.layerLineweight[entity.layer] ?? DEFAULT_LINE_WEIGHT_MM) : DEFAULT_LINE_WEIGHT_MM;
           const dash = lineTypeDashArray(element.linetype, scale, linetypeScaleFor(doc.drafting.linetypeScale, entity.linetypeScale));

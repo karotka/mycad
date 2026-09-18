@@ -1288,45 +1288,14 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     case 'circle':
       return canonicalEntityBounds(e);
     case 'rectangle':
-      return {
-        min: { x: Math.min(e.first.x, e.opposite.x), y: Math.min(e.first.y, e.opposite.y) },
-        max: { x: Math.max(e.first.x, e.opposite.x), y: Math.max(e.first.y, e.opposite.y) },
-      };
-    case 'octagon': {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const v of e.vertices) {
-        minX = Math.min(minX, v.x);
-        minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x);
-        maxY = Math.max(maxY, v.y);
-      }
-      return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
-    }
+    case 'octagon':
+      return canonicalEntityBounds(e);
     case 'polyline': {
       return canonicalEntityBounds(e);
     }
-    case 'mline': {
-      // A conservative box — the centerline's own extent padded by the widest
-      // element offset — rather than the exact offset-line geometry, so this
-      // stays free of a dependency on the offset math in commands/steps/edit2d.
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const v of e.vertices) {
-        minX = Math.min(minX, v.x);
-        minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x);
-        maxY = Math.max(maxY, v.y);
-      }
-      const pad = Math.max(0, ...e.elements.map((element) => Math.abs(element.offset)));
-      return { min: { x: minX - pad, y: minY - pad }, max: { x: maxX + pad, y: maxY + pad } };
-    }
-    case 'hatch': {
-      const points = e.loops.flat();
-      if (points.length === 0) return { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
-      return {
-        min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)) },
-        max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)) },
-      };
-    }
+    case 'mline':
+    case 'hatch':
+      return canonicalEntityBounds(e);
     case 'arc':
     case 'bezier':
       return canonicalEntityBounds(e);

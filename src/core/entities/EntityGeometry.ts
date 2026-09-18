@@ -1,6 +1,8 @@
-import type { Vec2 } from '../../math/geometry';
+import { dist2, type Vec2 } from '../../math/geometry';
+import { hatchPatternSegments } from './hatch';
+import { mlineOffsetLines } from './mline';
 import { polylineOutline } from './polylineArcs';
-import type { ArcEntity, BezierEntity, BezierSegment, CircleEntity, EllipseEntity, LineEntity, PolylineEntity } from './types';
+import type { ArcEntity, BezierEntity, BezierSegment, CircleEntity, EllipseEntity, HatchEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity } from './types';
 
 export interface EntityPath {
   points: Vec2[];
@@ -13,7 +15,12 @@ export interface EntityBounds {
   max: Vec2;
 }
 
-export type CanonicalPathEntity = LineEntity | PolylineEntity | CircleEntity | EllipseEntity | ArcEntity | BezierEntity;
+export interface EntityRegion {
+  /** Outer boundary first, followed by holes. */
+  loops: Vec2[][];
+}
+
+export type CanonicalPathEntity = LineEntity | PolylineEntity | CircleEntity | EllipseEntity | ArcEntity | BezierEntity | RectangleEntity | OctagonEntity | MlineEntity | HatchEntity;
 
 export interface GeometryQuality {
   /** Maximum local distance between an analytic curve and its sampled chord. */
@@ -165,6 +172,30 @@ export function canonicalEntityPaths(entity: CanonicalPathEntity, input: Geometr
       const points = [...polylineOutline(entity)];
       return points.length >= 2 ? [{ points, closed: entity.closed }] : [];
     }
+    case 'rectangle': {
+      const z = pointZ(entity.first) ?? pointZ(entity.opposite);
+      return [{
+        points: [
+          withZ({ x: entity.first.x, y: entity.first.y }, z),
+          withZ({ x: entity.opposite.x, y: entity.first.y }, z),
+          withZ({ x: entity.opposite.x, y: entity.opposite.y }, z),
+          withZ({ x: entity.first.x, y: entity.opposite.y }, z),
+        ],
+        closed: true,
+      }];
+    }
+    case 'octagon':
+      return entity.vertices.length >= 2 ? [{ points: [...entity.vertices], closed: true }] : [];
+    case 'mline':
+      return mlineOffsetLines(entity).flatMap((line) => {
+        if (line.length < 2) return [];
+        const repeatsStart = entity.closed && dist2(line[0], line.at(-1)!) < 1e-12;
+        return [{ points: repeatsStart ? line.slice(0, -1) : line, closed: entity.closed }];
+      });
+    case 'hatch':
+      return entity.pattern === 'solid'
+        ? entity.loops.filter((loop) => loop.length >= 2).map((loop) => ({ points: [...loop], closed: true }))
+        : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], closed: false }));
     case 'circle': {
       const z = pointZ(entity.center);
       return [{
@@ -223,10 +254,27 @@ export function canonicalEntityBounds(entity: CanonicalPathEntity): EntityBounds
   }
   if (entity.type === 'arc') return arcBounds(entity);
   if (entity.type === 'bezier') return bezierBounds(entity);
+  if (entity.type === 'rectangle' || entity.type === 'octagon') {
+    return boundsFromPaths(canonicalEntityPaths(entity))
+      ?? (entity.type === 'rectangle'
+        ? { min: { ...entity.first }, max: { ...entity.first } }
+        : { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } });
+  }
+  if (entity.type === 'mline' || entity.type === 'hatch') {
+    const source = entity.type === 'hatch' ? canonicalEntityRegions(entity).flatMap((region) => region.loops) : [];
+    return boundsFromPaths(source.length > 0
+      ? source.map((points) => ({ points, closed: true }))
+      : canonicalEntityPaths(entity)) ?? { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+  }
   return boundsFromPaths(canonicalEntityPaths(entity))
     ?? ('start' in entity
       ? { min: { ...entity.start }, max: { ...entity.start } }
       : { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } });
+}
+
+/** Filled regions are separate from drawable strokes so hatch holes survive. */
+export function canonicalEntityRegions(entity: HatchEntity): EntityRegion[] {
+  return entity.loops.length === 0 ? [] : [{ loops: entity.loops.map((loop) => [...loop]) }];
 }
 
 function normalizedAngle(angle: number): number {

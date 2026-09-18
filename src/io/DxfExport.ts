@@ -3,7 +3,7 @@ import { dimensionGeometry, type BlockDefinition, type DimensionEntity, type Ell
 import type { Vec2 } from '../math/geometry';
 import { ACI_BYLAYER } from './DxfAci';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, LINE_TYPES } from '../core/lineStyles';
-import { mlineOffsetLines } from '../core/entities/mline';
+import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
 import type { DimensionStyle } from '../core/settings';
 import { leaderGeometry, type LeaderEntity } from '../core/entities/types';
 
@@ -293,8 +293,8 @@ function writeEntity(pair: Pair, entity: Entity): void {
       // No native MLINE/MLINESTYLE writer yet — each parallel line exports as
       // its own LWPOLYLINE, in the element's own colour, so the drawing still
       // reads correctly (and cuts/plots correctly) in a plain DXF reader.
-      mlineOffsetLines(entity).forEach((points, index) => {
-        writePolyline(pair, { layer: entity.layer, aci: entity.elements[index].aci }, points, entity.closed);
+      canonicalEntityPaths(entity).forEach((path, index) => {
+        writePolyline(pair, { layer: entity.layer, aci: entity.elements[index].aci }, path.points, path.closed);
       });
       break;
     case 'bezier':

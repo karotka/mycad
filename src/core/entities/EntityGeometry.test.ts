@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalEntityBounds, canonicalEntityPaths } from './EntityGeometry';
-import type { ArcEntity, BezierEntity, CircleEntity, EllipseEntity, LineEntity, PolylineEntity } from './types';
+import { canonicalEntityBounds, canonicalEntityPaths, canonicalEntityRegions } from './EntityGeometry';
+import type { ArcEntity, BezierEntity, CircleEntity, EllipseEntity, HatchEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity } from './types';
 
 const base = { layer: '0', aci: 256, color: 0xffffff, selected: false } as const;
 
@@ -112,5 +112,66 @@ describe('canonicalEntityPaths', () => {
     expect(fine.points.length).toBeGreaterThan(coarse.points.length);
     expect((fine.points.at(-1) as typeof fine.points[number] & { z?: number }).z).toBe(4);
     expect(canonicalEntityBounds(bezier)).toEqual({ min: { x: 0, y: 0 }, max: { x: 10, y: 7.5 } });
+  });
+
+  it('builds one elevated closed path and bounds for a rectangle', () => {
+    const rectangle: RectangleEntity = {
+      ...base, id: 'rectangle', type: 'rectangle',
+      first: { x: 7, y: -2, z: 5 } as RectangleEntity['first'],
+      opposite: { x: 1, y: 4 } as RectangleEntity['opposite'],
+    };
+
+    const path = canonicalEntityPaths(rectangle)[0];
+    expect(path.closed).toBe(true);
+    expect(path.points).toEqual([
+      { x: 7, y: -2, z: 5 }, { x: 1, y: -2, z: 5 },
+      { x: 1, y: 4, z: 5 }, { x: 7, y: 4, z: 5 },
+    ]);
+    expect(canonicalEntityBounds(rectangle)).toEqual({ min: { x: 1, y: -2 }, max: { x: 7, y: 4 } });
+  });
+
+  it('uses octagon vertices directly and gives an empty one finite bounds', () => {
+    const octagon: OctagonEntity = {
+      ...base, id: 'octagon', type: 'octagon', center: { x: 2, y: 3 }, radius: 4,
+      vertices: [{ x: -2, y: 3 }, { x: 2, y: 7 }, { x: 6, y: 3 }, { x: 2, y: -1 }],
+    };
+    expect(canonicalEntityPaths(octagon)[0]).toEqual({ points: octagon.vertices, closed: true });
+    expect(canonicalEntityBounds(octagon)).toEqual({ min: { x: -2, y: -1 }, max: { x: 6, y: 7 } });
+
+    const empty = { ...octagon, vertices: [] };
+    expect(canonicalEntityPaths(empty)).toEqual([]);
+    expect(canonicalEntityBounds(empty)).toEqual({ min: { x: 0, y: 0 }, max: { x: 0, y: 0 } });
+  });
+
+  it('describes every visible MLINE element and derives exact offset bounds', () => {
+    const mline: MlineEntity = {
+      ...base, id: 'mline', type: 'mline', vertices: [{ x: 0, y: 0 }, { x: 10, y: 0 }], closed: false,
+      styleName: 'TEST', justification: 'zero', startCap: 'none', endCap: 'none',
+      elements: [
+        { offset: 0.5, aci: 256, linetype: 'Continuous' },
+        { offset: -0.5, aci: 256, linetype: 'Continuous' },
+      ],
+    };
+    expect(canonicalEntityPaths(mline)).toEqual([
+      { points: [{ x: 0, y: 0.5 }, { x: 10, y: 0.5 }], closed: false },
+      { points: [{ x: 0, y: -0.5 }, { x: 10, y: -0.5 }], closed: false },
+    ]);
+    expect(canonicalEntityBounds(mline)).toEqual({ min: { x: 0, y: -0.5 }, max: { x: 10, y: 0.5 } });
+  });
+
+  it('keeps HATCH regions with holes separate from generated pattern strokes', () => {
+    const hatch: HatchEntity = {
+      ...base, id: 'hatch', type: 'hatch', pattern: 'lines', angle: 0, spacing: 2,
+      loops: [
+        [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+        [{ x: 4, y: 4 }, { x: 6, y: 4 }, { x: 6, y: 6 }, { x: 4, y: 6 }],
+      ],
+      patternLines: [{ angle: 0, base: { x: 0, y: 0 }, offset: { x: 0, y: 2 } }],
+    };
+    const paths = canonicalEntityPaths(hatch);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((path) => !path.closed && path.points.length === 2)).toBe(true);
+    expect(canonicalEntityRegions(hatch)[0].loops).toEqual(hatch.loops);
+    expect(canonicalEntityBounds(hatch)).toEqual({ min: { x: 0, y: 0 }, max: { x: 10, y: 10 } });
   });
 });

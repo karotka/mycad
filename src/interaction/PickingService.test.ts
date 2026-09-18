@@ -165,6 +165,18 @@ describe('picking a native hatch', () => {
   });
 });
 
+describe('picking an MLINE by its visible elements', () => {
+  it('hits either offset stroke rather than an invisible centerline', () => {
+    const doc = new Document();
+    const mline = doc.createMline([{ x: 0, y: 0 }, { x: 10, y: 0 }], false, doc.mlineStyles[0]);
+    doc.addEntity(mline);
+
+    expect(pickEntityAt(doc, { x: 5, y: 0.5 }, 0.1)).toMatchObject({ id: mline.id, type: 'mline' });
+    expect(pickEntityAt(doc, { x: 5, y: -0.5 }, 0.1)).toMatchObject({ id: mline.id, type: 'mline' });
+    expect(pickEntityAt(doc, { x: 5, y: 0 }, 0.1)).toBeNull();
+  });
+});
+
 describe('picking a line along its length', () => {
   it('returns the INSERT owner when its transformed child is picked', () => {
     const doc = new Document();

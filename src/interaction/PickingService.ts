@@ -3,7 +3,7 @@ import { entityBounds, expandedInsertSolids, leaderGeometry, type Entity, type S
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
-import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
+import { canonicalEntityPaths, canonicalEntityRegions, type EntityPath } from '../core/entities/EntityGeometry';
 
 export interface SolidBounds {
   minX: number; minY: number; minZ: number;
@@ -98,29 +98,21 @@ function polygonIntersectsBox(polygon: readonly Vec2[], box: WindowBounds, close
   return false;
 }
 
-function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
+function entityOutlines(entity: Entity): EntityPath[] {
   switch (entity.type) {
-    case 'point': return { points: [entity.position], closed: false };
-    case 'leader': return { points: leaderGeometry(entity).path, closed: false };
-    case 'line': return canonicalEntityPaths(entity)[0];
-    case 'circle': return canonicalEntityPaths(entity)[0];
-    case 'ellipse': return canonicalEntityPaths(entity)[0];
-    case 'rectangle': {
-      const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
-      const corner = (x: number, y: number): Vec2 => (z === undefined ? { x, y } : { x, y, z } as Vec2);
-      return {
-        points: [corner(entity.first.x, entity.first.y), corner(entity.opposite.x, entity.first.y), corner(entity.opposite.x, entity.opposite.y), corner(entity.first.x, entity.opposite.y)],
-        closed: true,
-      };
-    }
-    case 'octagon': return { points: entity.vertices, closed: true };
-    case 'polyline': return canonicalEntityPaths(entity)[0] ?? { points: [], closed: entity.closed };
-    // v1 picks the mline by its centerline only, not each parallel element —
-    // matching where SnapService and GripController hook in for it too.
-    case 'mline': return { points: entity.vertices, closed: entity.closed };
-    case 'hatch': return { points: entity.loops[0] ?? [], closed: true };
+    case 'point': return [{ points: [entity.position], closed: false }];
+    case 'leader': return [{ points: leaderGeometry(entity).path, closed: false }];
+    case 'line':
+    case 'circle':
+    case 'ellipse':
+    case 'rectangle':
+    case 'octagon':
+    case 'polyline':
+    case 'mline': return canonicalEntityPaths(entity);
+    case 'hatch': return canonicalEntityRegions(entity).flatMap((region) =>
+      region.loops.map((points) => ({ points, closed: true })));
     case 'arc':
-    case 'bezier': return canonicalEntityPaths(entity)[0] ?? { points: [], closed: false };
+    case 'bezier': return canonicalEntityPaths(entity);
     case 'insert':
     case 'text':
     case 'dimension': {
@@ -129,10 +121,10 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
       // at the right depth for window selection.
       const z = (((entity.type === 'dimension' ? entity.start : entity.position) as Vec2 & { z?: number }).z);
       const corner = (point: Vec2): Vec2 => (z === undefined ? point : { ...point, z } as Vec2);
-      return {
+      return [{
         points: [corner(bounds.min), corner({ x: bounds.max.x, y: bounds.min.y }), corner(bounds.max), corner({ x: bounds.min.x, y: bounds.max.y })],
         closed: true,
-      };
+      }];
     }
   }
 }
@@ -157,9 +149,13 @@ export function applyProjectedWindowSelection(
   }
   for (const entity of doc.entities) {
     if (doc.hiddenLayers.has(entity.layer)) continue;
-    const outline = entityOutline(entity);
+    const outlines = entityOutlines(entity);
     const plane = entity.workPlane ?? WORLD_WORK_PLANE;
-    const projected = outline.points.map((point) => project(localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0)));
+    const projectedPaths = outlines.map((outline) => ({
+      ...outline,
+      points: outline.points.map((point) => project(localToWorld(plane, point, (point as Vec2 & { z?: number }).z ?? 0))),
+    }));
+    const projected = projectedPaths.flatMap((path) => path.points);
     const solidProjections = entity.type === 'insert'
       ? expandedInsertSolids(entity).map((solid) => {
         const points: Array<Vec2 | null> = [];
@@ -173,8 +169,10 @@ export function applyProjectedWindowSelection(
       : [];
     const allProjected = [...projected, ...solidProjections.flatMap((item) => item.points)];
     const contained = allProjected.length > 0 && allProjected.every((point) => point !== null && pointInsideBox(point, box));
-    const visible = projected.filter((point): point is Vec2 => point !== null);
-    let intersects = crossing && visible.length > 0 && polygonIntersectsBox(visible, box, outline.closed);
+    let intersects = crossing && projectedPaths.some((path) => {
+      const visible = path.points.filter((point): point is Vec2 => point !== null);
+      return visible.length > 0 && polygonIntersectsBox(visible, box, path.closed);
+    });
     if (crossing && !contained && !intersects) {
       solidLoop: for (const { solid, points } of solidProjections) {
         for (let offset = 0; offset + 2 < solid.mesh.indices.length; offset += 3) {
