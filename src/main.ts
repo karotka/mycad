@@ -156,14 +156,14 @@ const propertiesPanel = get<HTMLElement>('properties-panel');
 // Every panel is draggable by its own header and opens where it was last left.
 // Anchored to a corner by CSS is a fine default and a poor answer when one of
 // them covers the part of the drawing being worked on.
-([
+const floatingPanels = ([
   ['properties', propertiesPanel],
   ['layers', layerPanel],
   ['blocks', blockPanel],
   ['mline-styles', mlineStylePanel],
   ['model-tree', get<HTMLElement>('model-tree-panel')],
   ['settings', get<HTMLElement>('settings-window')],
-] as const).forEach(([name, panel]) => makePanelFloating(panel, name));
+] as const).flatMap(([name, panel]) => makePanelFloating(panel, name) ?? []);
 
 const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
@@ -333,6 +333,7 @@ function captureProjectView(): ProjectViewState {
     mode: cadDocument.viewMode,
     twoD: { pan: { ...renderer2d.pan }, zoom: renderer2d.zoom },
     threeD: renderer3d.captureViewState(),
+    panels: floatingPanels.map((panel) => panel.state()),
   };
 }
 let commandResize: { startY: number; startHeight: number; pointerId: number } | null = null;
@@ -932,6 +933,11 @@ const projectController = new ProjectController(cadDocument, history, {
     renderer2d.pan = { ...view.twoD.pan };
     renderer2d.zoom = view.twoD.zoom;
     renderer3d.restoreViewState(view.threeD);
+    // A drawing saved before panels were recorded says nothing about them, and
+    // they stay as they are rather than all being shut.
+    for (const saved of view.panels ?? []) {
+      floatingPanels.find((panel) => panel.name === saved.name)?.restore(saved);
+    }
   },
   zoomExtents: () => renderer2d.zoomExtents(cadDocument, width, height),
   renderLayers: () => layerController.render(),

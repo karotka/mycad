@@ -701,3 +701,52 @@ describe('ProjectIO', () => {
     expect(target.viewMode).toBe('3d');
   });
 });
+
+/**
+ * Panels are part of what a drawing remembers about how it was being looked
+ * at. Asked for directly: a layout with the Layers panel parked clear of the
+ * work should open that way, on any machine.
+ */
+describe('panels in the saved view', () => {
+  const view = {
+    mode: '2d' as const,
+    twoD: { pan: { x: 0, y: 0 }, zoom: 1 },
+    threeD: {
+      position: { x: 0, y: 0, z: 10 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 },
+      projection: 'perspective' as const, orbitRadius: 10, activeStandardView: null,
+    },
+  };
+
+  it('round-trips which were open and where they had been put', () => {
+    const source = new Document();
+    const saved = serializeProject(source, {
+      ...view,
+      panels: [{ name: 'layers', open: true, x: 120, y: 80 }, { name: 'properties', open: false }],
+    });
+
+    const restored = loadProject(new Document(), saved);
+    expect(restored?.panels).toEqual([
+      { name: 'layers', open: true, x: 120, y: 80 },
+      { name: 'properties', open: false },
+    ]);
+  });
+
+  it('loads a drawing saved before panels were recorded, view and all', () => {
+    const saved = JSON.parse(serializeProject(new Document(), view));
+    delete saved.settings.view.panels;
+
+    const restored = loadProject(new Document(), JSON.stringify(saved));
+    expect(restored).toBeDefined();
+    expect(restored?.panels).toBeUndefined();
+    expect(restored?.twoD.zoom).toBe(1);
+  });
+
+  it('keeps the rest of the view when a panel entry is malformed', () => {
+    const saved = JSON.parse(serializeProject(new Document(), view));
+    saved.settings.view.panels = [{ name: 'layers' }]; // no open flag
+
+    // The view is refused rather than half-applied — the same all-or-nothing
+    // rule every other field in it follows.
+    expect(loadProject(new Document(), JSON.stringify(saved))).toBeUndefined();
+  });
+});

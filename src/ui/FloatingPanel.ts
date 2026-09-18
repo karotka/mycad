@@ -59,14 +59,32 @@ export function writePanelPosition(name: string, position: PanelPosition): void 
   }
 }
 
+/** A panel's state as a drawing remembers it: whether it was open, and where
+ *  it had been put. */
+export interface PanelState {
+  name: string;
+  open: boolean;
+  x?: number;
+  y?: number;
+}
+
+/** What a panel can be asked about and told, once it floats. */
+export interface FloatingPanelHandle {
+  readonly name: string;
+  /** Open or not, and where it sits if it has been moved. */
+  state(): PanelState;
+  /** Puts it back the way a drawing remembers it. */
+  restore(state: PanelState): void;
+}
+
 /**
  * Makes one panel draggable by its header and gives it back its saved place.
  *
  * `name` is what the position is stored under, so it has to stay stable.
  */
-export function makePanelFloating(panel: HTMLElement, name: string): void {
+export function makePanelFloating(panel: HTMLElement, name: string): FloatingPanelHandle | null {
   const header = panel.querySelector('header');
-  if (!header) return;
+  if (!header) return null;
   header.classList.add('panel-drag-handle');
 
   /**
@@ -138,4 +156,20 @@ export function makePanelFloating(panel: HTMLElement, name: string): void {
     header.addEventListener('pointerup', onUp);
     header.addEventListener('pointercancel', onUp);
   });
+
+  return {
+    name,
+    state: () => ({ name, open: !panel.hidden, ...(moved ? { x: moved.x, y: moved.y } : {}) }),
+    restore: (state) => {
+      // A drawing that says where a panel was beats whatever this machine had
+      // remembered for it — the drawing travels, the machine does not. One
+      // that says nothing about the position leaves it where it was.
+      if (typeof state.x === 'number' && typeof state.y === 'number') {
+        moved = { x: state.x, y: state.y };
+        writePanelPosition(name, moved);
+      }
+      panel.hidden = !state.open;
+      restoreIntoView();
+    },
+  };
 }

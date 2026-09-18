@@ -17,6 +17,21 @@ export interface ProjectViewState {
     orbitRadius: number;
     activeStandardView: 'top' | 'front' | 'left' | 'right' | null;
   };
+  /**
+   * Which panels were open and where they had been put. Saved with the
+   * drawing because that is what travels: a drawing laid out with the Layers
+   * panel parked clear of it opens that way on any machine, where the browser
+   * storage the panels otherwise use only ever knew about one.
+   */
+  panels?: PanelState[];
+}
+
+/** One panel's state, as `ui/FloatingPanel` reports and restores it. */
+export interface PanelState {
+  name: string;
+  open: boolean;
+  x?: number;
+  y?: number;
 }
 
 /**
@@ -601,7 +616,18 @@ function validViewState(value: unknown): value is ProjectViewState {
       && (view.threeD.projection === 'perspective' || view.threeD.projection === 'orthographic')
       && Number.isFinite(view.threeD.orbitRadius)
       && view.threeD.orbitRadius > 0
-      && (view.threeD.activeStandardView === null || ['top', 'front', 'left', 'right'].includes(view.threeD.activeStandardView)));
+      && (view.threeD.activeStandardView === null || ['top', 'front', 'left', 'right'].includes(view.threeD.activeStandardView)))
+    // Panels are an addition: a file without them is still a valid view, and
+    // one with a malformed entry is not worth refusing the whole view over.
+    && (view.panels === undefined || (Array.isArray(view.panels) && view.panels.every(validPanelState)));
+}
+
+function validPanelState(value: unknown): value is PanelState {
+  if (!value || typeof value !== 'object') return false;
+  const panel = value as Partial<PanelState>;
+  return typeof panel.name === 'string' && typeof panel.open === 'boolean'
+    && (panel.x === undefined || Number.isFinite(panel.x))
+    && (panel.y === undefined || Number.isFinite(panel.y));
 }
 
 export function exportAsciiStl(solids: readonly Solid[], name = 'MyCAD'): string {
