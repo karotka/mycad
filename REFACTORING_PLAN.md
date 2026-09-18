@@ -151,6 +151,58 @@ Next in the path/bounds phase: migrate circles and ellipses while retaining
 their analytic rendering and hit tests. Arcs and Beziers follow only with an
 explicit shared quality/tolerance policy.
 
+### 2026-09-17 — canonical circle/ellipse paths and bounds
+
+Status: **completed and verified**.
+
+- Extended `EntityGeometry.ts` with canonical sampled display/export paths for
+  circles and rotated ellipses, including optional elevation carried by their
+  centre and an explicit segment count at each quality-sensitive call site.
+- Path export, projected window selection and Three.js construction now use
+  that shared sampling. Canvas continues to draw both types analytically.
+- Circle and rotated-ellipse bounds remain exact analytic calculations rather
+  than depending on sampled display points. Circle outline hit testing and
+  ellipse containment also remain analytic; this migration does not turn
+  stored analytic entities into polylines.
+- Removed four duplicate circle/ellipse sampling implementations and two
+  duplicate bounds formulas. No consumer `case` labels were removed in this
+  incremental migration; their dispatch responsibilities remain distinct.
+- Added direct coverage for sampling density, closed paths, off-plane Z and
+  exact rotated-ellipse bounds.
+
+Next in the path/bounds phase: define the shared curve quality/tolerance policy
+before migrating arcs and Beziers. Do not migrate them using an unexplained
+fixed segment count.
+
+### 2026-09-17 — canonical arc/Bezier paths, quality and exact bounds
+
+Status: **completed and verified**.
+
+- Added an explicit `GeometryQuality` contract with curve tolerance, minimum
+  segments and a safety ceiling. Numeric segment counts remain supported for
+  plot/G-code callers that intentionally request a fixed budget.
+- Arcs choose their tessellation from radius, sweep and permitted chord error.
+  Cubic Bezier chains subdivide adaptively and retain every segment join plus
+  optional per-control-point elevation.
+- Display/export paths, projected picking, Three.js construction, command hit
+  testing and SVG arc output now consume the canonical curve paths. Native
+  Canvas and SVG cubic Beziers remain analytic.
+- Arc bounds are exact over endpoints and included cardinal angles. Bezier
+  bounds are exact over endpoints and derivative roots, independent of display
+  quality. Exact kernel geometry remains entirely separate from tessellation.
+- Removed seven duplicate curve-sampling call sites and one sampled bounds
+  implementation. No consumer `case` labels were removed; the remaining
+  dispatch branches still own distinct rendering, picking or export policy.
+- Added direct tests proving tolerance changes density, Z survives sampling,
+  and arc/Bezier bounds retain analytic extrema.
+- Verification: TypeScript check passed; the full suite passed with 113 test
+  files and 1662 tests.
+
+Next in §1: migrate the remaining specialised path-producing entity types only
+where they duplicate geometry, then remove obsolete helpers/switch bodies.
+Snap-specific endpoint/intersection logic must remain definition-based rather
+than being replaced by display samples.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

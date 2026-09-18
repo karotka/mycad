@@ -7,7 +7,7 @@
  * complete, because a missing case here is geometry silently left out of a cut
  * file rather than something that merely looks wrong on screen.
  */
-import { curvePoints, dimensionGeometry, ellipsePoints, expandedInsertEntities, leaderGeometry, type Entity } from './types';
+import { dimensionGeometry, expandedInsertEntities, leaderGeometry, type Entity } from './types';
 import type { Vec2 } from '../../math/geometry';
 import { isStrokeFont, strokeText } from '../text/strokeFont';
 import { hatchPatternSegments } from '../../io/DxfHatch';
@@ -56,23 +56,13 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
         .filter((points) => points.length >= 2)
         .map((points) => ({ points, closed: entity.closed }));
     case 'circle': {
-      const points: Vec2[] = [];
-      for (let index = 0; index < segments; index++) {
-        const angle = (Math.PI * 2 * index) / segments;
-        points.push({
-          x: entity.center.x + Math.cos(angle) * entity.radius,
-          y: entity.center.y + Math.sin(angle) * entity.radius,
-        });
-      }
-      return [{ points, closed: true }];
+      return canonicalEntityPaths(entity, segments);
     }
     case 'ellipse':
-      // Samples the loop with the first point repeated last, which `closed`
-      // already says, so it is dropped rather than cut twice.
-      return [{ points: ellipsePoints(entity, segments).slice(0, -1), closed: true }];
+      return canonicalEntityPaths(entity, segments);
     case 'arc':
     case 'bezier':
-      return [{ points: curvePoints(entity, segments), closed: false }];
+      return canonicalEntityPaths(entity, segments);
     case 'hatch':
       return entity.pattern === 'solid'
         ? entity.loops.filter((loop) => loop.length >= 2).map((points) => ({ points: [...points], closed: true }))

@@ -15,7 +15,7 @@ import { sagittaForRadius, sagittaPoint } from '../../math/arcFit';
 import { worldPointInPlane, worldToLocal } from '../../math/workplane';
 import { canonicalEntityPaths } from '../entities/EntityGeometry';
 import { WORLD_WORK_PLANE } from '../../math/workplane';
-import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, leaderGeometry, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
+import { curvePoints, dimensionGeometry, entityBounds, leaderGeometry, expandedInsertEntities, expandedInsertSolids, type Entity, type Solid, type SolidEdgeSelection, type SolidFaceSelection, type SolidFeature, type Surface } from '../entities/types';
 import type { CommandHistory } from '../history/CommandHistory';
 import {
 } from '../history/edits';
@@ -842,7 +842,7 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
         break;
       }
       case 'ellipse': {
-        if (hitsChain(point, ellipsePoints(e, 64), tolerance)) return e;
+        if (hitsChain(point, canonicalEntityPaths(e, 64)[0].points, tolerance)) return e;
         break;
       }
       case 'rectangle': {
@@ -863,7 +863,8 @@ export function hitTestEntity(entities: Entity[], worldPoint: Vec2, tolerance = 
       }
       case 'arc':
       case 'bezier': {
-        if (hitsChain(point, curvePoints(e), tolerance)) return e;
+        const path = canonicalEntityPaths(e, { curveTolerance: tolerance / 4, minimumSegments: 8 })[0];
+        if (path && hitsChain(point, path.points, tolerance)) return e;
         break;
       }
       case 'hatch': {

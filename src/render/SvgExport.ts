@@ -1,8 +1,8 @@
 import type { Document } from '../core/Document';
 import type { Entity } from '../core/entities/types';
-import { curvePoints, dimensionGeometry, expandedInsertEntities, leaderGeometry } from '../core/entities/types';
+import { dimensionGeometry, expandedInsertEntities, leaderGeometry } from '../core/entities/types';
+import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, lineTypeDashArray, linetypeScaleFor } from '../core/lineStyles';
-import { polylineOutline } from '../core/entities/polylineArcs';
 import { hatchPatternSegments } from '../io/DxfHatch';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
 import type { Vec2 } from '../math/geometry';
@@ -144,7 +144,7 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         drawPolyline(entity, entity.vertices, true);
         break;
       case 'polyline':
-        drawPolyline(entity, polylineOutline(entity), entity.closed);
+        drawPolyline(entity, canonicalEntityPaths(entity)[0]?.points ?? [], entity.closed);
         break;
       case 'mline': {
         mlineOffsetLines(entity).forEach((points, index) => {
@@ -160,7 +160,7 @@ export function buildPrintSvg(doc: Document, win: PrintWindow, page: PrintPage, 
         break;
       }
       case 'arc':
-        drawPolyline(entity, curvePoints(entity), false);
+        drawPolyline(entity, canonicalEntityPaths(entity)[0].points, false);
         break;
       case 'bezier': {
         const start = toPage(entity.start);

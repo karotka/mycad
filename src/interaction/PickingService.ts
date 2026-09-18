@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { curvePoints, ellipsePoints, entityBounds, expandedInsertSolids, leaderGeometry, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
+import { entityBounds, expandedInsertSolids, leaderGeometry, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
@@ -103,21 +103,8 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
     case 'point': return { points: [entity.position], closed: false };
     case 'leader': return { points: leaderGeometry(entity).path, closed: false };
     case 'line': return canonicalEntityPaths(entity)[0];
-    case 'circle': {
-      // The centre may sit off the work plane (drawn in another UCS); its Z has
-      // to ride along or the outline projects at the wrong depth and window
-      // selection misses the circle.
-      const z = (entity.center as Vec2 & { z?: number }).z;
-      return {
-        points: Array.from({ length: 64 }, (_, index) => {
-          const angle = index * Math.PI * 2 / 64;
-          const point: Vec2 = { x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius };
-          return z === undefined ? point : { ...point, z } as Vec2;
-        }),
-        closed: true,
-      };
-    }
-    case 'ellipse': return { points: ellipsePoints(entity, 64).slice(0, -1), closed: true };
+    case 'circle': return canonicalEntityPaths(entity)[0];
+    case 'ellipse': return canonicalEntityPaths(entity)[0];
     case 'rectangle': {
       const z = (entity.first as Vec2 & { z?: number }).z ?? (entity.opposite as Vec2 & { z?: number }).z;
       const corner = (x: number, y: number): Vec2 => (z === undefined ? { x, y } : { x, y, z } as Vec2);
@@ -133,7 +120,7 @@ function entityOutline(entity: Entity): { points: Vec2[]; closed: boolean } {
     case 'mline': return { points: entity.vertices, closed: entity.closed };
     case 'hatch': return { points: entity.loops[0] ?? [], closed: true };
     case 'arc':
-    case 'bezier': return { points: curvePoints(entity, 64), closed: false };
+    case 'bezier': return canonicalEntityPaths(entity)[0] ?? { points: [], closed: false };
     case 'insert':
     case 'text':
     case 'dimension': {

@@ -1281,23 +1281,12 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
     }
     case 'point':
       return { min: { ...e.position }, max: { ...e.position } };
-    case 'ellipse': {
-      // Exact extent of a rotated ellipse.
-      const cos = Math.cos(e.rotation), sin = Math.sin(e.rotation);
-      const halfWidth = Math.hypot(e.radiusX * cos, e.radiusY * sin);
-      const halfHeight = Math.hypot(e.radiusX * sin, e.radiusY * cos);
-      return {
-        min: { x: e.center.x - halfWidth, y: e.center.y - halfHeight },
-        max: { x: e.center.x + halfWidth, y: e.center.y + halfHeight },
-      };
-    }
+    case 'ellipse':
+      return canonicalEntityBounds(e);
     case 'line':
       return canonicalEntityBounds(e);
     case 'circle':
-      return {
-        min: { x: e.center.x - e.radius, y: e.center.y - e.radius },
-        max: { x: e.center.x + e.radius, y: e.center.y + e.radius },
-      };
+      return canonicalEntityBounds(e);
     case 'rectangle':
       return {
         min: { x: Math.min(e.first.x, e.opposite.x), y: Math.min(e.first.y, e.opposite.y) },
@@ -1339,7 +1328,8 @@ export function entityBounds(e: Entity): { min: Vec2; max: Vec2 } {
       };
     }
     case 'arc':
-    case 'bezier': { const p = curvePoints(e); return { min: { x: Math.min(...p.map(v => v.x)), y: Math.min(...p.map(v => v.y)) }, max: { x: Math.max(...p.map(v => v.x)), y: Math.max(...p.map(v => v.y)) } }; }
+    case 'bezier':
+      return canonicalEntityBounds(e);
     case 'text': {
       const lines = e.text.split('\n');
       // A stroke font knows its own width exactly, so the box is the letters

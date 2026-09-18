@@ -7,7 +7,7 @@ import type { DimensionEntity, Entity, HatchEntity, Solid, SolidEdgeSelection, S
 import { axisOffsetUnderRay, verticesCentre } from '../interaction/AxisDrag';
 import type { UcsHandleName } from '../math/ucsAxisRotation';
 import { DEFAULT_LINE_SPACING, isStrokeFont, strokeText } from '../core/text/strokeFont';
-import { curvePoints, dimensionGeometry, ellipsePoints, entityBounds, expandedInsertEntities, expandedInsertSolids, leaderGeometry } from '../core/entities/types';
+import { dimensionGeometry, entityBounds, expandedInsertEntities, expandedInsertSolids, leaderGeometry } from '../core/entities/types';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { worldToScreen } from '../math/geometry';
 import { cloneWorkPlane, localToWorld, workPlaneFromXYAxes, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from '../math/workplane';
@@ -429,7 +429,7 @@ export class Canvas2DRenderer {
         }
         break;
       }
-      case 'arc': { const verts=curvePoints(entity); this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
+      case 'arc': { const verts=canonicalEntityPaths(entity)[0].points; this.ctx.beginPath(); verts.forEach((v,i)=>{const p=toScreen(v); if(i===0)this.ctx.moveTo(p.x,p.y);else this.ctx.lineTo(p.x,p.y);}); this.ctx.stroke(); break; }
       case 'bezier': {
         // Canvas already rasterizes cubic Beziers adaptively. Sampling every
         // curve into 65 JS points made a selected illustration cost tens of
@@ -2173,16 +2173,12 @@ export class Viewport3D {
           break;
         }
         case 'circle':
-          for (let index = 0; index < 72; index++) {
-            const angle = index * Math.PI * 2 / 72;
-            points.push({ x: entity.center.x + Math.cos(angle) * entity.radius, y: entity.center.y + Math.sin(angle) * entity.radius });
-          }
-          closed = true;
+        case 'ellipse': {
+          const path = canonicalEntityPaths(entity, 72)[0];
+          points = path.points;
+          closed = path.closed;
           break;
-        case 'ellipse':
-          points = ellipsePoints(entity, 72).slice(0, -1);
-          closed = true;
-          break;
+        }
         case 'rectangle': points = [entity.first, { x: entity.opposite.x, y: entity.first.y }, entity.opposite, { x: entity.first.x, y: entity.opposite.y }]; closed = true; break;
         case 'octagon': points = entity.vertices; closed = true; break;
         case 'polyline': {
@@ -2195,7 +2191,7 @@ export class Viewport3D {
         case 'mline': points = entity.vertices; closed = entity.closed; break;
         case 'hatch': points = entity.loops[0] ?? []; closed = true; break;
         case 'arc':
-        case 'bezier': points = curvePoints(entity, 64); break;
+        case 'bezier': points = canonicalEntityPaths(entity)[0]?.points ?? []; break;
         case 'text': {
           const bounds = entityBounds(entity);
           points = [bounds.min, { x: bounds.max.x, y: bounds.min.y }, bounds.max, { x: bounds.min.x, y: bounds.max.y }];
@@ -2383,21 +2379,11 @@ export class Viewport3D {
       case 'line':
         points.push(...canonicalEntityPaths(entity)[0].points);
         break;
-      case 'circle': {
-        const segments = 96;
-        for (let i = 0; i < segments; i++) {
-          const angle = i * Math.PI * 2 / segments;
-          points.push({
-            x: entity.center.x + Math.cos(angle) * entity.radius,
-            y: entity.center.y + Math.sin(angle) * entity.radius,
-          });
-        }
-        loop = true;
-        break;
-      }
+      case 'circle':
       case 'ellipse': {
-        points.push(...ellipsePoints(entity, 96).slice(0, -1));
-        loop = true;
+        const path = canonicalEntityPaths(entity, 96)[0];
+        points.push(...path.points);
+        loop = path.closed;
         break;
       }
       case 'rectangle':
@@ -2422,8 +2408,8 @@ export class Viewport3D {
           }
         }
         break;
-      case 'arc': points.push(...curvePoints(entity)); break;
-      case 'bezier': points.push(...curvePoints(entity)); break;
+      case 'arc':
+      case 'bezier': points.push(...(canonicalEntityPaths(entity)[0]?.points ?? [])); break;
     }
 
     const geometry = new THREE.BufferGeometry().setFromPoints(
