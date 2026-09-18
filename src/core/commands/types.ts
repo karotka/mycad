@@ -139,7 +139,10 @@ export type CommandStep =
    *  additive nor accepts. */
   | { kind: 'surface'; label: string; optional?: boolean }
   | { kind: 'edge'; label: string; optional?: boolean }
-  | { kind: 'text'; label: string; optional?: boolean }
+  /** `remember` carries the last answer over, the way a number step does: a
+   *  yes/no a command asks every time is better asked with last time's answer
+   *  already standing, so Enter is the whole reply. */
+  | { kind: 'text'; label: string; optional?: boolean; remember?: boolean }
   | { kind: 'done' };
 
 /**

@@ -57,7 +57,7 @@ export class CommandManager {
   /** What Enter at an empty prompt repeats, however that command was started. */
   private lastCommand: CommandName | null = null;
   /** Per-command defaults accepted by Enter, such as the last circle radius. */
-  private rememberedStepValues = new Map<string, number | [number, number]>();
+  private rememberedStepValues = new Map<string, number | string | [number, number]>();
 
   constructor(private ctx: CommandContext) {}
 
@@ -193,6 +193,11 @@ export class CommandManager {
       const remembered = this.rememberedStepValues.get(`${this.active.name}:${this.active.stepIndex}`);
       const pair = Array.isArray(remembered) ? remembered : step.defaultValue;
       return pair ? `${step.label} (${pair[0]}, ${pair[1]}):` : `${step.label} (x, y):`;
+    }
+    if (step.kind === 'text' && step.remember) {
+      const remembered = this.rememberedStepValues.get(`${this.active.name}:${this.active.stepIndex}`);
+      const base = step.label.replace(/:\s*$/, '');
+      return typeof remembered === 'string' ? `${base} <${remembered}>:` : `${base}:`;
     }
     if (step.kind === 'number' && step.remember) {
       // Shown so the last value is something to look at and accept with
@@ -618,6 +623,7 @@ export class CommandManager {
     if (remembered === undefined) return null;
     if ((step.kind === 'number' || step.kind === 'number-or-option')
       && step.remember && typeof remembered === 'number') return remembered;
+    if (step.kind === 'text' && step.remember && typeof remembered === 'string') return remembered;
     if (step.kind === 'number-pair' && step.remember && Array.isArray(remembered)) return [...remembered] as [number, number];
     if (step.kind === 'point' && step.rememberDistanceFrom && this.active && typeof remembered === 'number') {
       const base = this.active.data[step.rememberDistanceFrom] as Vec2 | undefined;
@@ -636,6 +642,8 @@ export class CommandManager {
     } else if (step.kind === 'number-pair' && step.remember && Array.isArray(value)
       && value.length === 2 && value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
       this.rememberedStepValues.set(key, [value[0], value[1]]);
+    } else if (step.kind === 'text' && step.remember && typeof value === 'string' && value.trim() !== '') {
+      this.rememberedStepValues.set(key, value);
     } else if (step.kind === 'point' && step.rememberDistanceFrom && value && typeof value === 'object' && 'x' in value && 'y' in value) {
       const base = data[step.rememberDistanceFrom] as Vec2 | undefined;
       const point = value as Vec2;

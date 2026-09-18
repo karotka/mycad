@@ -312,7 +312,7 @@ export const COMMANDS = [
     steps: [{ kind: 'entity', label: 'Select object(s) to rotate, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify rotation base point:' }, { kind: 'point', label: 'Specify rotation angle or enter degrees:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify rotation base point.`) },
-  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'done' }],
+  { name: 'MIRROR', aliases: ['MI', 'MIRROR'], execute: mirrorObjects, help: 'mirror objects', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) — click, then Enter to continue:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify first mirror-axis point:' }, { kind: 'point', label: 'Specify second mirror-axis point:' }, { kind: 'text', label: 'Erase source objects? [Yes/No]', optional: true, remember: true }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify first mirror-axis point.`) },
   { name: 'JOIN', aliases: ['J', 'JOIN'], execute: joinObjects, help: 'join connected 2D lines into one polyline', suggest: true,

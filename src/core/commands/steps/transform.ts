@@ -226,9 +226,14 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
     return 'advance';
   }
   if (active.stepIndex === 1) { data.axisStart = value; return 'advance'; }
+  if (active.stepIndex === 2) { data.axisEnd = value; return 'advance'; }
 
+  // The last step asks whether the originals go. Enter takes last time's
+  // answer, and No the first time — AutoCAD's own default, since a mirror
+  // that quietly deleted what it was given would be a surprise.
+  const eraseSource = /^y/i.test(typeof value === 'string' ? value.trim() : '');
   const axisStart = data.axisStart as Vec2;
-  const axisEnd = value as Vec2;
+  const axisEnd = data.axisEnd as Vec2;
   const entities = data.entities as Entity[];
   const solids = (data.solids as Solid[] | undefined) ?? [];
   const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
@@ -285,8 +290,17 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
     copy.name = `${surface.name}_mirror`;
     return mirrorMesh(copy);
   });
-  ctx.history.execute(new ReplaceObjectsEdit('Mirror', [], [], mirrored, mirroredSolids, [], mirroredSurfaces));
-  ctx.log(`Mirrored ${mirrored.length + mirroredSolids.length + mirroredSurfaces.length} object(s).`);
+  // Erasing the source is the same edit, undone in one step with the copies:
+  // what goes on the "before" side of the replacement.
+  ctx.history.execute(new ReplaceObjectsEdit(
+    'Mirror',
+    eraseSource ? entities.map(cloneEntity) : [],
+    eraseSource ? solids.map(cloneSolid) : [],
+    mirrored, mirroredSolids,
+    eraseSource ? surfaces.map(cloneSurfaceValue) : [], mirroredSurfaces,
+  ));
+  const count = mirrored.length + mirroredSolids.length + mirroredSurfaces.length;
+  ctx.log(`Mirrored ${count} object(s)${eraseSource ? ', source erased' : ''}.`);
   return 'advance';
 }
 

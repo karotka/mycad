@@ -27,6 +27,7 @@ function setup() {
   const doc = new Document();
   const history = new CommandHistory(doc);
   const log = vi.fn();
+  const prompt = vi.fn();
   const moveObjects = vi.fn();
   const manager = new CommandManager({
     doc,
@@ -34,11 +35,11 @@ function setup() {
     moveObjects,
     copyWorldDelta: () => undefined,
     log,
-    prompt: vi.fn(),
+    prompt,
     getCursor: () => ({ x: 0, y: 0 }),
     redraw: vi.fn(),
   });
-  return { doc, history, log, manager, moveObjects };
+  return { doc, history, log, prompt, manager, moveObjects };
 }
 
 describe('CommandManager history integration', () => {
@@ -2909,6 +2910,7 @@ describe('transforming a curve that is genuinely bent through 3D', () => {
     manager.startCommand('MIRROR');
     await manager.handleClick({ x: 0, y: -10 });
     await manager.handleClick({ x: 30, y: -10 });
+    await manager.submitInput(''); // keep the source objects
 
     expect(doc.entities).toHaveLength(2);
     const copy = doc.entities[1];
@@ -3629,6 +3631,7 @@ describe('commands take the selection you already made', () => {
     manager.startCommand('MIRROR');
     await manager.handleClick({ x: 0, y: -1 });
     await manager.handleClick({ x: 5, y: -1 });
+    await manager.submitInput(''); // keep the source objects
     // One original plus one mirrored copy.
     expect(doc.entities).toHaveLength(2);
   });
@@ -3651,6 +3654,7 @@ describe('commands take the selection you already made', () => {
     expect(manager.active?.data.solids).toHaveLength(1);
     await manager.handleClick({ x: 0, y: -1 });
     await manager.handleClick({ x: 0, y: 1 });
+    await manager.submitInput(''); // keep the source objects
 
     expect(doc.solids).toHaveLength(2);
     const copy = doc.solids.find((item) => item.id !== solid.id)!;
@@ -4153,7 +4157,7 @@ describe('MOVE/ROTATE/SCALE/MIRROR/COPY/ERASE reach a Surface too, not only Soli
       await kit.manager.submitInput(''); // Enter: finished selecting
       if (command === 'ROTATE') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.submitInput('90'); }
       else if (command === 'SCALE') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.handleClick({ x: 1, y: 0 }); await kit.manager.handleClick({ x: 2, y: 0 }); }
-      else if (command === 'MIRROR') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.handleClick({ x: 0, y: 1 }); }
+      else if (command === 'MIRROR') { await kit.manager.handleClick({ x: 0, y: 0 }); await kit.manager.handleClick({ x: 0, y: 1 }); await kit.manager.submitInput(''); }
       // ERASE needs nothing more — Enter above already committed it.
 
       expect(kit.log, `${command} failed`).not.toHaveBeenCalledWith(expect.stringContaining('failed'));
@@ -4195,6 +4199,7 @@ describe('MOVE/ROTATE/SCALE/MIRROR/COPY/ERASE reach a Surface too, not only Soli
     kit.manager.startCommand('MIRROR');
     await kit.manager.handleClick({ x: 0, y: 0 });
     await kit.manager.handleClick({ x: 0, y: 1 });
+    await kit.manager.submitInput(''); // keep the source objects
 
     expect(kit.doc.surfaces).toHaveLength(2);
     expect(kit.doc.surfaces.some((s) => s.id === original.id)).toBe(true);
@@ -8129,6 +8134,70 @@ describe('LEADER', () => {
  * applied to entity coordinates that are in the entity's own. Anything drawn
  * while the UCS was somewhere else went wrong, and nothing else did.
  */
+/**
+ * Asked for directly: a mirror should offer to take the originals away, and
+ * remember the answer. AutoCAD's own question, with No standing the first
+ * time — a mirror that quietly deleted what it was given would be a surprise.
+ */
+describe('MIRROR erasing the source objects', () => {
+  it('keeps them on Enter, which is what No means', async () => {
+    const { doc, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: -5 });
+    await manager.handleClick({ x: 20, y: 5 });
+    await manager.submitInput('');
+
+    expect(doc.entities).toHaveLength(2);
+    expect(doc.getEntity(line.id)).toBeDefined();
+  });
+
+  it('takes them away on Yes, in the one undoable step', async () => {
+    const { doc, history, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: -5 });
+    await manager.handleClick({ x: 20, y: 5 });
+    await manager.submitInput('Yes');
+
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.getEntity(line.id)).toBeUndefined();
+    expect(doc.entities[0]).toMatchObject({ start: { x: 40, y: 0 }, end: { x: 30, y: 0 } });
+
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.getEntity(line.id)).toBeDefined();
+  });
+
+  it('remembers the answer, so Enter alone repeats it next time', async () => {
+    const { doc, manager, prompt } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.addEntity(first);
+    doc.selectEntity(first.id);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: -5 });
+    await manager.handleClick({ x: 20, y: 5 });
+    await manager.submitInput('Y');
+
+    const second = doc.createLine({ x: 0, y: 30 }, { x: 10, y: 30 });
+    doc.addEntity(second);
+    doc.clearSelection();
+    doc.selectEntity(second.id);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: 25 });
+    await manager.handleClick({ x: 20, y: 35 });
+    // The standing answer is shown, so there is no guessing what Enter does.
+    expect(prompt).toHaveBeenLastCalledWith(expect.stringContaining('<Y>'));
+    await manager.submitInput('');
+
+    expect(doc.getEntity(second.id)).toBeUndefined();
+  });
+});
+
 describe('transforming an object drawn under a different UCS', () => {
   /** A line at local (0,0)-(10,0) on a plane whose origin is world (1000,500),
    *  so in world it lies at (1000,500)-(1010,500). */
@@ -8149,6 +8218,7 @@ describe('transforming an object drawn under a different UCS', () => {
     manager.startCommand('MIRROR');
     await manager.handleClick({ x: 20, y: -5 });
     await manager.handleClick({ x: 20, y: 5 });
+    await manager.submitInput(''); // keep the source objects
 
     // World (1000,500) reflected in x = 20 is (-960,500); on this plane that
     // reads as local (-1960, 0).
@@ -8202,6 +8272,7 @@ describe('transforming an object drawn under a different UCS', () => {
     manager.startCommand('MIRROR');
     await manager.handleClick({ x: 20, y: -5 });
     await manager.handleClick({ x: 20, y: 5 });
+    await manager.submitInput(''); // keep the source objects
 
     expect(doc.entities).toHaveLength(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('facing a different way'));
