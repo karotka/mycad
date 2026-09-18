@@ -8121,3 +8121,89 @@ describe('LEADER', () => {
     expect(copy.text).toBe('WELD ALL ROUND');
   });
 });
+
+/**
+ * Reported as MIRROR sometimes throwing a copy a long way off, with no way to
+ * reproduce it. The distance is exactly how far apart two work-plane origins
+ * are: a base or axis point is picked in the active plane, and it was being
+ * applied to entity coordinates that are in the entity's own. Anything drawn
+ * while the UCS was somewhere else went wrong, and nothing else did.
+ */
+describe('transforming an object drawn under a different UCS', () => {
+  /** A line at local (0,0)-(10,0) on a plane whose origin is world (1000,500),
+   *  so in world it lies at (1000,500)-(1010,500). */
+  function onShiftedPlane(doc: Document) {
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    line.workPlane = {
+      origin: { x: 1000, y: 500, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 },
+    };
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+    return line;
+  }
+
+  it('mirrors about the axis actually picked, not one the same numbers name elsewhere', async () => {
+    const { doc, manager } = setup();
+    const line = onShiftedPlane(doc);
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: -5 });
+    await manager.handleClick({ x: 20, y: 5 });
+
+    // World (1000,500) reflected in x = 20 is (-960,500); on this plane that
+    // reads as local (-1960, 0).
+    const copy = doc.entities.find((entity) => entity.id !== line.id)!;
+    expect(copy).toMatchObject({ type: 'line', start: { x: -1960, y: 0 }, end: { x: -1970, y: 0 } });
+  });
+
+  it('turns about the base point actually picked', async () => {
+    const { doc, manager } = setup();
+    const line = onShiftedPlane(doc);
+    manager.startCommand('ROTATE');
+    await manager.handleClick({ x: 20, y: 0 });
+    await manager.submitInput('90');
+
+    // World (1000,500) turned 90° about (20,0) is (-480,980) — local (-1480,480).
+    const turned = doc.getEntity(line.id)!;
+    if (turned.type === 'line') {
+      expect(turned.start.x).toBeCloseTo(-1480, 6);
+      expect(turned.start.y).toBeCloseTo(480, 6);
+    }
+  });
+
+  it('scales from the base point actually picked', async () => {
+    const { doc, manager } = setup();
+    const line = onShiftedPlane(doc);
+    manager.startCommand('SCALE');
+    await manager.handleClick({ x: 20, y: 0 });
+    await manager.submitInput('1');
+    await manager.submitInput('2');
+
+    // World (1000,500) doubled from (20,0) is (1980,1000) — local (980,500).
+    const scaled = doc.getEntity(line.id)!;
+    if (scaled.type === 'line') {
+      expect(scaled.start.x).toBeCloseTo(980, 6);
+      expect(scaled.start.y).toBeCloseTo(500, 6);
+    }
+  });
+
+  it('says so rather than guessing when the plane faces a different way', async () => {
+    const { doc, log, manager } = setup();
+    const line = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    // Standing up out of the active plane: a flat mirror in one is not a flat
+    // mirror in the other, and the line has only its own plane to lie on.
+    line.workPlane = {
+      origin: { x: 0, y: 0, z: 0 },
+      xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 0, z: 1 }, zAxis: { x: 0, y: -1, z: 0 },
+    };
+    doc.addEntity(line);
+    doc.selectEntity(line.id);
+
+    manager.startCommand('MIRROR');
+    await manager.handleClick({ x: 20, y: -5 });
+    await manager.handleClick({ x: 20, y: 5 });
+
+    expect(doc.entities).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('facing a different way'));
+  });
+});

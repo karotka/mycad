@@ -12,7 +12,7 @@ import { cloneEntity, cloneSurfaceValue, genId, transformEntityPoints, type Enti
 import { rotateEntity, scaleEntity } from '../../entities/EntityTransform';
 import { mirroredFeature, rotatedFeature, scaledFeature, translatedFeature } from '../../solids/featureTransform';
 import { mirrorAffine, preserveExactTransform, rotationAffine, scaleAffine, translationAffine } from '../../geometry/ExactTransform';
-import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE } from '../../../math/workplane';
+import { cloneWorkPlane, localToWorld, worldToLocal, WORLD_WORK_PLANE, type WorkPlane } from '../../../math/workplane';
 import { dist2, formatPoint, mirrorPoint2, type Vec2, type Vec3 } from '../../../math/geometry';
 import type { CommandRun, StepOutcome } from '../types';
 
@@ -187,6 +187,38 @@ function applyTo(
   return 'advance';
 }
 
+/**
+ * A point picked in the active work plane, read in the plane the entity being
+ * transformed actually lives on.
+ *
+ * A base or axis point arrives in the plane the user picked it in; an entity's
+ * own points are in its own. Where the two differ — anything drawn while the
+ * UCS was somewhere else — applying one to the other turned, scaled or
+ * mirrored the object about a line nowhere near the one picked, and it landed
+ * far from where it belongs. Reported as MIRROR occasionally throwing a copy
+ * a long way off, with no way to reproduce it: the distance is exactly how
+ * far apart the two plane origins happen to be.
+ *
+ * Null when the entity's plane is not parallel to the active one. A flat
+ * transform in one plane is not a flat transform in another facing a
+ * different way, and an entity has only the one plane to lie on, so there is
+ * no answer to give rather than a wrong one.
+ */
+function pickedPointInEntityPlane(point: Vec2, activePlane: WorkPlane, entity: Entity): Vec2 | null {
+  const plane = entity.workPlane ?? WORLD_WORK_PLANE;
+  const normals = plane.zAxis.x * activePlane.zAxis.x + plane.zAxis.y * activePlane.zAxis.y + plane.zAxis.z * activePlane.zAxis.z;
+  if (Math.abs(Math.abs(normals) - 1) > 1e-9) return null;
+  const local = worldToLocal(plane, localToWorld(activePlane, point));
+  return { x: local.x, y: local.y };
+}
+
+/** What to say when a transform cannot reach an entity on a plane facing a
+ *  different way — named, because silence there looked like the object had
+ *  simply been skipped. */
+function reportOffPlane(ctx: CommandRun['ctx'], command: string, count: number): void {
+  if (count > 0) ctx.log(`${command}: ${count} object(s) lie on a work plane facing a different way and were left alone.`);
+}
+
 export function mirrorObjects(run: CommandRun): StepOutcome {
   const { active, data, value, step, ctx } = run;
   if (step.kind === 'entity') {
@@ -200,17 +232,22 @@ export function mirrorObjects(run: CommandRun): StepOutcome {
   const entities = data.entities as Entity[];
   const solids = (data.solids as Solid[] | undefined) ?? [];
   const surfaces = (data.surfaces as Surface[] | undefined) ?? [];
+  const plane = ctx.doc.activeWorkPlane;
   // A mirror keeps the originals, so the copies need ids of their own.
-  const mirrored = entities.map((entity) => {
-    const copy = transformEntityPoints(entity, (point) => mirrorPoint2(point, axisStart, axisEnd));
+  let offPlane = 0;
+  const mirrored = entities.flatMap((entity) => {
+    const start = pickedPointInEntityPlane(axisStart, plane, entity);
+    const end = pickedPointInEntityPlane(axisEnd, plane, entity);
+    if (!start || !end) { offPlane++; return []; }
+    const copy = transformEntityPoints(entity, (point) => mirrorPoint2(point, start, end));
     // A reflection reverses the way round every arc turns, and a polyline says
     // that with the sign of its bulge — left alone, a mirrored slot's caps bow
     // into the slot instead of out of it.
     if (copy.type === 'polyline' && copy.bulges) copy.bulges = copy.bulges.map((bulge) => -bulge);
     copy.id = genId(entity.type);
-    return copy;
+    return [copy];
   });
-  const plane = ctx.doc.activeWorkPlane;
+  reportOffPlane(ctx, 'MIRROR', offPlane);
   const mirrorMesh = <T extends Solid | Surface>(clone: T): T => {
     for (let index = 0; index < clone.mesh.positions.length; index += 3) {
       const local = worldToLocal(plane, {
@@ -288,7 +325,12 @@ export function rotateObjects(run: CommandRun): StepOutcome {
   return applyTo(run, 'Rotate',
     { entities, solids, surfaces },
     {
-      entities: entities.map((entity) => rotateEntity(entity, base, angle)),
+      entities: entities.map((entity) => {
+        // The base was picked in the active plane; each entity turns about it
+        // read in its own — see pickedPointInEntityPlane.
+        const centre = pickedPointInEntityPlane(base, plane, entity);
+        return centre ? rotateEntity(entity, centre, angle) : cloneEntity(entity);
+      }),
       solids: solids.map((solid) => rotateSolidAroundPlane(cloneSolid(solid), { x: base.x, y: base.y, z: 0 }, angle, plane)),
       surfaces: surfaces.map((surface) => rotateSurfaceAroundPlane(cloneSurfaceValue(surface), { x: base.x, y: base.y, z: 0 }, angle, plane)),
     },
@@ -346,7 +388,8 @@ function applyScale(run: CommandRun, factor: number): StepOutcome {
     { entities, solids, surfaces },
     {
       entities: entities.map((entity) => {
-        const scaled = scaleEntity(entity, base, factor);
+        const origin = pickedPointInEntityPlane(base, ctx.doc.activeWorkPlane, entity);
+        const scaled = origin ? scaleEntity(entity, origin, factor) : cloneEntity(entity);
         scaled.selected = true;
         return scaled;
       }),
