@@ -378,7 +378,10 @@ export const COMMANDS = [
   { name: 'TRIM', aliases: ['TR', 'TRIM'], execute: trimEntity, help: 'trim objects at cutting edges', suggest: true,
     steps: [{ kind: 'entity', label: 'Select cutting edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to trim (Enter to finish):', optional: true }, { kind: 'done' }],
     data: () => ({}) },
-  { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], execute: offsetEntity, help: 'create an equidistant parallel line', suggest: true,
+  // Sticky: one offset is rarely the only one. It restarts at "select an
+  // object" with the distance still remembered, so the next one is a pick and
+  // a side-click, and Escape is what ends the run — AutoCAD's own loop.
+  { name: 'OFFSET', aliases: ['O', 'OFFSET', 'EQUID', 'EKVID'], execute: offsetEntity, help: 'create an equidistant parallel line', suggest: true, sticky: true, pointInput: true,
     steps: [{ kind: 'entity', label: 'Select line or closed 2D object to offset:' }, { kind: 'number', label: 'Enter offset distance:', remember: true }, { kind: 'point', label: 'Specify side for offset:' }, { kind: 'done' }],
     data: () => ({ entity: undefined }),
     onStart: preselectOne('entity', isOffsetEntity, 'Object preselected. Enter offset distance.') },

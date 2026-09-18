@@ -10,7 +10,7 @@
  * curved ones as surfaces it cannot represent here.
  */
 import { ReplaceObjectsEdit } from '../../history/edits';
-import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type Solid } from '../../entities/types';
+import { cloneSolidValue, closedVertices, curvePoints, expandedInsertEntities, expandedInsertSolids, genId, type Entity, type InsertEntity, type Solid } from '../../entities/types';
 import { bulgeArc, hasPolylineArcs, polylineSegments } from '../../entities/polylineArcs';
 import { solidPlanarFaces } from '../../solids/SolidTopology';
 import type { Document } from '../../Document';
@@ -20,12 +20,68 @@ import type { CommandRun, StepOutcome } from '../types';
 import { hatchPatternSegments } from '../../entities/hatch';
 import { isStrokeFont, strokeText } from '../../text/strokeFont';
 
-function explodeEntity(entity: Entity, doc: Document): Entity[] {
-  if (entity.type === 'insert') return expandedInsertEntities(entity).map((child) => ({
-    ...child,
-    id: genId(child.type),
-    selected: false,
-  }));
+/**
+ * Where an INSERT puts one point of the block it stands for. The same
+ * placement `expandedInsertEntities` applies, written out here because a
+ * nested block reference has to be *moved* rather than taken apart, and that
+ * needs the transform itself rather than its result.
+ */
+function placedByInsert(insert: InsertEntity, point: Vec2, column: number, row: number): Vec2 {
+  const cos = Math.cos(insert.rotation), sin = Math.sin(insert.rotation);
+  const x = (point.x - insert.definition.basePoint.x + column * insert.columnSpacing) * insert.scaleX;
+  const y = (point.y - insert.definition.basePoint.y + row * insert.rowSpacing) * insert.scaleY;
+  return { x: insert.position.x + x * cos - y * sin, y: insert.position.y + x * sin + y * cos };
+}
+
+/**
+ * One level of a block, the way AutoCAD's EXPLODE gives it back: the objects
+ * the block is made of, and a block *reference* for each block nested inside
+ * it — still a block, to be exploded again if that is what is wanted. It used
+ * to hand back the whole tree flattened to primitives, so exploding once took
+ * apart things the user had deliberately kept together.
+ *
+ * A nested reference is carried out by composing the two placements, which is
+ * exact as long as this INSERT does not scale its two axes differently: two
+ * such scales with a rotation between them shear the result, and no single
+ * position/rotation/scale can stand for that. In that one case the nested
+ * block is flattened after all, and said so.
+ */
+function explodeInsertOneLevel(insert: InsertEntity, ctx: CommandRun['ctx']): Entity[] {
+  const fresh = <T extends Entity>(entity: T): T => ({ ...entity, id: genId(entity.type), selected: false });
+  const uniformScale = Math.abs(Math.abs(insert.scaleX) - Math.abs(insert.scaleY)) < 1e-9;
+  const columns = Math.max(1, Math.floor(insert.columns));
+  const rows = Math.max(1, Math.floor(insert.rows));
+  const result: Entity[] = [];
+  for (const child of insert.definition.entities) {
+    // One child at a time through the shared expansion, so every entity type
+    // is placed by exactly the code the renderer and snaps already agree with.
+    const single: InsertEntity = { ...insert, definition: { ...insert.definition, entities: [child] } };
+    if (child.type !== 'insert') {
+      result.push(...expandedInsertEntities(single).map(fresh));
+      continue;
+    }
+    if (!uniformScale && Math.abs(child.rotation) > 1e-9) {
+      ctx.log(`EXPLODE: "${child.definition.name}" sits rotated inside a block scaled differently in x and y, so it cannot stay a block.`);
+      result.push(...expandedInsertEntities(single).map(fresh));
+      continue;
+    }
+    for (let row = 0; row < rows; row++) for (let column = 0; column < columns; column++) {
+      result.push(fresh({
+        ...child,
+        position: placedByInsert(insert, child.position, column, row),
+        rotation: child.rotation + insert.rotation,
+        scaleX: child.scaleX * insert.scaleX,
+        scaleY: child.scaleY * insert.scaleY,
+        scaleZ: (child.scaleZ ?? 1) * (insert.scaleZ ?? 1),
+        workPlane: insert.workPlane ? cloneWorkPlane(insert.workPlane) : undefined,
+      }));
+    }
+  }
+  return result;
+}
+
+function explodeEntity(entity: Entity, doc: Document, ctx: CommandRun['ctx']): Entity[] {
+  if (entity.type === 'insert') return explodeInsertOneLevel(entity, ctx);
   if (entity.type === 'text') {
     // Only a single-stroke font has a path a pen could follow — a system
     // font's glyphs are filled outlines with no strokes to give back, same
@@ -119,7 +175,7 @@ export function explodeObjects(run: CommandRun): StepOutcome {
   const solidParts: Solid[] = [];
 
   for (const entity of data.entities as Entity[]) {
-    const pieces = explodeEntity(entity, ctx.doc);
+    const pieces = explodeEntity(entity, ctx.doc, ctx);
     const solidPieces = entity.type === 'insert'
       ? expandedInsertSolids(entity).map((solid) => ({
         ...cloneSolidValue(solid),

@@ -1159,6 +1159,35 @@ describe('CommandManager history integration', () => {
     expect(levels).toEqual([-2, 0, 2]);
   });
 
+  /**
+   * One offset is rarely the only one: the command loops back to "select an
+   * object" with the distance still in hand, so the next is a pick and a
+   * click. It used to end after every single one.
+   */
+  it('stays open for the next object, distance and all, until Escape', async () => {
+    const { doc, manager } = setup();
+    const first = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    const second = doc.createLine({ x: 0, y: 20 }, { x: 10, y: 20 });
+    doc.entities.push(first, second);
+    manager.startCommand('OFFSET');
+    await manager.handleClick({ x: 4, y: 0 }, first);
+    await manager.submitInput('2');
+    await manager.handleClick({ x: 4, y: 5 });
+
+    // Still running, back at the object step.
+    expect(manager.active?.name).toBe('OFFSET');
+    expect(manager.active?.steps[manager.active.stepIndex].kind).toBe('entity');
+
+    await manager.handleClick({ x: 4, y: 20 }, second);
+    await manager.handleClick({ x: 4, y: 25 }); // the remembered 2, no Enter
+    const levels = doc.entities.filter((entity) => entity.type === 'line')
+      .map((entity) => (entity as { start: { y: number } }).start.y).sort((a, b) => a - b);
+    expect(levels).toEqual([0, 2, 20, 22]);
+
+    manager.cancelActive();
+    expect(manager.active).toBeNull();
+  });
+
   it('takes a distance typed but not entered when the click arrives', async () => {
     const { doc, manager } = setup();
     let typed = '';
@@ -1978,6 +2007,59 @@ describe('CommandManager history integration', () => {
     history.undo();
     expect(doc.entities).toHaveLength(1);
     expect(doc.entities[0].type).toBe('rectangle');
+  });
+
+  /**
+   * EXPLODE takes one level apart, as AutoCAD does: a block nested inside the
+   * one being exploded comes back as a block reference, not as its contents.
+   * It used to flatten the whole tree, so exploding once took apart things
+   * that had been deliberately kept together.
+   */
+  it('takes a block apart one level, leaving a nested block a block', async () => {
+    const { doc, manager, history } = setup();
+    const inner = { name: 'Inner', basePoint: { x: 0, y: 0 }, entities: [doc.createRectangle({ x: 0, y: 0 }, { x: 4, y: 2 })] };
+    const innerRef = doc.createInsert(inner, { x: 5, y: 5 });
+    const outer = { name: 'Outer', basePoint: { x: 0, y: 0 }, entities: [doc.createCircle({ x: 1, y: 1 }, 1), innerRef] };
+    const outerRef = doc.createInsert(outer, { x: 10, y: 10 });
+    doc.addEntity(outerRef);
+    doc.selectEntity(outerRef.id);
+
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities.map((entity) => entity.type).sort()).toEqual(['circle', 'insert']);
+    const circle = doc.entities.find((entity) => entity.type === 'circle');
+    expect(circle).toMatchObject({ center: { x: 11, y: 11 }, radius: 1 });
+    // The nested reference is carried out to where the outer block put it,
+    // still naming the block it stands for.
+    const nested = doc.entities.find((entity) => entity.type === 'insert');
+    expect(nested).toMatchObject({ position: { x: 15, y: 15 } });
+    if (nested?.type === 'insert') expect(nested.definition.name).toBe('Inner');
+
+    history.undo();
+    expect(doc.entities).toHaveLength(1);
+    expect(doc.entities[0].type).toBe('insert');
+  });
+
+  it('gives the inner block\'s own contents back only when that one is exploded too', async () => {
+    const { doc, manager } = setup();
+    const inner = { name: 'Inner', basePoint: { x: 0, y: 0 }, entities: [doc.createLine({ x: 0, y: 0 }, { x: 4, y: 0 })] };
+    const innerRef = doc.createInsert(inner, { x: 5, y: 0 });
+    const outer = { name: 'Outer', basePoint: { x: 0, y: 0 }, entities: [innerRef] };
+    const outerRef = doc.createInsert(outer, { x: 10, y: 0 });
+    doc.addEntity(outerRef);
+    doc.selectEntity(outerRef.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    const nested = doc.entities.find((entity) => entity.type === 'insert')!;
+    doc.clearSelection();
+    doc.selectEntity(nested.id);
+    manager.startCommand('EXPLODE');
+    await manager.submitInput('');
+
+    expect(doc.entities.map((entity) => entity.type)).toEqual(['line']);
+    expect(doc.entities[0]).toMatchObject({ start: { x: 15, y: 0 }, end: { x: 19, y: 0 } });
   });
 
   it('explodes single-stroke text into the line segments a pen would draw', async () => {
