@@ -1,5 +1,5 @@
 import type { Document } from '../core/Document';
-import { entityBounds, expandedInsertSolids, leaderGeometry, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
+import { entityBounds, expandedInsertSolids, type Entity, type Solid, type SolidMesh, type Surface } from '../core/entities/types';
 import { hitTestEntity, pointInEllipse } from '../core/commands/CommandManager';
 import type { Vec2, Vec3 } from '../math/geometry';
 import { localToWorld, worldPointInPlane, WORLD_WORK_PLANE } from '../math/workplane';
@@ -101,7 +101,7 @@ function polygonIntersectsBox(polygon: readonly Vec2[], box: WindowBounds, close
 function entityOutlines(entity: Entity): EntityPath[] {
   switch (entity.type) {
     case 'point': return [{ points: [entity.position], closed: false }];
-    case 'leader': return [{ points: leaderGeometry(entity).path, closed: false }];
+    case 'leader': return canonicalEntityPaths(entity);
     case 'line':
     case 'circle':
     case 'ellipse':

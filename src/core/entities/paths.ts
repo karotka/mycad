@@ -7,10 +7,8 @@
  * complete, because a missing case here is geometry silently left out of a cut
  * file rather than something that merely looks wrong on screen.
  */
-import { dimensionGeometry, expandedInsertEntities, leaderGeometry, type Entity } from './types';
-import type { Vec2 } from '../../math/geometry';
-import { isStrokeFont, strokeText } from '../text/strokeFont';
-import { canonicalEntityPaths, type EntityPath } from './EntityGeometry';
+import { dimensionGeometry, expandedInsertEntities, type Entity } from './types';
+import { canonicalEntityPaths, dimensionGeometryPaths, type EntityPath } from './EntityGeometry';
 
 export type { EntityPath } from './EntityGeometry';
 
@@ -27,12 +25,7 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
     case 'point':
       return [];
     case 'leader':
-      // The line and the arrowhead can be cut or plotted; the note itself is
-      // text, and text has no single stroke through it — see TEXT below.
-      return [
-        { points: leaderGeometry(entity).path, closed: false },
-        ...(leaderGeometry(entity).arrow.length > 0 ? [{ points: leaderGeometry(entity).arrow, closed: true }] : []),
-      ];
+      return canonicalEntityPaths(entity);
     case 'line':
       return canonicalEntityPaths(entity);
     case 'polyline':
@@ -56,29 +49,9 @@ export function entityToPaths(entity: Entity, segments = 64): EntityPath[] {
     case 'dimension': {
       // Drawn, not cut — but a plotter putting a drawing on paper wants it, and
       // it is made of lines like everything else. The arrowheads are outlines.
-      const geometry = dimensionGeometry(entity);
-      const paths: EntityPath[] = [
-        { points: [...geometry.extensionStart], closed: false },
-        { points: [...geometry.extensionEnd], closed: false },
-        { points: [...geometry.dimensionLine], closed: false },
-        ...geometry.arrows.map((arrow) => ({ points: [...arrow], closed: true })),
-      ];
-      // A degenerate leg is a path of one repeated point: nothing to draw, and a
-      // machine asked to draw it would still lower the tool and lift it again.
-      return paths.filter((path) => hasLength(path.points));
+      return dimensionGeometryPaths(dimensionGeometry(entity));
     }
     case 'text':
-      // Only the single-stroke font has a path a pen could follow. A system
-      // font's glyphs are filled outlines, and following those engraves the
-      // edges of each letter rather than the letter — so it stays empty here
-      // and the caller reports it, which is the honest answer.
-      return isStrokeFont(entity.font)
-        ? strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })
-          .map((points) => ({ points, closed: false }))
-        : [];
+      return canonicalEntityPaths(entity);
   }
-}
-
-function hasLength(points: Vec2[]): boolean {
-  return points.some((point) => Math.abs(point.x - points[0].x) > 1e-9 || Math.abs(point.y - points[0].y) > 1e-9);
 }

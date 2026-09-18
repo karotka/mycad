@@ -250,6 +250,30 @@ Next specialised migration: text, dimensions, leaders and inserts. Their
 display geometry must distinguish real strokes from selection-only bounds and
 expanded child geometry.
 
+### 2026-09-18 — annotation paths and specialised phase closure
+
+Status: **completed and verified**.
+
+- Extracted LEADER placement from the declaration-heavy `types.ts` into
+  `LeaderGeometry.ts`; canonical paths now describe its shelf and the actual
+  open, closed or tick arrow strokes without pretending the note is a cut path.
+- Stroke-font TEXT exposes real engraving paths. System-font text deliberately
+  exposes no path, while both kinds share canonical rotated selection bounds.
+- Added a shared adapter from analytic `dimensionGeometry()` to separate
+  extension, dimension-line and arrow paths. Degenerate legs are discarded and
+  projected picking no longer connects unrelated legs with phantom segments.
+- INSERT needs no second path owner: renderers, selection and export already
+  share cached `expandedInsertEntities()` / `expandedInsertSolids()`. Keeping
+  expansion there avoids double-applying nested work-plane transforms.
+- Added direct tests for LEADER arrow semantics, stroke versus system text,
+  rotated text bounds and separated dimension paths.
+- Verification: TypeScript check passed; the full suite passed with 114 test
+  files and 1704 tests.
+
+This closes the specialised path migration in §1. The next step is a removal
+audit of obsolete switch bodies/helpers, followed by the unified picking
+primitives. Snap-specific definition points remain outside display sampling.
+
 ## What this plan is for: four bugs it would have prevented
 
 The duplication below is not hypothetical. Each of these was found in use, in

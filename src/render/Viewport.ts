@@ -17,7 +17,7 @@ import { standardViewDelta } from './ViewportCoordinates';
 import { ViewportProjection } from './ViewportProjection';
 import { ViewportPicking } from './ViewportPicking';
 import { DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT_MM, DEFAULT_LINETYPE_SCALE, lineTypeDashArray, linetypeScaleFor, lineWeightToPixels } from '../core/lineStyles';
-import { canonicalEntityPaths } from '../core/entities/EntityGeometry';
+import { canonicalEntityPaths, dimensionGeometryPaths } from '../core/entities/EntityGeometry';
 import { planarFaceRegionAt, solidCircularEdges, solidDesignEdges, solidPlanarFaces } from '../core/solids/SolidTopology';
 import { hatchPatternSegments } from '../core/entities/hatch';
 import { aciToRgb } from '../io/DxfAci';
@@ -2190,6 +2190,20 @@ export class Viewport3D {
         paths.forEach((path) => testPath(entity, owner, path.points, path.closed));
         continue;
       }
+      if (entity.type === 'leader') {
+        canonicalEntityPaths(entity).forEach((path) => testPath(entity, owner, path.points, path.closed));
+        continue;
+      }
+      if (entity.type === 'dimension') {
+        const geometry = dimensionGeometry(entity);
+        dimensionGeometryPaths(geometry).forEach((path) => testPath(entity, owner, path.points, path.closed));
+        const textPoint = project(entity, geometry.textPoint);
+        if (textPoint && Math.hypot(cursor.x - textPoint.x, cursor.y - textPoint.y) <= tolerance * 1.5) {
+          bestEdgeDistance = 0;
+          edgeResult = owner;
+        }
+        continue;
+      }
       let points: Vec2[] = [];
       let closed = false;
       switch (entity.type) {
@@ -2226,20 +2240,6 @@ export class Viewport3D {
           const bounds = entityBounds(entity);
           points = [bounds.min, { x: bounds.max.x, y: bounds.min.y }, bounds.max, { x: bounds.min.x, y: bounds.max.y }];
           closed = true;
-          break;
-        }
-        case 'leader': {
-          points = leaderGeometry(entity).path;
-          break;
-        }
-        case 'dimension': {
-          const geometry = dimensionGeometry(entity);
-          points = [geometry.extensionStart[0], geometry.extensionStart[1], geometry.dimensionLine[0], geometry.dimensionLine[1], geometry.extensionEnd[0], geometry.extensionEnd[1]];
-          const textPoint = project(entity, geometry.textPoint);
-          if (textPoint && Math.hypot(cursor.x - textPoint.x, cursor.y - textPoint.y) <= tolerance * 1.5) {
-            bestEdgeDistance = 0;
-            edgeResult = owner;
-          }
           break;
         }
       }

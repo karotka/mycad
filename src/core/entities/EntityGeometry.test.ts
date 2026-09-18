@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalEntityBounds, canonicalEntityPaths, canonicalEntityRegions } from './EntityGeometry';
-import type { ArcEntity, BezierEntity, CircleEntity, EllipseEntity, HatchEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity } from './types';
+import { canonicalEntityBounds, canonicalEntityPaths, canonicalEntityRegions, dimensionGeometryPaths } from './EntityGeometry';
+import type { ArcEntity, BezierEntity, CircleEntity, DimensionGeometry, EllipseEntity, HatchEntity, LeaderEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity, TextEntity } from './types';
+import { STROKE_FONT } from '../text/strokeFont';
 
 const base = { layer: '0', aci: 256, color: 0xffffff, selected: false } as const;
 
@@ -173,5 +174,50 @@ describe('canonicalEntityPaths', () => {
     expect(paths.every((path) => !path.closed && path.points.length === 2)).toBe(true);
     expect(canonicalEntityRegions(hatch)[0].loops).toEqual(hatch.loops);
     expect(canonicalEntityBounds(hatch)).toEqual({ min: { x: 0, y: 0 }, max: { x: 10, y: 10 } });
+  });
+
+  it('describes a LEADER line and each arrow style as the strokes actually drawn', () => {
+    const leader: LeaderEntity = {
+      ...base, id: 'leader', type: 'leader', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+      text: 'NOTE', textHeight: 2, arrowSize: 2, arrowType: 'tick', landing: 3, scale: 1,
+    };
+    const tick = canonicalEntityPaths(leader);
+    expect(tick).toHaveLength(2);
+    expect(tick[0]).toMatchObject({ closed: false, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 13, y: 0 }] });
+    expect(tick[1]).toMatchObject({ closed: false });
+    expect(tick[1].points).toHaveLength(2);
+
+    const closed = canonicalEntityPaths({ ...leader, arrowType: 'closed' })[1];
+    expect(closed).toMatchObject({ closed: true });
+    expect(closed.points).toHaveLength(3);
+  });
+
+  it('exposes only genuine stroke-font paths while every text still has bounds', () => {
+    const text: TextEntity = {
+      ...base, id: 'text', type: 'text', position: { x: 3, y: 4 }, text: 'HI', height: 5, font: STROKE_FONT,
+    };
+    expect(canonicalEntityPaths(text).length).toBeGreaterThan(0);
+    const strokeBounds = canonicalEntityBounds(text);
+    expect(strokeBounds.min.x).toBe(3);
+    expect(strokeBounds.max.x).toBeGreaterThan(3);
+
+    const systemText = { ...text, font: 'Arial' };
+    expect(canonicalEntityPaths(systemText)).toEqual([]);
+    expect(canonicalEntityBounds(systemText).max.x).toBeGreaterThan(3);
+  });
+
+  it('keeps dimension strokes separate and drops degenerate extension legs', () => {
+    const geometry: DimensionGeometry = {
+      extensionStart: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
+      extensionEnd: [{ x: 10, y: 0 }, { x: 10, y: 4 }],
+      dimensionLine: [{ x: 0, y: 4 }, { x: 10, y: 4 }],
+      arrows: [[{ x: 0, y: 4 }, { x: 1, y: 3.5 }, { x: 1, y: 4.5 }]],
+      textPoint: { x: 5, y: 5 }, textAngle: 0, text: '10',
+    };
+    const paths = dimensionGeometryPaths(geometry);
+    expect(paths).toHaveLength(3);
+    expect(paths[0]).toEqual({ points: geometry.extensionEnd, closed: false });
+    expect(paths[1]).toEqual({ points: geometry.dimensionLine, closed: false });
+    expect(paths[2]).toEqual({ points: geometry.arrows[0], closed: true });
   });
 });

@@ -1,8 +1,10 @@
 import { dist2, type Vec2 } from '../../math/geometry';
+import { isStrokeFont, strokeText, strokeTextHeight, strokeTextWidth } from '../text/strokeFont';
 import { hatchPatternSegments } from './hatch';
+import { leaderGeometry } from './LeaderGeometry';
 import { mlineOffsetLines } from './mline';
 import { polylineOutline } from './polylineArcs';
-import type { ArcEntity, BezierEntity, BezierSegment, CircleEntity, EllipseEntity, HatchEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity } from './types';
+import type { ArcEntity, BezierEntity, BezierSegment, CircleEntity, DimensionGeometry, EllipseEntity, HatchEntity, LeaderEntity, LineEntity, MlineEntity, OctagonEntity, PolylineEntity, RectangleEntity, TextEntity } from './types';
 
 export interface EntityPath {
   points: Vec2[];
@@ -20,7 +22,7 @@ export interface EntityRegion {
   loops: Vec2[][];
 }
 
-export type CanonicalPathEntity = LineEntity | PolylineEntity | CircleEntity | EllipseEntity | ArcEntity | BezierEntity | RectangleEntity | OctagonEntity | MlineEntity | HatchEntity;
+export type CanonicalPathEntity = LineEntity | PolylineEntity | CircleEntity | EllipseEntity | ArcEntity | BezierEntity | RectangleEntity | OctagonEntity | MlineEntity | HatchEntity | LeaderEntity | TextEntity;
 
 export interface GeometryQuality {
   /** Maximum local distance between an analytic curve and its sampled chord. */
@@ -196,6 +198,21 @@ export function canonicalEntityPaths(entity: CanonicalPathEntity, input: Geometr
       return entity.pattern === 'solid'
         ? entity.loops.filter((loop) => loop.length >= 2).map((loop) => ({ points: [...loop], closed: true }))
         : hatchPatternSegments(entity.loops, entity.patternLines).map(([start, end]) => ({ points: [start, end], closed: false }));
+    case 'leader': {
+      const geometry = leaderGeometry(entity);
+      const paths: EntityPath[] = geometry.path.length >= 2 ? [{ points: geometry.path, closed: false }] : [];
+      if (geometry.arrow.length === 3) {
+        if (entity.arrowType === 'tick') paths.push({ points: [geometry.arrow[1], geometry.arrow[2]], closed: false });
+        else if (entity.arrowType === 'open') paths.push({ points: [geometry.arrow[1], geometry.arrow[0], geometry.arrow[2]], closed: false });
+        else paths.push({ points: geometry.arrow, closed: true });
+      }
+      return paths;
+    }
+    case 'text':
+      return isStrokeFont(entity.font)
+        ? strokeText(entity.text, { position: entity.position, height: entity.height, rotation: entity.rotation, font: entity.font })
+          .map((points) => ({ points, closed: false }))
+        : [];
     case 'circle': {
       const z = pointZ(entity.center);
       return [{
@@ -266,15 +283,48 @@ export function canonicalEntityBounds(entity: CanonicalPathEntity): EntityBounds
       ? source.map((points) => ({ points, closed: true }))
       : canonicalEntityPaths(entity)) ?? { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
   }
+  if (entity.type === 'text') return textBounds(entity);
   return boundsFromPaths(canonicalEntityPaths(entity))
     ?? ('start' in entity
       ? { min: { ...entity.start }, max: { ...entity.start } }
       : { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } });
 }
 
+function textBounds(entity: TextEntity): EntityBounds {
+  const lines = entity.text.split('\n');
+  const width = isStrokeFont(entity.font)
+    ? strokeTextWidth(entity.text, entity.height, entity.font)
+    : Math.max(0, ...lines.map((line) => line.length)) * entity.height * 0.62;
+  const bottom = entity.height - strokeTextHeight(entity.text, entity.height);
+  const angle = entity.rotation ?? 0;
+  const rotate = (point: Vec2): Vec2 => ({
+    x: entity.position.x + point.x * Math.cos(angle) - point.y * Math.sin(angle),
+    y: entity.position.y + point.x * Math.sin(angle) + point.y * Math.cos(angle),
+  });
+  return boundsFromPaths([{
+    points: [
+      rotate({ x: 0, y: bottom }), rotate({ x: width, y: bottom }),
+      rotate({ x: width, y: entity.height }), rotate({ x: 0, y: entity.height }),
+    ],
+    closed: true,
+  }])!;
+}
+
 /** Filled regions are separate from drawable strokes so hatch holes survive. */
 export function canonicalEntityRegions(entity: HatchEntity): EntityRegion[] {
   return entity.loops.length === 0 ? [] : [{ loops: entity.loops.map((loop) => [...loop]) }];
+}
+
+/** Separate dimension strokes; keeping them separate prevents phantom joins. */
+export function dimensionGeometryPaths(geometry: DimensionGeometry): EntityPath[] {
+  const paths: EntityPath[] = [
+    { points: [...geometry.extensionStart], closed: false },
+    { points: [...geometry.extensionEnd], closed: false },
+    { points: [...geometry.dimensionLine], closed: false },
+    ...geometry.arrows.map((arrow) => ({ points: [...arrow], closed: true })),
+  ];
+  return paths.filter((path) => path.points.length >= 2 && path.points.some((point) =>
+    Math.abs(point.x - path.points[0].x) > 1e-9 || Math.abs(point.y - path.points[0].y) > 1e-9));
 }
 
 function normalizedAngle(angle: number): number {
