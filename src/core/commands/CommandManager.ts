@@ -132,6 +132,7 @@ export class CommandManager {
   startCommand(name: CommandName): void {
     this.cancelActive();
     this.lastCommand = name;
+    this.recordInHistory(name);
     const def = commandDef(name);
     // A command with no wizard acts at once and leaves nothing active.
     if (def.run) {
@@ -730,6 +731,23 @@ export class CommandManager {
       this.ctx.prompt('Command:');
     }
     this.ctx.redraw();
+  }
+
+  /**
+   * Every command run goes into what the Up arrow walks back through — not
+   * only the ones typed. A command started from the toolbar or picked out of
+   * the suggestion list is still a command that was run, and reaching back for
+   * it is the whole reason to press Up.
+   *
+   * A command that arrived by being typed is already there under whatever was
+   * typed for it (an alias, most often), so it is not recorded twice. And the
+   * walk always starts again from the most recent, since what Up means is
+   * "the last one", not "one before wherever I last left off".
+   */
+  private recordInHistory(name: CommandName): void {
+    const last = this.history.at(-1);
+    if (!last || this.resolveAlias(last) !== name) this.history.push(name);
+    this.historyIndex = this.history.length;
   }
 
   historyUp(): string | null {

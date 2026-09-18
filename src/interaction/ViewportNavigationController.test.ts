@@ -61,14 +61,15 @@ function setup(mode: '2d' | '3d' = '2d') {
   } as unknown as Viewport3D;
   const redraw = vi.fn();
   const enter3dForOrbit = vi.fn(() => { doc.viewMode = '3d'; });
+  const pivotAboutSelection = vi.fn();
   const controller = new ViewportNavigationController(
     doc,
     viewport as unknown as HTMLElement,
     renderer2d,
     renderer3d,
-    { redraw, enter3dForOrbit },
+    { redraw, enter3dForOrbit, pivotAboutSelection },
   );
-  return { controller, doc, viewport, renderer2d, renderer3d, redraw, enter3dForOrbit };
+  return { controller, doc, viewport, renderer2d, renderer3d, redraw, enter3dForOrbit, pivotAboutSelection };
 }
 
 describe('ViewportNavigationController', () => {

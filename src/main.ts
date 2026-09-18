@@ -5,6 +5,7 @@ import { dimensionGeometry, entityBounds, type Entity, type Solid, type Surface,
 import { CommandHistory } from './core/history/CommandHistory';
 import { worldToScreen, type Vec2 } from './math/geometry';
 import { isWorldWorkPlane, localToWorld, WORLD_WORK_PLANE, worldToLocal, type WorkPlane } from './math/workplane';
+import { centerOfWorldBounds, worldBoundsOf } from './core/selectionBounds';
 import { Canvas2DRenderer } from './render/Canvas2DRenderer';
 import { Viewport3D } from './render/Viewport3D';
 import { viewCubeTransform } from './render/ViewportCoordinates';
@@ -167,7 +168,7 @@ const propertiesPanel = get<HTMLElement>('properties-panel');
 const renderer2d = new Canvas2DRenderer(canvas2d);
 const renderer3d = new Viewport3D(viewport3dHost);
 renderer3d.setWorkPlane(cadDocument.activeWorkPlane);
-renderer3d.attachControls(viewport, enter3dForOrbit);
+renderer3d.attachControls(viewport, () => { enter3dForOrbit(); pivotAboutSelection(); });
 const previewController = new PreviewController(
   dimensionToast,
   measureOrigin,
@@ -193,7 +194,7 @@ const navigation = new ViewportNavigationController(
   viewport,
   renderer2d,
   renderer3d,
-  { enter3dForOrbit, redraw },
+  { enter3dForOrbit, pivotAboutSelection, redraw },
 );
 const history = new CommandHistory(cadDocument);
 const { moveObjects } = createMoveEditing({ doc: cadDocument, history });
@@ -302,6 +303,29 @@ function enter3dForOrbit(): void {
   renderer3d.frameContent(cadDocument.entities, cadDocument.solids);
   cadDocument.viewMode = '3d';
   cadDocument.notify();
+}
+
+/**
+ * Turn the view about what is selected, if anything is.
+ *
+ * The orbit pivot was wherever the view last left it — for an unframed
+ * drawing, a default box near the origin — so turning the view around
+ * something just selected swung it off the screen instead. Called as an orbit
+ * begins rather than as the selection changes, so it costs nothing until it
+ * matters, and so a selection made and then orbited is pivoted about even if
+ * the view has since been moved. With nothing selected the pivot stays where
+ * it was, which is what turning about "the view" means.
+ */
+function pivotAboutSelection(): void {
+  const bounds = worldBoundsOf(
+    cadDocument.getSelectedEntities(),
+    cadDocument.getSelectedSolids(),
+    cadDocument.getSelectedSurfaces(),
+  );
+  if (!bounds) return;
+  const centre = centerOfWorldBounds(bounds);
+  // The viewport's own axes: CAD z is up there, and CAD y runs into the screen.
+  renderer3d.orbitTarget.set(centre.x, centre.z, -centre.y);
 }
 
 function captureProjectView(): ProjectViewState {

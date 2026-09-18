@@ -5,6 +5,8 @@ import type { Viewport3D } from '../render/Viewport3D';
 
 export interface ViewportNavigationCallbacks {
   enter3dForOrbit(): void;
+  /** Aims the orbit at whatever is selected, as an orbit begins. */
+  pivotAboutSelection(): void;
   redraw(): void;
 }
 
@@ -22,6 +24,7 @@ export class ViewportNavigationController {
       if (event.metaKey) {
         if (Math.abs(event.deltaX) <= 0.01 && Math.abs(event.deltaY) <= 0.01) return;
         this.callbacks.enter3dForOrbit();
+        this.callbacks.pivotAboutSelection();
         this.renderer3d.orbitByScreenDelta(event.deltaX * 0.6, event.deltaY * 0.6);
         this.renderer3d.render();
         this.callbacks.redraw(); // the view cube follows the camera
@@ -38,6 +41,7 @@ export class ViewportNavigationController {
     }
     if (event.metaKey) {
       if (Math.abs(event.deltaX) <= 0.01 && Math.abs(event.deltaY) <= 0.01) return;
+      this.callbacks.pivotAboutSelection();
       this.renderer3d.orbitByScreenDelta(event.deltaX * 0.6, event.deltaY * 0.6);
     } else if (Math.abs(event.deltaY) > 0.01) {
       this.renderer3d.zoomByWheelDelta(event.deltaY);

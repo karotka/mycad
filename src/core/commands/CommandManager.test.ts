@@ -8278,3 +8278,56 @@ describe('transforming an object drawn under a different UCS', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('facing a different way'));
   });
 });
+
+/**
+ * The Up arrow at the command line walks back through what has been run.
+ * Reported as not doing it: what was missing is every command that did not
+ * arrive by being typed — from the toolbar, or picked out of the suggestion
+ * list — and the walk carrying on from wherever it was last left instead of
+ * starting again at the most recent.
+ */
+describe('walking back through the commands already run', () => {
+  it('hands back the last one first, then the one before', () => {
+    const { manager } = setup();
+    manager.startCommand('LINE');
+    manager.startCommand('CIRCLE');
+
+    expect(manager.historyUp()).toBe('CIRCLE');
+    expect(manager.historyUp()).toBe('LINE');
+    expect(manager.historyDown()).toBe('CIRCLE');
+  });
+
+  it('includes a command started from the toolbar, not only a typed one', async () => {
+    const { manager } = setup();
+    await manager.submitInput('L'); // typed, by its alias
+    manager.startCommand('RECTANGLE'); // as a toolbar button does it
+
+    expect(manager.historyUp()).toBe('RECTANGLE');
+    // The typed one is remembered as typed, which is what Up put back before.
+    expect(manager.historyUp()).toBe('L');
+  });
+
+  it('does not record a typed command twice under both its names', async () => {
+    const { manager } = setup();
+    await manager.submitInput('LINE');
+
+    expect(manager.historyUp()).toBe('LINE');
+    expect(manager.historyUp()).toBe('LINE'); // nothing behind it
+  });
+
+  it('starts the walk again at the most recent after another command runs', () => {
+    const { manager } = setup();
+    manager.startCommand('LINE');
+    manager.startCommand('CIRCLE');
+    manager.historyUp();
+    manager.historyUp(); // walked back to LINE
+
+    manager.startCommand('ARC');
+    expect(manager.historyUp()).toBe('ARC');
+  });
+
+  it('has nothing to hand back before anything has run', () => {
+    const { manager } = setup();
+    expect(manager.historyUp()).toBeNull();
+  });
+});
