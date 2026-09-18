@@ -164,13 +164,31 @@ describe('a command is either a wizard or an immediate action', () => {
     }
   });
 
+  /**
+   * Selecting objects and then running a command has to mean the same as
+   * running it and then selecting them — reported as "often my earlier
+   * selection is not included". Where the first step only gathers objects,
+   * with no roles to tell apart, there is nothing to guess, so a preselection
+   * must answer it. LOFT is the one exception and says why.
+   */
+  it('takes a preselection wherever the first step just gathers objects', () => {
+    const orderMatters = new Set(['LOFT']);
+    for (const command of COMMAND_LIST) {
+      const first = command.steps?.[0];
+      if (!first || first.kind !== 'entity' || !('multi' in first) || !first.multi) continue;
+      if (orderMatters.has(command.name)) continue;
+      expect(Boolean(command.onStart), `${command.name} ignores a preselection`).toBe(true);
+    }
+  });
+
   // onStart skips a step only because the selection already answered it, so
-  // there must be a step there to skip.
+  // there must be a step there to skip. A surface counts alongside an entity
+  // and a solid: it is picked the same way and named by an id, like a solid.
   it('leaves onStart a step to skip into', () => {
     for (const command of COMMAND_LIST) {
       if (!command.onStart || !command.steps) continue;
       expect(command.steps.length, `${command.name} has nothing after its first step`).toBeGreaterThan(1);
-      expect(['entity', 'solid'], `${command.name} preselects into a non-object step`).toContain(command.steps[0].kind);
+      expect(['entity', 'solid', 'surface'], `${command.name} preselects into a non-object step`).toContain(command.steps[0].kind);
     }
   });
 });

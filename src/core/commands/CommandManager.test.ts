@@ -583,6 +583,43 @@ describe('CommandManager history integration', () => {
   });
 
   /**
+   * Selecting objects and then running the command has to mean the same as
+   * running it and then selecting them. TRIM ignored a prior selection
+   * entirely, so the cutting edges had to be picked all over again.
+   */
+  it('takes preselected objects as TRIM\'s cutting edges', async () => {
+    const { doc, manager, log } = setup();
+    const cutter = doc.createLine({ x: 5, y: -5 }, { x: 5, y: 5 });
+    const target = doc.createLine({ x: 0, y: 0 }, { x: 10, y: 0 });
+    doc.entities.push(cutter, target);
+    doc.selectEntity(cutter.id);
+
+    manager.startCommand('TRIM');
+    // Straight to "select an object to trim" — the edges are already in hand.
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cutting edge(s) preselected'));
+    await manager.handleClick({ x: 8, y: 0 }, target);
+    expect(doc.getEntity(target.id)).toMatchObject({ type: 'line', start: { x: 0, y: 0 }, end: { x: 5, y: 0 } });
+  });
+
+  it('takes a preselected surface into THICKEN, which asks only for the thickness', async () => {
+    const { doc, manager } = setup();
+    const surface = doc.createSurface(
+      {
+        positions: new Float32Array([0, 0, 0, 10, 0, 0, 10, 10, 0]),
+        indices: new Uint32Array([0, 1, 2]),
+      },
+      'Surface', [],
+    );
+    doc.addSurface(surface);
+    doc.selectSurface(surface.id);
+
+    manager.startCommand('THICKEN');
+    expect(manager.active?.stepIndex).toBe(1);
+    expect(manager.active?.steps[1].kind).toBe('number');
+  });
+
+  /**
    * Two lines laid across each other, trimmed down to the corner they make —
    * the everyday AutoCAD gesture. Both are selected as cutting edges, and then
    * each is clicked on the stub to drop off. It used to answer "Select a

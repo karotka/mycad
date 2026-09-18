@@ -90,8 +90,11 @@ function preselectSingleObject(key: string, message: string): (active: ActiveCom
   return (active, ctx) => {
     const entities = ctx.doc.getSelectedEntities();
     const solids = ctx.doc.getSelectedSolids();
-    if (entities.length + solids.length !== 1) return;
-    active.data[key] = entities[0] ?? solids[0].id;
+    const surfaces = ctx.doc.getSelectedSurfaces();
+    if (entities.length + solids.length + surfaces.length !== 1) return;
+    // A solid and a surface are both named by their id — that is all a
+    // viewport pick can hand over, so it is what the step expects.
+    active.data[key] = entities[0] ?? solids[0]?.id ?? surfaces[0].id;
     active.stepIndex = 1;
     ctx.log(message);
   };
@@ -283,7 +286,8 @@ export const COMMANDS = [
       { kind: 'point', label: 'Specify dimension line location:', ignoresDirection: true },
       { kind: 'done' },
     ],
-    data: () => ({ entities: [] }) },
+    data: () => ({ entities: [] }),
+    onStart: preselectObjects((count) => `${count} object(s) preselected. Specify the dimension line location.`) },
   { name: 'MOVE', aliases: ['MO', 'MOVE'], execute: moveObjects, help: 'move in view plane', suggest: true, pointInput: true, transformsObjects: true, steps: [{ kind: 'entity', label: 'Select object(s) to move, then press Enter:', multi: true, accepts: ['entity', 'solid', 'surface'] }, { kind: 'point', label: 'Specify base point:' }, { kind: 'point', label: 'Specify target point:' }, { kind: 'done' }],
     data: () => ({ entities: [], solids: [], surfaces: [] }),
     onStart: preselectObjects((count) => `${count} object(s) preselected. Specify base point.`) },
@@ -374,10 +378,12 @@ export const COMMANDS = [
   { name: 'OVERKILL', aliases: ['OVERKILL', 'OK'], run: removeGeometricDuplicates, help: 'delete objects that exactly duplicate another object’s geometry' },
   { name: 'EXTEND', aliases: ['EX', 'EXTEND'], execute: extendEntity, help: 'extend lines to boundaries', suggest: true,
     steps: [{ kind: 'entity', label: 'Select boundary edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to extend (Enter to finish):', optional: true }, { kind: 'done' }],
-    data: () => ({}) },
+    data: () => ({}),
+    onStart: preselectObjects((count) => `${count} boundary edge(s) preselected. Select an object to extend.`) },
   { name: 'TRIM', aliases: ['TR', 'TRIM'], execute: trimEntity, help: 'trim objects at cutting edges', suggest: true,
     steps: [{ kind: 'entity', label: 'Select cutting edges, then press Enter:', multi: true }, { kind: 'entity', label: 'Select object to trim (Enter to finish):', optional: true }, { kind: 'done' }],
-    data: () => ({}) },
+    data: () => ({}),
+    onStart: preselectObjects((count) => `${count} cutting edge(s) preselected. Select an object to trim.`) },
   // Sticky: one offset is rarely the only one. It restarts at "select an
   // object" with the distance still remembered, so the next one is a pick and
   // a side-click, and Escape is what ends the run — AutoCAD's own loop.
@@ -454,6 +460,10 @@ export const COMMANDS = [
   { name: 'PRESSPULL', aliases: ['PP', 'PRESSPULL'], execute: pressPullStep, help: 'modify a planar face region', suggest: true, steps: [{ kind: 'solid', label: 'Select planar face or bounded region:' }, { kind: 'number', label: 'Enter height change (+/-):' }, { kind: 'done' }] },
   { name: 'SHELL', aliases: ['SH', 'SHELL'], execute: shellStep, help: 'hollow a solid to a constant wall thickness', suggest: true,
     steps: [{ kind: 'solid', label: 'Select face to remove:' }, { kind: 'number', label: 'Enter wall thickness:' }, { kind: 'done' }] },
+  // No preselection, unlike every other command whose first step just gathers
+  // objects: a loft is built through its profiles *in the order they are
+  // picked*, and a selection set has no order to take. Picking them here is
+  // how the order gets said.
   { name: 'LOFT', aliases: ['LO', 'LOFT'], execute: loftStep, help: 'loft a solid through a sequence of closed profiles, or two open rails through guide curves', suggest: true,
     // loftStep always overwrites steps[2] to { kind: 'done' } itself (both
     // modes are fully decided after step 1) — this static 3rd step is never
@@ -480,13 +490,15 @@ export const COMMANDS = [
       // something the command can guess.
       { kind: 'number', label: 'Enter offset distance (negative offsets the other way):', remember: true },
       { kind: 'done' },
-    ] },
+    ],
+    onStart: preselectSingleObject('surfaceId', 'Surface preselected. Enter the offset distance.') },
   { name: 'THICKEN', aliases: ['TH', 'THICKEN'], execute: thickenSurfaceStep, help: 'give a surface a wall thickness, turning it into a solid', suggest: true,
     steps: [
       { kind: 'surface', label: 'Select surface to thicken:' },
       { kind: 'number', label: 'Enter wall thickness:' },
       { kind: 'done' },
-    ] },
+    ],
+    onStart: preselectSingleObject('surfaceId', 'Surface preselected. Enter the wall thickness.') },
   { name: 'DRAFT', aliases: ['DFT', 'DRAFT'], execute: draftStep, help: 'taper solid faces by an angle from a neutral plane', suggest: true,
     steps: [
       { kind: 'solid', label: 'Select face(s) to draft:' },
@@ -561,7 +573,8 @@ export const COMMANDS = [
       { kind: 'entity', label: 'Select the object to project onto:', accepts: ['solid', 'surface'] },
       { kind: 'done' },
     ],
-    data: () => ({ entities: [] }) },
+    data: () => ({ entities: [] }),
+    onStart: preselectObjects((count) => `${count} curve(s) preselected. Select the object to project onto.`) },
   // A drawing, not a wire model: only the edges that can actually be seen are
   // drawn solid, and the rest go dashed on their own layer.
   { name: 'FLATSHOT', aliases: ['FLATSHOT', 'FLAT'], execute: flatShot, help: 'draw the 3D model flat, with hidden lines dashed', suggest: true,
@@ -650,7 +663,8 @@ export const COMMANDS = [
       { kind: 'number', label: 'Enter the number of segments:', remember: true },
       { kind: 'done' },
     ],
-    data: () => ({}) },
+    data: () => ({}),
+    onStart: preselectSingleObject('entity', 'Object preselected. Enter the number of segments.') },
   { name: 'BREAK', aliases: ['BR', 'BREAK'], execute: breakObject, help: 'take a piece out of an object between two points', suggest: true, pointInput: true,
     steps: [
       { kind: 'entity', label: 'Select the object to break:' },
